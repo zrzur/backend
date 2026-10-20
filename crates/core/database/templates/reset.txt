@@ -1,9 +1,9 @@
-You requested a password reset, if you did not perform this action you can safely ignore this email.
+﻿You requested a password reset, if you did not perform this action you can safely ignore this email.
 
 Please navigate to: {{url}}
 
 This email is intended for {{email}}
-Sent by Stoat
+Sent by Zarzour
 Made in Europe
 
 Revolt Platforms Ltd. is a company incorporated and registered under the laws of England and Wales.

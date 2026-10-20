@@ -1,3 +1,8 @@
+﻿# Zarzour Backend (Zarzour 26)
+
+This tree is the **Zarzour** fork of Stoat `stoatchat` (AGPL). OpenAPI/email/config defaults are rebranded; crate names such as `revolt-*` and `Revolt.toml` remain for compatibility (class C).
+
+---
 <div align="center">
 <h1>
   Stoat Backend

@@ -1,4 +1,4 @@
-You tried to create a new account with or try
+﻿You tried to create a new account with or try
 to re-verify this email but there is already
 an existing verified account under this email.
 
@@ -8,7 +8,7 @@ password on it, click below to continue.
 Please navigate to: {{url}}
 
 This email is intended for {{email}}
-Sent by Stoat
+Sent by Zarzour
 Made in Europe
 
 Revolt Platforms Ltd. is a company incorporated and registered under the laws of England and Wales.

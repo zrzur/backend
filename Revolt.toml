@@ -13,23 +13,25 @@ redis = "redis://127.0.0.1:6379/"
 host = "127.0.0.1"
 
 [hosts]
-# Web locations of various services
-# Defaults assume all services are reverse-proxied
-# See https://github.com/stoatchat/self-hosted/blob/main/Caddyfile
+# Web locations of various services (Zarzour local development)
+# Defaults assume all services are reverse-proxied on loopback.
+# Planned production hosts (owner DNS verification required before use):
+#   app.zarzour.cc, api.zarzour.cc, ws.zarzour.cc, cdn.zarzour.cc, voice.zarzour.cc
+# Never fall back to stoat.chat / revolt.chat.
 #
 # Remember to change these to https/wss where appropriate in production!
-app = "http://local.revolt.chat:14701"
-api = "http://local.revolt.chat:14702"
-events = "ws://local.revolt.chat:14703"
-autumn = "http://local.revolt.chat:14704"
-january = "http://local.revolt.chat:14705"
+app = "http://127.0.0.1:14701"
+api = "http://127.0.0.1:14702"
+events = "ws://127.0.0.1:14703"
+autumn = "http://127.0.0.1:14704"
+january = "http://127.0.0.1:14705"
 voso_legacy = ""
 voso_legacy_ws = ""
 
 # Public urls for livekit nodes
 # each entry here should have a corresponding entry under `api.livekit.nodes`
 [hosts.livekit]
-worldwide = "ws://local.revolt.chat:14706"
+worldwide = "ws://127.0.0.1:14706"
 
 [api]
 
@@ -39,8 +41,8 @@ worldwide = "ws://local.revolt.chat:14706"
 host = "localhost"
 username = "smtp"
 password = "smtp"
-from_address = "development@revolt.chat"
-reply_to = "support@revolt.chat"
+from_address = "development@localhost"
+reply_to = "support@localhost"
 port = 14025
 use_tls = false
 use_starttls = false
@@ -67,4 +69,4 @@ access_key_id = "minioautumn"
 # S3 protocol access key
 secret_access_key = "minioautumn"
 # Bucket to upload to by default
-default_bucket = "revolt-uploads"
+default_bucket = "zarzour-uploads"

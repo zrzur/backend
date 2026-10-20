@@ -77,8 +77,8 @@ fn custom_openapi_spec() -> OpenApi {
     extensions.insert(
         "x-logo".to_owned(),
         json!({
-            "url": "https://stoat.chat/header.png",
-            "altText": "Stoat Header"
+            "url": "https://zarzour.cc/header.png",
+            "altText": "Zarzour Header"
         }),
     );
 
@@ -86,7 +86,7 @@ fn custom_openapi_spec() -> OpenApi {
         "x-tagGroups".to_owned(),
         json!([
           {
-            "name": "Stoat",
+            "name": "Zarzour",
             "tags": [
               "Core"
             ]
@@ -167,13 +167,17 @@ fn custom_openapi_spec() -> OpenApi {
     OpenApi {
         openapi: OpenApi::default_version(),
         info: Info {
-            title: "Stoat API".to_owned(),
-            description: Some("Open source user-first chat platform.".to_owned()),
-            terms_of_service: Some("https://stoat.chat/terms".to_owned()),
+            title: "Zarzour API".to_owned(),
+            description: Some(
+                "Zarzour 26 chat platform API (fork of Stoat/AGPL — see LICENSE)."
+                    .to_owned(),
+            ),
+            // Legal pages not yet published — leave unset rather than invent or link upstream.
+            terms_of_service: None,
             contact: Some(Contact {
-                name: Some("Stoat".to_owned()),
-                url: Some("https://stoat.chat".to_owned()),
-                email: Some("contact@stoat.chat".to_owned()),
+                name: Some("Zarzour".to_owned()),
+                url: Some("https://zarzour.cc".to_owned()),
+                email: Some("contact@localhost".to_owned()),
                 ..Default::default()
             }),
             license: Some(License {
@@ -189,19 +193,22 @@ fn custom_openapi_spec() -> OpenApi {
         },
         servers: vec![
             Server {
-                url: "https://api.stoat.chat".to_owned(),
-                description: Some("Stoat Production".to_owned()),
+                url: "http://127.0.0.1:14702".to_owned(),
+                description: Some("Zarzour local development".to_owned()),
                 ..Default::default()
             },
             Server {
-                url: "https://beta.stoat.chat/api".to_owned(),
-                description: Some("Stoat Beta".to_owned()),
+                url: "https://api.zarzour.cc".to_owned(),
+                description: Some(
+                    "Zarzour planned production (require owner DNS + deploy)"
+                        .to_owned(),
+                ),
                 ..Default::default()
             },
         ],
         external_docs: Some(ExternalDocs {
-            url: "https://developers.stoat.chat".to_owned(),
-            description: Some("Stoat Developer Documentation".to_owned()),
+            url: "https://zarzour.cc".to_owned(),
+            description: Some("Zarzour documentation (planned)".to_owned()),
             ..Default::default()
         }),
         extensions,

@@ -103,19 +103,19 @@ pub async fn email_templates() -> Templates {
     } else if config.production {
         Templates {
             verify: Template {
-                title: "Verify your Stoat account.".into(),
+                title: "Verify your Zarzour account.".into(),
                 text: include_str!("../../templates/verify.txt").into(),
                 url: format!("{}/login/verify/", config.hosts.app),
                 html: Some(include_str!("../../templates/verify.html").into()),
             },
             reset: Template {
-                title: "Reset your Stoat password.".into(),
+                title: "Reset your Zarzour password.".into(),
                 text: include_str!("../../templates/reset.txt").into(),
                 url: format!("{}/login/reset/", config.hosts.app),
                 html: Some(include_str!("../../templates/reset.html").into()),
             },
             reset_existing: Template {
-                title: "You already have a Stoat account, reset your password.".into(),
+                title: "You already have a Zarzour account, reset your password.".into(),
                 text: include_str!("../../templates/reset-existing.txt").into(),
                 url: format!("{}/login/reset/", config.hosts.app),
                 html: Some(include_str!("../../templates/reset-existing.html").into()),

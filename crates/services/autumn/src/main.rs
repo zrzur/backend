@@ -37,7 +37,7 @@ struct AppState {
 #[tokio::main]
 async fn main() -> Result<(), std::io::Error> {
     let _telemetry = stoat_otel::init(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
-    info!(version = env!("CARGO_PKG_VERSION"), awawa = true, "Starting the Stoat file server!");
+    info!(version = env!("CARGO_PKG_VERSION"), awawa = true, "Starting the Zarzour file server!");
 
     revolt_config::config().await;
     clamav::init().await;

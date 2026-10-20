@@ -16,11 +16,11 @@ redis = "redis://redis/"
 # See https://github.com/stoatchat/self-hosted/blob/main/Caddyfile
 #
 # Remember to change these to https/wss where appropriate in production!
-app = "http://local.revolt.chat"
-api = "http://local.revolt.chat/api"
-events = "ws://local.revolt.chat/ws"
-autumn = "http://local.revolt.chat/autumn"
-january = "http://local.revolt.chat/january"
+app = "http://127.0.0.1:14701"
+api = "http://127.0.0.1:14702"
+events = "ws://127.0.0.1:14703"
+autumn = "http://127.0.0.1:14704"
+january = "http://127.0.0.1:14705"
 assets = ""
 voso_legacy = ""
 voso_legacy_ws = ""
