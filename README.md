@@ -1,8 +1,5 @@
 ﻿<div align="center">
 
-<img src="assets/branding/bird_white.svg" alt="Zarzour" width="96" class="gh-dark-mode-only" />
-<img src="assets/branding/bird_black.svg" alt="Zarzour" width="96" class="gh-light-mode-only" />
-
 # Zarzour Backend
 
 Rust services for **Zarzour 26**: REST API, real-time events, files, media proxy, and supporting daemons.
