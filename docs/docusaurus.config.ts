@@ -1,22 +1,30 @@
 import { themes as prismThemes } from 'prism-react-renderer';
 import type { Config } from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
-import type { ScalarOptions } from '@scalar/docusaurus';
 
+/**
+ * Local developer documentation site for the Zarzour backend tree.
+ *
+ * Publication status: NOT published. Do not treat `url` as a live public docs host.
+ * OpenAPI Scalar plugin is disabled until a Zarzour-owned OpenAPI document is available
+ * (do not fetch stoat.chat openapi.json at runtime).
+ */
 const config: Config = {
-  title: 'Stoat Developers',
-  tagline: 'Developer documentation for Stoat',
-  favicon: 'https://stoat.chat/favicon-stoat.svg',
+  title: 'Zarzour Developers',
+  tagline: 'Developer documentation for Zarzour (derived from Stoat)',
+  // Use bundled navbar mark; do not hotlink upstream favicons.
+  favicon: '/img/navbar.dark.svg',
 
   future: {
     v4: true,
   },
 
-  url: 'https://developers.stoat.chat',
+  // Unpublished local site only — not a verified public docs hostname.
+  url: 'http://127.0.0.1:3000',
   baseUrl: '/',
 
-  organizationName: 'stoatchat',
-  projectName: 'stoatchat',
+  organizationName: 'zrzur',
+  projectName: 'backend',
 
   onBrokenLinks: 'throw',
 
@@ -32,8 +40,8 @@ const config: Config = {
         docs: {
           routeBasePath: '/',
           sidebarPath: './sidebars.ts',
-          editUrl:
-            'https://github.com/stoatchat/stoatchat/tree/main/docs/',
+          // Planned public edit URL when zrzur/backend is published (pending).
+          editUrl: undefined,
         },
       } satisfies Preset.Options,
     ],
@@ -41,25 +49,13 @@ const config: Config = {
 
   plugins: [
     [
-      '@scalar/docusaurus',
-      {
-        label: 'API Reference',
-        route: '/api-reference',
-        showNavLink: true,
-        configuration: {
-          url: 'https://stoat.chat/api/openapi.json',
-        },
-      } as ScalarOptions,
-    ],
-    [
       '@docusaurus/plugin-client-redirects',
       {
         fromExtensions: ['html', 'htm'],
         redirects: [
-          // legacy docs website (stoatchat/developer-wiki)
           {
             from: '/developers/api/reference.html',
-            to: '/api-reference',
+            to: '/developers/endpoints',
           },
           {
             from: '/contrib.html',
@@ -70,29 +66,28 @@ const config: Config = {
             to: '/developing/contrib',
           },
         ],
-      }
+      },
     ],
   ],
 
   themeConfig: {
-    // image: 'img/docusaurus-social-card.jpg',
     colorMode: {
       respectPrefersColorScheme: true,
     },
     navbar: {
       logo: {
-        alt: 'Stoat for Developers',
+        alt: 'Zarzour for Developers',
         src: '/img/navbar.light.svg',
-        srcDark: '/img/navbar.dark.svg'
+        srcDark: '/img/navbar.dark.svg',
       },
       items: [
         {
           type: 'doc',
           docId: 'index',
-          label: 'Docs'
+          label: 'Docs',
         },
         {
-          href: 'https://github.com/stoatchat',
+          href: 'https://github.com/zrzur',
           label: 'GitHub',
           position: 'right',
         },
@@ -105,72 +100,26 @@ const config: Config = {
           title: 'Developers',
           items: [
             {
-              label: 'Source Code',
-              href: 'https://github.com/stoatchat'
+              label: 'Source (planned org)',
+              href: 'https://github.com/zrzur',
             },
             {
-              label: 'Help Translate',
-              href: 'https://translate.stoat.chat'
-            },
-          ],
-        },
-        {
-          title: 'Team',
-          items: [
-            {
-              label: 'About',
-              href: 'https://stoat.chat/about'
-            },
-            {
-              label: 'Blog and Changelogs',
-              href: 'https://stoat.chat/updates'
-            },
-            {
-              label: 'Contact',
-              href: 'https://support.stoat.chat'
+              label: 'Upstream Stoat (attribution)',
+              href: 'https://github.com/stoatchat/stoatchat',
             },
           ],
         },
         {
-          title: 'Stoat on Socials',
+          title: 'Product',
           items: [
             {
-              label: 'Bluesky',
-              href: 'https://bsky.app/profile/stoat.chat'
-            },
-            {
-              label: 'Reddit',
-              href: 'https://reddit.com/r/stoatchat'
-            },
-            {
-              label: 'Stoat Server',
-              href: 'https://stt.gg/Testers'
-            },
-          ],
-        },
-        {
-          title: 'Legal',
-          items: [
-            {
-              label: 'Community Guidelines',
-              href: 'https://stoat.chat/legal/community-guidelines'
-            },
-            {
-              label: 'Terms of Service',
-              href: 'https://stoat.chat/legal/terms'
-            },
-            {
-              label: 'Privacy Policy',
-              href: 'https://stoat.chat/legal/privacy'
-            },
-            {
-              label: 'Imprint',
-              href: 'https://stoat.chat/legal/imprint'
+              label: 'zarzour.cc',
+              href: 'https://zarzour.cc',
             },
           ],
         },
       ],
-      copyright: `© Revolt Platforms Ltd, ${new Date().getFullYear()}`,
+      copyright: `Zarzour documentation (local). Upstream Stoat/Revolt AGPL copyrights preserved in repository LICENSE files. © ${new Date().getFullYear()}`,
     },
     prism: {
       theme: prismThemes.github,

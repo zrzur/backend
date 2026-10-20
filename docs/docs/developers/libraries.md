@@ -1,8 +1,8 @@
 # Libraries
 
-The following libraries are provided by the Stoat team:
+Protocol-compatible libraries (upstream Stoat ecosystem; package names may remain for compatibility):
 
-- [Javascript SDK](https://github.com/stoatchat/javascript-client-sdk)
+- [Javascript SDK (`stoat.js`)](https://github.com/stoatchat/javascript-client-sdk) — also vendored under Zarzour Web as `packages/stoat.js`
 - [Python SDK](https://github.com/stoatchat/python-client-sdk)
 
-You can find a host of [community created libraries here](https://github.com/stoatchat/awesome-stoat#-api-libraries).
+Community library lists for Stoat: [awesome-stoat](https://github.com/stoatchat/awesome-stoat#-api-libraries) (upstream; not a Zarzour endorsement).

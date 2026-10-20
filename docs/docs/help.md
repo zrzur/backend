@@ -2,29 +2,22 @@
 sidebar_position: 3
 ---
 
-# 💖 Helping Stoat!
+# Helping Zarzour
 
-You can contribute to Stoat in a variety of ways:
+You can contribute to Zarzour in several ways:
 
 ### 1. Feedback
 
-The easiest, but most important, way to contribute to Stoat is to voice your opinion and give us feedback.
-We want to hear what you think and appreciate and await your feature suggestions, bug reports and general opinions on everything Stoat has to offer.
-
-Typically, you can open issues on the relevant [GitHub repositories](https://github.com/stoatchat).
-
-<!-- Within the Stoat app, you can navigate to the [**feedback tab**](https://app.revolt.chat/settings/feedback), or you can open an issue on the relevant [GitHub repo](https://github.com/stoatchat). -->
+Open issues on the relevant Zarzour GitHub repositories under [github.com/zrzur](https://github.com/zrzur) once those repositories are published. Until then, treat this workspace as private development.
 
 ### 2. Translate
 
-Stoat is used by users all around the world; as such, it's more accessible if the user interface is available in a variety of languages.
-You can contribute translations through [**Weblate**](https://translate.stoat.chat/engage/revolt/).
+Localization for the web client lives in the Zarzour Web tree (Lingui catalogs). Contribute translation updates through pull requests on the web repository when it is public. A separate Weblate instance for Zarzour is **not** available yet.
 
-### 3. Donate
+### 3. Code
 
-Stoat is not backed by a big company, is not currently monetised (for example, via a subscription service) and does not serve you advertisements; as such, Stoat currently relies entirely on donations.
-You can learn more about donating [here](https://ko-fi.com/stoatchat) - if you want to make a larger donation, please consult me first.
+Follow the contribution notes in each component README (`backend`, `web`, `desktop`). Preserve AGPL attribution and keep changes focused.
 
-### 4. Join the project
+### 4. Upstream project
 
-We are a small team and always appreciate more help! [Check out roles we're looking for here!](https://outline.stoatinternal.com/s/454dd0eb-44b5-41f7-b1d1-b6accec577a0)
+Zarzour is independently developed from [Stoat](https://github.com/stoatchat). Upstream contribution channels belong to Stoat and are not Zarzour support destinations.

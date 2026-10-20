@@ -1,14 +1,15 @@
-# Stoat Migration Guide
+# Stoat migration guide (historical upstream)
 
 :::warning
 
-This is not yet finished.
+This page documents **upstream** Revolt → Stoat endpoint history for developers migrating old clients.  
+It is **not** the Zarzour production endpoint map. Zarzour clients must use local or Zarzour-owned hosts (see [Endpoints](./endpoints.md)).
 
 :::
 
-## Endpoint changes
+## Endpoint changes (Stoat platform history)
 
-| Service    | Old URL                             | New URL                                 |
+| Service    | Old URL                             | New URL (Stoat)                         |
 | ---------- | ----------------------------------- | --------------------------------------- |
 | **API**    | `https://api.revolt.chat`           | `https://stoat.chat/api`                |
 |            | `https://app.revolt.chat/api`       | `https://stoat.chat/api`                |
@@ -20,3 +21,5 @@ This is not yet finished.
 |            | `https://cdn.revoltusercontent.com` | `https://cdn.stoatusercontent.com`      |
 | **Proxy**  | `https://jan.revolt.chat`           | `https://external.stoatusercontent.com` |
 | **Voice**  | `https://vortex.revolt.chat`        | Superseded by Voice Chats v2            |
+
+Zarzour planned hosts (when DNS is verified): `api.zarzour.cc`, `ws.zarzour.cc`, `cdn.zarzour.cc`, `voice.zarzour.cc`.

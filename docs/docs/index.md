@@ -2,16 +2,18 @@
 sidebar_position: 1
 ---
 
-# 🤗 Introduction
+# Introduction
 
-Welcome to Stoat's developer documentation. Everything you need to contribute to Stoat, build apps or bots, or to learn more about the project can be found here.
+Welcome to the **Zarzour** backend developer documentation (derived from Stoat). Use this material to work on the API, bots, and related services in this repository.
 
 Learn more about:
 
 - [Contributing as a developer](./developing/contrib)
-- [Other ways to help out](./help)
+- [Other ways to help](./help)
+- [API endpoints (local + planned)](./developers/endpoints)
 
-You may also be interested in the:
+This Docusaurus site is for **local** use. It is **not** a published Zarzour documentation website.
 
-- [Frontend Book](https://stoatchat.github.io/for-web)
-- [Android Book](https://stoatchat.github.io/for-android)
+Upstream Stoat frontend books (historical / provenance):
+
+- [Stoat for Web book](https://stoatchat.github.io/for-web)

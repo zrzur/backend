@@ -54,4 +54,8 @@ For example:
 ?ready=users&ready=servers&ready=user_settings[ordering]
 ```
 
-You may specify these in the connection URL: `wss://stoat.chat/events?version=1&format=json`.
+You may specify these in the connection URL. Example for local Bonfire:
+
+`ws://127.0.0.1:14703?version=1&format=json`
+
+Use your instance’s events URL from configuration (planned production shape: `wss://ws.zarzour.cc`). Do not default to public Stoat/Revolt event hosts.
