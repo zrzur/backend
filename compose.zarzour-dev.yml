@@ -1,0 +1,60 @@
+# Zarzour local Docker overlay for backend/compose.yml
+#
+# Usage (from backend/):
+#   docker compose -f compose.yml -f compose.zarzour-dev.yml up -d
+#
+# Effects:
+# - Project name zarzour-backend
+# - Creates MinIO bucket matching Revolt.toml default_bucket (zarzour-uploads)
+# - Puts Stoat-GHCR LiveKit image behind profile `voice` (opt-in)
+# - Optional voice profile uses official livekit/livekit-server (not ghcr.io/stoatchat)
+#
+# Does NOT start API/events/web from upstream GHCR — those run from local
+# source builds (mise/cargo) or zarzour/* images built from Dockerfiles.
+
+name: zarzour-backend
+
+# WSL2 note: bind mounts under /mnt/c (NTFS) break MongoDB WiredTiger and
+# RabbitMQ .erlang.cookie permissions. Use named volumes for local Phase 01.
+volumes:
+  zarzour_mongo_data:
+  zarzour_rabbit_data:
+  zarzour_minio_data:
+
+services:
+  database:
+    volumes:
+      - zarzour_mongo_data:/data/db
+
+  rabbit:
+    volumes:
+      - zarzour_rabbit_data:/var/lib/rabbitmq
+
+  minio:
+    volumes:
+      - zarzour_minio_data:/data
+
+  createbuckets:
+    entrypoint: >
+      /bin/sh -c "
+      while ! /usr/bin/mc ready minio; do
+        /usr/bin/mc alias set minio http://minio:9000 minioautumn minioautumn;
+        echo 'Waiting minio...' && sleep 1;
+      done;
+      /usr/bin/mc mb minio/zarzour-uploads || true;
+      /usr/bin/mc mb minio/revolt-uploads || true;
+      exit 0;
+      "
+
+  # Disable default Stoat GHCR LiveKit; enable with --profile voice
+  livekit:
+    profiles: ["voice"]
+    image: livekit/livekit-server:v1.9.1
+    network_mode: ""
+    ports:
+      - "7880:7880"
+      - "14706:7880"
+      - "50000-50100:50000-50100/udp"
+    command: --config /etc/livekit.yml
+    volumes:
+      - ./livekit.yml:/etc/livekit.yml
