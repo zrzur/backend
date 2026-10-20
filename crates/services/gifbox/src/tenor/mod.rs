@@ -10,7 +10,12 @@ use tokio::sync::RwLock;
 
 pub mod types;
 
-const TENOR_API_BASE_URL: &str = "https://compat.gifbox.me/v2";
+/// Tenor/GIF proxy base URL. Unset → fail closed (no silent `compat.gifbox.me` fallback).
+fn tenor_api_base_url() -> Option<String> {
+    std::env::var("GIFBOX_TENOR_BASE_URL")
+        .ok()
+        .filter(|u| !u.is_empty())
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TenorError {
@@ -64,9 +69,12 @@ impl Tenor {
         path: &str,
         query: &[Option<(&str, &str)>],
     ) -> Result<Arc<T>, TenorError> {
+        let Some(base) = tenor_api_base_url() else {
+            return Err(TenorError::HttpError);
+        };
         let response = self
             .client
-            .get(format!("{TENOR_API_BASE_URL}{path}"))
+            .get(format!("{base}{path}"))
             .query(query)
             .send()
             .await

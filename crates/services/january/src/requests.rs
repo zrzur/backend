@@ -384,7 +384,7 @@ impl Request {
                 if RE_USER_AGENT_SPOOFING_AS_DISCORD.is_match(&url_host_str) {
                     "Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)"
                 } else {
-                    "Mozilla/5.0 (compatible; January/2.0; +https://github.com/stoatchat/stoatchat)"
+                    "Mozilla/5.0 (compatible; January/2.0; +https://zarzour.cc)"
                 },
             )
             .header("Accept-Language", "en-US,en;q=0.5")

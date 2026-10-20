@@ -315,7 +315,7 @@ impl User {
 
         let username_lowercase = username.to_lowercase();
 
-        const BLOCKED_USERNAMES: &[&str] = &["admin", "revolt", "stoat"];
+        const BLOCKED_USERNAMES: &[&str] = &["admin", "revolt", "stoat", "zarzour"];
 
         if BLOCKED_USERNAMES.contains(&username_lowercase.as_str())
             || BLOCKED_USERNAME_PATTERNS.is_match(username)

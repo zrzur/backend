@@ -475,8 +475,13 @@ pub async fn config_no_cache() -> Settings {
 
     // auto-detect production nodes
     if config.hosts.api.contains("https")
-        && (config.hosts.api.contains("revolt.chat") || config.hosts.api.contains("stoat.chat"))
+        && (config.hosts.api.contains("zarzour.cc")
+            || config.hosts.api.contains("revolt.chat")
+            || config.hosts.api.contains("stoat.chat"))
     {
+        // Prefer explicit [production] in Revolt.toml for Zarzour.
+        // Upstream host matches retained only so legacy forks don't break; do not
+        // treat stoat.chat as a Zarzour production destination.
         config.production = true;
     }
 
