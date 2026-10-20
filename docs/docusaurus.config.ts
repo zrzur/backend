@@ -12,8 +12,8 @@ import type * as Preset from '@docusaurus/preset-classic';
 const config: Config = {
   title: 'Zarzour Developers',
   tagline: 'Developer documentation for Zarzour (derived from Stoat)',
-  // Use bundled navbar mark; do not hotlink upstream favicons.
-  favicon: '/img/navbar.dark.svg',
+  // Official square dark-app favicon; do not hotlink upstream.
+  favicon: '/img/favicon.ico',
 
   future: {
     v4: true,
