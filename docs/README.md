@@ -1,6 +1,6 @@
-# Website
+# Backend docs site
 
-This website is built using [Docusaurus](https://docusaurus.io/), a modern static website generator.
+This website is built using [Docusaurus](https://docusaurus.io/), a modern static website generator. It documents the Zarzour backend tree (derived from Stoat).
 
 ## Installation
 
@@ -26,7 +26,9 @@ This command generates static content into the `build` directory and can be serv
 
 ## Deployment
 
-Using SSH:
+Published Zarzour developer documentation hosting is **pending**. Do not assume a live docs URL until the owner confirms it.
+
+Using SSH (upstream-style gh-pages flow; only if you intentionally maintain that branch):
 
 ```bash
 USE_SSH=true pnpm run deploy

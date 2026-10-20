@@ -1,42 +1,34 @@
-﻿# Zarzour Backend (Zarzour 26)
+﻿<div align="center">
 
-This tree is the **Zarzour** fork of Stoat `stoatchat` (AGPL). OpenAPI/email/config defaults are rebranded; crate names such as `revolt-*` and `Revolt.toml` remain for compatibility (class C).
+<img src="../logo/03_APP_ICONS/black-circle/zarzour_black-circle_128.png" alt="Zarzour" width="96" height="96" />
 
----
-<div align="center">
-<h1>
-  Stoat Backend
-  
-  [![Stars](https://img.shields.io/github/stars/stoatchat/stoatchat?style=flat-square&logoColor=white)](https://github.com/stoatchat/stoatchat/stargazers)
-  [![Forks](https://img.shields.io/github/forks/stoatchat/stoatchat?style=flat-square&logoColor=white)](https://github.com/stoatchat/stoatchat/network/members)
-  [![Pull Requests](https://img.shields.io/github/issues-pr/stoatchat/stoatchat?style=flat-square&logoColor=white)](https://github.com/stoatchat/stoatchat/pulls)
-  [![Issues](https://img.shields.io/github/issues/stoatchat/stoatchat?style=flat-square&logoColor=white)](https://github.com/stoatchat/stoatchat/issues)
-  [![Contributors](https://img.shields.io/github/contributors/stoatchat/stoatchat?style=flat-square&logoColor=white)](https://github.com/stoatchat/stoatchat/graphs/contributors)
-  [![License](https://img.shields.io/github/license/stoatchat/stoatchat?style=flat-square&logoColor=white)](https://github.com/stoatchat/stoatchat/blob/main/LICENSE)
-</h1>
-The services and libraries that power the Stoat service.<br/>
-<br/>
+# Zarzour Backend
 
-| Crate              | Path                                               | Description                         |                                                                                                                                                                                                                                                                                                           |
-| ------------------ | -------------------------------------------------- | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `core/config`      | [crates/core/config](crates/core/config)           | Core: Configuration                 | ![Crates.io Version](https://img.shields.io/crates/v/revolt-config) ![Crates.io Version](https://img.shields.io/crates/msrv/revolt-config) ![Crates.io Version](https://img.shields.io/crates/size/revolt-config) ![Crates.io License](https://img.shields.io/crates/l/revolt-config)                     |
-| `core/database`    | [crates/core/database](crates/core/database)       | Core: Database Implementation       | ![Crates.io Version](https://img.shields.io/crates/v/revolt-database) ![Crates.io Version](https://img.shields.io/crates/msrv/revolt-database) ![Crates.io Version](https://img.shields.io/crates/size/revolt-database) ![Crates.io License](https://img.shields.io/crates/l/revolt-database)             |
-| `core/files`       | [crates/core/files](crates/core/files)             | Core: S3 and encryption subroutines | ![Crates.io Version](https://img.shields.io/crates/v/revolt-files) ![Crates.io Version](https://img.shields.io/crates/msrv/revolt-files) ![Crates.io Version](https://img.shields.io/crates/size/revolt-files) ![Crates.io License](https://img.shields.io/crates/l/revolt-files)                         |
-| `core/models`      | [crates/core/models](crates/core/models)           | Core: API Models                    | ![Crates.io Version](https://img.shields.io/crates/v/revolt-models) ![Crates.io Version](https://img.shields.io/crates/msrv/revolt-models) ![Crates.io Version](https://img.shields.io/crates/size/revolt-models) ![Crates.io License](https://img.shields.io/crates/l/revolt-models)                     |
-| `core/permissions` | [crates/core/permissions](crates/core/permissions) | Core: Permission Logic              | ![Crates.io Version](https://img.shields.io/crates/v/revolt-permissions) ![Crates.io Version](https://img.shields.io/crates/msrv/revolt-permissions) ![Crates.io Version](https://img.shields.io/crates/size/revolt-permissions) ![Crates.io License](https://img.shields.io/crates/l/revolt-permissions) |
-| `core/presence`    | [crates/core/presence](crates/core/presence)       | Core: User Presence                 | ![Crates.io Version](https://img.shields.io/crates/v/revolt-presence) ![Crates.io Version](https://img.shields.io/crates/msrv/revolt-presence) ![Crates.io Version](https://img.shields.io/crates/size/revolt-presence) ![Crates.io License](https://img.shields.io/crates/l/revolt-presence)             |
-| `core/result`      | [crates/core/result](crates/core/result)           | Core: Result and Error types        | ![Crates.io Version](https://img.shields.io/crates/v/revolt-result) ![Crates.io Version](https://img.shields.io/crates/msrv/revolt-result) ![Crates.io Version](https://img.shields.io/crates/size/revolt-result) ![Crates.io License](https://img.shields.io/crates/l/revolt-result)                     |
-| `core/coalesced`   | [crates/core/coalesced](crates/core/coalesced)     | Core: Coalescion service            | ![Crates.io Version](https://img.shields.io/crates/v/revolt-coalesced) ![Crates.io Version](https://img.shields.io/crates/msrv/revolt-coalesced) ![Crates.io Version](https://img.shields.io/crates/size/revolt-coalesced) ![Crates.io License](https://img.shields.io/crates/l/revolt-coalesced)         |
-| `delta`            | [crates/delta](crates/delta)                       | REST API server                     | ![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)                                                                                                                                                                                                                                |
-| `bonfire`          | [crates/bonfire](crates/bonfire)                   | WebSocket events server             | ![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)                                                                                                                                                                                                                                |
-| `services/january` | [crates/services/january](crates/services/january) | Proxy server                        | ![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)                                                                                                                                                                                                                                |
-| `services/gifbox`  | [crates/services/gifbox](crates/services/gifbox)   | Tenor proxy server                  | ![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)                                                                                                                                                                                                                                |
-| `services/autumn`  | [crates/services/autumn](crates/services/autumn)   | File server                         | ![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)                                                                                                                                                                                                                                |
-| `daemons/crond`    | [crates/daemons/crond](crates/daemons/crond)       | Timed data clean up daemon server   | ![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)                                                                                                                                                                                                                                |
-| `daemons/pushd`    | [crates/daemons/pushd](crates/daemons/pushd)       | Push notification daemon server     | ![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)                                                                                                                                                                                                                                |
+Rust services that power **Zarzour 26**: REST API, WebSocket events, file storage, media proxy, and related daemons.
 
 </div>
+
 <br/>
+
+The services and libraries below implement messaging, authentication, permissions, presence, bots, and real-time events. Crate package names such as `revolt-*` are **compatibility identifiers** retained from upstream; they are not user-facing product branding.
+
+| Crate              | Path                                               | Description                         |
+| ------------------ | -------------------------------------------------- | ----------------------------------- |
+| `core/config`      | [crates/core/config](crates/core/config)           | Core: Configuration (`Revolt.toml`) |
+| `core/database`    | [crates/core/database](crates/core/database)       | Core: Database Implementation       |
+| `core/files`       | [crates/core/files](crates/core/files)             | Core: S3 and encryption subroutines |
+| `core/models`      | [crates/core/models](crates/core/models)           | Core: API Models                    |
+| `core/permissions` | [crates/core/permissions](crates/core/permissions) | Core: Permission Logic              |
+| `core/presence`    | [crates/core/presence](crates/core/presence)       | Core: User Presence                 |
+| `core/result`      | [crates/core/result](crates/core/result)           | Core: Result and Error types        |
+| `core/coalesced`   | [crates/core/coalesced](crates/core/coalesced)     | Core: Coalescion service            |
+| `delta`            | [crates/delta](crates/delta)                       | REST API server                     |
+| `bonfire`          | [crates/bonfire](crates/bonfire)                   | WebSocket events server             |
+| `services/january` | [crates/services/january](crates/services/january) | Proxy server                        |
+| `services/gifbox`  | [crates/services/gifbox](crates/services/gifbox)   | Tenor proxy server                  |
+| `services/autumn`  | [crates/services/autumn](crates/services/autumn)   | File server                         |
+| `daemons/crond`    | [crates/daemons/crond](crates/daemons/crond)       | Timed data clean up daemon server   |
+| `daemons/pushd`    | [crates/daemons/pushd](crates/daemons/pushd)       | Push notification daemon server     |
 
 ## Minimum Supported Rust Version
 
@@ -44,7 +36,7 @@ Rust 1.86.0 or higher.
 
 ## Development Guide
 
-Before contributing, make yourself familiar with [our contribution guidelines](https://developers.stoat.chat/developing/contrib/) and the [technical documentation for this project](https://developers.stoat.chat/).
+Before contributing, make yourself familiar with [contribution guidelines](../CONTRIBUTING.md) and the [component docs](docs/) *(upstream Stoat developer docs remain at developers.stoat.chat for historical reference)*.
 
 Before getting started, you'll want to install:
 
@@ -63,7 +55,7 @@ As a heads-up, the development environment uses the following ports:
 | Redis                     |      6379      |
 | MinIO                     |     14009      |
 | Maildev                   | 14025<br>14080 |
-| Revolt Web App            |     14701      |
+| Zarzour Web App            |     14701      |
 | RabbitMQ                  | 5672<br>15672  |
 | Grafana LGTM (OTLP)       | 13000<br>4318  |
 | `crates/delta`            |     14702      |
@@ -75,8 +67,8 @@ As a heads-up, the development environment uses the following ports:
 Now you can clone and build the project:
 
 ```bash
-git clone https://github.com/stoatchat/stoatchat stoat-backend
-cd stoat-backend
+# From the Zarzour workspace root:
+cd backend
 mise install
 mise build
 ```
@@ -165,9 +157,9 @@ You can start a web client by doing the following in another terminal:
 corepack enable
 
 # clone the web client and run it:
-git clone --recursive https://github.com/stoatchat/for-web stoat-web
-cd stoat-web
-# refer to stoat-web/README.md for startup, creating an account and loging in
+# From the Zarzour workspace root:
+cd ../web
+# refer to web/README.md for startup, creating an account and logging in
 ```
 
 When signing up, go to http://localhost:14080 to find confirmation/password reset emails.
@@ -218,7 +210,7 @@ Tag and push a new release by running:
 just release
 ```
 
-If you have bumped the crate versions, proceed to [GitHub releases](https://github.com/stoatchat/stoatchat/releases/new) to create a changelog.
+If you have bumped the crate versions, create a GitHub release changelog when Zarzour release repositories are published (org target: https://github.com/zrzur — repos pending).
 
 ## Testing
 
@@ -237,6 +229,15 @@ TEST_DB=MONGODB cargo nextest run
 
 ## License
 
-The Stoat backend is generally licensed under the [GNU Affero General Public License v3.0](https://github.com/stoatchat/stoatchat/blob/main/LICENSE).
+The Zarzour backend (derived from Stoat) is generally licensed under the [GNU Affero General Public License v3.0](./LICENSE).
 
 **Individual crates may supply their own licenses!**
+
+## Upstream Project & Attribution
+
+Zarzour Backend is independently developed from the open-source Stoat backend. Stoat does not sponsor or endorse Zarzour.
+
+- Upstream repository: https://github.com/stoatchat/stoatchat
+- License: AGPL-3.0-or-later (see [LICENSE](./LICENSE)); individual crates may supply their own licenses
+- Pinned release: see `docs/UPSTREAM_LOCK.md` in the workspace root
+
