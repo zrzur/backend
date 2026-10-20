@@ -1,5 +1,10 @@
 ﻿<div align="center">
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/branding/bird_white.svg" />
+  <img src="assets/branding/bird_black.svg" alt="Zarzour" width="64" />
+</picture>
+
 # Zarzour Backend
 
 Rust services for **Zarzour 26**: REST API, real-time events, files, media proxy, and supporting daemons.
