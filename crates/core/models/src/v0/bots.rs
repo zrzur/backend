@@ -1,4 +1,4 @@
-use super::User;
+﻿use super::User;
 
 auto_derived!(
     /// Bot
@@ -151,7 +151,7 @@ auto_derived!(
 
         /// Whether analytics should be gathered for this bot
         ///
-        /// Must be enabled in order to show up on [Revolt Discover](https://rvlt.gg).
+        /// Must be enabled in order to show up on [Discover](/discover).
         pub analytics: Option<bool>,
         /// Interactions URL
         #[cfg_attr(feature = "validator", validate(length(min = 1, max = 2048)))]
