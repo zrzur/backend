@@ -1,20 +1,18 @@
 # Backend docs site
 
-This website is built using [Docusaurus](https://docusaurus.io/), a modern static website generator. It documents the Zarzour backend tree (derived from Stoat).
+Docusaurus site for the Zarzour backend documentation.
 
-## Installation
+## Install
 
 ```bash
 pnpm install
 ```
 
-## Local Development
+## Develop
 
 ```bash
 pnpm start
 ```
-
-This command starts a local development server and opens up a browser window. Most changes are reflected live without having to restart the server.
 
 ## Build
 
@@ -22,22 +20,12 @@ This command starts a local development server and opens up a browser window. Mo
 pnpm build
 ```
 
-This command generates static content into the `build` directory and can be served using any static contents hosting service.
+Output: `build/`.
 
-## Deployment
-
-Published Zarzour developer documentation hosting is **pending**. Do not assume a live docs URL until the owner confirms it.
-
-Using SSH (upstream-style gh-pages flow; only if you intentionally maintain that branch):
+## Deploy
 
 ```bash
 USE_SSH=true pnpm run deploy
+# or
+GIT_USER=<username> pnpm run deploy
 ```
-
-Not using SSH:
-
-```bash
-GIT_USER=<Your GitHub username> pnpm run deploy
-```
-
-If you are using GitHub pages for hosting, this command is a convenient way to build the website and push to the `gh-pages` branch.

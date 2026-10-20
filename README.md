@@ -10,41 +10,41 @@ Rust services for **Zarzour 26**: REST API, real-time events, files, media proxy
 
 ## Purpose
 
-This repository implements the server side of Zarzour: authentication, messaging, communities (servers), permissions, presence, bots, file storage, and WebSocket events.
+Server side of Zarzour: authentication, messaging, communities, permissions, presence, bots, file storage, and WebSocket events.
 
-Crate and config names such as `revolt-*` and `Revolt.toml` are **compatibility identifiers** from upstream. They are not user-facing product branding and should not be renamed without a tested migration.
+Config file name `Revolt.toml` and crate names such as `revolt-*` are kept for compatibility with the existing protocol and toolchain.
 
 ## Architecture
 
 | Crate | Path | Role |
 | --- | --- | --- |
 | `core/config` | [crates/core/config](crates/core/config) | Configuration (`Revolt.toml`) |
-| `core/database` | [crates/core/database](crates/core/database) | Database implementation |
+| `core/database` | [crates/core/database](crates/core/database) | Database |
 | `core/files` | [crates/core/files](crates/core/files) | S3 and encryption helpers |
 | `core/models` | [crates/core/models](crates/core/models) | API models |
-| `core/permissions` | [crates/core/permissions](crates/core/permissions) | Permission logic |
-| `core/presence` | [crates/core/presence](crates/core/presence) | User presence |
-| `core/result` | [crates/core/result](crates/core/result) | Result and error types |
-| `core/coalesced` | [crates/core/coalesced](crates/core/coalesced) | Coalescion service |
-| `delta` | [crates/delta](crates/delta) | REST API server |
-| `bonfire` | [crates/bonfire](crates/bonfire) | WebSocket events server |
+| `core/permissions` | [crates/core/permissions](crates/core/permissions) | Permissions |
+| `core/presence` | [crates/core/presence](crates/core/presence) | Presence |
+| `core/result` | [crates/core/result](crates/core/result) | Errors |
+| `core/coalesced` | [crates/core/coalesced](crates/core/coalesced) | Coalescion |
+| `delta` | [crates/delta](crates/delta) | REST API |
+| `bonfire` | [crates/bonfire](crates/bonfire) | WebSocket events |
 | `services/january` | [crates/services/january](crates/services/january) | Metadata / image proxy |
 | `services/gifbox` | [crates/services/gifbox](crates/services/gifbox) | Tenor proxy |
 | `services/autumn` | [crates/services/autumn](crates/services/autumn) | File server |
 | `daemons/crond` | [crates/daemons/crond](crates/daemons/crond) | Timed cleanup |
 | `daemons/pushd` | [crates/daemons/pushd](crates/daemons/pushd) | Push notifications |
 
-Typical flow: clients call **Delta** (HTTP) and **Bonfire** (WebSocket); Autumn serves attachments; optional January/Gifbox proxies sit behind the edge; MongoDB, Redis/Valkey, and RabbitMQ back the stack.
+Clients use **Delta** (HTTP) and **Bonfire** (WebSocket). Autumn serves files. MongoDB, Redis/Valkey, and RabbitMQ back the stack.
 
 ## Requirements
 
-- **MSRV:** Rust 1.86.0 or higher
+- Rust 1.86.0+
 - [mise](https://mise.jdx.dev/)
-- Docker (for dependent services)
+- Docker
 - Git
-- mold (optional, faster linking)
+- mold (optional)
 
-> Nix users: `nix develop` enters the flake dev shell.
+Nix: `nix develop`
 
 ## Development ports
 
@@ -72,14 +72,13 @@ mise install
 mise build
 ```
 
-> [!TIP]
-> Override `BUILDER` in `.env` to use mold:
->
-> ```bash
-> BUILDER = "mold --run cargo"
-> ```
+Optional mold builder in `.env`:
 
-Default development configuration is `Revolt.toml`. Overrides go in `Revolt.overrides.toml`.
+```bash
+BUILDER = "mold --run cargo"
+```
+
+Default config: `Revolt.toml`. Overrides: `Revolt.overrides.toml`.
 
 ```bash
 cp livekit.example.yml livekit.yml
@@ -88,9 +87,9 @@ mise start
 
 Stop with Ctrl+C, then `mise docker:stop`.
 
-Signup confirmation emails (local): http://localhost:14080
+Local signup emails: http://localhost:14080
 
-Pair with the [Zarzour Web](https://github.com/zrzur/web) client for a full local stack (repository publication pending).
+Web client: [Zarzour Web](https://github.com/zrzur/web)
 
 ### Port conflicts
 
@@ -128,27 +127,20 @@ port = 14072
 OTEL_EXPORTER_OTLP_ENDPOINT = "http://localhost:14318"
 ```
 
-## Configuration and environment
+## Environment
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `RUST_LOG` | `info` | Log filter, e.g. `info,revolt_autumn=debug` |
-| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | | OTLP/HTTP logs |
-| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | | OTLP/HTTP traces |
-| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | | OTLP/HTTP metrics |
+| `RUST_LOG` | `info` | Log filter |
+| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | | OTLP logs |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | | OTLP traces |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | | OTLP metrics |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318` | Collector base URL |
 | `OTEL_RESOURCE_ATTRIBUTES` | | Extra resource attributes |
 | `OTEL_TRACES_SAMPLER` | `parentbased_always_on` | Trace sampler |
 | `OTEL_TRACES_SAMPLER_ARG` | `1.0` | Sampling ratio |
 
-Optional Sentry hooks can be set under `[sentry]` in `Revolt.overrides.toml`.
-
-## Security considerations
-
-- Do not expose MongoDB, Redis, or RabbitMQ to the public internet.
-- Keep secrets out of Git; use ignored env files and deployment secret stores.
-- Production hosts must be Zarzour-owned configuration — never fall back to upstream Stoat/Revolt cloud endpoints.
-- Review authentication, invite, and captcha options in `Revolt.toml` before any public deployment.
+Optional Sentry: `[sentry]` in `Revolt.overrides.toml`.
 
 ## Testing
 
@@ -164,19 +156,17 @@ TEST_DB=MONGODB cargo nextest run
 just patch   # 0.0.X
 just minor   # 0.X.0
 just major   # X.0.0
-just publish # crates
-just release # binary tag flow
+just publish
+just release
 ```
-
-GitHub Releases under [github.com/zrzur](https://github.com/zrzur) are **pending** until the owner publishes repositories.
 
 ## Contributing
 
-Issues and pull requests will be accepted on this repository after public publication. Keep changes focused, preserve AGPL attribution, and include the exact commands you ran. Do not open public issues for exploitable vulnerabilities — use private reporting when enabled.
+Issues and pull requests on this repository after publication. Keep changes focused and preserve AGPL attribution.
 
 ## License
 
-Generally [AGPL-3.0](./LICENSE). **Individual crates may supply their own licenses.**
+[AGPL-3.0](./LICENSE). Individual crates may supply their own licenses.
 
 ## Upstream Project & Attribution
 
