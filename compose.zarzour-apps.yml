@@ -1,0 +1,57 @@
+# Zarzour local application services — images built from THIS tree only.
+# Prerequisites:
+#   docker build -t zarzour/base:local -f Dockerfile .
+#   docker build -t zarzour/api:local -f crates/delta/Dockerfile.zarzour .
+#   docker build -t zarzour/events:local -f crates/bonfire/Dockerfile.zarzour .
+#   docker build -t zarzour/autumn:local -f crates/services/autumn/Dockerfile.zarzour .
+#
+# Usage (from backend/, after data plane is up):
+#   docker compose -f compose.yml -f compose.zarzour-dev.yml -f compose.zarzour-apps.yml up -d api events autumn
+#
+# Never pulls ghcr.io/stoatchat/{api,events,file-server}.
+
+name: zarzour-backend
+
+services:
+  api:
+    image: zarzour/api:local
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      rabbit:
+        condition: service_started
+    ports:
+      - "14702:14702"
+    volumes:
+      - ./Revolt.docker.toml:/Revolt.toml:ro
+    restart: unless-stopped
+
+  events:
+    image: zarzour/events:local
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      rabbit:
+        condition: service_started
+    ports:
+      - "14703:14703"
+    volumes:
+      - ./Revolt.docker.toml:/Revolt.toml:ro
+    restart: unless-stopped
+
+  autumn:
+    image: zarzour/autumn:local
+    depends_on:
+      minio:
+        condition: service_started
+      database:
+        condition: service_healthy
+    ports:
+      - "14704:14704"
+    volumes:
+      - ./Revolt.docker.toml:/Revolt.toml:ro
+    restart: unless-stopped

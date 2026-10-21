@@ -22,9 +22,27 @@ volumes:
   zarzour_minio_data:
 
 services:
+  # LiveKit (profile voice) shares this network namespace — publish its ports here.
+  redis:
+    ports:
+      - "6379:6379"
+      - "7880:7880"
+      - "14706:7880"
+      - "50000-50100:50000-50100/udp"
+
   database:
     volumes:
       - zarzour_mongo_data:/data/db
+    # rs0 member must be reachable as Docker DNS name from api/events/autumn.
+    # Existing volumes may still have 127.0.0.1 — reconfig once (non-destructive):
+    #   docker compose exec database mongosh --eval 'try{rs.reconfig({_id:"rs0",members:[{_id:0,host:"database:27017"}]},{force:true})}catch(e){rs.initiate({_id:"rs0",members:[{_id:0,host:"database:27017"}]})}'
+    healthcheck:
+      test: echo "try { rs.status() } catch (err) { rs.initiate({_id:'rs0',members:[{_id:0,host:'database:27017'}]}) }" | mongosh --port 27017 --quiet
+      interval: 5s
+      timeout: 30s
+      start_period: 0s
+      start_interval: 1s
+      retries: 30
 
   rabbit:
     volumes:
@@ -46,15 +64,16 @@ services:
       exit 0;
       "
 
-  # Disable default Stoat GHCR LiveKit; enable with --profile voice
+  # Disable default Stoat GHCR LiveKit; enable with --profile voice.
+  # Share redis network namespace so livekit.example.yml `localhost:6379` works
+  # and LiveKit joins the compose DNS network (overrides compose.yml host mode).
   livekit:
     profiles: ["voice"]
     image: livekit/livekit-server:v1.9.1
-    network_mode: ""
-    ports:
-      - "7880:7880"
-      - "14706:7880"
-      - "50000-50100:50000-50100/udp"
+    network_mode: "service:redis"
+    ports: !reset []
     command: --config /etc/livekit.yml
     volumes:
       - ./livekit.yml:/etc/livekit.yml
+    depends_on:
+      - redis
