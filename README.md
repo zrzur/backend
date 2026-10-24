@@ -1,3 +1,5 @@
+> **Zarzour 26.0.0-dev · main · development source.** See [shared release information](ZARZOUR_RELEASE.md).
+
 ﻿<div align="center">
 
 <picture>

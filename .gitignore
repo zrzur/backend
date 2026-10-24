@@ -15,3 +15,6 @@ livekit.yml
 .idea
 .vscode/launch.json
 .mise/config.local.toml
+
+# Instance-local configuration, not public source
+/Revolt.toml

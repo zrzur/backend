@@ -1,0 +1,27 @@
+name: Source integrity
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate development release manifest
+        run: |
+          python3 - <<'PY'
+          import json, pathlib
+          release = json.loads(pathlib.Path('RELEASE.json').read_text())
+          assert release['version'] == '26.0.0-dev'
+          assert release['component'] == 'backend'
+          assert release['releaseReady'] is False
+          assert pathlib.Path('LICENSE').exists()
+          assert pathlib.Path('ZARZOUR_RELEASE.md').exists()
+          print('Development source manifest verified; functional release checks remain separate.')
+          PY
