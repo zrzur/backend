@@ -8,8 +8,9 @@ use revolt_database::{
         reference::Reference,
     },
     voice::{
-        UserVoiceChannel, VoiceClient, get_channel_node, get_user_voice_channel_in_server,
-        set_channel_node, set_user_moved_from_voice, set_user_moved_to_voice,
+        UserVoiceChannel, VoiceClient, clear_voice_reentry, get_channel_node,
+        get_user_voice_channel_in_server, get_voice_channel_members, remove_user_from_voice_channel,
+        revoke_voice_reentry, set_channel_node, set_user_moved_from_voice, set_user_moved_to_voice,
         sync_user_voice_permissions,
     },
 };
@@ -137,9 +138,18 @@ pub async fn edit(
             Err(create_error!(UnknownChannel))?
         }
 
+        if channel.voice().is_none() {
+            return Err(create_error!(NotAVoiceChannel));
+        }
+
         let channel_permissions =
             calculate_channel_permissions(&mut query.clone().channel(&channel)).await;
         channel_permissions.throw_if_lacking_channel_permission(ChannelPermission::Connect)?;
+
+        let mut target_query = perms(db, &target_user).server(&server).channel(&channel);
+        calculate_channel_permissions(&mut target_query)
+            .await
+            .throw_if_lacking_channel_permission(ChannelPermission::Connect)?;
 
         if get_user_voice_channel_in_server(&target_user.id, &server.id)
             .await?
@@ -148,10 +158,35 @@ pub async fn edit(
             Err(create_error!(NotConnected))?
         };
 
+        if let Some(max_users) = channel.voice().and_then(|voice| voice.max_users) {
+            let occupancy = get_voice_channel_members(&UserVoiceChannel::from_channel(&channel))
+                .await?
+                .map(|members| {
+                    members
+                        .iter()
+                        .filter(|id| id.as_str() != target_user.id)
+                        .count()
+                })
+                .unwrap_or(0);
+
+            if occupancy >= max_users
+                && !channel_permissions.has(ChannelPermission::ManageChannel as u64)
+            {
+                return Err(create_error!(CannotJoinCall));
+            }
+        }
+
         Some(channel)
     } else {
         None
     };
+
+    // The owner may hold no roles. get_ranking is then i64::MAX, which is a
+    // worse rank than every role, so a moderator would pass the check below.
+    // Kick and ban already refuse this target.
+    if member.id.user == server.owner && user.id != server.owner {
+        return Err(create_error!(InvalidOperation));
+    }
 
     // Resolve our ranking
     let our_ranking = query.get_member_rank().unwrap_or(i64::MIN);
@@ -185,6 +220,14 @@ pub async fn edit(
         }
 
         data.roles = Some(new_roles.into_iter().cloned().collect()) // deduplicate the roles.
+    }
+
+    if data.remove.contains(&v0::FieldsMember::VoiceChannel)
+        && get_user_voice_channel_in_server(&target_user.id, &server.id)
+            .await?
+            .is_none()
+    {
+        return Err(create_error!(NotConnected));
     }
 
     // Apply edits to the member object
@@ -282,6 +325,9 @@ pub async fn edit(
                 .create_token(&new_node, db, &target_user, permissions, &new_voice_channel)
                 .await?;
 
+            revoke_voice_reentry(&channel, &target_user.id).await?;
+            clear_voice_reentry(new_voice_channel.id(), &target_user.id).await?;
+
             voice_client
                 .remove_user(&old_node, &target_user.id, &channel)
                 .await?;
@@ -308,7 +354,7 @@ pub async fn edit(
             db,
             voice_client,
             &node,
-            &user,
+            &target_user,
             &channel,
             Some(&server),
             None,
@@ -319,9 +365,16 @@ pub async fn edit(
     if remove.contains(&FieldsMember::VoiceChannel)
         && let Some(channel) = get_user_voice_channel_in_server(&target_user.id, &server.id).await?
     {
-        let node = get_channel_node(&channel).await?.unwrap();
-
-        voice_client.remove_user(&node, &user.id, &channel).await?;
+        revoke_voice_reentry(&channel, &target_user.id).await?;
+        remove_user_from_voice_channel(
+            voice_client,
+            &UserVoiceChannel {
+                id: channel,
+                server_id: Some(server.id.clone()),
+            },
+            &target_user.id,
+        )
+        .await?;
     };
 
     Ok(Json(member.into()))

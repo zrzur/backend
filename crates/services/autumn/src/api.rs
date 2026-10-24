@@ -4,21 +4,21 @@ use std::{
 };
 
 use axum::{
+    Json, Router,
     extract::{DefaultBodyLimit, Path, State},
-    http::{header, HeaderMap, Method},
+    http::{HeaderMap, Method, header},
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
-    Json, Router,
 };
 use axum_typed_multipart::{FieldData, TryFromMultipart, TypedMultipart};
 use lazy_static::lazy_static;
 use revolt_config::{config, report_internal_error};
-use revolt_database::{iso8601_timestamp::Timestamp, Database, FileHash, Metadata, User};
+use revolt_database::{Database, FileHash, Metadata, User, iso8601_timestamp::Timestamp};
 use revolt_files::{
-    create_thumbnail, decode_image, fetch_from_s3, is_animated, upload_to_s3,
-    AUTHENTICATION_TAG_SIZE_BYTES,
+    AUTHENTICATION_TAG_SIZE_BYTES, create_thumbnail, decode_image, fetch_from_s3, is_animated,
+    upload_to_s3,
 };
-use revolt_result::{create_error, Error, Result, ToRevoltError};
+use revolt_result::{Error, Result, ToRevoltError, create_error};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use stoat_otel::WideContextRepository;
@@ -29,7 +29,7 @@ use url_escape::encode_component;
 use utoipa::ToSchema;
 
 use crate::{
-    exif::strip_metadata, metadata::generate_metadata, mime_type::determine_mime_type, AppState,
+    AppState, exif::strip_metadata, metadata::generate_metadata, mime_type::determine_mime_type,
 };
 
 /// Build the API router
@@ -37,7 +37,7 @@ pub async fn router() -> Router<AppState> {
     let config = config().await;
 
     let cors = CorsLayer::new()
-        .allow_methods([Method::POST])
+        .allow_methods([Method::GET, Method::HEAD, Method::POST])
         .allow_headers(AllowHeaders::mirror_request())
         .expose_headers(vec![
             "X-RateLimit-Limit".try_into().unwrap(),
@@ -299,7 +299,10 @@ async fn upload_file(
     let process_ratio = new_file_size as f32 / original_file_size as f32;
     let time_to_process = Instant::now() - now;
 
-    tracing::info!("Received file {filename}\nOriginal hash: {original_hash:02x}\nOriginal size: {original_file_size} bytes\nMime type: {mime_type}\nMetadata: {metadata:?}\nProcessed file size: {new_file_size} bytes ({:.2}%).\nProcessed hash: {processed_hash:02x}\nProcessing took {time_to_process:?}", process_ratio * 100.0);
+    tracing::info!(
+        "Received file {filename}\nOriginal hash: {original_hash:02x}\nOriginal size: {original_file_size} bytes\nMime type: {mime_type}\nMetadata: {metadata:?}\nProcessed file size: {new_file_size} bytes ({:.2}%).\nProcessed hash: {processed_hash:02x}\nProcessing took {time_to_process:?}",
+        process_ratio * 100.0
+    );
 
     // Create hash entry in database
     let file_hash = FileHash {
@@ -472,6 +475,7 @@ async fn fetch_preview(
 async fn fetch_file(
     State(db): State<Database>,
     Path((tag, file_id, file_name)): Path<(Tag, String, String)>,
+    headers: HeaderMap,
 ) -> Result<Response> {
     let tag: &'static str = tag.clone().into();
     let file = db.fetch_attachment(tag, &file_id).await?;
@@ -500,17 +504,53 @@ async fn fetch_file(
     }
 
     let hash = file.as_hash(&db).await?;
-    retrieve_file_by_hash(&hash).await.map(|data| {
-        (
-            [
-                (header::CONTENT_TYPE, hash.content_type),
-                (header::CONTENT_DISPOSITION, "attachment".to_owned()),
-                (header::CACHE_CONTROL, CACHE_CONTROL.to_owned()),
-            ],
-            data,
-        )
-            .into_response()
-    })
+    let data = retrieve_file_by_hash(&hash).await?;
+    Ok(original_file_response(data, hash.content_type, &headers))
+}
+
+/// Let browser media engines seek without repeatedly requesting the whole file.
+fn original_file_response(data: Vec<u8>, content_type: String, headers: &HeaderMap) -> Response {
+    use crate::byte_range::{ByteRange, parse_range};
+    use axum::http::StatusCode;
+    let size = data.len();
+    // No entity validator is advertised, so If-Range requests receive the complete entity.
+    let range = if headers.contains_key(header::IF_RANGE) {
+        None
+    } else {
+        headers.get(header::RANGE).and_then(|v| v.to_str().ok())
+    };
+    let (status, body, content_range) = match parse_range(range, size) {
+        ByteRange::Full => (StatusCode::OK, data, None),
+        ByteRange::Partial(start, end) => (
+            StatusCode::PARTIAL_CONTENT,
+            data[start..=end].to_vec(),
+            Some(format!("bytes {start}-{end}/{size}")),
+        ),
+        ByteRange::Unsatisfiable => (
+            StatusCode::RANGE_NOT_SATISFIABLE,
+            Vec::new(),
+            Some(format!("bytes */{size}")),
+        ),
+    };
+    let length = body.len();
+    let mut response = (
+        status,
+        [
+            (header::CONTENT_TYPE, content_type),
+            (header::CONTENT_DISPOSITION, "attachment".to_owned()),
+            (header::CACHE_CONTROL, CACHE_CONTROL.to_owned()),
+            (header::ACCEPT_RANGES, "bytes".to_owned()),
+            (header::CONTENT_LENGTH, length.to_string()),
+        ],
+        body,
+    )
+        .into_response();
+    if let Some(value) = content_range {
+        response
+            .headers_mut()
+            .insert(header::CONTENT_RANGE, value.parse().unwrap());
+    }
+    response
 }
 
 /// Fetch original file (Moderation)

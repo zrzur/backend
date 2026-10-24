@@ -82,6 +82,8 @@ pub async fn web() -> Rocket<Build> {
     routes::mount(config, rocket)
         .attach(prometheus.clone())
         .mount("/metrics", prometheus)
+        // LiveKit posts webhooks to /{node} (local config: /worldwide).
+        .mount("/", rocket::routes![revolt_voice_ingress::api::ingress])
         .mount("/", rocket_cors::catch_all_options_routes())
         .mount("/", ratelimiter::routes())
         .mount("/swagger/", swagger)

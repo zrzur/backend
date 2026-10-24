@@ -1,0 +1,7 @@
+FROM zarzour/base:local AS builder
+COPY crates/services/autumn/src ./crates/services/autumn/src
+RUN rustc --edition=2024 --test crates/services/autumn/src/byte_range.rs -o /tmp/byte-range-tests && /tmp/byte-range-tests
+RUN cargo build --locked --offline --release -p revolt-autumn
+FROM zarzour/autumn:local
+COPY --from=builder /home/rust/src/target/release/revolt-autumn /revolt-autumn
+CMD ["/revolt-autumn"]

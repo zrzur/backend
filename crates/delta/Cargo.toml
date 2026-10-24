@@ -83,6 +83,7 @@ revolt-ratelimits = { workspace = true, features = ["rocket"] }
 # voice
 livekit-api = { workspace = true }
 livekit-protocol = { workspace = true }
+revolt-voice-ingress = { path = "../daemons/voice-ingress" }
 
 [dev-dependencies]
 revolt-config = { workspace = true, features = ["test"] }

@@ -161,10 +161,13 @@ impl UserLimits {
 /// # Server Configuration
 #[derive(Serialize, JsonSchema, Debug)]
 pub struct RevoltConfig {
-    /// Stoat API Version
+    /// Zarzour product version (authoritative; from `backend/ZARZOUR_VERSION`)
+    pub zarzour: String,
+    /// Upstream Stoat protocol compatibility version (`CARGO_PKG_VERSION`)
     pub stoat: String,
+    /// Legacy Revolt compatibility alias of `stoat` (temporary)
     pub revolt: String,
-    /// Features enabled on this Stoat node
+    /// Features enabled on this Zarzour node
     pub features: RevoltFeatures,
     /// WebSocket URL
     pub ws: String,
@@ -174,15 +177,24 @@ pub struct RevoltConfig {
     pub vapid: String,
 }
 
+fn january_public_url(hosts: &revolt_config::Hosts) -> String {
+    if !hosts.january_public.is_empty() {
+        hosts.january_public.clone()
+    } else {
+        hosts.january.clone()
+    }
+}
+
 /// # Query Node
 ///
-/// Fetch the server configuration for this Revolt instance.
+/// Fetch the server configuration for this Zarzour instance.
 #[openapi(tag = "Core")]
 #[get("/")]
 pub async fn root() -> Result<Json<RevoltConfig>> {
     let config = config().await;
 
     Ok(Json(RevoltConfig {
+        zarzour: env!("ZARZOUR_PKG_VERSION").to_string(),
         stoat: env!("CARGO_PKG_VERSION").to_string(),
         revolt: env!("CARGO_PKG_VERSION").to_string(),
         features: RevoltFeatures {
@@ -198,7 +210,7 @@ pub async fn root() -> Result<Json<RevoltConfig>> {
             },
             january: Feature {
                 enabled: !config.hosts.january.is_empty(),
-                url: config.hosts.january.clone(),
+                url: january_public_url(&config.hosts),
             },
             livekit: VoiceFeature {
                 enabled: !config.hosts.livekit.is_empty(),
@@ -257,8 +269,8 @@ pub async fn root() -> Result<Json<RevoltConfig>> {
 
 #[cfg(test)]
 mod test {
-    use crate::rocket;
     use rocket::http::Status;
+    use serde_json::Value;
 
     #[rocket::async_test]
     async fn hello_world() {
@@ -272,5 +284,53 @@ mod test {
         let harness = crate::util::test::TestHarness::new().await;
         let response = harness.client.get("/").dispatch().await;
         assert_eq!(response.status(), Status::Ok);
+    }
+
+    #[rocket::async_test]
+    async fn root_identity_fields() {
+        let harness = crate::util::test::TestHarness::new().await;
+        let response = harness.client.get("/").dispatch().await;
+        assert_eq!(response.status(), Status::Ok);
+        let body: Value = response.into_json().await.expect("json body");
+        assert_eq!(
+            body.get("zarzour").and_then(|v| v.as_str()),
+            Some(env!("ZARZOUR_PKG_VERSION"))
+        );
+        assert_eq!(
+            body.get("stoat").and_then(|v| v.as_str()),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+        assert_eq!(
+            body.get("revolt").and_then(|v| v.as_str()),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+        assert_ne!(
+            body.get("zarzour").and_then(|v| v.as_str()),
+            body.get("stoat").and_then(|v| v.as_str()),
+            "product identity must not silently equal upstream protocol version"
+        );
+    }
+
+    #[test]
+    fn january_public_prefers_public_host() {
+        let mut hosts = revolt_config::Hosts {
+            app: String::new(),
+            api: String::new(),
+            events: String::new(),
+            autumn: String::new(),
+            january: "http://january:14705".into(),
+            january_public: "http://127.0.0.1:14705".into(),
+            livekit: Default::default(),
+            assets: String::new(),
+        };
+        assert_eq!(
+            super::january_public_url(&hosts),
+            "http://127.0.0.1:14705"
+        );
+        hosts.january_public.clear();
+        assert_eq!(
+            super::january_public_url(&hosts),
+            "http://january:14705"
+        );
     }
 }

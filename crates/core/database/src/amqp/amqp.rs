@@ -3,13 +3,13 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-use crate::User;
 use crate::events::{client::EventV1, rabbit::*};
+use crate::User;
 use lapin::{
-    BasicProperties, Channel, Connection, ConnectionProperties, Error as AMQPError,
-    options::BasicPublishOptions,
+    options::{BasicPublishOptions, ExchangeDeclareOptions},
     protocol::basic::AMQPProperties,
     types::{AMQPValue, FieldTable},
+    BasicProperties, Channel, Connection, ConnectionProperties, Error as AMQPError, ExchangeKind,
 };
 use revolt_config::config;
 use revolt_models::v0::PushNotification;
@@ -41,6 +41,8 @@ pub struct AMQP {
 
 impl AMQP {
     pub async fn new(connection: Arc<Connection>) -> Self {
+        Self::declare_exchanges(&connection).await;
+
         let this = Self {
             friend_request_accepted: Self::create_channel(&connection).await,
             friend_request_received: Self::create_channel(&connection).await,
@@ -78,6 +80,49 @@ impl AMQP {
         );
 
         Self::new(connection).await
+    }
+
+    /// Make sure the exchanges we publish to exist.
+    ///
+    /// Publishing to a missing exchange makes RabbitMQ close the channel, after
+    /// which every publish on it fails (events, acks, voice leave…). The
+    /// notifications exchange is normally declared by pushd, which is not
+    /// always running (e.g. local development). Declaring is idempotent; the
+    /// kinds match those used by crond (topic) and pushd (direct).
+    async fn declare_exchanges(connection: &Connection) {
+        let config = revolt_config::config().await;
+
+        let channel = match connection.create_channel().await {
+            Ok(channel) => channel,
+            Err(error) => {
+                error!("Failed to open channel to declare exchanges: {error:?}");
+                return;
+            }
+        };
+
+        for (exchange, kind) in [
+            (config.rabbit.default_exchange.clone(), ExchangeKind::Topic),
+            (config.pushd.exchange.clone(), ExchangeKind::Direct),
+        ] {
+            if let Err(error) = channel
+                .exchange_declare(
+                    exchange.clone().into(),
+                    kind,
+                    ExchangeDeclareOptions {
+                        durable: true,
+                        ..Default::default()
+                    },
+                    FieldTable::default(),
+                )
+                .await
+            {
+                error!("Failed to declare exchange {exchange}: {error:?}");
+                // a failed declare closes the channel
+                return;
+            }
+        }
+
+        let _ = channel.close(200, "exchanges declared".into()).await;
     }
 
     async fn create_channel(connection: &Connection) -> Arc<Channel> {

@@ -127,9 +127,9 @@ pub async fn calculate_channel_permissions<P: PermissionQuery>(query: &mut P) ->
                     permissions.apply(role_override);
                 }
 
+                // Server mute is the microphone. Camera and screen share stay on Video.
                 if !query.do_we_have_publish_overwrites().await {
                     permissions.revoke(ChannelPermission::Speak as u64);
-                    permissions.revoke(ChannelPermission::Video as u64);
                 }
 
                 if !query.do_we_have_receive_overwrites().await {

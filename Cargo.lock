@@ -7606,6 +7606,7 @@ dependencies = [
  "revolt-presence",
  "revolt-ratelimits",
  "revolt-result",
+ "revolt-voice-ingress",
  "revolt_rocket_okapi",
  "rocket",
  "rocket_cors",

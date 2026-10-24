@@ -43,5 +43,7 @@ COPY crates/daemons/voice-ingress/Cargo.toml ./crates/daemons/voice-ingress/
 RUN sh /tmp/build-image-layer.sh deps
 
 # Build all apps
+# Authoritative product version for API root `zarzour` field (see crates/delta/build.rs).
+COPY ZARZOUR_VERSION ./ZARZOUR_VERSION
 COPY crates ./crates
 RUN sh /tmp/build-image-layer.sh apps

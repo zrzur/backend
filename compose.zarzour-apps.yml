@@ -4,11 +4,12 @@
 #   docker build -t zarzour/api:local -f crates/delta/Dockerfile.zarzour .
 #   docker build -t zarzour/events:local -f crates/bonfire/Dockerfile.zarzour .
 #   docker build -t zarzour/autumn:local -f crates/services/autumn/Dockerfile.zarzour .
+#   docker build -t zarzour/january:local -f crates/services/january/Dockerfile.zarzour .
 #
 # Usage (from backend/, after data plane is up):
-#   docker compose -f compose.yml -f compose.zarzour-dev.yml -f compose.zarzour-apps.yml up -d api events autumn
+#   docker compose -f compose.yml -f compose.zarzour-dev.yml -f compose.zarzour-apps.yml up -d api events autumn january
 #
-# Never pulls ghcr.io/stoatchat/{api,events,file-server}.
+# Never pulls ghcr.io/stoatchat/{api,events,file-server,january}.
 
 name: zarzour-backend
 
@@ -52,6 +53,20 @@ services:
         condition: service_healthy
     ports:
       - "14704:14704"
+    volumes:
+      - ./Revolt.docker.toml:/Revolt.toml:ro
+    restart: unless-stopped
+
+  # Media proxy / embed previews — advertised as features.january when hosts.january is set.
+  january:
+    image: zarzour/january:local
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    ports:
+      - "14705:14705"
     volumes:
       - ./Revolt.docker.toml:/Revolt.toml:ro
     restart: unless-stopped

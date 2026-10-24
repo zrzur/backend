@@ -75,7 +75,13 @@ impl VoiceClient {
         let room = self.get_node(node)?;
 
         let limits = user.limits().await;
-        let allowed_sources = get_allowed_sources(&limits, permissions);
+        let (server_can_publish, server_can_receive) =
+            super::member_voice_flags(db, channel, &user.id).await?;
+        let allowed_sources =
+            get_allowed_sources(&limits, permissions, server_can_publish);
+        let can_publish = !allowed_sources.is_empty();
+        let can_subscribe = server_can_receive
+            && permissions.has_channel_permission(ChannelPermission::Listen);
 
         AccessToken::with_api_key(&room.node.key, &room.node.secret)
             .with_name(&format!("{}#{}", user.username, user.discriminator))
@@ -83,16 +89,18 @@ impl VoiceClient {
             .with_metadata(
                 &serde_json::to_string(&user.clone().into(db, None).await).to_internal_error()?,
             )
-            .with_ttl(Duration::from_secs(10))
+            // Join tokens must outlive UI navigation / permission prompts / WebRTC setup.
+            // A 10s TTL caused LiveKit "token is expired" before browsers could connect.
+            .with_ttl(Duration::from_secs(6 * 60 * 60))
             .with_grants(VideoGrants {
                 room_join: true,
-                can_publish: true,
+                can_publish,
                 can_publish_data: false,
                 can_publish_sources: allowed_sources
                     .into_iter()
                     .map(ToString::to_string)
                     .collect(),
-                can_subscribe: permissions.has_channel_permission(ChannelPermission::Listen),
+                can_subscribe,
                 room: channel.id().to_string(),
                 ..Default::default()
             })
@@ -126,6 +134,7 @@ impl VoiceClient {
         user: &User,
         channel_id: &str,
         new_permissions: ParticipantPermission,
+        publish_sources: Vec<i32>,
     ) -> Result<ParticipantInfo> {
         let room = self.get_node(node)?;
 
@@ -134,7 +143,10 @@ impl VoiceClient {
                 channel_id,
                 &user.id,
                 UpdateParticipantOptions {
-                    permission: Some(new_permissions),
+                    permission: Some(ParticipantPermission {
+                        can_publish_sources: publish_sources,
+                        ..new_permissions
+                    }),
                     ..Default::default()
                 },
             )

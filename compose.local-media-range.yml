@@ -1,0 +1,6 @@
+# Local build of Autumn with HTTP byte-range media seeking.
+# Include after the existing local safety/application overlays.
+services:
+  autumn:
+    image: zarzour/autumn:media-range-local
+    pull_policy: never

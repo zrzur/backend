@@ -156,10 +156,12 @@ pub async fn get_user_voice_channel_in_server(
 pub fn get_allowed_sources(
     limits: &FeaturesLimits,
     permissions: PermissionValue,
+    server_can_publish: bool,
 ) -> Vec<&'static str> {
     let mut allowed_sources = Vec::new();
 
-    if permissions.has(ChannelPermission::Speak as u64) {
+    // Server mute blocks the microphone only. Camera and screen share stay on Video.
+    if server_can_publish && permissions.has(ChannelPermission::Speak as u64) {
         allowed_sources.push("microphone")
     };
 
@@ -168,6 +170,68 @@ pub fn get_allowed_sources(
     };
 
     allowed_sources
+}
+
+pub fn track_source_ids(sources: &[&str]) -> Vec<i32> {
+    sources
+        .iter()
+        .filter_map(|source| {
+            Some(match *source {
+                "microphone" => livekit_protocol::TrackSource::Microphone as i32,
+                "camera" => livekit_protocol::TrackSource::Camera as i32,
+                "screen_share" => livekit_protocol::TrackSource::ScreenShare as i32,
+                "screen_share_audio" => livekit_protocol::TrackSource::ScreenShareAudio as i32,
+                _ => return None,
+            })
+        })
+        .collect()
+}
+
+/// Member voice flags. Non-server channels have no server mute/deafen.
+pub async fn member_voice_flags(
+    db: &Database,
+    channel: &Channel,
+    user_id: &str,
+) -> Result<(bool, bool)> {
+    let Some(server_id) = channel.server() else {
+        return Ok((true, true));
+    };
+
+    let member = Reference::from_unchecked(user_id)
+        .as_member(db, server_id)
+        .await?;
+    Ok((member.can_publish, member.can_receive))
+}
+
+fn voice_reentry_key(channel_id: &str, user_id: &str) -> String {
+    format!("vc_revoked:{channel_id}:{user_id}")
+}
+
+/// Marks an existing join token for this channel as stale.
+/// A later `join_call` clears it. This is not a voice ban.
+pub async fn revoke_voice_reentry(channel_id: &str, user_id: &str) -> Result<()> {
+    get_connection()
+        .await?
+        .set_ex(voice_reentry_key(channel_id, user_id), "1", 6 * 60 * 60)
+        .await
+        .to_internal_error()
+}
+
+pub async fn clear_voice_reentry(channel_id: &str, user_id: &str) -> Result<()> {
+    get_connection()
+        .await?
+        .del(voice_reentry_key(channel_id, user_id))
+        .await
+        .to_internal_error()
+}
+
+pub async fn is_voice_reentry_revoked(channel_id: &str, user_id: &str) -> Result<bool> {
+    let value: Option<String> = get_connection()
+        .await?
+        .get(voice_reentry_key(channel_id, user_id))
+        .await
+        .to_internal_error()?;
+    Ok(value.is_some())
 }
 
 pub async fn create_voice_state(
@@ -515,10 +579,14 @@ pub async fn sync_user_voice_permissions(
 
         let before = update_event.clone();
 
-        let can_video =
-            limits.video && permissions.has_channel_permission(ChannelPermission::Video);
-        let can_speak = permissions.has_channel_permission(ChannelPermission::Speak);
-        let can_listen = permissions.has_channel_permission(ChannelPermission::Listen);
+        let server_can_publish = member.as_ref().is_none_or(|member| member.can_publish);
+        let server_can_receive = member.as_ref().is_none_or(|member| member.can_receive);
+        let sources = get_allowed_sources(&limits, permissions, server_can_publish);
+        let can_publish = !sources.is_empty();
+        let can_listen = server_can_receive
+            && permissions.has_channel_permission(ChannelPermission::Listen);
+        let can_video = sources.iter().any(|source| *source == "camera");
+        let can_speak = sources.iter().any(|source| *source == "microphone");
 
         update_event.camera = voice_state.camera.then_some(can_video);
         update_event.screensharing = voice_state.screensharing.then_some(can_video);
@@ -533,10 +601,11 @@ pub async fn sync_user_voice_permissions(
                 channel_id,
                 ParticipantPermission {
                     can_subscribe: can_listen,
-                    can_publish: can_speak,
-                    can_publish_data: can_speak,
+                    can_publish,
+                    can_publish_data: false,
                     ..Default::default()
                 },
+                track_source_ids(&sources),
             )
             .await?;
 

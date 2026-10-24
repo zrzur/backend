@@ -1,0 +1,23 @@
+# Lean local rebuild of revolt-delta only (verification / identity changes).
+# Avoids full workspace LTO which has hung Docker Desktop on this host.
+# Usage (from backend/):
+#   docker build -t zarzour/api:local -f crates/delta/Dockerfile.zarzour.identity .
+FROM rust:1.92.0-slim-trixie AS builder
+WORKDIR /src
+ENV CARGO_PROFILE_RELEASE_LTO=false
+ENV CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config libssl-dev libdav1d-dev make g++ ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY Cargo.toml Cargo.lock ./
+COPY ZARZOUR_VERSION ./ZARZOUR_VERSION
+COPY crates ./crates
+COPY crates/common/otel ./crates/common/otel
+RUN cargo build -p revolt-delta --release
+
+FROM gcr.io/distroless/cc-debian13:nonroot
+COPY --from=builder /src/target/release/revolt-delta ./
+EXPOSE 14702
+ENV ROCKET_ADDRESS=0.0.0.0
+USER nonroot
+CMD ["./revolt-delta"]

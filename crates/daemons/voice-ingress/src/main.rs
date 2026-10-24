@@ -6,9 +6,6 @@ use revolt_result::Result;
 use rocket::{build, routes, Config};
 use std::net::Ipv4Addr;
 
-mod api;
-mod guard;
-
 #[rocket::main]
 async fn main() -> Result<(), rocket::Error> {
     revolt_config::configure!(voice_ingress);
@@ -22,7 +19,7 @@ async fn main() -> Result<(), rocket::Error> {
         .manage(database)
         .manage(voice_client)
         .manage(amqp)
-        .mount("/", routes![api::ingress])
+        .mount("/", routes![revolt_voice_ingress::api::ingress])
         .configure(Config {
             port: 8500,
             address: Ipv4Addr::new(0, 0, 0, 0).into(),

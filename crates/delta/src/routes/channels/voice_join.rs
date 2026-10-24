@@ -2,9 +2,9 @@ use revolt_config::config;
 use revolt_database::{
     util::{permissions::perms, reference::Reference},
     voice::{
-        delete_voice_state, get_channel_node, get_user_voice_channels, get_voice_channel_members,
-        raise_if_in_voice, set_call_notification_recipients, set_channel_node, UserVoiceChannel,
-        VoiceClient,
+        clear_voice_reentry, delete_voice_state, get_channel_node, get_user_voice_channels,
+        get_voice_channel_members, raise_if_in_voice, set_call_notification_recipients,
+        set_channel_node, UserVoiceChannel, VoiceClient,
     },
     Database, User,
 };
@@ -51,15 +51,31 @@ pub async fn call(
     let current_permissions = calculate_channel_permissions(&mut permissions).await;
     current_permissions.throw_if_lacking_channel_permission(ChannelPermission::Connect)?;
 
+    // A moderator disconnect revokes the previous token. An authorized join_call
+    // is the supported way back in, and is not a cooldown.
+    clear_voice_reentry(channel.id(), &user.id).await?;
+
     let user_voice_channel = UserVoiceChannel::from_channel(&channel);
 
-    if get_voice_channel_members(&user_voice_channel)
-        .await?
-        .zip(voice_info.max_users)
-        .is_some_and(|(ms, max_users)| ms.len() >= max_users)
-        && !current_permissions.has(ChannelPermission::ManageChannel as u64)
-    {
-        return Err(create_error!(CannotJoinCall));
+    // Occupancy is Redis `vc_members` (updated by voice-ingress on LiveKit
+    // participant_joined). Exclude this user so a reconnect is not blocked by
+    // their own seat. Users with ManageChannel may exceed the limit.
+    if let Some(max_users) = voice_info.max_users {
+        let occupancy = get_voice_channel_members(&user_voice_channel)
+            .await?
+            .map(|members| {
+                members
+                    .iter()
+                    .filter(|id| id.as_str() != user.id)
+                    .count()
+            })
+            .unwrap_or(0);
+
+        if occupancy >= max_users
+            && !current_permissions.has(ChannelPermission::ManageChannel as u64)
+        {
+            return Err(create_error!(CannotJoinCall));
+        }
     }
 
     let existing_node = get_channel_node(channel.id()).await?;

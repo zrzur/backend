@@ -10,9 +10,12 @@ use crate::events::client::EventV1;
 use crate::Database;
 
 static PERMISSIBLE_EMOJIS: Lazy<HashSet<String>> = Lazy::new(|| {
+    // Strip CR so Windows CRLF checkouts do not poison the set with trailing `\r`
+    // (lookups would then fail for every Unicode reaction).
     include_str!("unicode_emoji.txt")
         .split('\n')
-        .map(|x| x.replace('\u{FE0F}', ""))
+        .map(|x| x.trim_end_matches('\r').replace('\u{FE0F}', ""))
+        .filter(|x| !x.is_empty())
         .collect()
 });
 
@@ -99,14 +102,18 @@ impl Emoji {
         Ok(())
     }
 
+    /// Normalise a Unicode emoji for whitelist lookup (VS16 + stray CR).
+    pub fn sanitize_unicode_emoji(emoji: &str) -> String {
+        emoji.trim_end_matches('\r').replace('\u{FE0F}', "")
+    }
+
     /// Check whether we can use a given emoji
     pub async fn can_use(db: &Database, emoji: &str) -> Result<bool> {
         if Ulid::from_str(emoji).is_ok() {
             db.fetch_emoji(emoji).await?;
             Ok(true)
         } else {
-            let sanitized_emoji = emoji.replace('\u{FE0F}', "");
-            Ok(PERMISSIBLE_EMOJIS.contains(&sanitized_emoji))
+            Ok(PERMISSIBLE_EMOJIS.contains(&Self::sanitize_unicode_emoji(emoji)))
         }
     }
 
@@ -122,5 +129,47 @@ impl Emoji {
         );
 
         before
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn supported_unicode_emojis_are_whitelisted() {
+        assert!(PERMISSIBLE_EMOJIS.contains(&Emoji::sanitize_unicode_emoji("👍")));
+        assert!(PERMISSIBLE_EMOJIS.contains(&Emoji::sanitize_unicode_emoji("😀")));
+        assert!(PERMISSIBLE_EMOJIS.contains(&Emoji::sanitize_unicode_emoji("❤️")));
+        assert!(PERMISSIBLE_EMOJIS.contains(&Emoji::sanitize_unicode_emoji("❤")));
+    }
+
+    #[test]
+    fn unsupported_unicode_is_not_whitelisted() {
+        assert!(!PERMISSIBLE_EMOJIS.contains(&Emoji::sanitize_unicode_emoji("not-an-emoji")));
+        assert!(!PERMISSIBLE_EMOJIS.contains(&Emoji::sanitize_unicode_emoji("")));
+    }
+
+    #[test]
+    fn whitelist_loader_strips_crlf() {
+        // Control: naive split without CR strip fails on CRLF-poisoned lines.
+        let poisoned: HashSet<String> = "👍\r\n😀\r\n"
+            .split('\n')
+            .map(|x| x.replace('\u{FE0F}', ""))
+            .filter(|x| !x.is_empty())
+            .collect();
+        assert!(!poisoned.contains("👍"));
+
+        assert!(
+            PERMISSIBLE_EMOJIS.contains("👍"),
+            "production set must contain bare thumbs-up after CR strip"
+        );
+        assert!(PERMISSIBLE_EMOJIS.contains("😀"));
+    }
+
+    #[test]
+    fn custom_emoji_ids_are_ulids() {
+        assert!(Ulid::from_str("01J00000000000000000000000").is_ok());
+        assert!(Ulid::from_str("👍").is_err());
     }
 }

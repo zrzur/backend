@@ -1,0 +1,18 @@
+# Include with compose.yml, compose.zarzour-dev.yml and compose.zarzour-apps.yml.
+# Build: docker build -t zarzour/acks:local -f crates/daemons/crond/Dockerfile.zarzour-acks .
+# Start: docker compose -f compose.yml -f compose.zarzour-dev.yml -f compose.zarzour-apps.yml -f compose.zarzour-acks.yml up -d --no-deps acks
+name: zarzour-backend
+services:
+  acks:
+    image: zarzour/acks:local
+    pull_policy: never
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      rabbit:
+        condition: service_started
+    volumes:
+      - ./Revolt.docker.toml:/Revolt.toml:ro
+    restart: unless-stopped

@@ -21,6 +21,7 @@ use utoipa_scalar::{Scalar, Servable as ScalarServable};
 use tracing::info;
 
 mod api;
+mod byte_range;
 pub mod clamav;
 pub mod exif;
 pub mod metadata;

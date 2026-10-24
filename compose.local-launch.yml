@@ -1,0 +1,12 @@
+# Local launch safety: data services are accessible only within Docker.
+services:
+  database:
+    ports: !reset []
+  rabbit:
+    ports: !reset []
+  redis:
+    ports: !override
+      - "127.0.0.1:7880:7880"
+      - "127.0.0.1:7881:7881"
+      - "127.0.0.1:14706:7880"
+      - "127.0.0.1:50000-50100:50000-50100/udp"

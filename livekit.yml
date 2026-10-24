@@ -1,12 +1,20 @@
 port: 7880
 redis:
-    address: localhost:6379
-    username: ""
-    password: ""
+  address: localhost:6379
+  username: ""
+  password: ""
+rtc:
+  # Local Docker Desktop: advertise loopback so host browsers can complete ICE.
+  # Without this, candidates are docker-bridge IPs (e.g. 172.18.0.x) → PC connection fails.
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50100
+  use_external_ip: false
+  node_ip: 127.0.0.1
 webhook:
   api_key: worldwide
   urls:
-    - 'http://localhost:8500/worldwide'
+    - 'http://api:14702/worldwide'
 logging:
   level: debug
 keys:

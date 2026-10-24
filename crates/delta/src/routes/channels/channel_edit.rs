@@ -32,6 +32,13 @@ pub async fn edit(
             error: error.to_string()
         })
     })?;
+    if let Some(voice) = &data.voice {
+        voice.validate().map_err(|error| {
+            create_error!(FailedValidation {
+                error: error.to_string()
+            })
+        })?;
+    }
 
     let mut channel = target.as_channel(db).await?;
     let mut query = DatabasePermissionQuery::new(db, &user).channel(&channel);

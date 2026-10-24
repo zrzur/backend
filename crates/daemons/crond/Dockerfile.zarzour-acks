@@ -1,0 +1,9 @@
+# Reuse the locally compiled dependencies; never fetch an upstream app image.
+FROM zarzour/base:local AS builder
+COPY crates/daemons/crond/src/bin/zarzour-acks.rs ./crates/daemons/crond/src/bin/zarzour-acks.rs
+RUN cargo build --locked --offline --release -p revolt-crond --bin zarzour-acks
+
+FROM gcr.io/distroless/cc-debian13:nonroot
+COPY --from=builder /home/rust/src/target/release/zarzour-acks /zarzour-acks
+USER nonroot
+ENTRYPOINT ["/zarzour-acks"]

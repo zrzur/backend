@@ -322,6 +322,9 @@ auto_derived!(
         pub query: Option<String>,
         /// Whether to only search for pinned messages, cannot be sent with `query`.
         pub pinned: Option<bool>,
+        /// Optional author user ID filter (channel-local; additive / backwards-compatible)
+        #[cfg_attr(feature = "validator", validate(length(min = 26, max = 26)))]
+        pub author: Option<String>,
 
         /// Maximum number of messages to fetch
         #[cfg_attr(feature = "validator", validate(range(min = 1, max = 100)))]

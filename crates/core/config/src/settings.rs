@@ -99,7 +99,12 @@ pub struct Hosts {
     pub api: String,
     pub events: String,
     pub autumn: String,
+    /// Internal January URL (API/workers). May be a Docker service hostname.
     pub january: String,
+    /// Browser-facing January URL advertised on `GET /` as `features.january.url`.
+    /// When empty, `january` is advertised (local/non-Docker default).
+    #[serde(default)]
+    pub january_public: String,
     pub livekit: HashMap<String, String>,
     pub assets: String,
 }

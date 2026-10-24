@@ -22,7 +22,9 @@ app = "http://127.0.0.1:14701"
 api = "http://127.0.0.1:14702"
 events = "ws://127.0.0.1:14703"
 autumn = "http://127.0.0.1:14704"
-january = "http://127.0.0.1:14705"
+# API container calls this for process_embeds — use compose DNS name, not 127.0.0.1.
+# Local Vite: set VITE_DEV_PROXY_URL=http://127.0.0.1:14705 for browser proxy.
+january = "http://january:14705"
 assets = ""
 voso_legacy = ""
 voso_legacy_ws = ""
@@ -98,7 +100,9 @@ call_ring_duration = 30
 expires_after = 2592000  # 30d
 
 [api.livekit.nodes.worldwide]
-url = "http://livekit"
+# When compose uses network_mode: service:redis for LiveKit, use redis:7880
+# (hostname "livekit" does not resolve on the compose DNS network).
+url = "http://redis:7880"
 lat = 0.0
 lon = 0.0
 key = "worldwide"

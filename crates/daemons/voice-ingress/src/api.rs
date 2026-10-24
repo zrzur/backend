@@ -7,7 +7,8 @@ use revolt_database::{
     voice::{
         create_voice_state, delete_channel_voice_state, delete_voice_state,
         get_call_notification_recipients, get_user_moved_from_voice, get_user_moved_to_voice,
-        get_voice_channel_members, set_channel_call_started_system_message,
+        get_voice_channel_members, is_voice_reentry_revoked,
+        set_channel_call_started_system_message, sync_user_voice_permissions,
         take_channel_call_started_system_message, update_voice_state_tracks, RoomMetadata,
         UserVoiceChannel, VoiceClient,
     },
@@ -66,7 +67,7 @@ pub async fn ingress(
         "participant_joined" => {
             let channel_id = channel_id.to_internal_error()?;
             let user_id = user_id.to_internal_error()?;
-            let server_id = room_metadata.to_internal_error()?.server;
+            let server_id = resolve_server_id(db, channel_id, room_metadata.as_ref()).await?;
             let voice_channel = UserVoiceChannel {
                 id: channel_id.clone(),
                 server_id: server_id.clone(),
@@ -74,11 +75,34 @@ pub async fn ingress(
 
             let channel = Reference::from_unchecked(channel_id).as_channel(db).await?;
 
+            // A moderator disconnect invalidates the previous token. join_call clears this.
+            if is_voice_reentry_revoked(channel_id, user_id).await? {
+                let _ = voice_client.remove_user(node, user_id, channel_id).await;
+                return Ok(EmptyResponse);
+            }
+
             let joined_at = Timestamp::UNIX_EPOCH
                 .checked_add(Duration::seconds(event.created_at))
                 .unwrap();
 
             let voice_state = create_voice_state(&voice_channel, user_id, joined_at).await?;
+
+            let joined_user = Reference::from_unchecked(user_id).as_user(db).await?;
+            let server = if let Some(server_id) = channel.server() {
+                Some(Reference::from_unchecked(server_id).as_server(db).await?)
+            } else {
+                None
+            };
+            sync_user_voice_permissions(
+                db,
+                voice_client,
+                node,
+                &joined_user,
+                &channel,
+                server.as_ref(),
+                None,
+            )
+            .await?;
 
             // Only publish one event when a user is moved from one channel to another.
             if let Some(moved_from) = get_user_moved_to_voice(channel_id, user_id).await? {
@@ -188,7 +212,7 @@ pub async fn ingress(
         "participant_left" => {
             let channel_id = channel_id.to_internal_error()?;
             let user_id = user_id.to_internal_error()?;
-            let server_id = room_metadata.to_internal_error()?.server;
+            let server_id = resolve_server_id(db, channel_id, room_metadata.as_ref()).await?;
             let voice_channel = UserVoiceChannel {
                 id: channel_id.clone(),
                 server_id: server_id.clone(),
@@ -269,10 +293,15 @@ pub async fn ingress(
         }
         // Audio/video track was started/stopped/unmuted/muted
         "track_published" | "track_unpublished" | "track_unmuted" | "track_muted" => {
+            // LiveKit delivers a room's webhooks in order and retries failures for
+            // ~15s, so an error here would hold back the participant_left queued
+            // behind it and leave the user listed in the channel. Track state is
+            // best effort: log failures and acknowledge.
+            let result: Result<()> = async {
             let channel_id = channel_id.to_internal_error()?;
             let user_id = user_id.to_internal_error()?;
             let track = event.track.as_ref().to_internal_error()?;
-            let server_id = room_metadata.to_internal_error()?.server;
+            let server_id = resolve_server_id(db, channel_id, room_metadata.as_ref()).await?;
             let channel = UserVoiceChannel {
                 id: channel_id.clone(),
                 server_id: server_id.clone(),
@@ -318,7 +347,7 @@ pub async fn ingress(
                     let _ = voice_client.remove_user(node, user_id, channel_id).await;
                     delete_voice_state(&channel, user_id).await?;
 
-                    return Ok(EmptyResponse);
+                    return Ok(());
                 };
             };
 
@@ -337,10 +366,23 @@ pub async fn ingress(
             }
             .p(channel_id.clone())
             .await;
+
+            Ok(())
+            }
+            .await;
+
+            if let Err(error) = result {
+                log::warn!(
+                    "Ignoring failed {} webhook for {:?} in {:?}: {error:?}",
+                    event.event,
+                    user_id,
+                    channel_id
+                );
+            }
         }
         "room_finished" => {
             let channel_id = channel_id.to_internal_error()?;
-            let server_id = room_metadata.to_internal_error()?.server;
+            let server_id = resolve_server_id(db, channel_id, room_metadata.as_ref()).await?;
             let channel = UserVoiceChannel {
                 id: channel_id.clone(),
                 server_id: server_id.clone(),
@@ -352,4 +394,21 @@ pub async fn ingress(
     };
 
     Ok(EmptyResponse)
+}
+
+/// Server the voice room belongs to (None for DMs and groups).
+///
+/// LiveKit only includes room metadata in some webhooks (track events arrive
+/// without it), so fall back to looking the channel up.
+async fn resolve_server_id(
+    db: &Database,
+    channel_id: &str,
+    metadata: Option<&RoomMetadata>,
+) -> Result<Option<String>> {
+    if let Some(metadata) = metadata {
+        return Ok(metadata.server.clone());
+    }
+
+    let channel = Reference::from_unchecked(channel_id).as_channel(db).await?;
+    Ok(channel.server().map(ToString::to_string))
 }
