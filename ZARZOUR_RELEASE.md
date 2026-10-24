@@ -15,4 +15,4 @@ Upstream Stoat/Revolt history, authorship and licenses are retained. No history 
 
 Local integration tests were exercised, but release readiness remains open: dependency advisories, production TLS/endpoints/email, attachment privacy policy, real multi-device voice, backups/restore, signed desktop installers/updates, and production acceptance require work. Do not publish development configuration or reuse demo credentials in production.
 
-Inherited workflows are preserved under .github/legacy-workflows for review and are not executed: some assumed upstream private runners, private brand assets or upstream repository write access. The active workflow only checks source metadata; it is not evidence of full build/integration CI.
+Inherited workflows are retained in upstream Git history and a private local archive, not shipped as inactive workflow copies: some assumed upstream private runners, private brand assets or upstream repository write access. The active workflow only checks source metadata; it is not evidence of full build/integration CI.

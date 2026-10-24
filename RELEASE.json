@@ -3,8 +3,9 @@
   "family": 26,
   "version": "26.0.0-dev",
   "component": "backend",
-  "status": "development",
+  "status": "preparing-official-release",
   "defaultBranch": "main",
   "releaseReady": false,
-  "upstreamCompatibility": "Preserved; see original package/crate versions and licenses."
+  "upstreamCompatibility": "Preserved; see original package/crate versions and licenses.",
+  "targetVersion": "26.0.0"
 }

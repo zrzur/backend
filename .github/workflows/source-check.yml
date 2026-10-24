@@ -25,3 +25,5 @@ jobs:
           assert pathlib.Path('ZARZOUR_RELEASE.md').exists()
           print('Development source manifest verified; functional release checks remain separate.')
           PY
+      - name: Verify reviewed public source files
+        run: python3 scripts/publication_guard.py
