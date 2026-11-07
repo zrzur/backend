@@ -26,6 +26,7 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
           range="HEAD~1..HEAD"
+          if ! git rev-parse -q --verify "HEAD~1" >/dev/null; then range="HEAD"; fi
           if [ -n "$BASE" ] && git cat-file -e "$BASE^{commit}" 2>/dev/null; then range="$BASE..HEAD"; fi
           docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.21.2 \
             git /repo --log-opts="$range" --redact --no-banner
