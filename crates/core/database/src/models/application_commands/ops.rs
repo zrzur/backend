@@ -1,0 +1,42 @@
+use revolt_models::v0::ApplicationCommand;
+use revolt_result::Result;
+
+#[cfg(feature = "mongodb")]
+mod mongodb;
+mod reference;
+
+#[async_trait]
+pub trait AbstractApplicationCommands: Sync + Send {
+    /// Insert a command; fails with `CommandAlreadyExists` on a duplicate type and name in its scope
+    async fn insert_application_command(&self, command: &ApplicationCommand) -> Result<()>;
+
+    /// Fetch a command by its id
+    async fn fetch_application_command(&self, id: &str) -> Result<ApplicationCommand>;
+
+    /// Fetch the commands of one scope: global when `server_id` is `None`, else that server's
+    async fn fetch_application_commands(
+        &self,
+        application_id: &str,
+        server_id: Option<&str>,
+    ) -> Result<Vec<ApplicationCommand>>;
+
+    /// Fetch every command usable in a server from the given applications
+    /// (their global commands and the ones scoped to this server)
+    async fn fetch_server_application_commands(
+        &self,
+        server_id: &str,
+        application_ids: &[String],
+    ) -> Result<Vec<ApplicationCommand>>;
+
+    /// Ids of the applications with commands usable in this server (global or scoped to it)
+    async fn fetch_command_application_ids(&self, server_id: &str) -> Result<Vec<String>>;
+
+    /// Replace a stored command with a new revision
+    async fn replace_application_command(&self, command: &ApplicationCommand) -> Result<()>;
+
+    /// Delete a command by its id
+    async fn delete_application_command(&self, id: &str) -> Result<()>;
+
+    /// Delete every command of an application, in all scopes
+    async fn delete_all_application_commands(&self, application_id: &str) -> Result<()>;
+}

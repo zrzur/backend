@@ -1,0 +1,52 @@
+# Starter entries of the platform word list. A draft for the moderators.
+#
+# This file is read once, when a database first gets the word list. From then
+# on the live list is the one in the admin console: staff add and remove
+# entries there, and nothing here ever changes or brings back what they did.
+# A change to this file reaches only databases that have not been seeded yet.
+#
+# How to edit:
+# - One entry on each line, under the heading of its category.
+# - The categories are [HateOrThreats], [Harassment], [SexualContent],
+#   [Spam] and [Other].
+# - An entry matches whole words. Put * at its start or end to match part of
+#   a word: hass* also matches hassen.
+# - Lines that start with # are notes and are not read.
+#
+# The list reads public profile text: display name, pronouns, status, about
+# and links. A match in any category refuses the save.
+
+# Threats and telling someone to harm themselves
+[HateOrThreats]
+kill yourself
+kys
+i will kill you
+bring dich um
+ich bringe dich um
+اقتل نفسك
+سأقتلك
+سوف اقتلك
+
+# Abuse
+[Harassment]
+retard
+hurensohn
+wichser
+ابن الكلب
+ابن العاهرة
+يا حقير
+
+# Sexual abuse words
+[SexualContent]
+fuck you
+fick dich
+شرموطة
+كس امك
+
+# Spam
+[Spam]
+free nitro
+crypto giveaway
+steam gift
+zrzur plus free
+free zrzur plus

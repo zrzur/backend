@@ -1,0 +1,10 @@
+You requested to have your account deleted, if you did not perform this action please take measures to secure your account immediately.
+
+Please navigate to: {{url}}
+
+After you confirm, the account is locked and everything is erased {{grace_days}} days later. To cancel before then, write to {{contact}} from the same address.
+
+This email is intended for {{email}}
+
+Learn more about third party instances here:
+https://zrzur.com/help

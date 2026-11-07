@@ -1,0 +1,7 @@
+Verify your email
+
+Thanks for signing up to Zrzur. Follow the link below to verify your email.
+
+Verify email: {{url}}
+
+If you didn't create a Zrzur account, you can safely ignore this email.

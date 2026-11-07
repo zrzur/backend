@@ -1,0 +1,27 @@
+{
+  "text": "New comic book alert!",
+  "attachments": [
+    {
+      "fallback": "Required plain-text summary of the attachment.",
+      "color": "#36a64f",
+      "pretext": "Optional text that appears above the attachment block",
+      "author_name": "Bobby Tables",
+      "author_link": "https://example.com/bobby",
+      "author_icon": "https://example.com/bobby.png",
+      "title": "Slack API Documentation",
+      "title_link": "https://api.slack.com/",
+      "text": "Optional text that appears within the attachment",
+      "fields": [
+        { "title": "Priority", "value": "High", "short": false },
+        { "title": "Volume", "value": "1", "short": true },
+        { "title": "Empty", "value": "", "short": true }
+      ],
+      "image_url": "https://example.com/my_image.jpg",
+      "thumb_url": "https://example.com/thumb.png",
+      "footer": "Slack API",
+      "footer_icon": "https://example.com/footer.png",
+      "ts": 123456789
+    },
+    { "color": "danger", "text": "<!channel> the build broke" }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "text": "Fallback text",
+  "blocks": [
+    { "type": "header", "text": { "type": "plain_text", "text": "New request" } },
+    {
+      "type": "section",
+      "text": { "type": "mrkdwn", "text": "You have a new request:\n*<https://example.com|Fred Enriquez - New device request>*" }
+    },
+    {
+      "type": "section",
+      "fields": [
+        { "type": "mrkdwn", "text": "*Type:*\nComputer (laptop)" },
+        { "type": "mrkdwn", "text": "*When:*\nSubmitted Aut 10" }
+      ]
+    },
+    { "type": "divider" },
+    { "type": "context", "elements": [{ "type": "mrkdwn", "text": "Last updated today" }] }
+  ]
+}

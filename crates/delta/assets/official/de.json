@@ -1,0 +1,598 @@
+{
+  "duration": {
+    "title": "",
+    "body": "Für {days} Tage."
+  },
+  "action.warning": {
+    "title": "Eine Verwarnung für dein Konto",
+    "body": "{statement}"
+  },
+  "action.remove_message": {
+    "title": "Wir haben eine deiner Nachrichten entfernt",
+    "body": "{statement}"
+  },
+  "action.suspend": {
+    "title": "Dein Konto ist vorübergehend gesperrt",
+    "body": "{statement}"
+  },
+  "action.ban": {
+    "title": "Dein Konto ist gesperrt",
+    "body": "{statement}"
+  },
+  "action.disable_bot": {
+    "title": "Wir haben einen deiner Bots deaktiviert",
+    "body": "{statement}"
+  },
+  "action.remove_discover": {
+    "title": "Wir haben deinen Discover-Eintrag entfernt",
+    "body": "{statement}"
+  },
+  "action.suspend_design": {
+    "title": "Wir haben eines deiner Designs entfernt",
+    "body": "{statement}"
+  },
+  "action.revoked": {
+    "title": "Wir haben eine Entscheidung zurückgenommen",
+    "body": "Wir haben es erneut geprüft und zurückgenommen.\n{note}"
+  },
+  "report.answer": {
+    "title": "Zu deiner Meldung {reference}",
+    "body": "Danke für die Meldung. Die Antwort von Trust & Safety: {note}"
+  },
+  "appeal.overturned": {
+    "title": "Deinem Einspruch wurde stattgegeben",
+    "body": "Wir haben die Entscheidung aufgehoben.\n{note}"
+  },
+  "appeal.upheld": {
+    "title": "Dein Einspruch wurde geprüft",
+    "body": "Wir haben die Entscheidung beibehalten.\n{note}"
+  },
+  "ticket.answer": {
+    "title": "Der Support hat dein Ticket „{subject}“ beantwortet",
+    "body": "{answer}\n\nZum Antworten öffne Einstellungen → Support kontaktieren."
+  },
+  "ticket.answer_closed": {
+    "title": "Der Support hat dein Ticket „{subject}“ beantwortet und geschlossen",
+    "body": "{answer}\n\nDu kannst es innerhalb einer Woche unter Einstellungen → Support kontaktieren wieder öffnen."
+  },
+  "bot.verified": {
+    "title": "Dein Bot ist bestätigt",
+    "body": "„{name}“ zeigt jetzt das Bestätigt-Kennzeichen."
+  },
+  "bot.denied": {
+    "title": "Bot-Bestätigung",
+    "body": "Wir haben „{name}“ diesmal nicht bestätigt.\n{note}"
+  },
+  "bot.unverified": {
+    "title": "Bestätigt-Kennzeichen entfernt",
+    "body": "„{name}“ zeigt das Bestätigt-Kennzeichen nicht mehr.\n{note}"
+  },
+  "bot.disabled": {
+    "title": "Wir haben einen deiner Bots deaktiviert",
+    "body": "„{name}“ kann sich vorerst nicht anmelden.\n{note}"
+  },
+  "discover.approved": {
+    "title": "Du bist bei Discover",
+    "body": "„{name}“ ist jetzt bei Discover gelistet."
+  },
+  "discover.denied": {
+    "title": "Discover",
+    "body": "Wir haben „{name}“ nicht bei Discover gelistet.\n{note}"
+  },
+  "discover.removed": {
+    "title": "Aus Discover entfernt",
+    "body": "„{name}“ ist nicht mehr bei Discover gelistet.\n{note}"
+  },
+  "plugin.approved": {
+    "title": "Deine Plugin-Version ist live",
+    "body": "Version {version} von „{name}“ wurde freigegeben und kann installiert werden."
+  },
+  "plugin.rejected": {
+    "title": "Deine Plugin-Version wurde nicht freigegeben",
+    "body": "Version {version} von „{name}“ wurde abgelehnt.\n{note}"
+  },
+  "plugin.revoked": {
+    "title": "Eine Plugin-Version wurde zurückgezogen",
+    "body": "Version {version} von „{name}“ läuft nicht mehr.\n{note}"
+  },
+  "plugin.suspended": {
+    "title": "Dein Plugin ist gesperrt",
+    "body": "„{name}“ ist vorerst nicht im Store und läuft nicht.\n{note}"
+  },
+  "plugin.reinstated": {
+    "title": "Dein Plugin ist zurück",
+    "body": "„{name}“ ist wieder verfügbar."
+  },
+  "plugin.removed": {
+    "title": "Dein Plugin wurde entfernt",
+    "body": "„{name}“ wurde endgültig aus dem Store entfernt.\n{note}"
+  },
+  "publisher.verified": {
+    "title": "Du bist bestätigter Herausgeber",
+    "body": "Deine Plugins zeigen jetzt, dass du ein bestätigter Herausgeber bist."
+  },
+  "publisher.suspended": {
+    "title": "Plugin-Veröffentlichung pausiert",
+    "body": "Du kannst vorerst keine neuen Plugins oder Versionen veröffentlichen.\n{note}"
+  },
+  "publisher.reinstated": {
+    "title": "Du kannst wieder Plugins veröffentlichen",
+    "body": "Deine Veröffentlichungsrechte sind zurück."
+  },
+  "server.verified": {
+    "title": "Dein Server ist bestätigt",
+    "body": "„{name}“ zeigt jetzt das Bestätigt-Kennzeichen."
+  },
+  "server.unverified": {
+    "title": "Bestätigt-Kennzeichen entfernt",
+    "body": "„{name}“ zeigt das Bestätigt-Kennzeichen nicht mehr.\n{note}"
+  },
+  "server.nsfw": {
+    "title": "Dein Server ist als 18+ markiert",
+    "body": "„{name}“ ist jetzt nur für Erwachsene.\n{note}"
+  },
+  "server.not_nsfw": {
+    "title": "18+-Markierung entfernt",
+    "body": "„{name}“ ist nicht mehr als 18+ markiert."
+  },
+  "server.transferred_from": {
+    "title": "Dein Server hat eine neue Eigentümer:in",
+    "body": "„{name}“ wurde auf Entscheidung des Support-Teams an ein anderes Mitglied übergeben.\n{note}"
+  },
+  "server.transferred_to": {
+    "title": "Dir gehört jetzt ein Server",
+    "body": "Du bist jetzt Eigentümer:in von „{name}“."
+  },
+  "creator.granted": {
+    "title": "Du bist Design-Ersteller:in",
+    "body": "Du kannst jetzt Designs in der Community-Galerie veröffentlichen."
+  },
+  "creator.suspended": {
+    "title": "Design-Veröffentlichung pausiert",
+    "body": "Du kannst vorerst keine Designs veröffentlichen, und deine Designs sind verborgen, bis die Pause endet. Grund und Einspruch findest du im Creator Studio.\n{note}"
+  },
+  "creator.revoked": {
+    "title": "Design-Veröffentlichung entzogen",
+    "body": "Du kannst keine Designs mehr veröffentlichen.\n{note}"
+  },
+  "creator.reinstated": {
+    "title": "Du kannst wieder Designs veröffentlichen",
+    "body": "Deine Ersteller-Rechte sind zurück."
+  },
+  "badge.granted": {
+    "title": "Ein neues Abzeichen für dich",
+    "body": "Du hast das Abzeichen „{name}“ erhalten. Es erscheint in deinem Profil."
+  },
+  "badge.revoked": {
+    "title": "Ein Abzeichen wurde entfernt",
+    "body": "Das Abzeichen „{name}“ wurde aus deinem Profil entfernt.\n{note}"
+  },
+  "bug.triage": {
+    "title": "Wir sehen uns deinen Fehlerbericht an",
+    "body": "„{title}“\n{note}"
+  },
+  "bug.need_info": {
+    "title": "Wir brauchen mehr zu deinem Fehlerbericht",
+    "body": "„{title}“\n{note}\nErgänze Details unter Einstellungen → Feedback & Meldungen."
+  },
+  "bug.confirm": {
+    "title": "Dein Fehlerbericht ist bestätigt",
+    "body": "„{title}“ – danke! Bestätigte Berichte zählen für Fehlerjäger.\n{note}"
+  },
+  "bug.fix": {
+    "title": "Der gemeldete Fehler ist behoben",
+    "body": "„{title}“ – danke für die Meldung.\n{note}"
+  },
+  "bug.duplicate": {
+    "title": "Dein Fehlerbericht war schon bekannt",
+    "body": "„{title}“ entspricht einem früheren Bericht. Danke!\n{note}"
+  },
+  "bug.not_a_bug": {
+    "title": "Zu deinem Fehlerbericht",
+    "body": "„{title}“ funktioniert wie vorgesehen.\n{note}"
+  },
+  "bug.reopen": {
+    "title": "Dein Fehlerbericht ist wieder offen",
+    "body": "„{title}“\n{note}"
+  },
+  "feather.granted": {
+    "title": "Ein Geschenk von Zrzur",
+    "body": "Das Zrzur-Team schenkt dir Feder für {days} Tage. Danke!"
+  },
+  "billing.refunded": {
+    "title": "Erstattung gesendet",
+    "body": "Wir haben {amount} für deine Bestellung erstattet. Es kann ein paar Tage dauern.\n{note}"
+  },
+  "beta.invited": {
+    "title": "Einladung zur Beta",
+    "body": "Probiere neue Zrzur-Funktionen vor allen anderen. Nimm die Einladung unter Einstellungen → Profil → Abzeichen an."
+  },
+  "beta.approved": {
+    "title": "Willkommen in der Beta",
+    "body": "Du bist jetzt Zrzur-Beta-Tester:in. Danke!"
+  },
+  "beta.removed": {
+    "title": "Beta-Programm",
+    "body": "Du bist nicht mehr im Beta-Programm."
+  },
+  "change_request": {
+    "title": "Eine Änderung an deinem Profil",
+    "body": "Das Zrzur-Team bittet dich, einer Änderung an deinem Profil zuzustimmen. Nichts ändert sich ohne deine Zustimmung; prüfe sie unter Einstellungen → Mein Konto."
+  },
+  "sessions.ended": {
+    "title": "Du wurdest abgemeldet",
+    "body": "Zu deiner Sicherheit hat das Zrzur-Team dich auf allen Geräten abgemeldet. Melde dich neu an; wenn du das nicht erwartet hast, ändere dein Passwort.\n{note}"
+  },
+  "badge_name.one_year": {
+    "title": "Ein Jahr auf Zrzur",
+    "body": ""
+  },
+  "badge_name.three_years": {
+    "title": "Drei Jahre auf Zrzur",
+    "body": ""
+  },
+  "badge_name.community_builder": {
+    "title": "Community-Gründer",
+    "body": ""
+  },
+  "badge_name.big_community": {
+    "title": "Große Community",
+    "body": ""
+  },
+  "badge_name.verified_server_owner": {
+    "title": "Verifizierter Serverinhaber",
+    "body": ""
+  },
+  "badge_name.verified_bot_developer": {
+    "title": "Verifizierter Bot-Entwickler",
+    "body": ""
+  },
+  "badge_name.saha_champion": {
+    "title": "Saha-Champion",
+    "body": ""
+  },
+  "badge_name.community_helper": {
+    "title": "Community-Helfer",
+    "body": ""
+  },
+  "badge_name.staff": {
+    "title": "Zrzur-Team",
+    "body": ""
+  },
+  "badge_name.founder": {
+    "title": "Gründer",
+    "body": ""
+  },
+  "badge_name.developer": {
+    "title": "Zrzur-Entwicklung",
+    "body": ""
+  },
+  "badge_name.platform_moderator": {
+    "title": "Plattform-Moderation",
+    "body": ""
+  },
+  "badge_name.partner": {
+    "title": "Partner",
+    "body": ""
+  },
+  "badge_name.super_creator": {
+    "title": "Super-Creator",
+    "body": ""
+  },
+  "badge_name.creator": {
+    "title": "Creator",
+    "body": ""
+  },
+  "badge_name.elite_bug_hunter": {
+    "title": "Elite-Bugjäger",
+    "body": ""
+  },
+  "badge_name.bug_hunter": {
+    "title": "Bugjäger",
+    "body": ""
+  },
+  "badge_name.beta_tester": {
+    "title": "Beta-Tester",
+    "body": ""
+  },
+  "badge_name.beta_veteran": {
+    "title": "Beta-Veteran",
+    "body": ""
+  },
+  "badge_name.plus": {
+    "title": "Feder",
+    "body": ""
+  },
+  "badge_name.early_supporter": {
+    "title": "Früher Unterstützer",
+    "body": ""
+  },
+  "badge_name.early_adopter": {
+    "title": "Früh dabei",
+    "body": ""
+  },
+  "badge_name.translator": {
+    "title": "Übersetzung",
+    "body": ""
+  },
+  "badge_name.responsible_disclosure": {
+    "title": "Verantwortungsvolle Offenlegung",
+    "body": ""
+  },
+  "badge_name.supporter": {
+    "title": "Unterstützer",
+    "body": ""
+  },
+  "badge_name.paw": {
+    "title": "Pfote",
+    "body": ""
+  },
+  "badge_name.reserved_1": {
+    "title": "Reserviert 1",
+    "body": ""
+  },
+  "badge_name.reserved_2": {
+    "title": "Reserviert 2",
+    "body": ""
+  },
+  "signature": {
+    "title": "",
+    "body": "Das Zrzur-Team"
+  },
+  "statement.facts": {
+    "title": "",
+    "body": "Was passiert ist: {facts}"
+  },
+  "statement.reason": {
+    "title": "",
+    "body": "Grund: {reason}"
+  },
+  "statement.ground_law": {
+    "title": "",
+    "body": "Rechtsgrundlage: Der Inhalt ist nach {law}, {provision} rechtswidrig."
+  },
+  "statement.ground_terms": {
+    "title": "",
+    "body": "Grundlage: Das verstößt gegen unsere Regeln ({rule}). Das ist keine Feststellung, dass es rechtswidrig ist."
+  },
+  "statement.automation": {
+    "title": "",
+    "body": "Automatisierte Werkzeuge wurden zum Auffinden eingesetzt: {detection}. Die Entscheidung wurde automatisiert getroffen: {decided}."
+  },
+  "statement.yes": {
+    "title": "",
+    "body": "ja"
+  },
+  "statement.no": {
+    "title": "",
+    "body": "nein"
+  },
+  "statement.scope": {
+    "title": "",
+    "body": "Geltungsbereich: {scope}."
+  },
+  "statement.worldwide": {
+    "title": "",
+    "body": "weltweit"
+  },
+  "statement.duration": {
+    "title": "",
+    "body": "Dauer: {duration}"
+  },
+  "statement.days": {
+    "title": "",
+    "body": "{days} Tage."
+  },
+  "statement.open_ended": {
+    "title": "",
+    "body": "ohne Enddatum, bis wir sie aufheben oder ein Einspruch Erfolg hat."
+  },
+  "statement.appeal": {
+    "title": "",
+    "body": "So legst du Einspruch ein: Öffne in Zrzur Einstellungen → Feedback & Meldungen und wähle neben dieser Entscheidung „Einspruch“. Du kannst mindestens 6 Monate nach der Entscheidung Einspruch einlegen. Wenn du dich nicht anmelden kannst, schreib an {contact} und nenne das Aktenzeichen {reference}. Ein Mensch prüft deinen Einspruch, nie nur eine Maschine. {link}"
+  },
+  "statement.out_of_court": {
+    "title": "",
+    "body": "Außergerichtliche Streitbeilegung: Du kannst diese Entscheidung auch einer zertifizierten außergerichtlichen Streitbeilegungsstelle deiner Wahl vorlegen (Artikel 21 des Digital Services Act). Die Europäische Kommission veröffentlicht die Liste der zertifizierten Stellen auf ihrer Website. Dein Recht, ein Gericht anzurufen, bleibt unberührt."
+  },
+  "statement.contact": {
+    "title": "",
+    "body": "Fragen: {contact}"
+  },
+  "public_report.receipt": {
+    "title": "Wir haben deine Meldung erhalten",
+    "body": "Danke. Wir haben deine Meldung erhalten.\n\nDein Aktenzeichen ist {reference}. Wir prüfen jede Meldung. Wenn du uns deine E-Mail-Adresse gegeben hast, schreiben wir dir dort, sobald wir entschieden haben.\n\nFragen: {contact}"
+  },
+  "statement.basis_report": {
+    "title": "",
+    "body": "Diese Entscheidung folgte auf eine Meldung einer anderen Person."
+  },
+  "statement.basis_notice": {
+    "title": "",
+    "body": "Diese Entscheidung folgte auf eine Meldung rechtswidriger Inhalte."
+  },
+  "statement.basis_own": {
+    "title": "",
+    "body": "Wir haben das bei unserer eigenen Prüfung festgestellt."
+  },
+  "statement.days_one": {
+    "title": "",
+    "body": "1 Tag."
+  },
+  "statement.days_two": {
+    "title": "",
+    "body": "2 Tage."
+  },
+  "statement.days_few": {
+    "title": "",
+    "body": "{days} Tage."
+  },
+  "statement.rule_link": {
+    "title": "",
+    "body": "Zur Regel: {link}"
+  },
+  "statement.out_of_court_body": {
+    "title": "",
+    "body": "Zrzur arbeitet außerdem mit: {body}."
+  },
+  "reporter.subject": {
+    "title": "Unsere Entscheidung zu deiner Meldung {reference}",
+    "body": ""
+  },
+  "reporter.opening": {
+    "title": "",
+    "body": "Danke für deine Meldung {reference}."
+  },
+  "reporter.outcome.action": {
+    "title": "",
+    "body": "Wir haben sie geprüft und gehandelt: Wir haben {what}."
+  },
+  "reporter.outcome.no_violation": {
+    "title": "",
+    "body": "Wir haben sie geprüft und keinen Verstoß gefunden, deshalb haben wir nichts unternommen."
+  },
+  "reporter.outcome.duplicate": {
+    "title": "",
+    "body": "Deine Meldung wiederholt eine, die wir schon bearbeiten, deshalb haben wir dazu nichts weiter unternommen."
+  },
+  "reporter.outcome.closed": {
+    "title": "",
+    "body": "Wir haben deine Meldung ohne weitere Maßnahmen abgeschlossen."
+  },
+  "reporter.outcome.info": {
+    "title": "",
+    "body": "Wir brauchen mehr Informationen, um über deine Meldung zu entscheiden: {question}"
+  },
+  "reporter.note": {
+    "title": "",
+    "body": "Anmerkung der prüfenden Person: {note}"
+  },
+  "reporter.human": {
+    "title": "",
+    "body": "Ein Mensch hat diese Entscheidung getroffen."
+  },
+  "reporter.redress": {
+    "title": "",
+    "body": "Wenn du nicht einverstanden bist, schreib innerhalb von 6 Monaten an {contact} und nenne das Aktenzeichen {reference}; ein Mensch prüft das erneut. Du kannst den Streit auch einer zertifizierten außergerichtlichen Streitbeilegungsstelle vorlegen (Artikel 21 des Digital Services Act); die Europäische Kommission veröffentlicht die Liste. Dein Recht, ein Gericht anzurufen, bleibt unberührt."
+  },
+  "reporter.what.warning": {
+    "title": "",
+    "body": "das Konto verwarnt"
+  },
+  "reporter.what.remove_message": {
+    "title": "",
+    "body": "die Nachricht entfernt"
+  },
+  "reporter.what.suspend": {
+    "title": "",
+    "body": "das Konto gesperrt"
+  },
+  "reporter.what.ban": {
+    "title": "",
+    "body": "das Konto dauerhaft gesperrt"
+  },
+  "reporter.what.disable_bot": {
+    "title": "",
+    "body": "den Bot deaktiviert"
+  },
+  "reporter.what.remove_discover": {
+    "title": "",
+    "body": "den Eintrag bei „Entdecken“ entfernt"
+  },
+  "reporter.what.suspend_design": {
+    "title": "",
+    "body": "das Design entfernt"
+  },
+  "rule.Harassment": {
+    "title": "",
+    "body": "Belästigung"
+  },
+  "rule.HateOrThreats": {
+    "title": "",
+    "body": "Hass oder Drohungen"
+  },
+  "rule.Spam": {
+    "title": "",
+    "body": "Spam"
+  },
+  "rule.ScamFraud": {
+    "title": "",
+    "body": "Betrug"
+  },
+  "rule.Impersonation": {
+    "title": "",
+    "body": "Identitätsmissbrauch"
+  },
+  "rule.MaliciousLinks": {
+    "title": "",
+    "body": "Schädliche Links"
+  },
+  "rule.Malware": {
+    "title": "",
+    "body": "Schadsoftware"
+  },
+  "rule.PrivacyViolation": {
+    "title": "",
+    "body": "Verletzung der Privatsphäre"
+  },
+  "rule.PersonalInformation": {
+    "title": "",
+    "body": "Weitergabe persönlicher Daten"
+  },
+  "rule.SexualContent": {
+    "title": "",
+    "body": "Sexuelle Inhalte"
+  },
+  "rule.SelfHarm": {
+    "title": "",
+    "body": "Selbstverletzung"
+  },
+  "rule.IllegalContent": {
+    "title": "",
+    "body": "Inhalte, die wir auf Zrzur nicht erlauben"
+  },
+  "rule.BotAbuse": {
+    "title": "",
+    "body": "Bot-Missbrauch"
+  },
+  "rule.MisleadingApplication": {
+    "title": "",
+    "body": "Irreführende Anwendungen"
+  },
+  "rule.UnauthorisedContent": {
+    "title": "",
+    "body": "Hier nicht erlaubte Inhalte"
+  },
+  "rule.IntellectualProperty": {
+    "title": "",
+    "body": "Geistiges Eigentum"
+  },
+  "rule.Underage": {
+    "title": "",
+    "body": "Nutzer unter dem Mindestalter"
+  },
+  "rule.Other": {
+    "title": "",
+    "body": "Ein anderer Verstoß gegen unsere Regeln"
+  },
+  "reporter.outcome.revoked": {
+    "title": "",
+    "body": "Wir haben noch einmal geprüft und unsere frühere Entscheidung zu deiner Meldung aufgehoben."
+  },
+  "rule.terms_of_service": {
+    "title": "",
+    "body": "Nutzungsbedingungen von Zrzur"
+  },
+  "reporter.outcome.overturned": {
+    "title": "",
+    "body": "Nach einem Einspruch haben wir noch einmal geprüft und unsere frühere Entscheidung zu deiner Meldung aufgehoben."
+  },
+  "reporter.info_reply_public": {
+    "title": "",
+    "body": "Bitte schreib an {contact} und nenne das Aktenzeichen {reference}."
+  },
+  "reporter.info_reply_app": {
+    "title": "",
+    "body": "Bitte antworte in Zrzur: Öffne Einstellungen → Feedback & Meldungen und antworte auf deine Meldung {reference}."
+  }
+}

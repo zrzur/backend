@@ -1,0 +1,101 @@
+name: Container images
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: images-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    permissions:
+      contents: read
+      packages: write
+    env:
+      REGISTRY: ghcr.io/zrzur
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify reviewed public source files
+        run: python3 scripts/publication_guard.py
+      - name: Refuse upstream application images
+        run: |
+          set -eu
+          # one recipe per service (crates/**/Dockerfile)
+          if grep -nE '^FROM .*ghcr\.io/stoatchat' \
+            crates/*/Dockerfile crates/*/*/Dockerfile; then
+            echo 'Zrzur images must be built from this source tree only (zrzur/base:local).'
+            exit 1
+          fi
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+      - name: Build backend base from reviewed source
+        run: docker build --build-arg CARGO_BUILD_JOBS=4 -t zrzur/base:local -f Dockerfile .
+      - name: Image tags from ZRZUR_VERSION
+        # 26.0.0 -> 26.0.0, 26, stable; 26.1.0-beta.1 -> 26.1.0-beta.1, beta;
+        # anything else (26.0.0-dev) -> only its version
+        run: |
+          set -eu
+          version=$(tail -n 1 ZRZUR_VERSION)
+          tags="${version}"
+          case "${version}" in
+            *-beta.*) tags="${tags} beta" ;;
+            *-*) ;;
+            *) tags="${tags} ${version%%.*} stable" ;;
+          esac
+          echo "ZRZUR_TAGS=${tags}" >> "$GITHUB_ENV"
+          echo "ZRZUR_IMAGE_VERSION=${version}" >> "$GITHUB_ENV"
+      - name: Build runtime images
+        run: |
+          set -eu
+          while read -r name recipe; do
+            tag_args="-t ${REGISTRY}/${name}:sha-${GITHUB_SHA}"
+            for tag in ${ZRZUR_TAGS}; do tag_args="${tag_args} -t ${REGISTRY}/${name}:${tag}"; done
+            docker build \
+              --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+              --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+              --label "org.opencontainers.image.version=${ZRZUR_IMAGE_VERSION}" \
+              ${tag_args} \
+              -f "${recipe}" .
+          done <<'EOF'
+          api crates/delta/Dockerfile
+          events crates/bonfire/Dockerfile
+          autumn crates/services/autumn/Dockerfile
+          january crates/services/january/Dockerfile
+          gifbox crates/services/gifbox/Dockerfile
+          crond crates/daemons/crond/Dockerfile
+          pushd crates/daemons/pushd/Dockerfile
+          voice-ingress crates/daemons/voice-ingress/Dockerfile
+          EOF
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push runtime images
+        run: |
+          set -eu
+          echo '| Image | Digest |' >> "$GITHUB_STEP_SUMMARY"
+          echo '|---|---|' >> "$GITHUB_STEP_SUMMARY"
+          # GHCR intermittently answers "denied" to the first push into a just-created package.
+          push() {
+            for attempt in 1 2 3 4 5; do
+              docker push "$1" && return 0
+              echo "push of $1 failed (attempt ${attempt}); retrying"
+              sleep $((attempt * 15))
+            done
+            return 1
+          }
+          for name in api events autumn january gifbox crond pushd voice-ingress; do
+            push "${REGISTRY}/${name}:sha-${GITHUB_SHA}"
+            for tag in ${ZRZUR_TAGS}; do push "${REGISTRY}/${name}:${tag}"; done
+            digest=$(docker image inspect --format '{{index .RepoDigests 0}}' "${REGISTRY}/${name}:sha-${GITHUB_SHA}")
+            echo "| ${name} | \`${digest}\` |" >> "$GITHUB_STEP_SUMMARY"
+          done

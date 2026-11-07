@@ -1,0 +1,11 @@
+[package]
+name = "revolt-parser"
+version = "0.16.2"
+edition = "2024"
+license = "MIT"
+authors = ["Zomatree <me@zomatree.live>", "izzy <me@insrt.uk>"]
+description = "Revolt Backend: Message Parser"
+repository = "https://github.com/stoatchat/stoatchat"
+
+[dependencies]
+logos = { workspace = true }

@@ -1,0 +1,16 @@
+port: 7880
+redis:
+    address: localhost:6379
+    username: ""
+    password: ""
+webhook:
+# Public example value, not for production. Generate your own: see README.
+  api_key: worldwide
+  urls:
+    - 'http://localhost:8500/worldwide'
+logging:
+  level: debug
+# Public example value, not for production. Generate your own: see README.
+keys:
+  # EXAMPLE ONLY, not for production. A release run with this secret refuses to start.
+  worldwide: ZjCofRlfm6GGtjlifmNpCDkcQbEIIVC0

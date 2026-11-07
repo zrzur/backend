@@ -1,0 +1,7 @@
+{
+  "username": "new-bot-name",
+  "icon_emoji": ":ghost:",
+  "mrkdwn": true,
+  "text": "Hello <@U012AB3CD> and <#C123ABC456|general>, ~old~ *new* `code`",
+  "unfurl_links": false
+}

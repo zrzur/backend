@@ -1,0 +1,472 @@
+use livekit_api::{access_token::TokenVerifier, webhooks::WebhookReceiver};
+use livekit_protocol::TrackType;
+use revolt_database::{
+    events::client::EventV1,
+    iso8601_timestamp::{Duration, Timestamp},
+    util::reference::Reference,
+    voice::{
+        create_voice_state, delete_channel_voice_state, delete_voice_state,
+        get_call_notification_recipients, get_user_moved_from_voice, get_user_moved_to_voice,
+        get_user_voice_channels, get_voice_channel_members, get_voice_state,
+        is_stale_voice_session, is_voice_reentry_revoked, leave_other_voice_channels,
+        set_channel_call_started_system_message, set_voice_session, sync_user_voice_permissions,
+        take_channel_call_started_system_message, update_voice_state_tracks, RoomMetadata,
+        UserVoiceChannel, VoiceClient,
+    },
+    Channel, Database, PartialMessage, SystemMessage, AMQP,
+};
+use revolt_models::v0;
+use revolt_result::{Result, ToRevoltError};
+use rocket::{post, State};
+use rocket_empty::EmptyResponse;
+use ulid::Ulid;
+
+use crate::guard::AuthHeader;
+
+#[post("/<node>", data = "<body>")]
+pub async fn ingress(
+    db: &State<Database>,
+    voice_client: &State<VoiceClient>,
+    amqp: &State<AMQP>,
+    node: &str,
+    auth_header: AuthHeader<'_>,
+    body: &str,
+) -> Result<EmptyResponse> {
+    log::debug!("received event: {body}");
+
+    let config = revolt_config::config().await;
+
+    let node_info = config
+        .api
+        .livekit
+        .nodes
+        .get(node)
+        .to_internal_error()
+        .inspect_err(|_| {
+            log::error!("Unknown node {node}, make sure livekit has the correct node name set and matches `hosts.livekit` and `api.livekit.nodes` in the Revolt config.")
+        })?;
+
+    let webhook_receiver = WebhookReceiver::new(TokenVerifier::with_api_key(
+        &node_info.key,
+        &node_info.secret,
+    ));
+
+    let event = webhook_receiver
+        .receive(body, &auth_header)
+        .to_internal_error()?;
+
+    let channel_id = event.room.as_ref().map(|r| &r.name);
+    let user_id = event.participant.as_ref().map(|r| &r.identity);
+    let room_metadata = if let Some(room) = event.room.as_ref() {
+        serde_json::from_str::<RoomMetadata>(&room.metadata).ok()
+    } else {
+        None
+    };
+
+    match event.event.as_str() {
+        // User joined a channel
+        "participant_joined" => {
+            let channel_id = channel_id.to_internal_error()?;
+            let user_id = user_id.to_internal_error()?;
+            let server_id = resolve_server_id(db, channel_id, room_metadata.as_ref()).await?;
+            let voice_channel = UserVoiceChannel {
+                id: channel_id.clone(),
+                server_id: server_id.clone(),
+            };
+
+            let channel = Reference::from_unchecked(channel_id).as_channel(db).await?;
+
+            // A moderator disconnect invalidates the previous token. join_call clears this.
+            if is_voice_reentry_revoked(channel_id, user_id).await? {
+                let _ = voice_client.remove_user(node, user_id, channel_id).await;
+                return Ok(EmptyResponse);
+            }
+
+            let joined_at = Timestamp::UNIX_EPOCH
+                .checked_add(Duration::seconds(event.created_at))
+                .unwrap();
+
+            let joined_user = Reference::from_unchecked(user_id).as_user(db).await?;
+            let moved_from = get_user_moved_to_voice(channel_id, user_id).await?;
+
+            // One voice room per user (bots excepted). join_call already
+            // leaves the previous room, but two tokens issued before either
+            // connected, or another tab/device, can still reach LiveKit: the
+            // newest participant keeps the seat.
+            if joined_user.bot.is_none() {
+                for other in get_user_voice_channels(user_id).await? {
+                    if other.id == *channel_id {
+                        continue;
+                    }
+
+                    if get_voice_state(&other, user_id)
+                        .await?
+                        .is_some_and(|state| state.joined_at > joined_at)
+                    {
+                        let _ = voice_client.remove_user(node, user_id, channel_id).await;
+                        return Ok(EmptyResponse);
+                    }
+                }
+
+                leave_other_voice_channels(
+                    voice_client,
+                    user_id,
+                    channel_id,
+                    moved_from.as_ref().map(|channel| channel.id.as_str()),
+                )
+                .await?;
+            }
+
+            if let Some(participant) = event.participant.as_ref() {
+                set_voice_session(channel_id, user_id, &participant.sid).await?;
+            }
+
+            let voice_state = create_voice_state(&voice_channel, user_id, joined_at).await?;
+            let server = if let Some(server_id) = channel.server() {
+                Some(Reference::from_unchecked(server_id).as_server(db).await?)
+            } else {
+                None
+            };
+            sync_user_voice_permissions(
+                db,
+                voice_client,
+                node,
+                &joined_user,
+                &channel,
+                server.as_ref(),
+                None,
+            )
+            .await?;
+
+            // Only publish one event when a user is moved from one channel to another.
+            if let Some(moved_from) = moved_from {
+                EventV1::VoiceChannelMove {
+                    user: user_id.to_string(),
+                    from: moved_from.id,
+                    to: channel_id.to_string(),
+                    state: voice_state,
+                }
+                .p(channel_id.to_string())
+                .await;
+            } else {
+                EventV1::VoiceChannelJoin {
+                    id: channel_id.to_string(),
+                    state: voice_state,
+                }
+                .p(channel_id.to_string())
+                .await;
+            };
+
+            let participants = voice_client.get_room_participants(node, channel_id).await?;
+
+            if participants.len() == 1 {
+                let user = Reference::from_unchecked(user_id).as_user(db).await?;
+                let message_id = Ulid::from_datetime(
+                    Timestamp::UNIX_EPOCH
+                        .checked_add(Duration::seconds(event.created_at))
+                        .unwrap()
+                        .into(),
+                )
+                .to_string();
+
+                let mut call_started_message = SystemMessage::CallStarted {
+                    by: user_id.to_string(),
+                    finished_at: None,
+                }
+                .into_message(channel_id.clone());
+
+                call_started_message.id = message_id;
+
+                set_channel_call_started_system_message(channel_id, &call_started_message.id)
+                    .await?;
+
+                call_started_message
+                    .send(
+                        db,
+                        Some(amqp),
+                        v0::MessageAuthor::System {
+                            username: &user.username,
+                            avatar: user.avatar.as_ref().map(|file| file.id.as_ref()),
+                        },
+                        None,
+                        None,
+                        &channel,
+                        false,
+                    )
+                    .await?;
+
+                if let Channel::DirectMessage { recipients, .. }
+                | Channel::Group { recipients, .. } = channel
+                {
+                    let call_recipients =
+                        get_call_notification_recipients(channel_id, user_id).await?;
+
+                    {
+                        let call_recipients = if let Some(user_recipients) = call_recipients.clone()
+                        {
+                            user_recipients
+                                .into_iter()
+                                .filter(|user_id| {
+                                    recipients.contains(user_id) && user_id != &user.id
+                                })
+                                .collect::<Vec<_>>()
+                        } else {
+                            recipients
+                                .into_iter()
+                                .filter(|user_id| user_id != &user.id)
+                                .collect()
+                        };
+
+                        EventV1::VoiceCallUpdate {
+                            initiator_id: user.id.clone(),
+                            channel_id: channel_id.clone(),
+                            started_at: Some(joined_at),
+                            ended: false,
+                        }
+                        .p_broadcast(call_recipients)
+                        .await
+                    }
+
+                    if let Err(e) = amqp
+                        .dm_call_updated(
+                            &user.id,
+                            channel_id,
+                            Some(&joined_at.format_short()),
+                            false,
+                            call_recipients,
+                        )
+                        .await
+                    {
+                        revolt_config::capture_error(&e);
+                    }
+                }
+            }
+        }
+        // User left a channel
+        "participant_left" => {
+            let channel_id = channel_id.to_internal_error()?;
+            let user_id = user_id.to_internal_error()?;
+            let server_id = resolve_server_id(db, channel_id, room_metadata.as_ref()).await?;
+            let voice_channel = UserVoiceChannel {
+                id: channel_id.clone(),
+                server_id: server_id.clone(),
+            };
+
+            // The same user rejoined this room from another tab or device and
+            // LiveKit dropped the older session: the seat belongs to the new one.
+            let session_id = event
+                .participant
+                .as_ref()
+                .map(|participant| participant.sid.as_str())
+                .unwrap_or_default();
+            if is_stale_voice_session(channel_id, user_id, session_id).await? {
+                return Ok(EmptyResponse);
+            }
+
+            delete_voice_state(&voice_channel, user_id).await?;
+
+            // Dont send leave event when a user is moved
+            if get_user_moved_from_voice(channel_id, user_id)
+                .await?
+                .is_none()
+            {
+                EventV1::VoiceChannelLeave {
+                    id: channel_id.clone(),
+                    user: user_id.clone(),
+                }
+                .p(channel_id.clone())
+                .await;
+            };
+
+            // // Update CallStarted system message if everyone has left with the end time
+            let members = get_voice_channel_members(&voice_channel).await?;
+
+            if members.is_none_or(|m| m.is_empty()) {
+                let channel = Reference::from_unchecked(channel_id).as_channel(db).await?;
+
+                // The channel is empty so send out an "end" notification for ringing
+                if matches!(
+                    channel,
+                    Channel::DirectMessage { .. } | Channel::Group { .. }
+                ) {
+                    EventV1::VoiceCallUpdate {
+                        initiator_id: user_id.clone(),
+                        channel_id: channel_id.clone(),
+                        started_at: None,
+                        ended: true,
+                    }
+                    .p(channel_id.clone())
+                    .await;
+
+                    if let Err(e) = amqp
+                        .dm_call_updated(user_id, channel_id, None, true, None)
+                        .await
+                    {
+                        revolt_config::capture_internal_error!(&e);
+                    }
+                }
+
+                if let Some(system_message_id) =
+                    take_channel_call_started_system_message(channel_id).await?
+                {
+                    // Could have been deleted
+                    if let Ok(mut message) = Reference::from_unchecked(&system_message_id)
+                        .as_message(db)
+                        .await
+                    {
+                        if let Some(SystemMessage::CallStarted { finished_at, .. }) =
+                            &mut message.system
+                        {
+                            *finished_at = Some(Timestamp::now_utc());
+
+                            message
+                                .update(
+                                    db,
+                                    PartialMessage {
+                                        system: message.system.clone(),
+                                        ..Default::default()
+                                    },
+                                    Vec::new(),
+                                )
+                                .await?;
+                        } else {
+                            log::error!("Broken State: Call started message ID ({}) does not contain a CallStarted system message.", &message.id)
+                        }
+                    };
+                };
+            }
+        }
+        // Audio/video track was started/stopped/unmuted/muted
+        "track_published" | "track_unpublished" | "track_unmuted" | "track_muted" => {
+            // LiveKit delivers a room's webhooks in order and retries failures for
+            // ~15s, so an error here would hold back the participant_left queued
+            // behind it and leave the user listed in the channel. Track state is
+            // best effort: log failures and acknowledge.
+            let result: Result<()> = async {
+            let channel_id = channel_id.to_internal_error()?;
+            let user_id = user_id.to_internal_error()?;
+            let track = event.track.as_ref().to_internal_error()?;
+            let server_id = resolve_server_id(db, channel_id, room_metadata.as_ref()).await?;
+            let channel = UserVoiceChannel {
+                id: channel_id.clone(),
+                server_id: server_id.clone(),
+            };
+
+            let user = Reference::from_unchecked(user_id).as_user(db).await?;
+
+            let mut user_limits = user.limits().await;
+
+            // a supercharged server allows sharper streams for everyone in it
+            if let Some(server_id) = server_id.as_deref() {
+                if let Some(resolution) =
+                    revolt_database::server_supercharge_video(db, server_id).await
+                {
+                    if resolution[0] * resolution[1]
+                        > user_limits.video_resolution[0] * user_limits.video_resolution[1]
+                    {
+                        user_limits.video_resolution = resolution;
+                    }
+                }
+            }
+
+            // forbid any size which goes over the limit and also limit the aspect ratio to stop people from making too tall or too wide and bypassing the limit.
+            // TODO: figure out how to track audio stream quality
+
+            if event.event == "track_published" {
+                let mut disconnect = false;
+
+                if track.r#type == TrackType::Data as i32 {
+                    log::debug!("User published data");
+                    disconnect = true;
+                };
+
+                if track.r#type == TrackType::Video as i32 {
+                    if user_limits.video_resolution[0] != 0
+                        && user_limits.video_resolution[1] != 0
+                        && track.width * track.height
+                            > user_limits.video_resolution[0] * user_limits.video_resolution[1]
+                    {
+                        log::debug!("User published video with out of bounds resolution");
+                        disconnect = true;
+                    };
+
+                    if user_limits.video_aspect_ratio[0] != user_limits.video_aspect_ratio[1]
+                        && !(user_limits.video_aspect_ratio[0]..=user_limits.video_aspect_ratio[1])
+                            .contains(&(track.width as f32 / track.height as f32))
+                    {
+                        log::debug!("User published video with out of bounds aspect ratio");
+                        disconnect = true;
+                    };
+                };
+
+                if disconnect {
+                    log::debug!("Removing user {user_id} from channel {channel_id} {event:?} due to forbidden track.");
+
+                    let _ = voice_client.remove_user(node, user_id, channel_id).await;
+                    delete_voice_state(&channel, user_id).await?;
+
+                    return Ok(());
+                };
+            };
+
+            let partial = update_voice_state_tracks(
+                &channel,
+                user_id,
+                event.event == "track_published" || event.event == "track_unmuted", // to avoid duplicating this entire case twice
+                track.source,
+            )
+            .await?;
+
+            EventV1::UserVoiceStateUpdate {
+                id: user_id.clone(),
+                channel_id: channel_id.clone(),
+                data: partial,
+            }
+            .p(channel_id.clone())
+            .await;
+
+            Ok(())
+            }
+            .await;
+
+            if let Err(error) = result {
+                log::warn!(
+                    "Ignoring failed {} webhook for {:?} in {:?}: {error:?}",
+                    event.event,
+                    user_id,
+                    channel_id
+                );
+            }
+        }
+        "room_finished" => {
+            let channel_id = channel_id.to_internal_error()?;
+            let server_id = resolve_server_id(db, channel_id, room_metadata.as_ref()).await?;
+            let channel = UserVoiceChannel {
+                id: channel_id.clone(),
+                server_id: server_id.clone(),
+            };
+
+            delete_channel_voice_state(&channel, &[]).await?;
+        }
+        _ => {}
+    };
+
+    Ok(EmptyResponse)
+}
+
+/// Server the voice room belongs to (None for DMs and groups).
+///
+/// LiveKit only includes room metadata in some webhooks (track events arrive
+/// without it), so fall back to looking the channel up.
+async fn resolve_server_id(
+    db: &Database,
+    channel_id: &str,
+    metadata: Option<&RoomMetadata>,
+) -> Result<Option<String>> {
+    if let Some(metadata) = metadata {
+        return Ok(metadata.server.clone());
+    }
+
+    let channel = Reference::from_unchecked(channel_id).as_channel(db).await?;
+    Ok(channel.server().map(ToString::to_string))
+}

@@ -1,0 +1,163 @@
+# Memory and CPU are capped so the stack cannot starve the PC or WSL: Mongo ran
+# out of memory (WiredTiger error 12) with no limit set.
+# Local development only. All ports are bound to 127.0.0.1 so the databases are not reachable from the network
+# (Docker bypasses ufw/firewall rules for published ports).
+name: zrzur-backend
+
+services:
+  # Redis
+  redis:
+    image: docker.io/valkey/valkey:9.0.2-alpine
+    mem_limit: 256m
+    cpus: 1
+    ports:
+      - "127.0.0.1:6379:6379"
+
+  # MongoDB
+  database:
+    image: docker.io/mongo:9.0.4
+    # as the image's own user: run as root it first walks every file, and the
+    # health check rotating its logs meanwhile stops it from starting
+    user: "999:999"
+    command: mongod --replSet rs0 --wiredTigerCacheSizeGB 1
+    mem_limit: 2g
+    cpus: 2
+    ports:
+      - "127.0.0.1:27017:27017"
+    volumes:
+      - ./.data/db:/data/db
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: echo "try { rs.status() } catch (err) { rs.initiate({_id:'rs0',members:[{_id:0,host:'127.0.0.1:27017'}]}) }" | mongosh --port 27017 --quiet
+      interval: 5s
+      timeout: 30s
+      start_period: 0s
+      start_interval: 1s
+      retries: 30
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+  # MongoDB for TEST_DB=MONGODB (Revolt.test.toml): in memory, and never the
+  # development database above. Every test makes its own database, about 150
+  # files, so a disk (above all a Windows bind mount) cannot keep up. A dropped
+  # database only leaves the disk after the history window and a checkpoint:
+  # hence minSnapshotHistoryWindowInSeconds and --syncdelay.
+  database-test:
+    image: docker.io/mongo:9.0.4
+    mem_limit: 6g
+    cpus: 4
+    command: mongod --replSet rs0 --port 27018 --bind_ip_all --wiredTigerCacheSizeGB 1 --syncdelay 5 --setParameter minSnapshotHistoryWindowInSeconds=0
+    ports:
+      - "127.0.0.1:27018:27018"
+    tmpfs:
+      - /data/db:size=4g
+    healthcheck:
+      test: echo "try { rs.status() } catch (err) { rs.initiate({_id:'rs0',members:[{_id:0,host:'127.0.0.1:27018'}]}) }" | mongosh --port 27018 --quiet
+      interval: 5s
+      timeout: 30s
+      start_period: 0s
+      start_interval: 1s
+      retries: 30
+    ulimits:
+      nofile:
+        soft: 1048576
+        hard: 1048576
+
+  # Silo: The artist formerly known as MinIO: S3-compatible storage server
+  minio:
+    image: docker.io/pgsty/silo:RELEASE.2026-10-18T00-00-00Z
+    mem_limit: 512m
+    cpus: 1
+    command: server /data --console-address ":9001"
+    environment:
+      # Public example values for local use, not for production: generate your own.
+      MINIO_ROOT_USER: minioautumn
+      MINIO_ROOT_PASSWORD: minioautumn
+      MINIO_REGION: minio
+    volumes:
+      - ./.data/minio:/data
+    ports:
+      - "127.0.0.1:14009:9000"
+      - "127.0.0.1:14010:9001"
+    restart: always
+
+  # Create buckets for Silo.
+  createbuckets:
+    image: docker.io/pgsty/mc:RELEASE.2026-10-18T00-00-00Z
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "while ! /usr/bin/mc ready minio; do
+        /usr/bin/mc alias set minio http://minio:9000 minioautumn minioautumn;
+        echo 'Waiting minio...' && sleep 1;
+      done; /usr/bin/mc mb minio/revolt-uploads; exit 0;"
+
+  # Rabbit
+  rabbit:
+    image: docker.io/rabbitmq:4.4.0-management
+    mem_limit: 512m
+    cpus: 1
+    environment:
+      # Public example values for local use, not for production: generate your own.
+      RABBITMQ_DEFAULT_USER: rabbituser
+      RABBITMQ_DEFAULT_PASS: rabbitpass
+    volumes:
+      - ./.data/rabbit:/var/lib/rabbitmq
+      #- ./rabbit_plugins:/opt/rabbitmq/plugins/
+      #- ./rabbit_enabled_plugins:/etc/rabbitmq/enabled_plugins
+      # uncomment this if you need to enable other plugins
+    ports:
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672" # management UI, for development
+
+  # Mock SMTP server
+  maildev:
+    image: docker.io/maildev/maildev:2.2.1
+    mem_limit: 128m
+    cpus: 1
+    ports:
+      - "127.0.0.1:14025:25"
+      - "127.0.0.1:14080:8080"
+    environment:
+      MAILDEV_SMTP_PORT: 25
+      MAILDEV_WEB_PORT: 8080
+      # Public example values for local use, not for production: generate your own.
+      MAILDEV_INCOMING_USER: smtp
+      MAILDEV_INCOMING_PASS: smtp
+
+  # LiveKit
+  livekit:
+    image: docker.io/livekit/livekit-server:v1.9.12
+    command: --config /etc/livekit.yml
+    network_mode: "host"
+    volumes:
+      - ./livekit.yml:/etc/livekit.yml
+
+  # LiveKit for the voice tests (Revolt.test.toml, node "voicetest"): dev
+  # mode with its built-in local key, only on 127.0.0.1
+  livekit-test:
+    image: docker.io/livekit/livekit-server:v1.9.12
+    mem_limit: 256m
+    cpus: 1
+    command: --dev --bind 0.0.0.0 --node-ip 127.0.0.1
+    ports:
+      - "127.0.0.1:17880:7880"
+      # media: without these a browser signals but never connects
+      - "127.0.0.1:7881:7881"
+      - "127.0.0.1:7882:7882/udp"
+
+  # Grafana LGTM (OTel Collector + Loki + Tempo + Prometheus + Grafana)
+  otel-lgtm:
+    image: docker.io/grafana/otel-lgtm:0.35.0
+    ports:
+      - "127.0.0.1:13000:3000" # Grafana UI
+      - "127.0.0.1:4318:4318" # OTLP/HTTP
+
+  # Waits for dependencies, used by `mise docker:start`
+  wait:
+    image: docker.io/dokku/wait:0.9.4
+    command: -c rabbit:5672,database:27017,redis:6379
+    profiles: [tools]

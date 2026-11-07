@@ -1,0 +1,64 @@
+# Internal, never published
+_internal/
+.claude/
+
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.jks
+*.keystore
+Revolt.overrides.toml
+google-services.json
+
+# Data and logs
+*.log
+*.sqlite
+*.bson
+*.dump
+uploads/
+
+# Build output
+node_modules/
+target/
+dist/
+build/
+out/
+.gradle/
+
+# Personal editor files
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# ----- project-specific -----
+Rocket.toml
+Revolt.*.toml
+compose.override.yml
+
+target
+.data
+.env
+.venv/
+venv/
+
+.vercel
+.DS_Store
+
+livekit.yml
+.idea
+.vscode/launch.json
+.mise/config.local.toml
+
+# Instance-local configuration, not public source
+/Revolt.toml
+CLAUDE.local.md
+screenshots/
+test-results/
+playwright-report/
+coverage/
+*.har

@@ -1,0 +1,7 @@
+# Authoritative Zrzur product version (API root field `zrzur`).
+# Year-line scheme (Apple-style): major = calendar year short form.
+#   26.x.y  →  2026 release line
+#   27.x.y  →  2027 release line
+# Zrzur ships its own releases; this is not an upstream Stoat/Revolt version.
+# Do not duplicate elsewhere without updating this file.
+26.0.0-dev

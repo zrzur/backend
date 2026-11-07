@@ -1,0 +1,316 @@
+use std::collections::hash_map::Entry;
+
+use super::AbstractChannels;
+use crate::util::ChunkedDatabaseGenerator;
+use crate::ReferenceDb;
+use crate::{Channel, FieldsChannel, Invite, PartialChannel};
+use revolt_permissions::OverrideField;
+use revolt_result::Result;
+
+#[async_trait]
+impl AbstractChannels for ReferenceDb {
+    /// Insert a new channel in the database
+    async fn insert_channel(&self, channel: &Channel) -> Result<()> {
+        let mut channels = self.channels.lock().await;
+        if let Entry::Vacant(entry) = channels.entry(channel.id().to_string()) {
+            entry.insert(channel.clone());
+            Ok(())
+        } else {
+            Err(create_database_error!("insert", "channel"))
+        }
+    }
+
+    /// Fetch a channel from the database
+    async fn fetch_channel(&self, channel_id: &str) -> Result<Channel> {
+        let channels = self.channels.lock().await;
+        channels
+            .get(channel_id)
+            .cloned()
+            .ok_or_else(|| create_error!(NotFound))
+    }
+
+    /// Fetch all channels from the database
+    async fn fetch_channels<'a>(&self, ids: &'a [String]) -> Result<Vec<Channel>> {
+        let channels = self.channels.lock().await;
+        ids.iter()
+            .map(|id| {
+                channels
+                    .get(id)
+                    .cloned()
+                    .ok_or_else(|| create_error!(NotFound))
+            })
+            .collect()
+    }
+
+    /// Threads of a channel, newest first
+    async fn fetch_threads(
+        &self,
+        parent: &str,
+        archived: bool,
+        before: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<Channel>> {
+        let channels = self.channels.lock().await;
+        let mut threads: Vec<Channel> = channels
+            .values()
+            .filter(|channel| match channel {
+                Channel::TextChannel {
+                    id,
+                    parent: Some(of),
+                    thread,
+                    ..
+                } => {
+                    of == parent
+                        && thread.as_ref().is_some_and(|t| t.archived) == archived
+                        && before.is_none_or(|before| id.as_str() < before)
+                }
+                _ => false,
+            })
+            .cloned()
+            .collect();
+        threads.sort_by(|a, b| b.id().cmp(a.id()));
+        threads.truncate(limit.max(0) as usize);
+        Ok(threads)
+    }
+
+    /// Active threads of these channels, newest first
+    async fn fetch_active_threads(&self, parents: &[String], limit: i64) -> Result<Vec<Channel>> {
+        let channels = self.channels.lock().await;
+        let mut threads: Vec<Channel> = channels
+            .values()
+            .filter(|channel| match channel {
+                Channel::TextChannel {
+                    parent: Some(of),
+                    thread,
+                    ..
+                } => parents.contains(of) && !thread.as_ref().is_some_and(|t| t.archived),
+                _ => false,
+            })
+            .cloned()
+            .collect();
+        threads.sort_by(|a, b| b.id().cmp(a.id()));
+        threads.truncate(limit.max(0) as usize);
+        Ok(threads)
+    }
+
+    /// Fetch all direct messages for a user
+    async fn find_direct_messages(&self, user_id: &str) -> Result<Vec<Channel>> {
+        let channels = self.channels.lock().await;
+        Ok(channels
+            .values()
+            .filter(|channel| channel.contains_user(user_id))
+            .cloned()
+            .collect())
+    }
+
+    // Fetch all group dms for a user
+    async fn find_group_message_channels(
+        &self,
+        user_id: &str,
+    ) -> Result<ChunkedDatabaseGenerator<Channel>> {
+        let channels = self.channels.lock().await;
+        let groups = channels
+            .values()
+            .filter(|channel| match channel {
+                Channel::Group { recipients, .. } => {
+                    recipients.iter().any(|recipient| recipient == user_id)
+                }
+                _ => false,
+            })
+            .cloned()
+            .collect();
+
+        Ok(ChunkedDatabaseGenerator::new_reference(groups))
+    }
+
+    // Fetch saved messages channel
+    async fn find_saved_messages_channel(&self, user_id: &str) -> Result<Channel> {
+        let channels = self.channels.lock().await;
+        channels
+            .get(user_id)
+            .cloned()
+            .ok_or_else(|| create_database_error!("fetch", "channel"))
+    }
+
+    // Fetch direct message channel (DM or Saved Messages)
+    async fn find_direct_message_channel(&self, user_a: &str, user_b: &str) -> Result<Channel> {
+        // same as MongoDB: saved messages for oneself, otherwise only a
+        // direct message (never a group both users are in)
+        let channels = self.channels.lock().await;
+        for (_, data) in channels.iter() {
+            let matches = match data {
+                Channel::SavedMessages { user, .. } => user_a == user_b && user == user_a,
+                Channel::DirectMessage { .. } => {
+                    user_a != user_b && data.contains_user(user_a) && data.contains_user(user_b)
+                }
+                _ => false,
+            };
+            if matches {
+                return Ok(data.to_owned());
+            }
+        }
+        Err(create_error!(NotFound))
+    }
+    /// Insert a user to a group
+    async fn add_user_to_group(&self, channel_id: &str, user_id: &str) -> Result<()> {
+        let mut channels = self.channels.lock().await;
+
+        if let Some(Channel::Group { recipients, .. }) = channels.get_mut(channel_id) {
+            recipients.push(String::from(user_id));
+            Ok(())
+        } else {
+            Err(create_error!(InvalidOperation))
+        }
+    }
+    /// Insert channel role permissions
+    async fn set_channel_role_permission(
+        &self,
+        channel_id: &str,
+        role_id: &str,
+        permissions: OverrideField,
+    ) -> Result<()> {
+        let mut channels = self.channels.lock().await;
+
+        if let Some(mut channel) = channels.get_mut(channel_id) {
+            match &mut channel {
+                Channel::TextChannel {
+                    role_permissions, ..
+                } => {
+                    // as MongoDB's $set: add the role, or replace its entry
+                    role_permissions.insert(String::from(role_id), permissions);
+                    Ok(())
+                }
+                _ => Err(create_error!(NotFound)),
+            }
+        } else {
+            Err(create_error!(NotFound))
+        }
+    }
+
+    // Update channel
+    async fn update_channel(
+        &self,
+        id: &str,
+        channel: &PartialChannel,
+        remove: Vec<FieldsChannel>,
+    ) -> Result<()> {
+        let mut channels = self.channels.lock().await;
+        if let Some(channel_data) = channels.get_mut(id) {
+            channel_data.apply_options(channel.to_owned());
+            channel_data.remove_fields(remove);
+            Ok(())
+        } else {
+            Err(create_error!(NotFound))
+        }
+    }
+
+    // Remove a user from a group
+    async fn remove_user_from_group(&self, channel: &str, user: &str) -> Result<()> {
+        let mut channels = self.channels.lock().await;
+        if let Some(Channel::Group { recipients, .. }) = channels.get_mut(channel) {
+            if let Some(index) = recipients.iter().position(|recipient| recipient == user) {
+                recipients.remove(index);
+                return Ok(());
+            } else {
+                return Err(create_error!(NotFound));
+            }
+        }
+        Err(create_error!(NotFound))
+    }
+
+    // Remove a user from all specified groups
+    async fn remove_user_from_groups(&self, channel_ids: Vec<String>, user_id: &str) -> Result<()> {
+        let mut channels = self.channels.lock().await;
+
+        for channel_id in channel_ids {
+            if let Some(Channel::Group { recipients, .. }) = channels.get_mut(&channel_id) {
+                recipients.retain(|recipient| recipient != user_id);
+            }
+        }
+
+        Ok(())
+    }
+
+    // Delete a channel
+    async fn delete_unattached_channels(&self, channel_ids: &[String]) -> Result<()> {
+        let mut channels = self.channels.lock().await;
+        for id in channel_ids {
+            channels.remove(id);
+        }
+        Ok(())
+    }
+
+    async fn delete_channel(&self, channel: &Channel) -> Result<()> {
+        let mut channels = self.channels.lock().await;
+        if channels.remove(channel.id()).is_some() {
+            // Like MongoDB: the channel's invites go with it
+            self.channel_invites.lock().await.retain(|_, invite| match invite {
+                Invite::Server { channel: id, .. } | Invite::Group { channel: id, .. } => {
+                    id != channel.id()
+                }
+            });
+
+            // ...and its webhooks
+            self.channel_webhooks
+                .lock()
+                .await
+                .retain(|_, webhook| webhook.channel_id != channel.id());
+
+            // Remove from the server's channel list and its categories
+            if let Channel::TextChannel { server, .. } = channel {
+                if let Some(server) = self.servers.lock().await.get_mut(server) {
+                    server.channels.retain(|id| id != channel.id());
+                    if let Some(categories) = &mut server.categories {
+                        for category in categories {
+                            category.channels.retain(|id| id != channel.id());
+                        }
+                    }
+                    if server.rules_channel.as_deref() == Some(channel.id()) {
+                        server.rules_channel = None;
+                    }
+                }
+            }
+
+            Ok(())
+        } else {
+            Err(create_error!(NotFound))
+        }
+    }
+
+    async fn fetch_last_message(&self, channel_id: &str) -> Result<Option<String>> {
+        let messages = self.messages.lock().await;
+        let mut channel_messages: Vec<&crate::Message> = messages
+            .iter()
+            .filter(|(_, msg)| msg.channel == channel_id)
+            .map(|(_, msg)| msg)
+            .collect();
+
+        channel_messages.sort_unstable_by_key(|msg| &msg.id);
+        Ok(channel_messages.last().map(|msg| msg.id.clone()).or(None))
+    }
+
+    async fn update_last_messsage_id(
+        &self,
+        channel_id: &str,
+        message_id: Option<&str>,
+    ) -> Result<()> {
+        let mut channels = self.channels.lock().await;
+        let channel = channels
+            .get_mut(channel_id)
+            .ok_or_else(|| create_error!(NotFound))?;
+
+        match channel {
+            Channel::DirectMessage {
+                last_message_id, ..
+            }
+            | Channel::Group {
+                last_message_id, ..
+            }
+            | Channel::TextChannel {
+                last_message_id, ..
+            } => *last_message_id = message_id.map(|id| id.to_string()),
+            _ => (),
+        };
+        Ok(())
+    }
+}

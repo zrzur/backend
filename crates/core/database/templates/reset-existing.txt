@@ -1,0 +1,7 @@
+Reset your password
+
+Someone tried to sign up or re-verify with this email, but a verified account already exists. Follow the link below to choose a new password.
+
+Reset password: {{url}}
+
+If you didn't request this, you can safely ignore this email.

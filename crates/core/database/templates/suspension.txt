@@ -1,0 +1,34 @@
+Your account has been suspended
+
+Your Zrzur account has been suspended for one or more reasons:
+{{list}}
+
+You will be able to use your account again in {{duration}} days.
+
+Further violations may result in a permanent ban. Ban evasion is prohibited.
+
+If you think this is wrong, you can appeal for at least 6 months. You do not need to sign in: write to support@zrzur.com from this address and say that your account was suspended.
+
+---
+
+Dein Konto wurde gesperrt
+
+Dein Zrzur-Konto wurde aus einem oder mehreren Gründen gesperrt (siehe oben).
+
+Du kannst dein Konto in {{duration}} Tagen wieder nutzen.
+
+Weitere Verstöße können zu einer dauerhaften Sperre führen. Das Umgehen einer Sperre ist verboten.
+
+Wenn du das für falsch hältst, kannst du mindestens 6 Monate lang Einspruch einlegen. Du musst dich dafür nicht anmelden: Schreib von dieser Adresse an support@zrzur.com und gib an, dass dein Konto gesperrt wurde.
+
+---
+
+تم إيقاف حسابك
+
+أوقفنا حسابك في زرزور لسبب واحد أو أكثر (انظر أعلاه).
+
+يمكنك استخدام حسابك مرة أخرى بعد {{duration}} يوماً.
+
+قد تؤدي المخالفات الأخرى إلى حظر دائم. والتحايل على الحظر ممنوع.
+
+إذا رأيت أن هذا القرار خاطئ، يمكنك الاعتراض عليه خلال ستة أشهر على الأقل. ولا تحتاج إلى تسجيل الدخول: اكتب إلى support@zrzur.com من عنوان البريد هذا واذكر أن حسابك موقوف.

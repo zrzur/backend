@@ -1,0 +1,15 @@
+# Adding new API features
+
+New API features must be documented where appropriate, this document aims to cover everywhere you need to update for new features.
+
+Before writing new API features, generally a good idea to:
+
+- Coordinate with Zrzur maintainers via Issues/PRs on the published repositories (pending under github.com/zrzur)
+- If it's a relatively big feature, also [write an RFC](https://github.com/revoltchat/rfcs)
+
+When your feature is ready to release, ensure to:
+
+- Update backend documentation (what you're reading now!) if applicable
+- Update developer documentation under `backend/docs` if applicable
+- Update the Feature Matrix (or ask someone that can to do so)
+- Ensure it is properly listed in the backend release changelog

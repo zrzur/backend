@@ -1,0 +1,137 @@
+name: CI
+on:
+  push:
+    branches: [main, beta]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  guard:
+    name: Publication guard and secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Reviewed public source files
+        run: python3 scripts/publication_guard.py
+      - name: Secrets in the new commits
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          range="HEAD~1..HEAD"
+          if [ -n "$BASE" ] && git cat-file -e "$BASE^{commit}" 2>/dev/null; then range="$BASE..HEAD"; fi
+          docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.21.2 \
+            git /repo --log-opts="$range" --redact --no-banner
+
+  test:
+    name: Check, lint and test
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: valkey/valkey:9-alpine
+        ports: ["6379:6379"]
+      rabbit:
+        image: rabbitmq:4
+        env:
+          RABBITMQ_DEFAULT_USER: rabbituser
+          RABBITMQ_DEFAULT_PASS: rabbitpass
+        ports: ["5672:5672"]
+      maildev:
+        image: maildev/maildev:2.2.1
+        env:
+          MAILDEV_SMTP_PORT: 25
+          MAILDEV_WEB_PORT: 8080
+          MAILDEV_INCOMING_USER: smtp
+          MAILDEV_INCOMING_PASS: smtp
+        ports: ["14025:25", "14080:8080"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: LiveKit for the voice tests, MinIO for the file tests
+        run: |
+          docker run -d --rm -p 127.0.0.1:17880:7880 livekit/livekit-server:v1.9.12 --dev --bind 0.0.0.0
+          docker run -d --rm -p 127.0.0.1:14009:9000 -e MINIO_ROOT_USER=minioautumn \
+            -e MINIO_ROOT_PASSWORD=minioautumn -e MINIO_REGION=minio \
+            docker.io/pgsty/silo:RELEASE.2026-10-18T00-00-00Z server /data
+      - name: System libraries
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libssl-dev libdav1d-dev
+      - uses: dtolnay/rust-toolchain@1.92.0
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - name: Type check (production build, no test features)
+        run: cargo check --workspace --locked
+      - name: Type check (with tests)
+        run: cargo check --workspace --tests --locked
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked
+      - name: Tests (in-memory database)
+        env:
+          TEST_DB: REFERENCE
+          RUST_LOG: "off"
+        run: cargo nextest run --workspace --locked --no-fail-fast -E 'not package(revolt-ratelimits)'
+      - name: Rate limiter tests (limits are off while TEST_DB is set)
+        env:
+          RUST_LOG: "off"
+        run: cargo nextest run -p revolt-ratelimits --all-features --locked
+
+  test-mongodb:
+    name: Tests on MongoDB
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: valkey/valkey:9-alpine
+        ports: ["6379:6379"]
+      rabbit:
+        image: rabbitmq:4
+        env:
+          RABBITMQ_DEFAULT_USER: rabbituser
+          RABBITMQ_DEFAULT_PASS: rabbitpass
+        ports: ["5672:5672"]
+      maildev:
+        image: maildev/maildev:2.2.1
+        env:
+          MAILDEV_SMTP_PORT: 25
+          MAILDEV_WEB_PORT: 8080
+          MAILDEV_INCOMING_USER: smtp
+          MAILDEV_INCOMING_PASS: smtp
+        ports: ["14025:25", "14080:8080"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: LiveKit, MinIO and a one-node MongoDB replica set
+        run: |
+          docker run -d --rm -p 127.0.0.1:17880:7880 livekit/livekit-server:v1.9.12 --dev --bind 0.0.0.0
+          docker run -d --rm -p 127.0.0.1:14009:9000 -e MINIO_ROOT_USER=minioautumn \
+            -e MINIO_ROOT_PASSWORD=minioautumn -e MINIO_REGION=minio \
+            docker.io/pgsty/silo:RELEASE.2026-10-18T00-00-00Z server /data
+          docker run -d --name database-test --network host --tmpfs /data/db:size=4g docker.io/mongo:9.0.4 \
+            mongod --replSet rs0 --port 27018 --bind_ip_all --wiredTigerCacheSizeGB 1 --syncdelay 5 \
+            --setParameter minSnapshotHistoryWindowInSeconds=0
+          for i in $(seq 1 30); do
+            docker exec database-test mongosh --port 27018 --quiet --eval \
+              "try { rs.status() } catch (err) { rs.initiate({_id:'rs0',members:[{_id:0,host:'127.0.0.1:27018'}]}) }" && break
+            sleep 2
+          done
+      - name: System libraries
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libssl-dev libdav1d-dev
+      - uses: dtolnay/rust-toolchain@1.92.0
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - name: Tests (MongoDB)
+        env:
+          TEST_DB: MONGODB
+          RUST_LOG: "off"
+        run: cargo nextest run --workspace --locked --no-fail-fast -E 'not package(revolt-ratelimits)'

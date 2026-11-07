@@ -1,0 +1,7 @@
+Your account has been suspended, for one or more reasons:
+{{list}}
+
+This email is intended for {{email}}
+
+Learn more about third party instances here:
+https://zrzur.com/help

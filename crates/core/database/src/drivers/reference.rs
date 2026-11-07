@@ -1,0 +1,77 @@
+use std::{collections::HashMap, sync::Arc};
+
+use futures::lock::Mutex;
+
+use crate::{
+    Account, AccountInvite, AuditLogEntry, Bot, Channel, ChannelCompositeKey, ChannelUnread,
+    BillingOrder, CommunityItem, CommunityReview, CreatorPermissionLog, DiscoverPromotion, PlatformRole, DiscoverWaitlistEntry, PlusSubscription,
+    Supercharge,
+    DiscoverBan, DiscoverRequest, DiscoverRequestType, Emoji, File, FileHash, Invite, MFATicket,
+    Member, MemberCompositeKey, Message, PolicyChange, RatelimitEvent, Report, Server, ServerBan,
+    ServerJoinRequest, Session, Snapshot, User, UserSettings, Webhook,
+};
+
+database_derived!(
+    /// Reference implementation
+    #[derive(Default, Debug)]
+    pub struct ReferenceDb {
+        pub audit_logs: Arc<Mutex<HashMap<String, AuditLogEntry>>>,
+        pub badge_store: Arc<Mutex<crate::BadgeStore>>,
+        pub plugin_store: Arc<Mutex<crate::PluginStore>>,
+        pub bots: Arc<Mutex<HashMap<String, Bot>>>,
+        pub channels: Arc<Mutex<HashMap<String, Channel>>>,
+        pub channel_invites: Arc<Mutex<HashMap<String, Invite>>>,
+        pub channel_unreads: Arc<Mutex<HashMap<ChannelCompositeKey, ChannelUnread>>>,
+        pub channel_webhooks: Arc<Mutex<HashMap<String, Webhook>>>,
+        pub application_commands:
+            Arc<Mutex<HashMap<String, revolt_models::v0::ApplicationCommand>>>,
+        pub interactions: Arc<Mutex<HashMap<String, crate::Interaction>>>,
+        pub oauth: Arc<Mutex<crate::ReferenceOAuth>>,
+        pub emojis: Arc<Mutex<HashMap<String, Emoji>>>,
+        pub discover_requests: Arc<Mutex<HashMap<(DiscoverRequestType, String), DiscoverRequest>>>,
+        pub discover_bans: Arc<Mutex<HashMap<String, DiscoverBan>>>,
+        pub community_items: Arc<Mutex<HashMap<String, CommunityItem>>>,
+        pub platform_words: Arc<Mutex<HashMap<String, revolt_models::v0::PlatformWord>>>,
+        pub trust_safety: Arc<Mutex<crate::TrustSafetyStore>>,
+        pub platform_staff: Arc<Mutex<crate::PlatformStaffStore>>,
+        pub bot_verifications: Arc<Mutex<HashMap<String, crate::BotVerification>>>,
+        pub account_change_requests: Arc<Mutex<HashMap<String, crate::AccountChangeRequest>>>,
+        pub official_mark_requests: Arc<Mutex<HashMap<String, crate::OfficialMarkRequest>>>,
+        pub platform_notices: Arc<Mutex<HashMap<String, crate::PlatformNotice>>>,
+        pub notice_dismissals: Arc<Mutex<std::collections::HashSet<(String, String)>>>,
+        pub support_tickets: Arc<Mutex<HashMap<String, crate::SupportTicket>>>,
+        pub community_reviews: Arc<Mutex<Vec<CommunityReview>>>,
+        pub community_favourites: Arc<Mutex<Vec<(String, String)>>>,
+        pub community_uses: Arc<Mutex<std::collections::HashSet<String>>>,
+        pub platform_roles: Arc<Mutex<HashMap<String, PlatformRole>>>,
+        pub creator_logs: Arc<Mutex<Vec<CreatorPermissionLog>>>,
+        pub plus_subscriptions: Arc<Mutex<HashMap<String, PlusSubscription>>>,
+        pub supercharges: Arc<Mutex<HashMap<String, Supercharge>>>,
+        pub discover_promotions: Arc<Mutex<HashMap<String, DiscoverPromotion>>>,
+        pub billing_orders: Arc<Mutex<HashMap<String, BillingOrder>>>,
+        pub discover_waitlist: Arc<Mutex<HashMap<String, DiscoverWaitlistEntry>>>,
+        pub billing_webhook_events: Arc<Mutex<HashMap<String, crate::BillingWebhookEvent>>>,
+        pub billing_customers: Arc<Mutex<HashMap<String, crate::BillingCustomer>>>,
+        pub billing_audit: Arc<Mutex<HashMap<String, crate::BillingAuditEntry>>>,
+        pub billing_issues: Arc<Mutex<HashMap<String, crate::ReconciliationIssue>>>,
+        pub file_hashes: Arc<Mutex<HashMap<String, FileHash>>>,
+        pub files: Arc<Mutex<HashMap<String, File>>>,
+        pub messages: Arc<Mutex<HashMap<String, Message>>>,
+        pub policy_changes: Arc<Mutex<HashMap<String, PolicyChange>>>,
+        pub ratelimit_events: Arc<Mutex<HashMap<String, RatelimitEvent>>>,
+        pub user_settings: Arc<Mutex<HashMap<String, UserSettings>>>,
+        pub users: Arc<Mutex<HashMap<String, User>>>,
+        pub server_bans: Arc<Mutex<HashMap<MemberCompositeKey, ServerBan>>>,
+        pub server_join_requests: Arc<Mutex<HashMap<MemberCompositeKey, ServerJoinRequest>>>,
+        pub server_members: Arc<Mutex<HashMap<MemberCompositeKey, Member>>>,
+        pub servers: Arc<Mutex<HashMap<String, Server>>>,
+        pub safety_reports: Arc<Mutex<HashMap<String, Report>>>,
+        pub safety_snapshots: Arc<Mutex<HashMap<String, Snapshot>>>,
+        pub accounts: Arc<Mutex<HashMap<String, Account>>>,
+        pub account_invites: Arc<Mutex<HashMap<String, AccountInvite>>>,
+        pub sessions: Arc<Mutex<HashMap<String, Session>>>,
+        pub tickets: Arc<Mutex<HashMap<String, MFATicket>>>,
+        pub data_exports: Arc<Mutex<HashMap<String, crate::DataExport>>>,
+        pub data_export_bytes: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+    }
+);

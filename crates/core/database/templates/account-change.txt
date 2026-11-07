@@ -1,0 +1,36 @@
+Zrzur support was asked to change your account:
+
+  {{what}}
+
+Message from Zrzur: {{reason}}
+
+Nothing changes unless you confirm. Open this link to confirm or decline (it works once, for 24 hours):
+{{url}}
+
+If you didn't ask Zrzur for this, decline it and change your password.
+
+----
+
+طُلب من دعم زرزور تعديل حسابك:
+
+  {{what_ar}}
+
+رسالة من زرزور: {{reason}}
+
+لن يتغيّر شيء إلا إذا أكّدت. افتح هذا الرابط للتأكيد أو الرفض (يعمل مرة واحدة خلال 24 ساعة):
+{{url}}
+
+إذا لم تطلب ذلك من زرزور فارفض الطلب وغيّر كلمة المرور.
+
+----
+
+Der Zrzur-Support wurde gebeten, dein Konto zu ändern:
+
+  {{what_de}}
+
+Nachricht von Zrzur: {{reason}}
+
+Nichts ändert sich, solange du nicht bestätigst. Öffne diesen Link, um zu bestätigen oder abzulehnen (er funktioniert einmal, 24 Stunden lang):
+{{url}}
+
+Wenn du das nicht bei Zrzur angefragt hast, lehne ab und ändere dein Passwort.

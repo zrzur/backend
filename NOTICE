@@ -1,0 +1,24 @@
+Zrzur (زرزور) - backend
+https://github.com/zrzur/backend
+Copyright (C) 2026 Zrzur contributors
+
+This repository is a modified version ("fork") of software from the Stoat
+project (formerly Revolt), https://github.com/stoatchat. It is NOT affiliated
+with, endorsed by, or sponsored by Stoat or Revolt Platforms Ltd.
+
+Upstream source (forked on 2026-10-19):
+  stoatchat/stoatchat @ 483c1779ee1cf6079b9ff294a8607fae4af633e8
+  Licence: AGPL-3.0-or-later; some crates MIT (see each LICENSE)
+
+Original authors: Paul (Pawel) Makles and the Stoat/Revolt contributors.
+All upstream copyright notices are retained in the files concerned.
+Git history was not carried over; this repository starts with a single initial
+commit. Modifications are summarised in MODIFICATIONS.md.
+
+
+"Stoat", the Stoat logo and "Toast" are trademarks of Revolt Platforms Ltd.
+"Revolt" is a trademark of its respective owner. Used only to identify the
+origin of the code.
+
+"Zrzur", "زرزور" and the Zrzur logo are trademarks of the Zrzur project and are
+not covered by the source code licence.

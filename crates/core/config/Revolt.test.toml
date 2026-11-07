@@ -1,0 +1,57 @@
+# Test configuration. Every value here is a test value, not for production.
+# Test values only, never for production. This file is built into tests alone.
+environment = "test"
+
+[database]
+# `database-test` in compose.yml, not the development database
+mongodb = "mongodb://127.0.0.1:27018/?directConnection=true"
+redis = "redis://localhost/"
+
+[rabbit]
+host = "127.0.0.1"
+port = 5672
+username = "rabbituser"
+password = "rabbitpass"
+
+[january]
+proxy_key = "test-proxy-key"
+
+[features]
+webhooks_enabled = true
+plugins_enabled = true
+
+[features.community]
+effects_enabled = true
+
+# The tests talk to a bot endpoint on 127.0.0.1
+[api.interactions]
+signing_key = "test-signing-key-of-at-least-32-bytes"
+allow_private_urls = true
+
+[api.smtp]
+host = "localhost"
+username = "smtp"
+password = "smtp"
+from_address = "development@zrzur.com"
+reply_to = "support@zrzur.com"
+port = 14025
+use_tls = false
+
+# Voice tests: a local LiveKit in dev mode (`livekit-test` in compose.yml)
+[hosts.livekit]
+voicetest = "ws://127.0.0.1:17880"
+
+[api.livekit.nodes.voicetest]
+url = "http://127.0.0.1:17880"
+lat = 0.0
+lon = 0.0
+key = "devkey"
+secret = "secret"
+
+# File tests: MinIO from compose.yml
+[files.s3]
+endpoint = "http://127.0.0.1:14009"
+
+# Tests exercise the adult path; the shipped default is "blocked"
+[features.age_safety]
+mature_content = "self_declared_adults"

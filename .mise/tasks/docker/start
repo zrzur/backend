@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#MISE description="Start Docker containers"
+set -e
+
+docker compose up -d "$@"
+docker compose run --rm wait

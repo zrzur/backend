@@ -1,0 +1,598 @@
+{
+  "duration": {
+    "title": "",
+    "body": "المدة: {days} يوماً."
+  },
+  "action.warning": {
+    "title": "تحذير لحسابك",
+    "body": "{statement}"
+  },
+  "action.remove_message": {
+    "title": "أزلنا إحدى رسائلك",
+    "body": "{statement}"
+  },
+  "action.suspend": {
+    "title": "أوقفنا حسابك مؤقتاً",
+    "body": "{statement}"
+  },
+  "action.ban": {
+    "title": "حُظر حسابك",
+    "body": "{statement}"
+  },
+  "action.disable_bot": {
+    "title": "أوقفنا أحد بوتاتك",
+    "body": "{statement}"
+  },
+  "action.remove_discover": {
+    "title": "أزلنا إدراجك من صفحة الاكتشاف",
+    "body": "{statement}"
+  },
+  "action.suspend_design": {
+    "title": "أوقفنا أحد تصاميمك",
+    "body": "{statement}"
+  },
+  "action.revoked": {
+    "title": "ألغينا قراراً على حسابك",
+    "body": "راجعنا الأمر مرة أخرى وألغينا القرار.\n{note}"
+  },
+  "report.answer": {
+    "title": "بخصوص بلاغك {reference}",
+    "body": "شكراً لإبلاغك. ردّ فريق الثقة والأمان: {note}"
+  },
+  "appeal.overturned": {
+    "title": "قُبل طعنك",
+    "body": "ألغينا القرار.\n{note}"
+  },
+  "appeal.upheld": {
+    "title": "راجعنا طعنك",
+    "body": "أبقينا القرار كما هو.\n{note}"
+  },
+  "ticket.answer": {
+    "title": "ردّ الدعم على تذكرتك «{subject}»",
+    "body": "{answer}\n\nللرد افتح الإعدادات ← التواصل مع الدعم."
+  },
+  "ticket.answer_closed": {
+    "title": "ردّ الدعم على تذكرتك «{subject}» وأغلقها",
+    "body": "{answer}\n\nيمكنك إعادة فتحها خلال أسبوع من الإعدادات ← التواصل مع الدعم."
+  },
+  "bot.verified": {
+    "title": "أصبح بوتك موثَّقاً",
+    "body": "تظهر الآن علامة التوثيق على «{name}»."
+  },
+  "bot.denied": {
+    "title": "توثيق البوت",
+    "body": "لم نوثّق «{name}» هذه المرة.\n{note}"
+  },
+  "bot.unverified": {
+    "title": "سُحبت علامة التوثيق",
+    "body": "لم تعد علامة التوثيق تظهر على «{name}».\n{note}"
+  },
+  "bot.disabled": {
+    "title": "أوقفنا أحد بوتاتك",
+    "body": "لا يستطيع «{name}» تسجيل الدخول حالياً.\n{note}"
+  },
+  "discover.approved": {
+    "title": "أنت الآن في صفحة الاكتشاف",
+    "body": "أُدرج «{name}» في صفحة الاكتشاف."
+  },
+  "discover.denied": {
+    "title": "صفحة الاكتشاف",
+    "body": "لم ندرج «{name}» في صفحة الاكتشاف.\n{note}"
+  },
+  "discover.removed": {
+    "title": "أُزيل من صفحة الاكتشاف",
+    "body": "لم يعد «{name}» مدرجاً في صفحة الاكتشاف.\n{note}"
+  },
+  "plugin.approved": {
+    "title": "إصدار إضافتك متاح الآن",
+    "body": "قُبل الإصدار {version} من «{name}» ويمكن تثبيته."
+  },
+  "plugin.rejected": {
+    "title": "لم يُقبل إصدار إضافتك",
+    "body": "رُفض الإصدار {version} من «{name}».\n{note}"
+  },
+  "plugin.revoked": {
+    "title": "سُحب إصدار من إضافتك",
+    "body": "لم يعد الإصدار {version} من «{name}» يعمل.\n{note}"
+  },
+  "plugin.suspended": {
+    "title": "أُوقفت إضافتك",
+    "body": "أُخرجت «{name}» من المتجر ولا تعمل حالياً.\n{note}"
+  },
+  "plugin.reinstated": {
+    "title": "عادت إضافتك",
+    "body": "أصبحت «{name}» متاحة مجدداً."
+  },
+  "plugin.removed": {
+    "title": "أُزيلت إضافتك",
+    "body": "أُزيلت «{name}» من المتجر نهائياً.\n{note}"
+  },
+  "publisher.verified": {
+    "title": "أصبحت ناشراً موثَّقاً",
+    "body": "تظهر إضافاتك الآن أنك ناشر موثَّق."
+  },
+  "publisher.suspended": {
+    "title": "أُوقف نشر الإضافات",
+    "body": "لا يمكنك نشر إضافات أو إصدارات جديدة حالياً.\n{note}"
+  },
+  "publisher.reinstated": {
+    "title": "يمكنك نشر الإضافات مجدداً",
+    "body": "عادت إليك صلاحية النشر."
+  },
+  "server.verified": {
+    "title": "أصبح سيرفرك موثَّقاً",
+    "body": "تظهر الآن علامة التوثيق على «{name}»."
+  },
+  "server.unverified": {
+    "title": "سُحبت علامة التوثيق",
+    "body": "لم تعد علامة التوثيق تظهر على «{name}».\n{note}"
+  },
+  "server.nsfw": {
+    "title": "عُلّم سيرفرك للبالغين +18",
+    "body": "أصبح «{name}» للبالغين فقط.\n{note}"
+  },
+  "server.not_nsfw": {
+    "title": "أُزيلت علامة +18",
+    "body": "لم يعد «{name}» معلَّماً للبالغين."
+  },
+  "server.transferred_from": {
+    "title": "لسيرفرك مالك جديد",
+    "body": "نُقلت ملكية «{name}» إلى عضو آخر بقرار من فريق الدعم.\n{note}"
+  },
+  "server.transferred_to": {
+    "title": "أصبحت مالك سيرفر",
+    "body": "أنت الآن مالك «{name}»."
+  },
+  "creator.granted": {
+    "title": "أصبحت مصمّماً",
+    "body": "يمكنك الآن نشر التصاميم في معرض المجتمع."
+  },
+  "creator.suspended": {
+    "title": "أُوقف نشر التصاميم",
+    "body": "لا يمكنك نشر تصاميم حالياً، وتصاميمك مخفية حتى رفع الإيقاف. تجد السبب والطعن في استوديو المصممين.\n{note}"
+  },
+  "creator.revoked": {
+    "title": "سُحبت صلاحية نشر التصاميم",
+    "body": "لم يعد بإمكانك نشر التصاميم.\n{note}"
+  },
+  "creator.reinstated": {
+    "title": "يمكنك نشر التصاميم مجدداً",
+    "body": "عادت إليك صلاحية المصمّم."
+  },
+  "badge.granted": {
+    "title": "شارة جديدة لك",
+    "body": "حصلت على شارة «{name}» وتظهر في ملفك الشخصي."
+  },
+  "badge.revoked": {
+    "title": "أُزيلت شارة",
+    "body": "أُزيلت شارة «{name}» من ملفك الشخصي.\n{note}"
+  },
+  "bug.triage": {
+    "title": "نراجع بلاغ الخطأ الذي أرسلته",
+    "body": "«{title}»\n{note}"
+  },
+  "bug.need_info": {
+    "title": "نحتاج تفاصيل أكثر عن بلاغك",
+    "body": "«{title}»\n{note}\nأضف التفاصيل من الإعدادات ← الملاحظات والبلاغات."
+  },
+  "bug.confirm": {
+    "title": "تأكّدنا من بلاغ الخطأ",
+    "body": "«{title}» — شكراً لك! البلاغات المؤكَّدة تُحتسب لشارة صائد الأخطاء.\n{note}"
+  },
+  "bug.fix": {
+    "title": "أصلحنا الخطأ الذي أبلغت عنه",
+    "body": "«{title}» — شكراً لإبلاغك.\n{note}"
+  },
+  "bug.duplicate": {
+    "title": "بلاغك معروف من قبل",
+    "body": "«{title}» يطابق بلاغاً سابقاً. شكراً لك!\n{note}"
+  },
+  "bug.not_a_bug": {
+    "title": "بخصوص بلاغ الخطأ",
+    "body": "«{title}» يعمل كما هو مقصود.\n{note}"
+  },
+  "bug.reopen": {
+    "title": "أعدنا فتح بلاغك",
+    "body": "«{title}»\n{note}"
+  },
+  "feather.granted": {
+    "title": "هدية من زرزور",
+    "body": "منحك فريق زرزور الريشة لمدة {days} يوماً. شكراً لك!"
+  },
+  "billing.refunded": {
+    "title": "أُرسل الاسترداد",
+    "body": "أعدنا {amount} عن طلبك. قد يستغرق وصوله بضعة أيام.\n{note}"
+  },
+  "beta.invited": {
+    "title": "دعوة إلى برنامج التجربة",
+    "body": "جرّب ميزات زرزور الجديدة قبل الجميع. اقبل الدعوة من الإعدادات ← الملف الشخصي ← الشارات."
+  },
+  "beta.approved": {
+    "title": "أهلاً بك في برنامج التجربة",
+    "body": "أصبحت مختبِراً في زرزور. شكراً لك!"
+  },
+  "beta.removed": {
+    "title": "برنامج التجربة",
+    "body": "لم تعد ضمن برنامج التجربة."
+  },
+  "change_request": {
+    "title": "طلب تعديل في ملفك الشخصي",
+    "body": "يطلب منك فريق زرزور الموافقة على تعديل في ملفك. لن يتغيّر شيء إلا إذا وافقت؛ راجع الطلب في الإعدادات ← حسابي."
+  },
+  "sessions.ended": {
+    "title": "سُجّل خروجك",
+    "body": "حفاظاً على أمانك سجّل فريق زرزور خروجك من كل الأجهزة. سجّل الدخول مجدداً، وإن لم تتوقع ذلك فغيّر كلمة المرور.\n{note}"
+  },
+  "badge_name.one_year": {
+    "title": "عام في زرزور",
+    "body": ""
+  },
+  "badge_name.three_years": {
+    "title": "ثلاثة أعوام في زرزور",
+    "body": ""
+  },
+  "badge_name.community_builder": {
+    "title": "باني مجتمع",
+    "body": ""
+  },
+  "badge_name.big_community": {
+    "title": "مجتمع كبير",
+    "body": ""
+  },
+  "badge_name.verified_server_owner": {
+    "title": "مالك سيرفر موثّق",
+    "body": ""
+  },
+  "badge_name.verified_bot_developer": {
+    "title": "مطوّر بوت موثّق",
+    "body": ""
+  },
+  "badge_name.saha_champion": {
+    "title": "بطل الساحة",
+    "body": ""
+  },
+  "badge_name.community_helper": {
+    "title": "مساعد المجتمع",
+    "body": ""
+  },
+  "badge_name.staff": {
+    "title": "فريق زرزور",
+    "body": ""
+  },
+  "badge_name.founder": {
+    "title": "مؤسس",
+    "body": ""
+  },
+  "badge_name.developer": {
+    "title": "مطوّر زرزور",
+    "body": ""
+  },
+  "badge_name.platform_moderator": {
+    "title": "مشرف المنصة",
+    "body": ""
+  },
+  "badge_name.partner": {
+    "title": "شريك",
+    "body": ""
+  },
+  "badge_name.super_creator": {
+    "title": "صانع مميّز",
+    "body": ""
+  },
+  "badge_name.creator": {
+    "title": "صانع محتوى",
+    "body": ""
+  },
+  "badge_name.elite_bug_hunter": {
+    "title": "صائد أخطاء نخبة",
+    "body": ""
+  },
+  "badge_name.bug_hunter": {
+    "title": "صائد أخطاء",
+    "body": ""
+  },
+  "badge_name.beta_tester": {
+    "title": "مختبِر تجريبي",
+    "body": ""
+  },
+  "badge_name.beta_veteran": {
+    "title": "مختبِر قديم",
+    "body": ""
+  },
+  "badge_name.plus": {
+    "title": "ريشة",
+    "body": ""
+  },
+  "badge_name.early_supporter": {
+    "title": "داعم مبكر",
+    "body": ""
+  },
+  "badge_name.early_adopter": {
+    "title": "مستخدم مبكر",
+    "body": ""
+  },
+  "badge_name.translator": {
+    "title": "مترجم",
+    "body": ""
+  },
+  "badge_name.responsible_disclosure": {
+    "title": "إفصاح مسؤول",
+    "body": ""
+  },
+  "badge_name.supporter": {
+    "title": "داعم",
+    "body": ""
+  },
+  "badge_name.paw": {
+    "title": "مخلب",
+    "body": ""
+  },
+  "badge_name.reserved_1": {
+    "title": "محجوزة 1",
+    "body": ""
+  },
+  "badge_name.reserved_2": {
+    "title": "محجوزة 2",
+    "body": ""
+  },
+  "signature": {
+    "title": "",
+    "body": "فريق زرزور"
+  },
+  "statement.facts": {
+    "title": "",
+    "body": "ما حدث: {facts}"
+  },
+  "statement.reason": {
+    "title": "",
+    "body": "السبب: {reason}"
+  },
+  "statement.ground_law": {
+    "title": "",
+    "body": "الأساس القانوني: المحتوى مخالف للقانون بموجب {law}، {provision}."
+  },
+  "statement.ground_terms": {
+    "title": "",
+    "body": "الأساس: هذا مخالف لقواعدنا ({rule}). وليس في ذلك حكم بأنه مخالف للقانون."
+  },
+  "statement.automation": {
+    "title": "",
+    "body": "استُخدمت أدوات آلية لاكتشاف ذلك: {detection}. واتُّخذ القرار بوسائل آلية: {decided}."
+  },
+  "statement.yes": {
+    "title": "",
+    "body": "نعم"
+  },
+  "statement.no": {
+    "title": "",
+    "body": "لا"
+  },
+  "statement.scope": {
+    "title": "",
+    "body": "نطاق التطبيق: {scope}."
+  },
+  "statement.worldwide": {
+    "title": "",
+    "body": "في جميع أنحاء العالم"
+  },
+  "statement.duration": {
+    "title": "",
+    "body": "المدة: {duration}"
+  },
+  "statement.days": {
+    "title": "",
+    "body": "{days} يوماً."
+  },
+  "statement.open_ended": {
+    "title": "",
+    "body": "دون تاريخ انتهاء، إلى أن نلغيه أو يُقبل الطعن."
+  },
+  "statement.appeal": {
+    "title": "",
+    "body": "كيفية الطعن: افتح زرزور، ثم الإعدادات ← الملاحظات والبلاغات، واختر «طعن» بجانب هذا القرار. يمكنك الطعن مدة 6 أشهر على الأقل بعد القرار. وإن تعذّر عليك تسجيل الدخول فراسلنا على {contact} واذكر الرقم المرجعي {reference}. يراجع الطعنَ شخصٌ، ولا تراجعه آلة وحدها. {link}"
+  },
+  "statement.out_of_court": {
+    "title": "",
+    "body": "التسوية خارج المحكمة: يمكنك أيضاً عرض هذا القرار على هيئة معتمدة لتسوية النزاعات خارج المحكمة تختارها بنفسك (المادة 21 من قانون الخدمات الرقمية). وتنشر المفوضية الأوروبية قائمة الهيئات المعتمدة على موقعها. ولا يمس ذلك حقك في اللجوء إلى القضاء."
+  },
+  "statement.contact": {
+    "title": "",
+    "body": "للاستفسار: {contact}"
+  },
+  "public_report.receipt": {
+    "title": "استلمنا بلاغك",
+    "body": "شكراً لك. استلمنا بلاغك.\n\nالرقم المرجعي لبلاغك: {reference}. نراجع كل بلاغ. وإن كنت قد زودتنا ببريدك الإلكتروني فسنراسلك عليه عند اتخاذ القرار.\n\nللاستفسار: {contact}"
+  },
+  "statement.basis_report": {
+    "title": "",
+    "body": "جاء هذا القرار بعد بلاغ من شخص آخر."
+  },
+  "statement.basis_notice": {
+    "title": "",
+    "body": "جاء هذا القرار بعد إشعار بمحتوى مخالف للقانون."
+  },
+  "statement.basis_own": {
+    "title": "",
+    "body": "اكتشفنا ذلك أثناء مراجعتنا الخاصة."
+  },
+  "statement.days_one": {
+    "title": "",
+    "body": "يوم واحد."
+  },
+  "statement.days_two": {
+    "title": "",
+    "body": "يومان."
+  },
+  "statement.days_few": {
+    "title": "",
+    "body": "{days} أيام."
+  },
+  "statement.rule_link": {
+    "title": "",
+    "body": "اقرأ القاعدة: {link}"
+  },
+  "statement.out_of_court_body": {
+    "title": "",
+    "body": "يتعاون زرزور أيضاً مع: {body}."
+  },
+  "reporter.subject": {
+    "title": "قرارنا بشأن بلاغك {reference}",
+    "body": ""
+  },
+  "reporter.opening": {
+    "title": "",
+    "body": "شكراً لك على بلاغك {reference}."
+  },
+  "reporter.outcome.action": {
+    "title": "",
+    "body": "نظرنا فيه واتخذنا إجراءً: {what}."
+  },
+  "reporter.outcome.no_violation": {
+    "title": "",
+    "body": "نظرنا فيه ولم نجد مخالفة، فلم نتخذ أي إجراء."
+  },
+  "reporter.outcome.duplicate": {
+    "title": "",
+    "body": "بلاغك يكرر بلاغاً نعالجه أصلاً، فلم نتخذ إجراءً إضافياً بشأنه."
+  },
+  "reporter.outcome.closed": {
+    "title": "",
+    "body": "أغلقنا بلاغك دون اتخاذ إجراء إضافي."
+  },
+  "reporter.outcome.info": {
+    "title": "",
+    "body": "نحتاج إلى معلومات إضافية لنبتّ في بلاغك: {question}"
+  },
+  "reporter.note": {
+    "title": "",
+    "body": "ملاحظة من المراجع: {note}"
+  },
+  "reporter.human": {
+    "title": "",
+    "body": "اتخذ هذا القرار شخص."
+  },
+  "reporter.redress": {
+    "title": "",
+    "body": "إن لم تتفق مع القرار فراسلنا على {contact} خلال 6 أشهر مع ذكر الرقم المرجعي {reference}، وسيراجعه شخص. ويمكنك أيضاً عرض النزاع على هيئة معتمدة لتسوية النزاعات خارج المحكمة (المادة 21 من قانون الخدمات الرقمية)، وتنشر المفوضية الأوروبية قائمة بها. ولا يمس ذلك حقك في اللجوء إلى القضاء."
+  },
+  "reporter.what.warning": {
+    "title": "",
+    "body": "وجّهنا تحذيراً إلى الحساب"
+  },
+  "reporter.what.remove_message": {
+    "title": "",
+    "body": "أزلنا الرسالة"
+  },
+  "reporter.what.suspend": {
+    "title": "",
+    "body": "أوقفنا الحساب مؤقتاً"
+  },
+  "reporter.what.ban": {
+    "title": "",
+    "body": "حظرنا الحساب"
+  },
+  "reporter.what.disable_bot": {
+    "title": "",
+    "body": "عطّلنا البوت"
+  },
+  "reporter.what.remove_discover": {
+    "title": "",
+    "body": "أزلنا الإدراج من «اكتشف»"
+  },
+  "reporter.what.suspend_design": {
+    "title": "",
+    "body": "أزلنا التصميم"
+  },
+  "rule.Harassment": {
+    "title": "",
+    "body": "المضايقة"
+  },
+  "rule.HateOrThreats": {
+    "title": "",
+    "body": "الكراهية أو التهديد"
+  },
+  "rule.Spam": {
+    "title": "",
+    "body": "المحتوى المزعج"
+  },
+  "rule.ScamFraud": {
+    "title": "",
+    "body": "الاحتيال"
+  },
+  "rule.Impersonation": {
+    "title": "",
+    "body": "انتحال الهوية"
+  },
+  "rule.MaliciousLinks": {
+    "title": "",
+    "body": "الروابط الضارة"
+  },
+  "rule.Malware": {
+    "title": "",
+    "body": "البرمجيات الخبيثة"
+  },
+  "rule.PrivacyViolation": {
+    "title": "",
+    "body": "انتهاك الخصوصية"
+  },
+  "rule.PersonalInformation": {
+    "title": "",
+    "body": "نشر معلومات شخصية"
+  },
+  "rule.SexualContent": {
+    "title": "",
+    "body": "المحتوى الجنسي"
+  },
+  "rule.SelfHarm": {
+    "title": "",
+    "body": "إيذاء النفس"
+  },
+  "rule.IllegalContent": {
+    "title": "",
+    "body": "محتوى لا نسمح به على زرزور"
+  },
+  "rule.BotAbuse": {
+    "title": "",
+    "body": "إساءة استخدام البوتات"
+  },
+  "rule.MisleadingApplication": {
+    "title": "",
+    "body": "التطبيقات المضلِّلة"
+  },
+  "rule.UnauthorisedContent": {
+    "title": "",
+    "body": "المحتوى غير المصرّح به"
+  },
+  "rule.IntellectualProperty": {
+    "title": "",
+    "body": "الملكية الفكرية"
+  },
+  "rule.Underage": {
+    "title": "",
+    "body": "مستخدمون دون السن المسموح"
+  },
+  "rule.Other": {
+    "title": "",
+    "body": "مخالفة أخرى لقواعدنا"
+  },
+  "reporter.outcome.revoked": {
+    "title": "",
+    "body": "نظرنا في الأمر من جديد وألغينا قرارنا السابق بشأن بلاغك."
+  },
+  "rule.terms_of_service": {
+    "title": "",
+    "body": "شروط خدمة زرزور"
+  },
+  "reporter.outcome.overturned": {
+    "title": "",
+    "body": "بعد طعن نظرنا في الأمر من جديد وألغينا قرارنا السابق بشأن بلاغك."
+  },
+  "reporter.info_reply_public": {
+    "title": "",
+    "body": "يرجى مراسلتنا على {contact} مع ذكر الرقم المرجعي {reference}."
+  },
+  "reporter.info_reply_app": {
+    "title": "",
+    "body": "يرجى الرد من داخل زرزور: افتح الإعدادات ← الملاحظات والبلاغات وأجب عن بلاغك {reference}."
+  }
+}

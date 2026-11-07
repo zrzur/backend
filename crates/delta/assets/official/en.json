@@ -1,0 +1,598 @@
+{
+  "duration": {
+    "title": "",
+    "body": "For {days} days."
+  },
+  "action.warning": {
+    "title": "A warning on your account",
+    "body": "{statement}"
+  },
+  "action.remove_message": {
+    "title": "We removed one of your messages",
+    "body": "{statement}"
+  },
+  "action.suspend": {
+    "title": "Your account is suspended",
+    "body": "{statement}"
+  },
+  "action.ban": {
+    "title": "Your account is banned",
+    "body": "{statement}"
+  },
+  "action.disable_bot": {
+    "title": "We disabled one of your bots",
+    "body": "{statement}"
+  },
+  "action.remove_discover": {
+    "title": "We removed your Discover listing",
+    "body": "{statement}"
+  },
+  "action.suspend_design": {
+    "title": "We took one of your designs down",
+    "body": "{statement}"
+  },
+  "action.revoked": {
+    "title": "We reversed a decision on your account",
+    "body": "We looked again and reversed it.\n{note}"
+  },
+  "report.answer": {
+    "title": "About your report {reference}",
+    "body": "Thanks for reporting. The Trust & Safety team's answer: {note}"
+  },
+  "appeal.overturned": {
+    "title": "Your appeal was accepted",
+    "body": "We reversed the decision.\n{note}"
+  },
+  "appeal.upheld": {
+    "title": "Your appeal was reviewed",
+    "body": "We kept the decision.\n{note}"
+  },
+  "ticket.answer": {
+    "title": "Support answered your ticket “{subject}”",
+    "body": "{answer}\n\nTo reply, open Settings → Contact support."
+  },
+  "ticket.answer_closed": {
+    "title": "Support answered and closed your ticket “{subject}”",
+    "body": "{answer}\n\nYou can reopen it within a week in Settings → Contact support."
+  },
+  "bot.verified": {
+    "title": "Your bot is verified",
+    "body": "“{name}” now shows the verified mark."
+  },
+  "bot.denied": {
+    "title": "Bot verification",
+    "body": "We didn't verify “{name}” this time.\n{note}"
+  },
+  "bot.unverified": {
+    "title": "Verified mark removed",
+    "body": "“{name}” no longer shows the verified mark.\n{note}"
+  },
+  "bot.disabled": {
+    "title": "We disabled one of your bots",
+    "body": "“{name}” can't sign in for now.\n{note}"
+  },
+  "discover.approved": {
+    "title": "You're on Discover",
+    "body": "“{name}” is now listed on Discover."
+  },
+  "discover.denied": {
+    "title": "Discover",
+    "body": "We didn't list “{name}” on Discover.\n{note}"
+  },
+  "discover.removed": {
+    "title": "Removed from Discover",
+    "body": "“{name}” is no longer listed on Discover.\n{note}"
+  },
+  "plugin.approved": {
+    "title": "Your plugin version is live",
+    "body": "Version {version} of “{name}” was approved and can be installed."
+  },
+  "plugin.rejected": {
+    "title": "Your plugin version was not approved",
+    "body": "Version {version} of “{name}” was rejected.\n{note}"
+  },
+  "plugin.revoked": {
+    "title": "A plugin version was withdrawn",
+    "body": "Version {version} of “{name}” can no longer run.\n{note}"
+  },
+  "plugin.suspended": {
+    "title": "Your plugin is suspended",
+    "body": "“{name}” is out of the store and doesn't run for now.\n{note}"
+  },
+  "plugin.reinstated": {
+    "title": "Your plugin is back",
+    "body": "“{name}” is available again."
+  },
+  "plugin.removed": {
+    "title": "Your plugin was removed",
+    "body": "“{name}” was removed from the store for good.\n{note}"
+  },
+  "publisher.verified": {
+    "title": "You're a verified publisher",
+    "body": "Your plugins now show that you are a verified publisher."
+  },
+  "publisher.suspended": {
+    "title": "Plugin publishing is paused",
+    "body": "You can't publish new plugins or versions for now.\n{note}"
+  },
+  "publisher.reinstated": {
+    "title": "You can publish plugins again",
+    "body": "Your publishing rights are back."
+  },
+  "server.verified": {
+    "title": "Your server is verified",
+    "body": "“{name}” now shows the verified mark."
+  },
+  "server.unverified": {
+    "title": "Verified mark removed",
+    "body": "“{name}” no longer shows the verified mark.\n{note}"
+  },
+  "server.nsfw": {
+    "title": "Your server is marked 18+",
+    "body": "“{name}” is now for adults only.\n{note}"
+  },
+  "server.not_nsfw": {
+    "title": "18+ mark removed",
+    "body": "“{name}” is no longer marked 18+."
+  },
+  "server.transferred_from": {
+    "title": "Your server has a new owner",
+    "body": "“{name}” was handed to another member at the support team's decision.\n{note}"
+  },
+  "server.transferred_to": {
+    "title": "You now own a server",
+    "body": "You are now the owner of “{name}”."
+  },
+  "creator.granted": {
+    "title": "You're a design creator",
+    "body": "You can now publish designs in the community gallery."
+  },
+  "creator.suspended": {
+    "title": "Design publishing is paused",
+    "body": "You can't publish designs for now, and your designs are hidden until this is lifted. Your reason and an appeal are in the Creator Studio.\n{note}"
+  },
+  "creator.revoked": {
+    "title": "Design publishing removed",
+    "body": "You can no longer publish designs.\n{note}"
+  },
+  "creator.reinstated": {
+    "title": "You can publish designs again",
+    "body": "Your creator rights are back."
+  },
+  "badge.granted": {
+    "title": "A new badge for you",
+    "body": "You received the badge “{name}”. It shows on your profile."
+  },
+  "badge.revoked": {
+    "title": "A badge was removed",
+    "body": "The badge “{name}” was removed from your profile.\n{note}"
+  },
+  "bug.triage": {
+    "title": "We're looking at your bug report",
+    "body": "“{title}”\n{note}"
+  },
+  "bug.need_info": {
+    "title": "We need more about your bug report",
+    "body": "“{title}”\n{note}\nAdd details in Settings → Feedback & reports."
+  },
+  "bug.confirm": {
+    "title": "Your bug report is confirmed",
+    "body": "“{title}” — thank you! Confirmed reports count towards Bug Hunter.\n{note}"
+  },
+  "bug.fix": {
+    "title": "The bug you reported is fixed",
+    "body": "“{title}” — thank you for reporting it.\n{note}"
+  },
+  "bug.duplicate": {
+    "title": "Your bug report was already known",
+    "body": "“{title}” is the same as an earlier report. Thank you!\n{note}"
+  },
+  "bug.not_a_bug": {
+    "title": "About your bug report",
+    "body": "“{title}” works as intended.\n{note}"
+  },
+  "bug.reopen": {
+    "title": "Your bug report is open again",
+    "body": "“{title}”\n{note}"
+  },
+  "feather.granted": {
+    "title": "A gift from Zrzur",
+    "body": "The Zrzur team gave you Feather for {days} days. Thank you!"
+  },
+  "billing.refunded": {
+    "title": "Refund sent",
+    "body": "We refunded {amount} for your order. It can take a few days to reach you.\n{note}"
+  },
+  "beta.invited": {
+    "title": "You're invited to the beta",
+    "body": "Try new Zrzur features before everyone else. Accept the invitation in Settings → Profile → Badges."
+  },
+  "beta.approved": {
+    "title": "Welcome to the beta",
+    "body": "You're now a Zrzur beta tester. Thank you!"
+  },
+  "beta.removed": {
+    "title": "Beta program",
+    "body": "You're no longer in the beta program."
+  },
+  "change_request": {
+    "title": "A change to your profile",
+    "body": "The Zrzur team asks you to agree to a change to your profile. Nothing changes unless you agree; review it in Settings → My account."
+  },
+  "sessions.ended": {
+    "title": "You were signed out",
+    "body": "For your safety, the Zrzur team signed you out on all devices. Sign in again; if you didn't expect this, change your password.\n{note}"
+  },
+  "badge_name.one_year": {
+    "title": "One year on Zrzur",
+    "body": ""
+  },
+  "badge_name.three_years": {
+    "title": "Three years on Zrzur",
+    "body": ""
+  },
+  "badge_name.community_builder": {
+    "title": "Community builder",
+    "body": ""
+  },
+  "badge_name.big_community": {
+    "title": "Big community",
+    "body": ""
+  },
+  "badge_name.verified_server_owner": {
+    "title": "Verified server owner",
+    "body": ""
+  },
+  "badge_name.verified_bot_developer": {
+    "title": "Verified bot developer",
+    "body": ""
+  },
+  "badge_name.saha_champion": {
+    "title": "Saha champion",
+    "body": ""
+  },
+  "badge_name.community_helper": {
+    "title": "Community helper",
+    "body": ""
+  },
+  "badge_name.staff": {
+    "title": "Zrzur staff",
+    "body": ""
+  },
+  "badge_name.founder": {
+    "title": "Founder",
+    "body": ""
+  },
+  "badge_name.developer": {
+    "title": "Zrzur developer",
+    "body": ""
+  },
+  "badge_name.platform_moderator": {
+    "title": "Platform moderator",
+    "body": ""
+  },
+  "badge_name.partner": {
+    "title": "Partner",
+    "body": ""
+  },
+  "badge_name.super_creator": {
+    "title": "Super creator",
+    "body": ""
+  },
+  "badge_name.creator": {
+    "title": "Creator",
+    "body": ""
+  },
+  "badge_name.elite_bug_hunter": {
+    "title": "Elite bug hunter",
+    "body": ""
+  },
+  "badge_name.bug_hunter": {
+    "title": "Bug hunter",
+    "body": ""
+  },
+  "badge_name.beta_tester": {
+    "title": "Beta tester",
+    "body": ""
+  },
+  "badge_name.beta_veteran": {
+    "title": "Beta veteran",
+    "body": ""
+  },
+  "badge_name.plus": {
+    "title": "Feather",
+    "body": ""
+  },
+  "badge_name.early_supporter": {
+    "title": "Early supporter",
+    "body": ""
+  },
+  "badge_name.early_adopter": {
+    "title": "Early adopter",
+    "body": ""
+  },
+  "badge_name.translator": {
+    "title": "Translator",
+    "body": ""
+  },
+  "badge_name.responsible_disclosure": {
+    "title": "Responsible disclosure",
+    "body": ""
+  },
+  "badge_name.supporter": {
+    "title": "Supporter",
+    "body": ""
+  },
+  "badge_name.paw": {
+    "title": "Paw",
+    "body": ""
+  },
+  "badge_name.reserved_1": {
+    "title": "Reserved 1",
+    "body": ""
+  },
+  "badge_name.reserved_2": {
+    "title": "Reserved 2",
+    "body": ""
+  },
+  "signature": {
+    "title": "",
+    "body": "The Zrzur team"
+  },
+  "statement.facts": {
+    "title": "",
+    "body": "What happened: {facts}"
+  },
+  "statement.reason": {
+    "title": "",
+    "body": "Reason: {reason}"
+  },
+  "statement.ground_law": {
+    "title": "",
+    "body": "Legal ground: the content is illegal under {law}, {provision}."
+  },
+  "statement.ground_terms": {
+    "title": "",
+    "body": "Ground: this breaks our rules ({rule}). This is not a finding that it is illegal."
+  },
+  "statement.automation": {
+    "title": "",
+    "body": "Automated tools were used to find this: {detection}. The decision was made by automated means: {decided}."
+  },
+  "statement.yes": {
+    "title": "",
+    "body": "yes"
+  },
+  "statement.no": {
+    "title": "",
+    "body": "no"
+  },
+  "statement.scope": {
+    "title": "",
+    "body": "Where it applies: {scope}."
+  },
+  "statement.worldwide": {
+    "title": "",
+    "body": "worldwide"
+  },
+  "statement.duration": {
+    "title": "",
+    "body": "How long: {duration}"
+  },
+  "statement.days": {
+    "title": "",
+    "body": "{days} days."
+  },
+  "statement.open_ended": {
+    "title": "",
+    "body": "no end date, until we reverse it or an appeal succeeds."
+  },
+  "statement.appeal": {
+    "title": "",
+    "body": "How to appeal: in Zrzur, open Settings → Feedback & reports and choose Appeal next to this decision. You can appeal for at least 6 months after the decision. If you cannot sign in, write to {contact} and give the reference {reference}. A person reviews your appeal, never only a machine. {link}"
+  },
+  "statement.out_of_court": {
+    "title": "",
+    "body": "Out-of-court settlement: you can also take this decision to a certified out-of-court dispute settlement body of your choice (Article 21 of the Digital Services Act). The European Commission publishes the list of certified bodies on its website. This does not affect your right to go to court."
+  },
+  "statement.contact": {
+    "title": "",
+    "body": "Questions: {contact}"
+  },
+  "public_report.receipt": {
+    "title": "We received your report",
+    "body": "Thank you. We received your report.\n\nYour reference is {reference}. We review every report. If you gave us your email address, we will write to you there when we have decided.\n\nQuestions: {contact}"
+  },
+  "statement.basis_report": {
+    "title": "",
+    "body": "This decision followed a report from another person."
+  },
+  "statement.basis_notice": {
+    "title": "",
+    "body": "This decision followed a notice of illegal content."
+  },
+  "statement.basis_own": {
+    "title": "",
+    "body": "We found this during our own review."
+  },
+  "statement.days_one": {
+    "title": "",
+    "body": "1 day."
+  },
+  "statement.days_two": {
+    "title": "",
+    "body": "2 days."
+  },
+  "statement.days_few": {
+    "title": "",
+    "body": "{days} days."
+  },
+  "statement.rule_link": {
+    "title": "",
+    "body": "Read the rule: {link}"
+  },
+  "statement.out_of_court_body": {
+    "title": "",
+    "body": "Zrzur also works with: {body}."
+  },
+  "reporter.subject": {
+    "title": "Our decision on your report {reference}",
+    "body": ""
+  },
+  "reporter.opening": {
+    "title": "",
+    "body": "Thank you for your report {reference}."
+  },
+  "reporter.outcome.action": {
+    "title": "",
+    "body": "We looked at it and took action: we {what}."
+  },
+  "reporter.outcome.no_violation": {
+    "title": "",
+    "body": "We looked at it and did not find a breach, so we took no action."
+  },
+  "reporter.outcome.duplicate": {
+    "title": "",
+    "body": "Your report repeats one we are already handling, so we took no further action on it."
+  },
+  "reporter.outcome.closed": {
+    "title": "",
+    "body": "We closed your report without further action."
+  },
+  "reporter.outcome.info": {
+    "title": "",
+    "body": "We need more information to decide on your report: {question}"
+  },
+  "reporter.note": {
+    "title": "",
+    "body": "Note from the reviewer: {note}"
+  },
+  "reporter.human": {
+    "title": "",
+    "body": "A person made this decision."
+  },
+  "reporter.redress": {
+    "title": "",
+    "body": "If you disagree, write to {contact} within 6 months and give the reference {reference}; a person will review it. You can also take the dispute to a certified out-of-court dispute settlement body (Article 21 of the Digital Services Act); the European Commission publishes the list. This does not affect your right to go to court."
+  },
+  "reporter.what.warning": {
+    "title": "",
+    "body": "warned the account"
+  },
+  "reporter.what.remove_message": {
+    "title": "",
+    "body": "removed the message"
+  },
+  "reporter.what.suspend": {
+    "title": "",
+    "body": "suspended the account"
+  },
+  "reporter.what.ban": {
+    "title": "",
+    "body": "banned the account"
+  },
+  "reporter.what.disable_bot": {
+    "title": "",
+    "body": "disabled the bot"
+  },
+  "reporter.what.remove_discover": {
+    "title": "",
+    "body": "removed the Discover listing"
+  },
+  "reporter.what.suspend_design": {
+    "title": "",
+    "body": "took the design down"
+  },
+  "rule.Harassment": {
+    "title": "",
+    "body": "Harassment"
+  },
+  "rule.HateOrThreats": {
+    "title": "",
+    "body": "Hate or threats"
+  },
+  "rule.Spam": {
+    "title": "",
+    "body": "Spam"
+  },
+  "rule.ScamFraud": {
+    "title": "",
+    "body": "Scams and fraud"
+  },
+  "rule.Impersonation": {
+    "title": "",
+    "body": "Impersonation"
+  },
+  "rule.MaliciousLinks": {
+    "title": "",
+    "body": "Harmful links"
+  },
+  "rule.Malware": {
+    "title": "",
+    "body": "Malware"
+  },
+  "rule.PrivacyViolation": {
+    "title": "",
+    "body": "Privacy violations"
+  },
+  "rule.PersonalInformation": {
+    "title": "",
+    "body": "Sharing personal information"
+  },
+  "rule.SexualContent": {
+    "title": "",
+    "body": "Sexual content"
+  },
+  "rule.SelfHarm": {
+    "title": "",
+    "body": "Self-harm"
+  },
+  "rule.IllegalContent": {
+    "title": "",
+    "body": "Content we do not allow on Zrzur"
+  },
+  "rule.BotAbuse": {
+    "title": "",
+    "body": "Bot abuse"
+  },
+  "rule.MisleadingApplication": {
+    "title": "",
+    "body": "Misleading applications"
+  },
+  "rule.UnauthorisedContent": {
+    "title": "",
+    "body": "Content that is not allowed here"
+  },
+  "rule.IntellectualProperty": {
+    "title": "",
+    "body": "Intellectual property"
+  },
+  "rule.Underage": {
+    "title": "",
+    "body": "Users below the minimum age"
+  },
+  "rule.Other": {
+    "title": "",
+    "body": "Another breach of our rules"
+  },
+  "reporter.outcome.revoked": {
+    "title": "",
+    "body": "We looked at this again and reversed our earlier decision on your report."
+  },
+  "rule.terms_of_service": {
+    "title": "",
+    "body": "Zrzur's Terms of Service"
+  },
+  "reporter.outcome.overturned": {
+    "title": "",
+    "body": "After an appeal we looked at this again and reversed our earlier decision on your report."
+  },
+  "reporter.info_reply_public": {
+    "title": "",
+    "body": "Please write to {contact} and give the reference {reference}."
+  },
+  "reporter.info_reply_app": {
+    "title": "",
+    "body": "Please answer in Zrzur: open Settings → Feedback & reports and reply to your report {reference}."
+  }
+}

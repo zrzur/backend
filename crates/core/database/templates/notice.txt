@@ -1,0 +1,27 @@
+{{{title_en}}}
+
+{{{body_en}}}
+{{#if link}}
+More: {{{link}}}
+{{/if}}
+You can also read this in the Zrzur app. This is a message from the Zrzur team; we never ask for your password.
+
+----
+
+{{{title_ar}}}
+
+{{{body_ar}}}
+{{#if link}}
+المزيد: {{{link}}}
+{{/if}}
+يمكنك قراءة هذه الرسالة في تطبيق زرزور أيضاً. هذه رسالة من فريق زرزور، ولن نطلب منك كلمة المرور أبداً.
+
+----
+
+{{{title_de}}}
+
+{{{body_de}}}
+{{#if link}}
+Mehr: {{{link}}}
+{{/if}}
+Du kannst das auch in der Zrzur-App lesen. Dies ist eine Nachricht vom Zrzur-Team; wir fragen nie nach deinem Passwort.

@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+#MISE description="Start the Zrzur developer documentation"
+#MISE depends=["docs:install"]
+#MISE dir="{{config_root}}/docs"
+set -e
+
+pnpm build

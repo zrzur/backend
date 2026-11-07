@@ -1,0 +1,29 @@
+[tools]
+node = "25.4.0"
+pnpm = "10.28.1"
+
+gh = "2.25.0"
+
+rust = "1.92.0"
+"github:nextest-rs/nextest" = { version = "0.9.122", version_prefix = "cargo-nextest-" }
+"github:cargo-bins/cargo-quickinstall" = { version = "0.13.13", version_prefix = "cargo-edit-" }
+
+"github:git-town/git-town" = "22.7.1"
+
+[settings]
+experimental = true
+idiomatic_version_file_enable_tools = ["rust"]
+
+[tasks.start]
+description = "Run all services"
+depends = ["docker:start", "build"]
+wait_for = ["docker:start", "build"]
+run = [{ task = "service:*" }]
+
+[env]
+RUST_LOG = "debug,opentelemetry=info,hyper=info,reqwest=info,mobc=info"
+
+BUILDER = "cargo"
+SYSTEM_DEPS_DAV1D_BUILD_INTERNAL = "auto" # enable building dav1d iff the system doesn't have a new enough version
+
+_.file = { path = ".env", tools = true }
