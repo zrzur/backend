@@ -46,8 +46,8 @@
     },
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "3a13160e81ec4ee8b155cf961327cb3597bd0271b32a272ce83ae4d8b5813a2b",
-      "bytes": 5160,
+      "sha256": "abded017db0b56f6042221190861559051124fecc5bff38e4bac0519dd504eee",
+      "bytes": 5244,
       "category": "reviewed-build-and-ci"
     },
     {
@@ -5560,20 +5560,20 @@
     },
     {
       "path": "docs/package-lock.json",
-      "sha256": "28cf8015dd3502cd4b0c922610e03dd0bf3cd5ddcb6c1563498ab0d02426c9c0",
+      "sha256": "8a3224b31370e9c061061adea4f7abb6d8b68b9c425855dc6adf177d9b88cca1",
       "bytes": 688211,
       "category": "public-documentation"
     },
     {
       "path": "docs/package.json",
-      "sha256": "9f7bf2dd0d53be03d645dea69f1cd2d598dbc849e7cb91e493c80e7d569be1a2",
-      "bytes": 1406,
+      "sha256": "7dd1930350684032506aa57e2c7f6783f695c1733e32d5cdf7961c547d145299",
+      "bytes": 1570,
       "category": "public-documentation"
     },
     {
       "path": "docs/pnpm-lock.yaml",
-      "sha256": "e30af13b796e8462293f00ed4e06796d451377fe9fcb961d1a5fb4b412be7be6",
-      "bytes": 402470,
+      "sha256": "64d96ead557e1d5ab36547cdd8074607cdc75a77d19a63a18299353d05c081ca",
+      "bytes": 402557,
       "category": "public-documentation"
     },
     {
