@@ -58,8 +58,8 @@
     },
     {
       "path": ".github/workflows/images.yml",
-      "sha256": "ff6f3eef81705cf8067c37681ebccc4f890464d064eeb1f4c165a355f0275274",
-      "bytes": 3991,
+      "sha256": "96e9e748eb6a2817c289b2f5936c6b3b35ad9a51cb35e5af12882b0cad18d935",
+      "bytes": 4058,
       "category": "reviewed-build-and-ci"
     },
     {
