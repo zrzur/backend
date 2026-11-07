@@ -1,3 +1,4 @@
+# Builds and pushes the service container images to ghcr.io/zrzur.
 name: Container images
 on:
   push:
