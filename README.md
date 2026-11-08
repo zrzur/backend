@@ -28,7 +28,7 @@ Zrzur is an independent, Arabic-first chat platform based on the open-source Sto
 
 Licence and origin: [LICENSE](./LICENSE), [NOTICE](./NOTICE), [MODIFICATIONS.md](./MODIFICATIONS.md). Security: [SECURITY.md](./SECURITY.md). Contributing: [CONTRIBUTING.md](./CONTRIBUTING.md).
 
-> **Zrzur 26.0.0-dev · main · development source.** See [shared release information](ZRZUR_RELEASE.md).
+> **Zrzur 26.0.0 · main · first release.** See [shared release information](ZRZUR_RELEASE.md).
 
 <div align="center">
 

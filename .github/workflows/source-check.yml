@@ -13,17 +13,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Validate development release manifest
+      - name: Validate release manifest
         run: |
           python3 - <<'PY'
           import json, pathlib
           release = json.loads(pathlib.Path('RELEASE.json').read_text())
-          assert release['version'] == '26.0.0-dev'
+          assert release['version'] == '26.0.0'
           assert release['component'] == 'backend'
-          assert release['releaseReady'] is False
+          assert release['releaseReady'] is True
           assert pathlib.Path('LICENSE').exists()
           assert pathlib.Path('ZRZUR_RELEASE.md').exists()
-          print('Development source manifest verified; functional release checks remain separate.')
+          print('Release manifest verified; functional release checks remain separate.')
           PY
       - name: Verify reviewed public source files
         run: python3 scripts/publication_guard.py
