@@ -7,6 +7,9 @@ ARG TARGETARCH
 
 ARG CARGO_BUILD_JOBS=10
 ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
+# Hosted CI runners pass "thin": full LTO of every service exhausts their memory.
+ARG CARGO_PROFILE_RELEASE_LTO=true
+ENV CARGO_PROFILE_RELEASE_LTO=${CARGO_PROFILE_RELEASE_LTO}
 
 # Install build requirements
 RUN dpkg --add-architecture "${TARGETARCH}"

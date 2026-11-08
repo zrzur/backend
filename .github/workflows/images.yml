@@ -38,7 +38,7 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
           df -h /
       - name: Build backend base from reviewed source
-        run: docker build --build-arg CARGO_BUILD_JOBS=2 -t zrzur/base:local -f Dockerfile .
+        run: docker build --build-arg CARGO_BUILD_JOBS=2 --build-arg CARGO_PROFILE_RELEASE_LTO=thin -t zrzur/base:local -f Dockerfile .
       - name: Image tags from ZRZUR_VERSION
         # 26.0.0 -> 26.0.0, 26, stable; 26.1.0-beta.1 -> 26.1.0-beta.1, beta;
         # anything else (26.0.0-dev) -> only its version
