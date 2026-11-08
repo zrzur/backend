@@ -303,6 +303,21 @@ pub async fn send(
     )
     .await?;
 
+    // what you send yourself is read: every session of yours, and the unread
+    // state after a reconnect, start after this message
+    if user.bot.is_none() {
+        if let Err(err) = revolt_database::util::acker::ack_channel(
+            &user.id,
+            &message.channel,
+            &message.id,
+            amqp,
+        )
+        .await
+        {
+            revolt_config::capture_error(&err);
+        }
+    }
+
     if let Some((mut thread_channel, next)) = thread_update {
         thread_channel
             .update(
@@ -965,5 +980,42 @@ mod flags_test {
         // bits above the defined flags are still refused
         let response = send(1 << 4).await;
         assert_eq!(response.status(), Status::BadRequest);
+    }
+
+    #[rocket::async_test]
+    async fn sending_marks_the_channel_read_for_the_author() {
+        let harness = TestHarness::new().await;
+        let (_, session, user) = harness.new_user().await;
+        let (server, channels) = Server::create(
+            &harness.db,
+            v0::DataCreateServer {
+                name: "Own messages".to_string(),
+                ..Default::default()
+            },
+            &user,
+            true,
+        )
+        .await
+        .unwrap();
+        Member::create(&harness.db, &server, &user, None).await.unwrap();
+        let channel = channels[0].id().to_string();
+
+        let response = harness
+            .client
+            .post(format!("/channels/{channel}/messages"))
+            .header(ContentType::JSON)
+            .header(Header::new("x-session-token", session.token.clone()))
+            .body(json!({ "content": "mine" }).to_string())
+            .dispatch()
+            .await;
+        assert_eq!(response.status(), Status::Ok);
+        let message: v0::Message = response.into_json().await.unwrap();
+
+        // the ack waits in Redis for crond, as one from PUT /ack does
+        let mut redis = redis_kiss::get_connection().await.unwrap();
+        let acked = revolt_database::util::acker::take_ack(&mut redis, &user.id, &channel)
+            .await
+            .unwrap();
+        assert_eq!(acked.as_deref(), Some(message.id.as_str()));
     }
 }

@@ -791,7 +791,8 @@ impl Message {
         // Add mentions for affected users
         #[cfg(feature = "tasks")]
         if !mentions_elsewhere {
-            if let Some(mentions) = &self.mentions {
+            if self.mentions.is_some() {
+                let mentions = self.mention_recipients();
                 tasks::ack::queue_message(
                     self.channel.to_string(),
                     AckEvent::ProcessMessage {
@@ -875,9 +876,7 @@ impl Message {
                                 .filter(|uid| *uid != author.id())
                                 .cloned()
                                 .collect(),
-                            Channel::TextChannel { .. } => {
-                                self.mentions.clone().unwrap_or_default()
-                            }
+                            Channel::TextChannel { .. } => self.mention_recipients(),
                             _ => vec![],
                         },
                         false, // branch already dictates this
@@ -930,6 +929,17 @@ impl Message {
             image_url: embed.image_url,
             thumbnail_url: embed.thumbnail_url,
         })
+    }
+
+    /// Users this message's mentions notify: everyone mentioned except the
+    /// author (replying to your own message, or naming yourself, is no mention)
+    pub fn mention_recipients(&self) -> Vec<String> {
+        self.mentions
+            .iter()
+            .flatten()
+            .filter(|id| **id != self.author)
+            .cloned()
+            .collect()
     }
 
     /// Whether this message has suppressed notifications
@@ -1450,5 +1460,29 @@ impl Interactions {
     /// Check if default initialisation of fields
     pub fn is_default(&self) -> bool {
         !self.restrict_reactions && self.reactions.is_none()
+    }
+}
+
+#[cfg(test)]
+mod mention_recipient_tests {
+    use super::Message;
+
+    #[test]
+    fn the_author_is_never_a_mention_recipient() {
+        let message = Message {
+            author: "author".to_string(),
+            mentions: Some(vec!["author".to_string(), "friend".to_string()]),
+            ..Default::default()
+        };
+        assert_eq!(message.mention_recipients(), vec!["friend".to_string()]);
+    }
+
+    #[test]
+    fn no_mentions_means_no_recipients() {
+        let message = Message {
+            author: "author".to_string(),
+            ..Default::default()
+        };
+        assert!(message.mention_recipients().is_empty());
     }
 }

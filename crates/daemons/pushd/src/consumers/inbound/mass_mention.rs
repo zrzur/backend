@@ -144,8 +144,12 @@ impl Consumer for MassMessageConsumer {
                             }
                         }
 
-                        let userids: Vec<String> =
-                            chunk.iter().map(|member| member.id.user.clone()).collect();
+                        // the author's own @everyone is no mention of themselves
+                        let userids: Vec<String> = chunk
+                            .iter()
+                            .map(|member| member.id.user.clone())
+                            .filter(|id| *id != push.message.author)
+                            .collect();
 
                         debug!("Userids in chunk: {:?}", userids);
 
@@ -207,7 +211,10 @@ impl Consumer for MassMessageConsumer {
                             .await
                             .iter()
                             .filter_map(|(uid, viewable)| {
-                                if *viewable && !existing_mentions.contains(uid) {
+                                if *viewable
+                                    && !existing_mentions.contains(uid)
+                                    && *uid != push.message.author
+                                {
                                     Some(uid.clone())
                                 } else {
                                     None
