@@ -13,7 +13,7 @@ use std::time::Duration;
 use redis_kiss::{get_connection, redis};
 use revolt_database::util::{ip::rocket::to_real_ip, reference::Reference};
 use revolt_database::{Database, Webhook};
-use revolt_ratelimits::ratelimiter::{retry_after_seconds, Ratelimiter};
+use revolt_ratelimits::ratelimiter::{address_group, retry_after_seconds, Ratelimiter};
 use revolt_result::{create_error, Result};
 use revolt_rocket_okapi::{
     r#gen::OpenApiGenerator,
@@ -86,7 +86,7 @@ fn key(kind: &str, id: &str) -> u64 {
 }
 
 fn bad_token_key(ip: &str) -> String {
-    format!("rl:webhook-token:{}", key("address", ip))
+    format!("rl:webhook-token:{}", key("address", &address_group(ip)))
 }
 
 /// Milliseconds an address must wait, when it guessed too often
@@ -181,7 +181,7 @@ impl WebhookCaller<'_> {
                 limit: BAD_TOKEN_LIMIT,
                 remaining: 0,
                 reset: wait,
-                bucket: key("address", &self.ip),
+                bucket: key("address", &address_group(&self.ip)),
                 refused: true,
             });
             return Err(rate_limited(wait));

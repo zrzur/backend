@@ -18,7 +18,7 @@ mod tests {
         let (name, resource, limit) = bucket(Method::POST, "/webhooks/01HOOK/attachments");
         assert_eq!(name, "webhook_upload");
         assert_eq!(resource.as_deref(), Some("01HOOK"));
-        assert_eq!(limit, 10);
+        assert_eq!(limit, 125);
         // another webhook has a bucket of its own
         assert_eq!(bucket(Method::POST, "/webhooks/01OTHER/attachments").1.as_deref(), Some("01OTHER"));
     }
@@ -52,7 +52,9 @@ impl RatelimitResolver<Parts> for AutumnRatelimits {
     fn resolve_bucket_limit(&self, bucket: &str) -> u32 {
         match bucket {
             "upload" => 10,
-            "webhook_upload" => 10,
+            // delta lets a webhook send 5 messages in 2 s with 5 files each:
+            // 125 files in a 10 s window, so delta's own forwarding never hits this
+            "webhook_upload" => 125,
             _ => u32::MAX,
         }
     }

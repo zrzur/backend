@@ -313,19 +313,33 @@ async fn upload_webhook_file(
     State(db): State<Database>,
     Path(webhook_id): Path<String>,
     headers: HeaderMap,
-    TypedMultipart(UploadPayload { file }): TypedMultipart<UploadPayload>,
+    request: axum::extract::Request,
 ) -> Result<Json<UploadResponse>> {
+    // The webhook and its token are checked before the body is read, so a
+    // made-up webhook id costs no disk or memory. An unknown webhook answers
+    // like a wrong token (401), which counts towards blocking the address.
     let token = headers
         .get("x-webhook-token")
         .and_then(|value| value.to_str().ok())
         .ok_or_else(|| create_error!(NotAuthenticated))?;
-    let webhook = db.fetch_webhook(&webhook_id).await?;
+    let webhook = db
+        .fetch_webhook(&webhook_id)
+        .await
+        .map_err(|_| create_error!(NotAuthenticated))?;
     webhook.assert_token(token)?;
     if !webhook.can_upload_files() {
         return Err(create_error!(MissingPermission {
             permission: "UploadFiles".to_string()
         }));
     }
+    let TypedMultipart(UploadPayload { file }) =
+        <TypedMultipart<UploadPayload> as axum::extract::FromRequest<()>>::from_request(request, &())
+            .await
+            .map_err(|_| {
+                revolt_result::failed_validation(vec![revolt_result::ValidationProblem::new(
+                    "file", "invalid_upload",
+                )])
+            })?;
 
     let size_limit = *config()
         .await
@@ -378,7 +392,7 @@ async fn store_upload(
     };
     let on_disk = report_internal_error!(file.contents.as_file().metadata())?.len();
     if on_disk > largest as u64 {
-        return Err(create_error!(FileTooLarge { max: size_limit }));
+        return Err(create_error!(FileTooLarge { max: largest }));
     }
 
     // Load file to memory
@@ -470,31 +484,42 @@ async fn store_upload(
         return Err(create_error!(FileTypeNotAllowed));
     }
 
-    // Read the size from the image header first; decoding happens only below the limits
+    // Read the size from the image header first; nothing decodes an image
+    // over the limits. An attachment that big is still sent, as a plain file
+    // (no preview); a picture for a profile, server or emoji is refused.
+    let mut over_pixel_limit = false;
     if mime_type.starts_with("image/") && mime_type != "image/svg+xml" {
         if let Some((width, height)) = revolt_files::image_size(&file.contents) {
             if !pixels_allowed(width, height, &config.files.limit) {
-                return Err(revolt_result::failed_validation(vec![
-                    revolt_result::ValidationProblem::new("file", "image_too_large"),
-                ]));
+                if !matches!(tag, Tag::attachments) {
+                    return Err(revolt_result::failed_validation(vec![
+                        revolt_result::ValidationProblem::new("file", "image_too_large"),
+                    ]));
+                }
+                over_pixel_limit = true;
             }
         }
     }
 
     // Heavy work (decoding, re-encoding) waits for a free slot and runs away
-    // from the threads that answer requests
-    let _decode_slot = UPLOAD_DECODES
+    // from the threads that answer requests. The slot goes with the work into
+    // the blocking task, so a request that is dropped doesn't free it early.
+    let decode_slot = UPLOAD_DECODES
         .acquire()
         .await
         .map_err(|_| create_error!(InternalError))?;
 
     // Determine metadata for the file
-    let (contents, metadata) = tokio::task::spawn_blocking(move || {
-        let metadata = generate_metadata(&file.contents, mime_type);
-        (file.contents, metadata)
-    })
-    .await
-    .map_err(|_| create_error!(InternalError))?;
+    let (contents, metadata, decode_slot) = if over_pixel_limit {
+        (file.contents, Metadata::File, decode_slot)
+    } else {
+        tokio::task::spawn_blocking(move || {
+            let metadata = generate_metadata(&file.contents, mime_type);
+            (file.contents, metadata, decode_slot)
+        })
+        .await
+        .map_err(|_| create_error!(InternalError))?
+    };
 
     // Block non-images for non-attachment uploads
     if !matches!(tag, Tag::attachments) && !matches!(metadata, Metadata::Image { .. }) {
@@ -594,9 +619,16 @@ async fn store_upload(
     let (buf, metadata) = if matches!(tag, Tag::decorations | Tag::effects)
         && mime_type.starts_with("image/")
     {
+        drop(decode_slot);
         (buf, metadata)
     } else {
-        strip_metadata(contents, buf, metadata, mime_type).await?
+        let runtime = tokio::runtime::Handle::current();
+        tokio::task::spawn_blocking(move || {
+            let _slot = decode_slot;
+            runtime.block_on(strip_metadata(contents, buf, metadata, mime_type))
+        })
+        .await
+        .map_err(|_| create_error!(InternalError))??
     };
 
     // Virus scan files if ClamAV is configured

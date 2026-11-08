@@ -158,7 +158,10 @@ impl<'r> FromRequest<'r> for ClientAddress {
     type Error = revolt_result::Error;
 
     async fn from_request(request: &'r Request<'_>) -> Outcome<Self, Self::Error> {
-        Outcome::Success(ClientAddress(to_real_ip(request).await))
+        // one /64 is one address for the limit (an IPv6 host can pick any address in it)
+        Outcome::Success(ClientAddress(revolt_ratelimits::ratelimiter::address_group(
+            &to_real_ip(request).await,
+        )))
     }
 }
 
