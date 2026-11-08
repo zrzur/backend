@@ -13,7 +13,7 @@ use axum::{
 };
 use axum_typed_multipart::{FieldData, TryFromMultipart, TypedMultipart};
 use lazy_static::lazy_static;
-use revolt_config::{config, report_internal_error, CorsOrigins};
+use revolt_config::{config, report_internal_error, CorsOrigins, FilesLimit};
 use revolt_database::{
     CommunityFileAccess, CommunityImageError, CommunityImageLimits, Database, FileHash, Metadata,
     PlatformPermission, User, check_effect_image, community_file_access, inspect_community_image,
@@ -338,6 +338,19 @@ async fn upload_webhook_file(
     store_upload(&db, Tag::attachments, file, &webhook.id, size_limit).await
 }
 
+/// Images whose header claims more pixels than the limits are refused before
+/// anything decodes them: a small file can claim a huge picture
+fn pixels_allowed(width: usize, height: usize, limit: &FilesLimit) -> bool {
+    let side = limit.max_pixel_side;
+    let pixels = limit.max_mega_pixels.saturating_mul(1_000_000);
+    (side == 0 || (width <= side && height <= side))
+        && (pixels == 0 || width.saturating_mul(height) <= pixels)
+}
+
+/// Uploads decoded at the same time; the rest wait their turn
+const MAX_UPLOAD_DECODES: usize = 4;
+static UPLOAD_DECODES: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(MAX_UPLOAD_DECODES);
+
 /// Check, clean and store one upload
 async fn store_upload(
     db: &Database,
@@ -354,6 +367,19 @@ async fn store_upload(
 
     // Extract the filename, or give it a generic name
     let mut filename = file.metadata.file_name.take().unwrap_or("unnamed-file".to_owned());
+
+    // Refuse a file over the limit before it is read into memory (a design's
+    // WebM has a limit of its own, checked again below)
+    let design_upload = matches!(tag, Tag::decorations | Tag::effects);
+    let largest = if design_upload {
+        size_limit.max(config.features.community.webm_max_bytes)
+    } else {
+        size_limit
+    };
+    let on_disk = report_internal_error!(file.contents.as_file().metadata())?.len();
+    if on_disk > largest as u64 {
+        return Err(create_error!(FileTooLarge { max: size_limit }));
+    }
 
     // Load file to memory
     let mut buf = Vec::<u8>::new();
@@ -444,8 +470,31 @@ async fn store_upload(
         return Err(create_error!(FileTypeNotAllowed));
     }
 
+    // Read the size from the image header first; decoding happens only below the limits
+    if mime_type.starts_with("image/") && mime_type != "image/svg+xml" {
+        if let Some((width, height)) = revolt_files::image_size(&file.contents) {
+            if !pixels_allowed(width, height, &config.files.limit) {
+                return Err(revolt_result::failed_validation(vec![
+                    revolt_result::ValidationProblem::new("file", "image_too_large"),
+                ]));
+            }
+        }
+    }
+
+    // Heavy work (decoding, re-encoding) waits for a free slot and runs away
+    // from the threads that answer requests
+    let _decode_slot = UPLOAD_DECODES
+        .acquire()
+        .await
+        .map_err(|_| create_error!(InternalError))?;
+
     // Determine metadata for the file
-    let metadata = generate_metadata(&file.contents, mime_type);
+    let (contents, metadata) = tokio::task::spawn_blocking(move || {
+        let metadata = generate_metadata(&file.contents, mime_type);
+        (file.contents, metadata)
+    })
+    .await
+    .map_err(|_| create_error!(InternalError))?;
 
     // Block non-images for non-attachment uploads
     if !matches!(tag, Tag::attachments) && !matches!(metadata, Metadata::Image { .. }) {
@@ -547,7 +596,7 @@ async fn store_upload(
     {
         (buf, metadata)
     } else {
-        strip_metadata(file.contents, buf, metadata, mime_type).await?
+        strip_metadata(contents, buf, metadata, mime_type).await?
     };
 
     // Virus scan files if ClamAV is configured
@@ -1009,5 +1058,36 @@ mod cors_tests {
                 assert!(answer.contains("vary: origin"), "{method} {origin}: {answer}");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod pixel_limit_tests {
+    use super::pixels_allowed;
+    use revolt_config::FilesLimit;
+
+    fn limit() -> FilesLimit {
+        FilesLimit { min_file_size: 1, min_resolution: [1, 1], max_mega_pixels: 40, max_pixel_side: 10_000 }
+    }
+
+    #[test]
+    fn ordinary_pictures_pass() {
+        assert!(pixels_allowed(4032, 3024, &limit()));
+        assert!(pixels_allowed(10_000, 4_000, &limit()));
+    }
+
+    #[test]
+    fn a_huge_claimed_picture_is_refused() {
+        assert!(!pixels_allowed(11_000, 11_000, &limit()));
+        assert!(!pixels_allowed(10_001, 10, &limit()));
+        // under the side limit, but over 40 megapixels
+        assert!(!pixels_allowed(9_000, 9_000, &limit()));
+        assert!(!pixels_allowed(usize::MAX, usize::MAX, &limit()));
+    }
+
+    #[test]
+    fn zero_means_no_limit() {
+        let none = FilesLimit { max_mega_pixels: 0, max_pixel_side: 0, ..limit() };
+        assert!(pixels_allowed(50_000, 50_000, &none));
     }
 }

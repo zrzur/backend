@@ -242,7 +242,26 @@ pub fn identifier(bot: Option<&str>, session: Option<&str>, ip: &str) -> String 
     match (bot, session) {
         (Some(bot), _) => format!("bot:{bot}"),
         (None, Some(session)) => session.to_string(),
-        (None, None) => ip.to_string(),
+        (None, None) => address_group(ip),
+    }
+}
+
+/// The address a limit counts against. IPv6 hosts usually get a whole /64,
+/// so one person could take a fresh address (and a fresh bucket) for every
+/// request; all addresses of one /64 count as one. IPv4, and IPv4 written as
+/// IPv6 (`::ffff:a.b.c.d`), stay one address. Anything that is not an address
+/// is kept as it is.
+pub fn address_group(ip: &str) -> String {
+    match ip.trim().parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(v4)) => v4.to_string(),
+        Ok(std::net::IpAddr::V6(v6)) => match v6.to_ipv4_mapped() {
+            Some(v4) => v4.to_string(),
+            None => {
+                let s = v6.segments();
+                format!("{:x}:{:x}:{:x}:{:x}::/64", s[0], s[1], s[2], s[3])
+            }
+        },
+        Err(_) => ip.to_string(),
     }
 }
 
@@ -261,7 +280,7 @@ pub fn identifier_for_bucket(
     ip: &str,
 ) -> String {
     if is_address_only_bucket(bucket) {
-        format!("ip:{ip}")
+        format!("ip:{}", address_group(ip))
     } else {
         identifier(bot, session, ip)
     }
@@ -303,7 +322,7 @@ pub fn counts_as_refused(status: u16) -> bool {
 
 fn address_key(kind: &str, ip: &str) -> String {
     let mut hash = DefaultHasher::new();
-    hash.write(ip.as_bytes());
+    hash.write(address_group(ip).as_bytes());
     format!("rl:{kind}:{}", hash.finish())
 }
 
@@ -418,6 +437,34 @@ pub fn retry_after_seconds(reset_ms: u128) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn one_ipv6_slash_64_counts_as_one_address() {
+        use super::{address_group, identifier, identifier_for_bucket};
+        let a = "2001:db8:1:2:aaaa::1";
+        let b = "2001:db8:1:2:ffff:ffff:ffff:ffff";
+        let other = "2001:db8:1:3::1";
+        assert_eq!(address_group(a), address_group(b));
+        assert_ne!(address_group(a), address_group(other));
+        assert_eq!(address_group(a), "2001:db8:1:2::/64");
+        // the sign-in buckets and anonymous requests both use the group
+        assert_eq!(
+            identifier_for_bucket("auth", None, None, a),
+            identifier_for_bucket("auth", None, None, b)
+        );
+        assert_eq!(identifier(None, None, a), identifier(None, None, b));
+        // a session is still counted by itself, not by its address
+        assert_eq!(identifier(None, Some("session"), a), "session");
+    }
+
+    #[test]
+    fn ipv4_addresses_stay_single() {
+        use super::address_group;
+        assert_eq!(address_group("198.51.100.7"), "198.51.100.7");
+        assert_ne!(address_group("198.51.100.7"), address_group("198.51.100.8"));
+        assert_eq!(address_group("::ffff:198.51.100.7"), "198.51.100.7");
+        assert_eq!(address_group("not an address"), "not an address");
+    }
+
     use super::*;
 
     #[test]
