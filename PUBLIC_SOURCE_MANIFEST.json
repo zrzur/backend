@@ -58,8 +58,8 @@
     },
     {
       "path": ".github/workflows/images.yml",
-      "sha256": "8afa172cb8f349ce6a30727ba8ae775f5cddd7d584365ebc84679f5c299db3ec",
-      "bytes": 4058,
+      "sha256": "2b24c97849a5187147a6340eec2d44c645157cd4904774f52092545de026001f",
+      "bytes": 4101,
       "category": "reviewed-build-and-ci"
     },
     {
@@ -238,8 +238,8 @@
     },
     {
       "path": "Dockerfile",
-      "sha256": "9538dd8ede7102d48964222df5eb7bb9902baba32c5e2dc30ba638c28958deaa",
-      "bytes": 1924,
+      "sha256": "f8d3ff41a41d848b99bf96c2b4f9d274768792a0c65e8d230bb0c57aaedc47c0",
+      "bytes": 2100,
       "category": "product-source-or-build-manifest"
     },
     {
