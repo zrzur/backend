@@ -2860,8 +2860,8 @@
     },
     {
       "path": "crates/core/ratelimits/src/ratelimiter.rs",
-      "sha256": "fe793d1adbaa41335a11f21d1ab1ff3f1fcf62cdc9d928f32a291b8fb836b2de",
-      "bytes": 18389,
+      "sha256": "33c37e33d0c2429bd0a1ac665c5a9db234d57cd9c8d029432ca6e614f778df12",
+      "bytes": 20479,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4126,8 +4126,8 @@
     },
     {
       "path": "crates/delta/src/routes/safety/public_report.rs",
-      "sha256": "956d39439659ddded2421e6b822da353433ae14b5849e271139195f0d971d474",
-      "bytes": 24744,
+      "sha256": "3d2730ad4ee03341e33276005ae567e3dfc02905ade1dd2172c40ce7ba906410",
+      "bytes": 24905,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -5170,8 +5170,8 @@
     },
     {
       "path": "crates/delta/src/util/webhooks.rs",
-      "sha256": "7a63a58acff1da4dbf6a57d007f3b99eb3a3553ae22732e18b7b74f6c087321c",
-      "bytes": 10984,
+      "sha256": "e4e022533d61fd6ff2d6d39911c333453932f225efd9d8fd81cd17bd4847245f",
+      "bytes": 11031,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -5188,8 +5188,8 @@
     },
     {
       "path": "crates/services/autumn/src/api.rs",
-      "sha256": "afd2eda992e772ac9997d057c36ba1d893d67db6ac4974708c5bc16e0ad52e41",
-      "bytes": 36519,
+      "sha256": "aa865d650633f82ecba74ed17a7ff0b6c34cda14bb32cdf631f07221a65283d8",
+      "bytes": 41084,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -5248,8 +5248,8 @@
     },
     {
       "path": "crates/services/autumn/src/ratelimits.rs",
-      "sha256": "b0ccaf0a9891f50aadc14104b486482787f0327435fdea39d00e96fce4a150cf",
-      "bytes": 749,
+      "sha256": "c4a0aef06dae42d8ac73cd20843ad3e0edd9576a05c34ecb8a7fb3e2b6169613",
+      "bytes": 2371,
       "category": "product-source-or-build-manifest"
     },
     {
