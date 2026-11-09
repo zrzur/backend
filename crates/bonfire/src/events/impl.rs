@@ -1127,18 +1127,30 @@ impl State {
     /// check when it came in; what the session lost since (a channel it can
     /// no longer see, a server it left, webhooks it no longer manages) is
     /// not sent again. Events that take something away always are.
-    pub async fn may_replay(&self, db: &Database, event: &mut EventV1) -> bool {
+    pub async fn may_replay<'e>(
+        &self,
+        db: &Database,
+        event: &'e EventV1,
+    ) -> Option<std::borrow::Cow<'e, EventV1>> {
+        use std::borrow::Cow;
         if let EventV1::Bulk { v } = event {
             let mut kept = Vec::with_capacity(v.len());
-            for inner in std::mem::take(v) {
-                if self.still_visible(db, &inner).await {
-                    kept.push(inner);
+            for inner in v {
+                if self.still_visible(db, inner).await {
+                    kept.push(inner.clone());
                 }
             }
-            *v = kept;
-            return !v.is_empty();
+            if kept.is_empty() {
+                return None;
+            }
+            if kept.len() == v.len() {
+                return Some(Cow::Borrowed(event));
+            }
+            return Some(Cow::Owned(EventV1::Bulk { v: kept }));
         }
-        self.still_visible(db, event).await
+        self.still_visible(db, event)
+            .await
+            .then_some(Cow::Borrowed(event))
     }
 
     async fn still_visible(&self, db: &Database, event: &EventV1) -> bool {
@@ -1149,7 +1161,20 @@ impl State {
             Scope::Webhooks(id) => {
                 self.follows_channel(id).await && self.cache.can_manage_webhooks(db, id).await
             }
+            Scope::Channels(from, to) => {
+                self.follows_channel(from).await || self.follows_channel(to).await
+            }
             Scope::Server(id) => self.cache.servers.contains_key(id),
+            Scope::Emoji(id) => match db.fetch_emoji(id).await {
+                Ok(emoji) => match emoji.parent {
+                    revolt_database::EmojiParent::Server { id } => {
+                        self.cache.servers.contains_key(&id)
+                    }
+                    revolt_database::EmojiParent::Detached => true,
+                },
+                // gone since: its EmojiDelete says so
+                Err(_) => false,
+            },
         }
     }
 

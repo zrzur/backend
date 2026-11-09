@@ -1089,7 +1089,7 @@ async fn a_kept_message_is_not_replayed_after_its_channel_was_hidden() {
 
     // kept while the socket was down
     let kept = message_in(CHANNEL);
-    assert!(state.may_replay(&db, &mut kept.clone()).await);
+    assert!(state.may_replay(&db, &kept).await.is_some());
 
     // then, before the resume, @everyone loses the channel
     let mut removal = permissions_update(PartialChannel {
@@ -1100,16 +1100,16 @@ async fn a_kept_message_is_not_replayed_after_its_channel_was_hidden() {
     assert!(matches!(removal, EventV1::ChannelDelete { .. }));
 
     assert!(
-        !state.may_replay(&db, &mut kept.clone()).await,
+        !state.may_replay(&db, &kept).await.is_some(),
         "the message must not be sent again"
     );
     let mut typing = EventV1::ChannelStartTyping {
         id: CHANNEL.to_string(),
         user: OWNER.to_string(),
     };
-    assert!(!state.may_replay(&db, &mut typing).await);
+    assert!(!state.may_replay(&db, &typing).await.is_some());
     // what takes the channel away is sent
-    assert!(state.may_replay(&db, &mut removal).await);
+    assert!(state.may_replay(&db, &removal).await.is_some());
 }
 
 #[tokio::test]
@@ -1124,7 +1124,7 @@ async fn kept_server_events_are_not_replayed_after_leaving() {
         data: Default::default(),
         clear: vec![],
     };
-    assert!(state.may_replay(&db, &mut update.clone()).await);
+    assert!(state.may_replay(&db, &update).await.is_some());
 
     let mut leave = EventV1::ServerMemberLeave {
         id: SERVER.to_string(),
@@ -1133,9 +1133,9 @@ async fn kept_server_events_are_not_replayed_after_leaving() {
     };
     assert!(state.handle_incoming_event_v1(&db, &mut leave, SERVER).await);
 
-    assert!(!state.may_replay(&db, &mut update.clone()).await);
-    assert!(!state.may_replay(&db, &mut message_in(CHANNEL)).await);
-    assert!(state.may_replay(&db, &mut leave).await);
+    assert!(!state.may_replay(&db, &update).await.is_some());
+    assert!(!state.may_replay(&db, &message_in(CHANNEL)).await.is_some());
+    assert!(state.may_replay(&db, &leave).await.is_some());
 }
 
 #[tokio::test]
@@ -1154,8 +1154,8 @@ async fn a_kept_bulk_event_keeps_only_what_is_still_visible() {
             },
         ],
     };
-    assert!(state.may_replay(&db, &mut bulk).await);
-    let EventV1::Bulk { v } = &bulk else { panic!() };
+    let kept = state.may_replay(&db, &bulk).await.expect("some of it");
+    let EventV1::Bulk { v } = kept.as_ref() else { panic!() };
     assert_eq!(v.len(), 2);
     assert!(matches!(&v[0], EventV1::Message(m) if m.channel == CHANNEL));
     assert!(matches!(&v[1], EventV1::ChannelDelete { .. }));
@@ -1163,5 +1163,106 @@ async fn a_kept_bulk_event_keeps_only_what_is_still_visible() {
     let mut nothing_left = EventV1::Bulk {
         v: vec![message_in("elsewhere")],
     };
-    assert!(!state.may_replay(&db, &mut nothing_left).await);
+    assert!(!state.may_replay(&db, &nothing_left).await.is_some());
+}
+
+/// Review S3: what is about one channel follows that channel on a resume
+#[tokio::test]
+async fn kept_interaction_answers_and_voice_moves_follow_their_channel() {
+    let db = db().await;
+    let server = server(false);
+    let mut state = state("member", &server, &[]).await;
+    follow(&mut state, &channel(HashMap::new(), None)).await;
+
+    let ephemeral: v0::EphemeralMessage = serde_json::from_value(serde_json::json!({
+        "_id": "e", "interaction_id": "i", "author": "bot", "channel_id": CHANNEL,
+        "embeds": [], "components": []
+    }))
+    .expect("valid ephemeral message");
+    let state_update = |channel: &str| EventV1::InteractionStateUpdate {
+        id: "i".to_string(),
+        channel_id: channel.to_string(),
+        state: serde_json::from_value(serde_json::json!("Deferred")).expect("a state"),
+        message_id: None,
+    };
+    let kept = vec![
+        EventV1::EphemeralMessageCreate { message: ephemeral.clone() },
+        EventV1::EphemeralMessageUpdate { message: ephemeral },
+        EventV1::EphemeralMessageDelete { id: "e".to_string(), channel_id: CHANNEL.to_string() },
+        state_update(CHANNEL),
+        EventV1::UserMoveVoiceChannel {
+            node: "n".to_string(),
+            from: "elsewhere".to_string(),
+            to: CHANNEL.to_string(),
+            token: "t".to_string(),
+        },
+    ];
+    for event in &kept {
+        assert!(state.may_replay(&db, event).await.is_some(), "{event:?}");
+    }
+    // a channel the session never followed is not replayed
+    assert!(state.may_replay(&db, &state_update("elsewhere")).await.is_none());
+
+    let mut removal = permissions_update(PartialChannel {
+        default_permissions: Some(OverrideField { a: 0, d: view() }),
+        ..Default::default()
+    });
+    assert!(state.handle_incoming_event_v1(&db, &mut removal, CHANNEL).await);
+    for event in &kept {
+        assert!(state.may_replay(&db, event).await.is_none(), "{event:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_kept_voice_move_is_replayed_while_either_side_is_followed() {
+    let db = db().await;
+    let server = server(false);
+    let mut state = state("member", &server, &[]).await;
+    follow(&mut state, &channel(HashMap::new(), None)).await;
+    let user_state: v0::UserVoiceState = serde_json::from_value(serde_json::json!({
+        "id": "someone", "joined_at": "2026-11-09T00:00:00Z", "is_receiving": true, "is_publishing": false,
+        "screensharing": false, "camera": false
+    }))
+    .expect("a voice state");
+    let moved = |from: &str, to: &str| EventV1::VoiceChannelMove {
+        user: "someone".to_string(),
+        from: from.to_string(),
+        to: to.to_string(),
+        state: user_state.clone(),
+    };
+    assert!(state.may_replay(&db, &moved(CHANNEL, "elsewhere")).await.is_some());
+    assert!(state.may_replay(&db, &moved("elsewhere", CHANNEL)).await.is_some());
+    assert!(state.may_replay(&db, &moved("elsewhere", "other")).await.is_none());
+}
+
+#[tokio::test]
+async fn a_kept_emoji_update_follows_its_server() {
+    let db = db().await;
+    let server = server(false);
+    let mut state = state("member", &server, &[]).await;
+    db.insert_emoji(&revolt_database::Emoji {
+        id: "emoji".to_string(),
+        parent: revolt_database::EmojiParent::Server {
+            id: SERVER.to_string(),
+        },
+        creator_id: OWNER.to_string(),
+        name: "wave".to_string(),
+        animated: false,
+        nsfw: false,
+    })
+    .await
+    .unwrap();
+    let update = EventV1::EmojiUpdate {
+        id: "emoji".to_string(),
+        data: serde_json::from_value(serde_json::json!({ "name": "hi" })).expect("a change"),
+    };
+    assert!(state.may_replay(&db, &update).await.is_some());
+
+    let mut leave = EventV1::ServerMemberLeave {
+        id: SERVER.to_string(),
+        user: "member".to_string(),
+        reason: v0::RemovalIntention::Leave,
+    };
+    assert!(state.handle_incoming_event_v1(&db, &mut leave, SERVER).await);
+    assert!(state.may_replay(&db, &update).await.is_none());
 }

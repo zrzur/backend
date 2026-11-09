@@ -50,6 +50,13 @@ const MAX_CLIENT_MESSAGE: usize = 1024 * 1024;
 
 /// Close code: a privileged intent was asked for that is not switched on
 const CLOSE_DISALLOWED_INTENTS: u16 = 4014;
+/// Longest a write to a socket may take; a client that reads nothing must
+/// not hold its session's events
+const WRITE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+/// Longest the missed events of a resume may take to send
+const REPLAY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+/// Refused resumes one socket may try before it is closed
+const MAX_RESUME_TRIES: usize = 2;
 
 type WsReader = SplitStream<WebSocketStream<Compat<TcpStream>>>;
 type Writer = Arc<Mutex<WsWriter>>;
@@ -238,6 +245,7 @@ async fn client_with_limits(
     // is answered `InvalidSession { resumable: false }` and the client may
     // authenticate on the same socket.
     let until = Instant::now() + AUTH_TIMEOUT;
+    let mut resume_tries = 0;
     loop {
         match hello(&mut config, &mut read, until).await {
             Some(Hello::Identify) => break,
@@ -245,7 +253,14 @@ async fn client_with_limits(
                 token,
                 session_id,
                 seq,
-            }) => match resume_session(db, &config, &write, &token, &session_id, seq).await {
+            }) => match tokio::time::timeout_at(
+                until,
+                resume_session(db, &config, &write, &token, &session_id, seq),
+            )
+            .await
+            // too slow: the socket ends; a session that took it detaches again
+            .unwrap_or(Resumption::Ended)
+            {
                 Resumption::Accepted {
                     handle,
                     generation,
@@ -256,7 +271,7 @@ async fn client_with_limits(
                     db.update_session_last_seen(&auth_session_id, Timestamp::now_utc())
                         .await
                         .ok();
-                    worker(
+                    let end = worker(
                         addr,
                         handle.subscribed.clone(),
                         handle.active_servers.clone(),
@@ -271,15 +286,21 @@ async fn client_with_limits(
                         check_every,
                     )
                     .await;
-                    handle
-                        .control
-                        .send(Control::WorkerEnded { generation })
-                        .await
-                        .ok();
+                    handle.control.send(end.control(generation)).await.ok();
                     return;
                 }
                 Resumption::Refused => {
                     send(&write, &config, &EventV1::InvalidSession { resumable: false }).await;
+                    resume_tries += 1;
+                    if resume_tries >= MAX_RESUME_TRIES {
+                        write
+                            .lock()
+                            .await
+                            .send(async_tungstenite::tungstenite::Message::Close(None))
+                            .await
+                            .ok();
+                        return;
+                    }
                 }
                 Resumption::Ended => return,
             },
@@ -402,14 +423,6 @@ async fn client_with_limits(
         }
     }
 
-    // Create presence session.
-    let (first_session, session_id) = create_session(&user_id, 0).await;
-
-    // If this was the first session, notify other users that we just went online.
-    if first_session {
-        state.broadcast_presence_change(true).await;
-    }
-
     {
         // Setup channels and mutexes
         let subscribed = state.subscribed.clone();
@@ -420,7 +433,7 @@ async fn client_with_limits(
         let (control_s, control_r) = async_channel::unbounded();
         let (kill_worker_s, kill_worker_r) = async_channel::bounded(1);
 
-        if let Some(id) = &gateway_session_id {
+        let registration = gateway_session_id.as_ref().map(|id| {
             resume::register(
                 id,
                 SessionHandle {
@@ -432,8 +445,8 @@ async fn client_with_limits(
                     topic_signal: topic_signal_s.clone(),
                     control: control_s.clone(),
                 },
-            );
-        }
+            )
+        });
 
         // Create a PubSub connection to poll on.
         let listener = listener(
@@ -450,11 +463,12 @@ async fn client_with_limits(
             control_r,
             limits,
             gateway_session_id,
+            registration,
         );
 
         // Read from WebSocket stream.
         let worker = async {
-            worker(
+            let end = worker(
                 addr,
                 subscribed,
                 active_servers,
@@ -469,20 +483,10 @@ async fn client_with_limits(
                 check_every,
             )
             .await;
-            control_s
-                .send(Control::WorkerEnded { generation: 0 })
-                .await
-                .ok();
+            control_s.send(end.control(0)).await.ok();
         };
 
         join!(listener, worker);
-    }
-    // Clean up presence session.
-    let last_session = delete_session(&user_id, session_id).await;
-
-    // If this was the last session, notify other users that we just went offline.
-    if last_session {
-        state.broadcast_presence_change(false).await;
     }
 }
 
@@ -581,50 +585,107 @@ struct Delivery {
     buffer: ReplayBuffer,
     resumable: bool,
     limits: ResumeLimits,
+    user_id: String,
+    /// Id for resumes; reachable while this is held
+    gateway_session_id: Option<String>,
+    _registration: Option<resume::Registration>,
+    /// Presence session while the user counts as online (not while dropped)
+    presence: Option<u32>,
     /// When the last socket dropped, while there is none
     detached_at: Option<Instant>,
+    /// Last `seq` given out when the socket dropped: the most a resume can
+    /// start from
+    seq_at_detach: u64,
     next_generation: u64,
 }
 
-impl Delivery {
-    /// The socket is gone: keep the session for a resume
-    fn detach(&mut self) {
-        if let Some(outlet) = self.outlet.take() {
-            let _ = outlet.kill_worker.try_send(());
-        }
-        self.detached_at = Some(Instant::now());
-    }
-
-    /// Send an event with its sequence number. False when the socket failed
-    /// and the session can't wait for a resume.
-    async fn send(&mut self, event: &EventV1, seq: u64, addr: SocketAddr) -> bool {
-        let Some(outlet) = &self.outlet else {
-            return self.resumable;
-        };
-        let result = outlet
-            .write
-            .lock()
-            .await
-            .send(outlet.config.encode(&Sequenced { event, seq }))
-            .await;
-        if let Err(e) = result {
+/// Send one message, but not for ever
+async fn send_in_time(
+    write: &Mutex<WsWriter>,
+    message: async_tungstenite::tungstenite::Message,
+    addr: SocketAddr,
+) -> bool {
+    match tokio::time::timeout(WRITE_TIMEOUT, async {
+        write.lock().await.send(message).await
+    })
+    .await
+    {
+        Ok(Ok(())) => true,
+        Ok(Err(e)) => {
             use async_tungstenite::tungstenite::Error;
             if !matches!(e, Error::AlreadyClosed | Error::ConnectionClosed) {
                 let err = format!("Error while sending an event to {addr:?}: {e:?}");
                 warn!("{}", err);
                 sentry::capture_message(&err, Level::Warning);
             }
-            if !self.resumable {
-                return false;
-            }
-            self.detach();
+            false
         }
-        true
+        Err(_) => {
+            info!("{addr:?} took too long to read its events");
+            false
+        }
+    }
+}
+
+impl Delivery {
+    /// Online: a presence session, and the first one tells the others
+    async fn come_online(&mut self, state: &State) {
+        if self.presence.is_none() {
+            let (first, presence) = create_session(&self.user_id, 0).await;
+            self.presence = Some(presence);
+            if first {
+                state.broadcast_presence_change(true).await;
+            }
+        }
+    }
+
+    /// Offline: the presence session goes, and the last one tells the others
+    async fn go_offline(&mut self, state: &State) {
+        if let Some(presence) = self.presence.take() {
+            if delete_session(&self.user_id, presence).await {
+                state.broadcast_presence_change(false).await;
+            }
+        }
+    }
+
+    /// The socket is gone: keep the session for a resume, offline (a bot
+    /// gets no interactions meanwhile), within the caps
+    async fn detach(&mut self, state: &State) {
+        if let Some(outlet) = self.outlet.take() {
+            let _ = outlet.kill_worker.try_send(());
+        }
+        if self.detached_at.is_some() {
+            return;
+        }
+        let now = Instant::now();
+        self.detached_at = Some(now);
+        self.seq_at_detach = self.buffer.last_seq();
+        self.go_offline(state).await;
+        if let Some(id) = &self.gateway_session_id {
+            for control in resume::detached(id, &self.limits, now) {
+                let _ = control.try_send(Control::SessionOver);
+            }
+        }
+    }
+
+    /// Whether nothing could resume this dropped session any more: more was
+    /// missed than is kept
+    fn beyond_resume(&self) -> bool {
+        self.detached_at.is_some() && self.buffer.forgotten() > self.seq_at_detach
+    }
+
+    /// Send an event with its sequence number. False when the socket failed
+    /// or was too slow.
+    async fn send(&mut self, event: &EventV1, seq: u64, addr: SocketAddr) -> bool {
+        let Some(outlet) = &self.outlet else {
+            return true;
+        };
+        send_in_time(&outlet.write, outlet.config.encode(&Sequenced { event, seq }), addr).await
     }
 
     /// A resume: send the kept events after its `seq` that the session may
     /// still see, then `Resumed`, and use its socket from now on
-    async fn attach(&mut self, db: &Database, state: &State, attach: Attach) {
+    async fn attach(&mut self, db: &Database, state: &State, attach: Attach, addr: SocketAddr) {
         let Attach {
             writer,
             config,
@@ -632,48 +693,51 @@ impl Delivery {
             kill_worker,
             reply,
         } = attach;
-        let missed = if self.resumable {
-            self.buffer.after(seq, Instant::now())
-        } else {
-            None
-        };
-        let Some(missed) = missed else {
+        if !self.resumable || !self.buffer.covers(seq, Instant::now()) {
             let _ = reply.send(None);
             return;
-        };
+        }
+        // the client has everything up to its seq
+        self.buffer.acknowledge(seq);
 
-        // a socket the client gave up on, still open, is replaced
+        // a socket the client gave up on, still open, is replaced; closing
+        // it must not wait on that client
         if let Some(old) = self.outlet.take() {
             let _ = old.kill_worker.try_send(());
-            old.write
-                .lock()
-                .await
-                .send(async_tungstenite::tungstenite::Message::Close(None))
-                .await
-                .ok();
+            tokio::spawn(async move {
+                let _ = tokio::time::timeout(WRITE_TIMEOUT, async {
+                    old.write
+                        .lock()
+                        .await
+                        .send(async_tungstenite::tungstenite::Message::Close(None))
+                        .await
+                })
+                .await;
+            });
         }
 
         let generation = self.next_generation;
         self.next_generation += 1;
-        let mut delivered = true;
-        {
+        let buffer = &self.buffer;
+        let replay = tokio::time::timeout(REPLAY_TIMEOUT, async {
             let mut write = writer.lock().await;
-            for (seq, mut event) in missed {
-                if !state.may_replay(db, &mut event).await {
+            for (seq, event) in buffer.kept() {
+                let Some(event) = state.may_replay(db, event).await else {
                     continue;
-                }
-                if write
-                    .send(config.encode(&Sequenced { event: &event, seq }))
-                    .await
-                    .is_err()
-                {
-                    delivered = false;
-                    break;
-                }
+                };
+                write
+                    .send(config.encode(&Sequenced {
+                        event: event.as_ref(),
+                        seq,
+                    }))
+                    .await?;
             }
-            if delivered {
-                delivered = write.send(config.encode(&EventV1::Resumed)).await.is_ok();
-            }
+            write.send(config.encode(&EventV1::Resumed)).await
+        })
+        .await;
+        let mut delivered = matches!(replay, Ok(Ok(())));
+        if !delivered {
+            info!("{addr:?}: the missed events could not be sent");
         }
 
         self.outlet = Some(Outlet {
@@ -682,11 +746,19 @@ impl Delivery {
             kill_worker,
             generation,
         });
-        self.detached_at = None;
-        if !delivered {
-            self.detach();
+        // the resuming socket may have given up waiting
+        if reply.send(Some(generation)).is_err() {
+            delivered = false;
         }
-        let _ = reply.send(Some(generation));
+        if delivered {
+            self.detached_at = None;
+            if let Some(id) = &self.gateway_session_id {
+                resume::attached(id);
+            }
+            self.come_online(state).await;
+        } else {
+            self.detach(state).await;
+        }
     }
 }
 
@@ -700,6 +772,7 @@ async fn listener(
     control_r: async_channel::Receiver<Control>,
     limits: ResumeLimits,
     gateway_session_id: Option<String>,
+    registration: Option<resume::Registration>,
 ) {
     let resumable = gateway_session_id.is_some();
     let mut delivery = Delivery {
@@ -707,19 +780,27 @@ async fn listener(
         buffer: ReplayBuffer::new(limits, resumable),
         resumable,
         limits,
+        user_id: state.cache.user_id.clone(),
+        gateway_session_id,
+        _registration: registration,
+        presence: None,
         detached_at: None,
+        seq_at_detach: 0,
         next_generation: 1,
     };
+
+    // Create presence session; the first one tells the others we are online
+    delivery.come_online(state).await;
 
     listen(db, state, addr, topic_signal_r, control_r, &mut delivery).await;
 
     // the session is over: no resume, and its reader stops
-    if let Some(id) = &gateway_session_id {
-        resume::unregister(id);
-    }
+    drop(delivery._registration.take());
     if let Some(outlet) = &delivery.outlet {
         outlet.kill_worker.send(()).await.ok();
     }
+    // the last session going tells the others we are offline
+    delivery.go_offline(state).await;
 }
 
 async fn listen(
@@ -859,13 +940,13 @@ async fn listen(
                         if !delivery.resumable {
                             break 'out;
                         }
-                        delivery.detach();
+                        delivery.detach(state).await;
                     }
                 }
                 Ok(Control::Attach(attach)) => {
-                    delivery.attach(db, state, attach).await;
+                    delivery.attach(db, state, attach, addr).await;
                 }
-                Err(_) => break 'out,
+                Ok(Control::SessionOver) | Err(_) => break 'out,
             },
             message = t1 => {
                 // Handle incoming events.
@@ -928,6 +1009,13 @@ async fn listen(
 
                 let seq = delivery.buffer.record(&event, Instant::now());
                 if !delivery.send(&event, seq, addr).await {
+                    if !delivery.resumable {
+                        break 'out;
+                    }
+                    delivery.detach(state).await;
+                }
+                if delivery.beyond_resume() {
+                    info!("{addr:?}: missed more than is kept, the session ends");
                     break 'out;
                 }
 
@@ -941,6 +1029,23 @@ async fn listen(
     }
 
     report_internal_error!(subscriber.quit().await).ok();
+}
+
+/// Why a socket's reader stopped
+enum WorkerEnd {
+    /// The socket is gone (or was replaced)
+    SocketGone,
+    /// The login behind it is closed or expired: the session ends
+    SessionOver,
+}
+
+impl WorkerEnd {
+    fn control(self, generation: u64) -> Control {
+        match self {
+            WorkerEnd::SocketGone => Control::WorkerEnded { generation },
+            WorkerEnd::SessionOver => Control::SessionOver,
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -957,7 +1062,7 @@ async fn worker(
     db: &Database,
     session_id: String,
     check_every: std::time::Duration,
-) {
+) -> WorkerEnd {
     // The check runs on a timer: a client that never pings must not escape it.
     // Only pings count as use, so a silent socket lets its session expire.
     let mut next_check = tokio::time::Instant::now() + check_every;
@@ -973,14 +1078,14 @@ async fn worker(
 
         select! {
             _ = t2 => {
-                return;
+                return WorkerEnd::SocketGone;
             },
             _ = t3 => {
                 next_check = tokio::time::Instant::now() + check_every;
                 let used = std::mem::take(&mut pinged);
                 if !session_still_open(db, &session_id, used, Timestamp::now_utc()).await {
                     end_session_socket(addr, config, write).await;
-                    return;
+                    return WorkerEnd::SessionOver;
                 }
             },
             result = t1 => {
@@ -989,7 +1094,7 @@ async fn worker(
                     Ok(None) => {
                         warn!("Received a None message!");
                         sentry::capture_message("Received a None message!", Level::Warning);
-                        return;
+                        return WorkerEnd::SocketGone;
                     }
                     Err(e) => {
                         use async_tungstenite::tungstenite::Error;
@@ -999,7 +1104,7 @@ async fn worker(
                             sentry::capture_message(&err, Level::Warning);
                         }
 
-                        return;
+                        return WorkerEnd::SocketGone;
                     }
                 };
 
@@ -1497,11 +1602,20 @@ mod resume_tests {
 
     /// A socket to a fresh bonfire task; `query` is added to the address
     async fn connect(db: &'static Database, query: &str, limits: ResumeLimits) -> Socket {
+        connect_checking(db, query, limits, NEVER).await
+    }
+
+    async fn connect_checking(
+        db: &'static Database,
+        query: &str,
+        limits: ResumeLimits,
+        check_every: StdDuration,
+    ) -> Socket {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         tokio::spawn(async move {
             let (stream, peer) = listener.accept().await.unwrap();
-            client_with_limits(db, stream, peer, NEVER, limits).await;
+            client_with_limits(db, stream, peer, check_every, limits).await;
         });
 
         let stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
@@ -1640,26 +1754,24 @@ mod resume_tests {
             if event["type"] == "Resumed" {
                 break;
             }
-            assert_eq!(event["type"], "ChannelAck", "only the missed events: {event}");
-            replayed.push((
-                event["seq"].as_u64().unwrap(),
-                event["message_id"].as_str().unwrap().to_owned(),
-            ));
+            let seq = event["seq"].as_u64().unwrap();
+            assert!(seq > seen, "only the missed events: {event}");
+            // the user's own presence change (offline while dropped) is
+            // among them; the acknowledgements come in order
+            if event["type"] == "ChannelAck" {
+                replayed.push((seq, event["message_id"].as_str().unwrap().to_owned()));
+            }
         }
-        assert_eq!(
-            replayed,
-            vec![
-                (seen + 1, "one".to_owned()),
-                (seen + 2, "two".to_owned()),
-                (seen + 3, "three".to_owned())
-            ]
-        );
+        let markers: Vec<&str> = replayed.iter().map(|(_, m)| m.as_str()).collect();
+        assert_eq!(markers, vec!["one", "two", "three"]);
+        assert!(replayed.windows(2).all(|pair| pair[0].0 < pair[1].0), "in seq order");
+        let last = replayed.last().unwrap().0;
 
         // and the session goes on, on the new socket
         ack(&session.user_id, "four").await;
         let event = wait_for(&mut socket, "ChannelAck").await;
         assert_eq!(event["message_id"], "four");
-        assert_eq!(event["seq"], seen + 4);
+        assert!(event["seq"].as_u64().unwrap() > last);
     }
 
     #[tokio::test]
@@ -1668,7 +1780,7 @@ mod resume_tests {
         let session = person(db).await;
         let limits = ResumeLimits {
             window: StdDuration::from_millis(400),
-            max_events: 1000,
+            ..Default::default()
         };
         let (socket, id, seen) = resumable_session(db, &session, limits).await;
         drop_socket(socket).await;
@@ -1689,8 +1801,8 @@ mod resume_tests {
         let db = database().await;
         let session = person(db).await;
         let limits = ResumeLimits {
-            window: StdDuration::from_secs(120),
             max_events: 2,
+            ..Default::default()
         };
         let (socket, id, seen) = resumable_session(db, &session, limits).await;
         drop_socket(socket).await;
@@ -1810,5 +1922,228 @@ mod resume_tests {
 
         let mut socket = connect(db, &format!("&token={token}&intents={wanted}"), limits).await;
         wait_for(&mut socket, "Ready").await;
+    }
+
+    /// The session is no longer reachable for a resume, within a short wait
+    async fn ends_soon(id: &str) -> bool {
+        for _ in 0..30 {
+            if crate::resume::find(id).is_none() {
+                return true;
+            }
+            tokio::time::sleep(StdDuration::from_millis(100)).await;
+        }
+        false
+    }
+
+    async fn invalid(socket: &mut Socket) {
+        let event = next_event(socket).await.expect("an answer");
+        assert_eq!(event, json!({ "type": "InvalidSession", "resumable": false }));
+    }
+
+    /// Review B1: one user can't keep more dropped sessions than the cap;
+    /// a new drop ends the oldest
+    #[tokio::test]
+    async fn a_user_keeps_only_a_few_dropped_sessions() {
+        let db = database().await;
+        let session = person(db).await;
+        let limits = ResumeLimits {
+            detached_per_user: 1,
+            ..Default::default()
+        };
+        let (first, first_id, first_seen) = resumable_session(db, &session, limits).await;
+        let (second, second_id, second_seen) = resumable_session(db, &session, limits).await;
+        drop_socket(first).await;
+        assert!(crate::resume::find(&first_id).is_some(), "within the cap");
+        drop_socket(second).await;
+        assert!(ends_soon(&first_id).await, "the oldest dropped session ends");
+
+        let mut socket = resume(db, &session.token, &first_id, first_seen, limits).await;
+        invalid(&mut socket).await;
+        let mut socket = resume(db, &session.token, &second_id, second_seen, limits).await;
+        wait_for(&mut socket, "Resumed").await;
+    }
+
+    #[tokio::test]
+    async fn the_process_keeps_only_so_many_dropped_sessions() {
+        let db = database().await;
+        let (one, two) = (person(db).await, person(db).await);
+        let limits = ResumeLimits {
+            detached_total: 1,
+            ..Default::default()
+        };
+        let (first, first_id, _) = resumable_session(db, &one, limits).await;
+        let (second, second_id, second_seen) = resumable_session(db, &two, limits).await;
+        drop_socket(first).await;
+        drop_socket(second).await;
+        assert!(ends_soon(&first_id).await, "the oldest dropped session ends");
+        let mut socket = resume(db, &two.token, &second_id, second_seen, limits).await;
+        wait_for(&mut socket, "Resumed").await;
+    }
+
+    /// Review B1: once more was missed than is kept, nothing can resume the
+    /// session, so it ends at once instead of waiting out the window
+    #[tokio::test]
+    async fn a_dropped_session_that_missed_too_much_ends_at_once() {
+        let db = database().await;
+        let session = person(db).await;
+        let limits = ResumeLimits {
+            max_events: 2,
+            ..Default::default()
+        };
+        let (socket, id, _) = resumable_session(db, &session, limits).await;
+        drop_socket(socket).await;
+        assert!(crate::resume::find(&id).is_some());
+        for marker in ["one", "two", "three"] {
+            ack(&session.user_id, marker).await;
+        }
+        assert!(ends_soon(&id).await);
+    }
+
+    /// Review S5: while dropped the user is not online (a bot gets
+    /// ApplicationOffline); a resume brings them back
+    #[tokio::test]
+    async fn a_dropped_session_is_offline_until_resumed() {
+        let db = database().await;
+        let session = person(db).await;
+        let limits = ResumeLimits::default();
+        let (socket, id, seen) = resumable_session(db, &session, limits).await;
+        assert!(revolt_presence::is_online(&session.user_id).await);
+        drop_socket(socket).await;
+        assert!(!revolt_presence::is_online(&session.user_id).await, "offline while dropped");
+
+        let mut socket = resume(db, &session.token, &id, seen, limits).await;
+        wait_for(&mut socket, "Resumed").await;
+        assert!(revolt_presence::is_online(&session.user_id).await, "online again");
+    }
+
+    /// Review S2: a session the timer finds closed ends; it does not wait for
+    /// a resume
+    #[tokio::test]
+    async fn a_session_the_timer_finds_closed_ends_at_once() {
+        let db = database().await;
+        let session = person(db).await;
+        let limits = ResumeLimits::default();
+        let mut socket = connect_checking(db, "", limits, StdDuration::from_millis(200)).await;
+        send(
+            &mut socket,
+            json!({ "type": "Authenticate", "token": session.token, "resumable": true }),
+        )
+        .await;
+        let ready = wait_for(&mut socket, "Ready").await;
+        let id = ready["session_id"].as_str().unwrap().to_owned();
+        tokio::time::sleep(StdDuration::from_millis(1000)).await;
+        db.delete_session(&session.id).await.unwrap();
+
+        wait_for(&mut socket, "Logout").await;
+        assert!(ends_soon(&id).await, "the session is over, not waiting for a resume");
+    }
+
+    /// Review S9: a resume while the old socket is still open takes over
+    #[tokio::test]
+    async fn a_resume_while_the_old_socket_is_open_takes_over() {
+        let db = database().await;
+        let session = person(db).await;
+        let limits = ResumeLimits::default();
+        let (mut old, id, seen) = resumable_session(db, &session, limits).await;
+
+        let mut socket = resume(db, &session.token, &id, seen, limits).await;
+        wait_for(&mut socket, "Resumed").await;
+        assert!(next_event(&mut old).await.is_none(), "the old socket is closed");
+
+        ack(&session.user_id, "after").await;
+        let event = wait_for(&mut socket, "ChannelAck").await;
+        assert_eq!(event["message_id"], "after");
+    }
+
+    /// Review S9: a logout while dropped ends the session
+    #[tokio::test]
+    async fn a_logout_while_dropped_ends_the_session() {
+        let db = database().await;
+        let session = person(db).await;
+        let limits = ResumeLimits::default();
+        let (socket, id, seen) = resumable_session(db, &session, limits).await;
+        drop_socket(socket).await;
+        EventV1::Logout.p(session.user_id.clone()).await;
+        assert!(ends_soon(&id).await);
+
+        let mut socket = resume(db, &session.token, &id, seen, limits).await;
+        invalid(&mut socket).await;
+    }
+
+    /// Review S9: on a real socket, a channel lost while dropped takes its
+    /// missed messages with it; its removal still comes
+    #[tokio::test]
+    async fn a_channel_lost_while_dropped_is_not_replayed() {
+        use revolt_database::{Member, Server};
+        let db = database().await;
+        let owner_session = person(db).await;
+        let owner = db.fetch_user(&owner_session.user_id).await.unwrap();
+        let session = person(db).await;
+        let member = db.fetch_user(&session.user_id).await.unwrap();
+        let (server, channels) = Server::create(
+            db,
+            v0::DataCreateServer {
+                name: "Resume".to_owned(),
+                ..Default::default()
+            },
+            &owner,
+            true,
+        )
+        .await
+        .unwrap();
+        Member::create(db, &server, &member, None).await.unwrap();
+        let channel = channels[0].id().to_owned();
+
+        let limits = ResumeLimits::default();
+        let (socket, id, seen) = resumable_session(db, &session, limits).await;
+        drop_socket(socket).await;
+
+        let message: v0::Message = serde_json::from_value(json!({
+            "_id": ulid::Ulid::new().to_string(), "channel": channel,
+            "author": owner.id, "content": "only for those who can see it"
+        }))
+        .unwrap();
+        EventV1::Message(message).p(channel.clone()).await;
+        tokio::time::sleep(StdDuration::from_millis(200)).await;
+        let view = revolt_permissions::ChannelPermission::ViewChannel as i64;
+        EventV1::ChannelUpdate {
+            id: channel.clone(),
+            data: serde_json::from_value(json!({ "default_permissions": { "a": 0, "d": view } }))
+                .unwrap(),
+            clear: vec![],
+        }
+        .p(channel.clone())
+        .await;
+        tokio::time::sleep(StdDuration::from_millis(300)).await;
+
+        let mut socket = resume(db, &session.token, &id, seen, limits).await;
+        let mut kinds = vec![];
+        loop {
+            let event = next_event(&mut socket).await.expect("the socket ended");
+            if event["type"] == "Resumed" {
+                break;
+            }
+            kinds.push(event["type"].as_str().unwrap().to_owned());
+        }
+        assert!(!kinds.contains(&"Message".to_owned()), "{kinds:?}");
+        assert!(kinds.contains(&"ChannelDelete".to_owned()), "{kinds:?}");
+    }
+
+    /// Review nit: a socket gets two tries at a resume, then it is closed
+    #[tokio::test]
+    async fn a_socket_gets_two_resume_tries() {
+        let db = database().await;
+        let session = person(db).await;
+        let limits = ResumeLimits::default();
+        let mut socket = connect(db, "", limits).await;
+        for n in 0..2 {
+            send(
+                &mut socket,
+                json!({ "type": "Resume", "token": session.token, "session_id": format!("none{n}"), "seq": 0 }),
+            )
+            .await;
+            invalid(&mut socket).await;
+        }
+        assert!(next_event(&mut socket).await.is_none(), "closed after the second");
     }
 }
