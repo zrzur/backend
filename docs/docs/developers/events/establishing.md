@@ -58,4 +58,4 @@ You may specify these in the connection URL. Example for local Bonfire:
 
 `ws://127.0.0.1:14703?version=1&format=json`
 
-Use your instance’s events URL from configuration (planned production shape: `wss://ws.zrzur.com`). Do not default to public Stoat/Revolt event hosts.
+Use your instance’s events URL from configuration (production: `wss://events.zrzur.com`, the `ws` field of `GET /`). Do not default to public Stoat/Revolt event hosts.

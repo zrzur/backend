@@ -28,7 +28,7 @@ These are configuration targets only — **not** verified live yet:
 | --- | --- |
 | App | `https://app.zrzur.com` |
 | API | `https://api.zrzur.com` |
-| WebSocket | `wss://ws.zrzur.com` |
+| WebSocket | `wss://events.zrzur.com` |
 | CDN / files | `https://cdn.zrzur.com` |
 | Voice | `https://voice.zrzur.com` |
 
