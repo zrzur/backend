@@ -18,7 +18,7 @@ mod message_fetch;
 mod message_pin;
 mod message_query;
 mod message_react;
-mod message_search;
+pub(crate) mod message_search;
 mod message_send;
 mod message_unpin;
 mod message_unreact;

@@ -6,6 +6,7 @@ Zrzur's first release, built on Stoat 0.15.5 (below).
 
 ### Features
 
+* **Message search filters and server-wide search:** `POST /channels/:id/search` takes `authors`, `mentions`, `has` (link, file, image, video, embed, sound), `before_date` / `after_date` and may combine `pinned` with `query`. `POST /servers/:id/messages/search` searches only the channels the user may view and read the history of (mature channels for declared adults only), never reporting the others; one rate-limit bucket `message_search` per person shared by every server (5), and MongoDB stops a search after 5 s. The reference database now applies sort, limit, time windows and the pinned filter as MongoDB does (pinned was inverted).
 * **Account erasure removes designs:** `Account::mark_deleted` and `erase_completely` delete all of a person's community items with their favourites, use counts and review log, release every file the items claimed, take them off everyone wearing them, and clear the person's platform role.
 * **Creator rank is 18+:** `grant`, `reinstate` and `POST /admin/permissions` refuse anyone who has not declared an age of 18 or over (`FailedValidation`, rule `adult`), and `platform_permissions` drops `cosmetics.submit` for them, so someone under 18 who already has the rank cannot upload, create, edit or publish.
 * **Takedowns of every design:** decorations and nameplates taken down get the same Safety case, statement of reasons and appeal as effects, and their wearers are told.

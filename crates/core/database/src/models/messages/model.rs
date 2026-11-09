@@ -2,7 +2,7 @@ use indexmap::{IndexMap, IndexSet};
 use iso8601_timestamp::Timestamp;
 use revolt_config::{config, FeaturesLimits};
 use revolt_models::v0::{
-    self, BulkMessageResponse, DataMessageSend, Embed, MessageAuthor, MessageFlags, MessageSort,
+    self, BulkMessageResponse, DataMessageSend, Embed, MessageAuthor, MessageFlags, MessageHas, MessageSort,
     MessageWebhook, PushNotification, ReplyIntent, SendableEmbed, Text,
 };
 use revolt_permissions::{calculate_channel_permissions, ChannelPermission, PermissionValue};
@@ -205,6 +205,14 @@ auto_derived!(
         pub query: Option<String>,
         /// Search for pinned
         pub pinned: Option<bool>,
+        /// Any of these channels (server-wide search; ignored when `channel` is set)
+        pub channels: Option<Vec<String>>,
+        /// Any of these authors (together with `author`)
+        pub authors: Option<Vec<String>>,
+        /// Messages that mention this user
+        pub mentions: Option<String>,
+        /// Messages that have all of these
+        pub has: Option<Vec<MessageHas>>,
     }
 
     /// Message Query
@@ -1484,5 +1492,215 @@ mod mention_recipient_tests {
             ..Default::default()
         };
         assert!(message.mention_recipients().is_empty());
+    }
+}
+
+/// Search filters, on both databases (`TEST_DB=REFERENCE` and `MONGODB`)
+#[cfg(test)]
+mod search_filter_tests {
+    use lapin::{options::ExchangeDeclareOptions, types::FieldTable, ExchangeKind};
+    use revolt_models::v0::{Embed, MessageHas, MessageSort};
+
+    use crate::{Database, File, Message, MessageFilter, MessageQuery, MessageTimePeriod, Metadata};
+
+    /// A sortable id: a higher `n` is a newer message
+    fn id(n: u32) -> String {
+        format!("01HZZZZZZZZZZZZZZZZZZZZ{n:03}")
+    }
+
+    fn file(metadata: Metadata) -> File {
+        File {
+            id: "file".to_string(),
+            tag: "attachments".to_string(),
+            filename: "a".to_string(),
+            hash: None,
+            uploaded_at: None,
+            uploader_id: None,
+            used_for: None,
+            deleted: None,
+            reported: None,
+            purged: None,
+            metadata,
+            content_type: "application/octet-stream".to_string(),
+            size: 1,
+            message_id: None,
+            user_id: None,
+            server_id: None,
+            object_id: None,
+        }
+    }
+
+    /// Ten messages in channel A and one in channel B
+    async fn seed(db: &Database) {
+        let base = |n: u32, channel: &str| Message {
+            id: id(n),
+            channel: channel.to_string(),
+            author: "alice".to_string(),
+            content: Some(format!("message {n}")),
+            ..Default::default()
+        };
+        let embed: Embed =
+            serde_json::from_value(serde_json::json!({ "type": "Text", "title": "card" })).unwrap();
+        let messages = vec![
+            base(1, "A"),
+            Message { author: "bob".to_string(), ..base(2, "A") },
+            Message { mentions: Some(vec!["carol".to_string()]), ..base(3, "A") },
+            Message { content: Some("see https://zrzur.com".to_string()), ..base(4, "A") },
+            Message { attachments: Some(vec![file(Metadata::File)]), ..base(5, "A") },
+            Message {
+                attachments: Some(vec![file(Metadata::Image {
+                    width: 1,
+                    height: 1,
+                    thumbhash: None,
+                    animated: None,
+                })]),
+                ..base(6, "A")
+            },
+            Message {
+                attachments: Some(vec![file(Metadata::Video { width: 1, height: 1 })]),
+                ..base(7, "A")
+            },
+            Message { attachments: Some(vec![file(Metadata::Audio)]), ..base(8, "A") },
+            Message { embeds: Some(vec![embed]), ..base(9, "A") },
+            Message { pinned: Some(true), ..base(10, "A") },
+            Message { author: "bob".to_string(), ..base(11, "B") },
+        ];
+        for message in messages {
+            db.insert_message(&message).await.unwrap();
+        }
+    }
+
+    async fn ids(db: &Database, filter: MessageFilter) -> Vec<String> {
+        ids_in(db, filter, None, None, None, None).await
+    }
+
+    async fn ids_in(
+        db: &Database,
+        filter: MessageFilter,
+        before: Option<String>,
+        after: Option<String>,
+        sort: Option<MessageSort>,
+        limit: Option<i64>,
+    ) -> Vec<String> {
+        db.fetch_messages(MessageQuery {
+            filter,
+            limit,
+            time_period: MessageTimePeriod::Absolute { before, after, sort },
+        })
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|message| message.id)
+        .collect()
+    }
+
+    fn in_a() -> MessageFilter {
+        MessageFilter {
+            channel: Some("A".to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn newest_first_with_limit_and_window() {
+        database_test!(|db| async move {
+            seed(&db).await;
+            assert_eq!(
+                ids_in(&db, in_a(), None, None, None, Some(3)).await,
+                vec![id(10), id(9), id(8)]
+            );
+            assert_eq!(
+                ids_in(&db, in_a(), Some(id(5)), Some(id(2)), Some(MessageSort::Oldest), None)
+                    .await,
+                vec![id(3), id(4)]
+            );
+        });
+    }
+
+    #[tokio::test]
+    async fn pinned_only() {
+        database_test!(|db| async move {
+            seed(&db).await;
+            let filter = MessageFilter { pinned: Some(true), ..in_a() };
+            assert_eq!(ids(&db, filter).await, vec![id(10)]);
+        });
+    }
+
+    #[tokio::test]
+    async fn from_one_or_more_authors() {
+        database_test!(|db| async move {
+            seed(&db).await;
+            let filter = MessageFilter { author: Some("bob".to_string()), ..in_a() };
+            assert_eq!(ids(&db, filter).await, vec![id(2)]);
+            let filter = MessageFilter {
+                author: Some("bob".to_string()),
+                authors: Some(vec!["nobody".to_string()]),
+                ..in_a()
+            };
+            assert_eq!(ids(&db, filter).await, vec![id(2)]);
+            let filter = MessageFilter {
+                authors: Some(vec!["bob".to_string(), "nobody".to_string()]),
+                ..Default::default()
+            };
+            assert_eq!(ids(&db, filter).await, vec![id(11), id(2)]);
+        });
+    }
+
+    #[tokio::test]
+    async fn mentions_a_user() {
+        database_test!(|db| async move {
+            seed(&db).await;
+            let filter = MessageFilter { mentions: Some("carol".to_string()), ..in_a() };
+            assert_eq!(ids(&db, filter).await, vec![id(3)]);
+        });
+    }
+
+    #[tokio::test]
+    async fn in_any_of_several_channels() {
+        database_test!(|db| async move {
+            seed(&db).await;
+            let filter = MessageFilter {
+                channels: Some(vec!["B".to_string(), "C".to_string()]),
+                ..Default::default()
+            };
+            assert_eq!(ids(&db, filter).await, vec![id(11)]);
+            // an empty list matches nothing, never everything
+            let filter = MessageFilter { channels: Some(vec![]), ..Default::default() };
+            assert!(ids(&db, filter).await.is_empty());
+        });
+    }
+
+    #[tokio::test]
+    async fn has_each_kind() {
+        database_test!(|db| async move {
+            seed(&db).await;
+            let has = |kinds: Vec<MessageHas>| MessageFilter { has: Some(kinds), ..in_a() };
+            assert_eq!(ids(&db, has(vec![MessageHas::Link])).await, vec![id(4)]);
+            assert_eq!(
+                ids(&db, has(vec![MessageHas::File])).await,
+                vec![id(8), id(7), id(6), id(5)]
+            );
+            assert_eq!(ids(&db, has(vec![MessageHas::Image])).await, vec![id(6)]);
+            assert_eq!(ids(&db, has(vec![MessageHas::Video])).await, vec![id(7)]);
+            assert_eq!(ids(&db, has(vec![MessageHas::Sound])).await, vec![id(8)]);
+            assert_eq!(ids(&db, has(vec![MessageHas::Embed])).await, vec![id(9)]);
+            // all of them at once: no message has both
+            assert!(ids(&db, has(vec![MessageHas::Image, MessageHas::Video]))
+                .await
+                .is_empty());
+        });
+    }
+
+    /// The reference database has no text index: words match in any case
+    #[tokio::test]
+    async fn words_in_any_case() {
+        database_test!(|db| async move {
+            if !matches!(db, Database::Reference(_)) {
+                return; // MongoDB needs the text index of the migrations
+            }
+            seed(&db).await;
+            let filter = MessageFilter { query: Some("ZRZUR".to_string()), ..in_a() };
+            assert_eq!(ids(&db, filter).await, vec![id(4)]);
+        });
     }
 }

@@ -1,7 +1,8 @@
 use crate::{
-    AppendMessage, FieldsMessage, Message, MessageQuery,
-    PartialMessage, ReferenceDb,
+    AppendMessage, FieldsMessage, Message, MessageFilter, MessageQuery, MessageTimePeriod,
+    Metadata, PartialMessage, ReferenceDb,
 };
+use revolt_models::v0::{MessageHas, MessageSort};
 use futures::future::try_join_all;
 use indexmap::IndexSet;
 use revolt_result::Result;
@@ -10,6 +11,68 @@ use std::time::SystemTime;
 use ulid::Ulid;
 
 use super::AbstractMessages;
+
+/// Whether a message passes every filter given, as the MongoDB query does
+fn matches_filter(filter: &MessageFilter, message: &Message) -> bool {
+    if let Some(channel) = &filter.channel {
+        if &message.channel != channel {
+            return false;
+        }
+    } else if let Some(channels) = &filter.channels {
+        if !channels.contains(&message.channel) {
+            return false;
+        }
+    }
+
+    let authors: Vec<&String> = filter
+        .author
+        .iter()
+        .chain(filter.authors.iter().flatten())
+        .collect();
+    if !authors.is_empty() && !authors.contains(&&message.author) {
+        return false;
+    }
+
+    if let Some(query) = &filter.query {
+        let Some(content) = &message.content else {
+            return false;
+        };
+        if !content.to_lowercase().contains(&query.to_lowercase()) {
+            return false;
+        }
+    }
+
+    if let Some(pinned) = filter.pinned {
+        if message.pinned.unwrap_or_default() != pinned {
+            return false;
+        }
+    }
+
+    if let Some(user) = &filter.mentions {
+        if !message.mentions.iter().flatten().any(|id| id == user) {
+            return false;
+        }
+    }
+
+    let attachment = |wanted: fn(&Metadata) -> bool| {
+        message
+            .attachments
+            .iter()
+            .flatten()
+            .any(|file| wanted(&file.metadata))
+    };
+    filter.has.iter().flatten().all(|kind| match kind {
+        MessageHas::Link => message.content.as_ref().is_some_and(|content| {
+            let content = content.to_lowercase();
+            content.contains("http://") || content.contains("https://")
+        }),
+        MessageHas::File => message.attachments.as_ref().is_some_and(|a| !a.is_empty()),
+        MessageHas::Image => attachment(|m| matches!(m, Metadata::Image { .. })),
+        MessageHas::Video => attachment(|m| matches!(m, Metadata::Video { .. })),
+        MessageHas::Sound => attachment(|m| matches!(m, Metadata::Audio)),
+        MessageHas::Embed => message.embeds.as_ref().is_some_and(|e| !e.is_empty()),
+    })
+}
 
 #[async_trait]
 impl AbstractMessages for ReferenceDb {
@@ -36,156 +99,50 @@ impl AbstractMessages for ReferenceDb {
     /// Fetch multiple messages by given query
     async fn fetch_messages(&self, query: MessageQuery) -> Result<Vec<Message>> {
         let messages = self.messages.lock().await;
-        let matched_messages = messages
+        let filter = &query.filter;
+        let matched: Vec<&Message> = messages
             .values()
-            .filter(|message| {
-                if let Some(channel) = &query.filter.channel {
-                    if &message.channel != channel {
-                        return false;
-                    }
-                }
-
-                if let Some(author) = &query.filter.author {
-                    if &message.author != author {
-                        return false;
-                    }
-                }
-
-                if let Some(query) = &query.filter.query {
-                    if let Some(content) = &message.content {
-                        if !content.to_lowercase().contains(query) {
-                            return false;
-                        }
-                    } else {
-                        return false;
-                    }
-                }
-
-                if let Some(pinned) = query.filter.pinned {
-                    if message.pinned.unwrap_or_default() == pinned {
-                        return false;
-                    }
-                }
-
-                true
-            })
-            .cloned()
+            .filter(|message| matches_filter(filter, message))
             .collect();
 
-        // FIXME: sorting, etc (will be required for tests)
+        let limit = query.limit.unwrap_or(50).max(0) as usize;
+        let newest_first = |list: &mut Vec<&Message>| list.sort_by(|a, b| b.id.cmp(&a.id));
+        let oldest_first = |list: &mut Vec<&Message>| list.sort_by(|a, b| a.id.cmp(&b.id));
 
-        Ok(matched_messages)
-
-        /*
-        // 2. Find query limit
-        let limit = query.limit.unwrap_or(50);
-
-        // 3. Apply message time period
-        match query.time_period {
+        // the same windows and order as MongoDB
+        let found: Vec<&Message> = match query.time_period {
             MessageTimePeriod::Relative { nearby } => {
-                // 3.1. Prepare filters
-                let mut older_message_filter = filter.clone();
-                let mut newer_message_filter = filter;
-
-                older_message_filter.insert(
-                    "_id",
-                    doc! {
-                        "$lt": &nearby
-                    },
-                );
-
-                newer_message_filter.insert(
-                    "_id",
-                    doc! {
-                        "$gte": &nearby
-                    },
-                );
-
-                // 3.2. Execute in both directions
-                let (a, b) = try_join!(
-                    self.find_with_options::<_, Message>(
-                        COL,
-                        newer_message_filter,
-                        FindOptions::builder()
-                            .limit(limit / 2 + 1)
-                            .sort(doc! {
-                                "_id": 1_i32
-                            })
-                            .build(),
-                    ),
-                    self.find_with_options::<_, Message>(
-                        COL,
-                        older_message_filter,
-                        FindOptions::builder()
-                            .limit(limit / 2)
-                            .sort(doc! {
-                                "_id": -1_i32
-                            })
-                            .build(),
-                    )
-                )
-                .map_err(|_| create_database_error!("find", COL))?;
-
-                Ok([a, b].concat())
+                let mut newer: Vec<&Message> =
+                    matched.iter().copied().filter(|m| m.id >= nearby).collect();
+                let mut older: Vec<&Message> =
+                    matched.iter().copied().filter(|m| m.id < nearby).collect();
+                oldest_first(&mut newer);
+                newest_first(&mut older);
+                newer.truncate(limit / 2 + 1);
+                older.truncate(limit / 2 + 1);
+                newer.into_iter().chain(older).collect()
             }
             MessageTimePeriod::Absolute {
                 before,
                 after,
                 sort,
             } => {
-                // 3.1. Apply message ID filter
-                if let Some(doc) = match (before, after) {
-                    (Some(before), Some(after)) => Some(doc! {
-                        "$lt": before,
-                        "$gt": after
-                    }),
-                    (Some(before), _) => Some(doc! {
-                        "$lt": before
-                    }),
-                    (_, Some(after)) => Some(doc! {
-                        "$gt": after
-                    }),
-                    _ => None,
-                } {
-                    filter.insert("_id", doc);
+                let mut list: Vec<&Message> = matched
+                    .into_iter()
+                    .filter(|m| before.as_ref().is_none_or(|before| &m.id < before))
+                    .filter(|m| after.as_ref().is_none_or(|after| &m.id > after))
+                    .collect();
+                match sort.unwrap_or(MessageSort::Latest) {
+                    // no text score here: relevance is newest first
+                    MessageSort::Relevance | MessageSort::Latest => newest_first(&mut list),
+                    MessageSort::Oldest => oldest_first(&mut list),
                 }
-
-                // 3.2. Execute with given message sort
-                self.find_with_options(
-                    COL,
-                    filter,
-                    FindOptions::builder()
-                        .limit(limit)
-                        .sort(match sort.unwrap_or(MessageSort::Latest) {
-                            // Sort by relevance, fallback to latest
-                            MessageSort::Relevance => {
-                                if is_search_query {
-                                    doc! {
-                                        "score": {
-                                            "$meta": "textScore"
-                                        }
-                                    }
-                                } else {
-                                    doc! {
-                                        "_id": -1_i32
-                                    }
-                                }
-                            }
-                            // Sort by latest first
-                            MessageSort::Latest => doc! {
-                                "_id": -1_i32
-                            },
-                            // Sort by oldest first
-                            MessageSort::Oldest => doc! {
-                                "_id": 1_i32
-                            },
-                        })
-                        .build(),
-                )
-                .await
-                .map_err(|_| create_database_error!("find", COL))
+                list.truncate(limit);
+                list
             }
-        }*/
+        };
+
+        Ok(found.into_iter().cloned().collect())
     }
 
     /// Fetch multiple messages by given IDs

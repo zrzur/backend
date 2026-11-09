@@ -2,7 +2,7 @@ use bson::{to_bson, Document};
 use futures::try_join;
 use futures::StreamExt;
 use mongodb::options::FindOptions;
-use revolt_models::v0::MessageSort;
+use revolt_models::v0::{MessageHas, MessageSort};
 use revolt_result::Result;
 use std::collections::{HashMap, HashSet};
 use std::time::SystemTime;
@@ -16,6 +16,9 @@ use crate::{
 use super::AbstractMessages;
 
 static COL: &str = "messages";
+
+/// Longest a search may run in MongoDB
+const SEARCH_MAX_TIME: std::time::Duration = std::time::Duration::from_secs(5);
 
 #[async_trait]
 impl AbstractMessages for MongoDb {
@@ -33,13 +36,61 @@ impl AbstractMessages for MongoDb {
     async fn fetch_messages(&self, query: MessageQuery) -> Result<Vec<Message>> {
         let mut filter = doc! {};
 
+        // Searches may scan many messages: they stop after this long
+        let is_search = query.filter.query.is_some()
+            || query.filter.authors.is_some()
+            || query.filter.mentions.is_some()
+            || query.filter.has.is_some()
+            || query.filter.channels.is_some();
+        let limit_time = |mut options: FindOptions| {
+            if is_search {
+                options.max_time = Some(SEARCH_MAX_TIME);
+            }
+            options
+        };
+
         // 1. Apply message filters
         if let Some(channel) = query.filter.channel {
             filter.insert("channel", channel);
+        } else if let Some(channels) = query.filter.channels {
+            filter.insert("channel", doc! { "$in": channels });
         }
 
-        if let Some(author) = query.filter.author {
-            filter.insert("author", author);
+        let mut authors: Vec<String> = query.filter.author.into_iter().collect();
+        authors.extend(query.filter.authors.into_iter().flatten());
+        match authors.len() {
+            0 => {}
+            1 => {
+                filter.insert("author", authors.remove(0));
+            }
+            _ => {
+                filter.insert("author", doc! { "$in": authors });
+            }
+        }
+
+        if let Some(user) = query.filter.mentions {
+            filter.insert("mentions", user);
+        }
+
+        // every kind asked for must be there
+        let has: Vec<Document> = query
+            .filter
+            .has
+            .unwrap_or_default()
+            .into_iter()
+            .map(|kind| match kind {
+                MessageHas::Link => doc! {
+                    "content": { "$regex": "https?://", "$options": "i" }
+                },
+                MessageHas::File => doc! { "attachments.0": { "$exists": true } },
+                MessageHas::Image => doc! { "attachments.metadata.type": "Image" },
+                MessageHas::Video => doc! { "attachments.metadata.type": "Video" },
+                MessageHas::Sound => doc! { "attachments.metadata.type": "Audio" },
+                MessageHas::Embed => doc! { "embeds.0": { "$exists": true } },
+            })
+            .collect();
+        if !has.is_empty() {
+            filter.insert("$and", has);
         }
 
         let is_search_query = if let Some(query) = query.filter.query {
@@ -88,22 +139,22 @@ impl AbstractMessages for MongoDb {
                     self.find_with_options::<_, Message>(
                         COL,
                         newer_message_filter,
-                        FindOptions::builder()
+                        limit_time(FindOptions::builder()
                             .limit(limit / 2 + 1)
                             .sort(doc! {
                                 "_id": 1_i32
                             })
-                            .build(),
+                            .build()),
                     ),
                     self.find_with_options::<_, Message>(
                         COL,
                         older_message_filter,
-                        FindOptions::builder()
+                        limit_time(FindOptions::builder()
                             .limit(limit / 2 + 1)
                             .sort(doc! {
                                 "_id": -1_i32
                             })
-                            .build(),
+                            .build()),
                     )
                 )
                 .map_err(|_| create_database_error!("find", COL))?;
@@ -136,7 +187,7 @@ impl AbstractMessages for MongoDb {
                 self.find_with_options(
                     COL,
                     filter,
-                    FindOptions::builder()
+                    limit_time(FindOptions::builder()
                         .limit(limit)
                         .sort(match sort.unwrap_or(MessageSort::Latest) {
                             // Sort by relevance, fallback to latest
@@ -162,7 +213,7 @@ impl AbstractMessages for MongoDb {
                                 "_id": 1_i32
                             },
                         })
-                        .build(),
+                        .build()),
                 )
                 .await
                 .map_err(|_| create_database_error!("find", COL))

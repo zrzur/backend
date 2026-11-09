@@ -226,6 +226,23 @@ auto_derived!(
         Oldest,
     }
 
+    /// Something a message has, for search
+    #[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
+    pub enum MessageHas {
+        /// A web address in the text
+        Link,
+        /// Any attachment
+        File,
+        /// An image attachment
+        Image,
+        /// A video attachment
+        Video,
+        /// An embed (a link preview or a bot embed)
+        Embed,
+        /// An audio attachment, voice messages included
+        Sound,
+    }
+
     /// Push Notification
     pub struct PushNotification {
         /// Known author name
@@ -380,11 +397,28 @@ auto_derived!(
         /// See [MongoDB documentation](https://docs.mongodb.com/manual/text-search/#-text-operator) for more information.
         #[cfg_attr(feature = "validator", validate(length(min = 1, max = 64)))]
         pub query: Option<String>,
-        /// Whether to only search for pinned messages, cannot be sent with `query`.
+        /// Whether to only search for pinned messages (may be sent with `query`)
         pub pinned: Option<bool>,
         /// Optional author user ID filter (channel-local; additive / backwards-compatible)
         #[cfg_attr(feature = "validator", validate(length(min = 26, max = 26)))]
         pub author: Option<String>,
+        /// Messages by any of these users (together with `author`)
+        #[cfg_attr(feature = "validator", validate(length(min = 1, max = 10)))]
+        pub authors: Option<Vec<String>>,
+        /// Messages that mention this user
+        #[cfg_attr(feature = "validator", validate(length(min = 26, max = 26)))]
+        pub mentions: Option<String>,
+        /// Messages that have all of these: a link, a file, an image, a video,
+        /// an embed or a sound
+        #[cfg_attr(feature = "validator", validate(length(min = 1, max = 6)))]
+        pub has: Option<Vec<MessageHas>>,
+        /// Messages sent before this moment (works together with `before`)
+        pub before_date: Option<Timestamp>,
+        /// Messages sent after this moment (works together with `after`)
+        pub after_date: Option<Timestamp>,
+        /// Server-wide search only: limit the search to these channels
+        #[cfg_attr(feature = "validator", validate(length(min = 1, max = 50)))]
+        pub channels: Option<Vec<String>>,
 
         /// Maximum number of messages to fetch
         #[cfg_attr(feature = "validator", validate(range(min = 1, max = 100)))]
