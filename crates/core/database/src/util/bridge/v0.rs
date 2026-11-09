@@ -9,7 +9,11 @@ impl crate::Bot {
         #[cfg(debug_assertions)]
         assert_eq!(self.id, user.id);
 
+        let verified = self.is_verified();
         PublicBot {
+            verified,
+            creator: None,
+            server_count: None,
             id: self.id,
             username: user.username,
             avatar: user.avatar.map(|x| x.id).unwrap_or_default(),
@@ -44,6 +48,7 @@ impl From<crate::Bot> for Bot {
             approved_intents: value.approved_intents,
             interactions_endpoint: value.interactions_endpoint,
             interactions_secret_version: value.interactions_secret_version,
+            show_creator: value.show_creator,
         }
     }
 }
@@ -1913,6 +1918,17 @@ impl From<crate::AuditLogEntryAction> for AuditLogEntryAction {
                 scopes,
             },
             crate::AuditLogEntryAction::BotRemove { bot } => AuditLogEntryAction::BotRemove { bot },
+            crate::AuditLogEntryAction::CommandPermissionsUpdate {
+                bot,
+                command,
+                before,
+                after,
+            } => AuditLogEntryAction::CommandPermissionsUpdate {
+                bot,
+                command,
+                before,
+                after,
+            },
             crate::AuditLogEntryAction::AutoModAction {
                 rule,
                 user,

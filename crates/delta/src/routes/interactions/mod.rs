@@ -10,6 +10,8 @@ pub(crate) use callback::answer;
 pub(crate) use respond::state_update;
 
 #[cfg(test)]
+mod command_permission_tests;
+#[cfg(test)]
 mod component_tests;
 #[cfg(test)]
 mod endpoint_tests;

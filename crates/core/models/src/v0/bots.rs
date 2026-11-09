@@ -79,6 +79,13 @@ auto_derived!(
         /// Generation of the signing secret, 0 for none yet
         #[cfg_attr(feature = "serde", serde(default))]
         pub interactions_secret_version: i32,
+
+        /// Whether the bot's public page names who made it (off by default)
+        #[cfg_attr(
+            feature = "serde",
+            serde(skip_serializing_if = "crate::if_false", default)
+        )]
+        pub show_creator: bool,
     }
 
     /// Optional fields on bot object
@@ -134,7 +141,38 @@ auto_derived!(
             feature = "serde",
             serde(skip_serializing_if = "Option::is_none", default)
         )]
-        pub default_permissions: Option<i64>
+        pub default_permissions: Option<i64>,
+        /// Verified by Trust & Safety
+        #[cfg_attr(
+            feature = "serde",
+            serde(skip_serializing_if = "crate::if_false", default)
+        )]
+        pub verified: bool,
+        /// Who made the bot, when its owner chose to show it
+        #[cfg_attr(
+            feature = "serde",
+            serde(skip_serializing_if = "Option::is_none", default)
+        )]
+        pub creator: Option<PublicBotCreator>,
+        /// Servers the bot is in
+        #[cfg_attr(
+            feature = "serde",
+            serde(skip_serializing_if = "Option::is_none", default)
+        )]
+        pub server_count: Option<i64>,
+    }
+
+    /// The person who made a public bot, shown only when the owner chose so
+    /// (never their id)
+    pub struct PublicBotCreator {
+        /// Username
+        pub username: String,
+        /// Display name
+        #[cfg_attr(
+            feature = "serde",
+            serde(skip_serializing_if = "Option::is_none", default)
+        )]
+        pub display_name: Option<String>,
     }
 
     /// Where a bot receives its interactions over HTTP
@@ -199,6 +237,9 @@ auto_derived!(
         /// `MESSAGE_CONTENT`, `SERVER_MEMBERS` and `PRESENCE`
         #[serde(skip_serializing_if = "Option::is_none")]
         pub privileged_intents: Option<i64>,
+        /// Show who made the bot on its public page
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub show_creator: Option<bool>,
         /// Fields to remove from bot object
         #[cfg_attr(feature = "serde", serde(default))]
         pub remove: Vec<FieldsBot>,

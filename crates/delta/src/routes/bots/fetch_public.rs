@@ -1,5 +1,5 @@
 use revolt_database::{util::reference::Reference, Database, User};
-use revolt_models::v0::PublicBot;
+use revolt_models::v0::{PublicBot, PublicBotCreator};
 use revolt_result::{create_error, Result};
 
 use rocket::serde::json::Json;
@@ -7,7 +7,9 @@ use rocket::State;
 
 /// # Fetch Public Bot
 ///
-/// Fetch details of a public (or owned) bot by its id.
+/// Fetch details of a public (or owned) bot by its id: its profile, the
+/// permissions it asks for, whether it is verified, how many servers it is
+/// in and, if its owner chose to show it, who made it.
 #[openapi(tag = "Bots")]
 #[get("/<target>/invite")]
 pub async fn fetch_public_bot(
@@ -20,8 +22,25 @@ pub async fn fetch_public_bot(
         return Err(create_error!(NotFound));
     }
 
-    let user = db.fetch_user(&bot.id).await?;
-    Ok(Json(bot.into_public_bot(user)))
+    let bot_user = db.fetch_user(&bot.id).await?;
+    // who made it is the owner's choice (`show_creator`, off by default)
+    let creator = if bot.show_creator {
+        db.fetch_user(&bot.owner)
+            .await
+            .ok()
+            .map(|owner| PublicBotCreator {
+                username: owner.username,
+                display_name: owner.display_name,
+            })
+    } else {
+        None
+    };
+    let server_count = db.fetch_server_count(&bot.id).await.ok().map(|n| n as i64);
+
+    let mut public = bot.into_public_bot(bot_user);
+    public.creator = creator;
+    public.server_count = server_count;
+    Ok(Json(public))
 }
 
 #[cfg(test)]
@@ -43,6 +62,7 @@ mod test {
             &harness.db,
             PartialBot {
                 public: Some(true),
+                default_permissions: Some(1 << 22),
                 ..Default::default()
             },
             vec![],
@@ -58,6 +78,12 @@ mod test {
             .await;
 
         let public_bot: v0::PublicBot = response.into_json().await.expect("`PublicBot`");
-        assert_eq!(public_bot, bot.into_public_bot(bot_user));
+        let mut expected = bot.into_public_bot(bot_user);
+        // the maker stays hidden until the owner turns on show_creator
+        expected.server_count = Some(0);
+        assert_eq!(public_bot, expected);
+        // the add dialog needs these to ask for the right permissions
+        assert_eq!(public_bot.default_permissions, Some(1 << 22));
+        assert!(!public_bot.verified);
     }
 }

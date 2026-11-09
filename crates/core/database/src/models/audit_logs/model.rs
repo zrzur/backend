@@ -165,6 +165,18 @@ auto_derived!(
         BotRemove {
             bot: String,
         },
+        /// Who may use a bot's commands changed (`command` absent: the whole bot)
+        CommandPermissionsUpdate {
+            bot: String,
+            #[serde(skip_serializing_if = "Option::is_none", default)]
+            command: Option<String>,
+            /// The rules before the change
+            #[serde(skip_serializing_if = "Vec::is_empty", default)]
+            before: Vec<revolt_models::v0::CommandPermission>,
+            /// The rules after it
+            #[serde(skip_serializing_if = "Vec::is_empty", default)]
+            after: Vec<revolt_models::v0::CommandPermission>,
+        },
         /// AutoMod acted on a message (actions: block, alert, timeout)
         AutoModAction {
             rule: String,
@@ -295,7 +307,9 @@ impl AuditLogEntry {
                 AuditLogEntryAction::EmojiUpdate { .. } => {}
                 AuditLogEntryAction::EmojiDelete { .. } => {}
                 // the bot's avatar is shown with the entry
-                AuditLogEntryAction::BotAdd { bot, .. } | AuditLogEntryAction::BotRemove { bot } => {
+                AuditLogEntryAction::BotAdd { bot, .. }
+                | AuditLogEntryAction::BotRemove { bot }
+                | AuditLogEntryAction::CommandPermissionsUpdate { bot, .. } => {
                     user_ids.insert(bot.clone());
                 }
                 AuditLogEntryAction::AutoModAction { user, .. } => {

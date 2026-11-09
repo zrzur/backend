@@ -37,6 +37,8 @@ const PENDING_LIST_INDEXES: i32 = 76;
 const NO_OP_REVISION_77: i32 = 77;
 const PENDING_PLATFORM_WORD_SEED: i32 = 78;
 const PENDING_PLATFORM_WORD_SEED_2: i32 = 79;
+// Number given by the coordinator at merge (stream botsapp)
+const PENDING_COMMAND_PERMISSIONS_INDEX: i32 = -1;
 
 /// The earliest day a session from before expiry can expire. At least 30
 /// days out, also with expiry switched off (0), for the day it is switched on.
@@ -2577,6 +2579,11 @@ pub async fn run_migrations(db: &MongoDb, revision: i32) -> i32 {
         update_platform_word_seed(&db.db()).await;
     }
 
+    if revision <= PENDING_COMMAND_PERMISSIONS_INDEX {
+        info!("Running migration [revision {PENDING_COMMAND_PERMISSIONS_INDEX} / 10-11-2026]: Index for command permission rules");
+        create_command_permission_indexes(&db.db()).await;
+    }
+
     // Reminder to update LATEST_REVISION when adding new migrations.
     LATEST_REVISION.max(revision)
 }
@@ -2690,6 +2697,21 @@ pub async fn create_official_indexes(db: &crate::mongodb::Database) {
     })
     .await
     .expect("Failed to create the official index.");
+}
+
+/// Command permission rules are read per server and app (every command
+/// used, every command list). Creating an index that exists does nothing, so
+/// this is safe to run twice.
+pub async fn create_command_permission_indexes(db: &crate::mongodb::Database) {
+    db.run_command(doc! {
+        "createIndexes": "command_permissions",
+        "indexes": [{
+            "key": { "server_id": 1_i32, "application_id": 1_i32 },
+            "name": "server_application",
+        }]
+    })
+    .await
+    .expect("Failed to create the command permissions index.");
 }
 
 /// Indexes of the bot verification queue, account change requests, notices
@@ -3415,5 +3437,67 @@ mod platform_word_seed_tests {
             database.collection::<Document>("migrations").count_documents(doc! { "_id": "platform_words" }).await.expect("count"),
             0
         );
+    }
+}
+
+#[cfg(test)]
+mod command_permission_index_tests {
+    use crate::mongodb::bson::{doc, Document};
+    use crate::{AbstractApplicationCommands, Database, DatabaseInfo};
+    use futures::TryStreamExt;
+
+    #[tokio::test]
+    async fn the_rules_index_is_made_once_however_often_it_runs() {
+        let db = DatabaseInfo::Test("command_rules_index".to_string())
+            .connect()
+            .await
+            .expect("Database connection failed.");
+        let Database::MongoDb(mongo) = &db else { return };
+        db.drop_database().await;
+        let handle = mongo.db();
+        super::create_command_permission_indexes(&handle).await;
+        super::create_command_permission_indexes(&handle).await;
+        let indexes: Vec<_> = handle
+            .collection::<Document>("command_permissions")
+            .list_indexes()
+            .await
+            .unwrap()
+            .try_collect()
+            .await
+            .unwrap();
+        let ours: Vec<_> = indexes
+            .iter()
+            .filter(|index| {
+                index.options.as_ref().and_then(|o| o.name.as_deref()) == Some("server_application")
+            })
+            .collect();
+        assert_eq!(ours.len(), 1);
+        assert_eq!(ours[0].keys, doc! { "server_id": 1_i32, "application_id": 1_i32 });
+        db.drop_database().await;
+    }
+
+    /// A stored rule that does not read is an error, never skipped
+    #[tokio::test]
+    async fn a_rule_that_does_not_read_is_an_error() {
+        let db = DatabaseInfo::Test("command_rules_decode".to_string())
+            .connect()
+            .await
+            .expect("Database connection failed.");
+        let Database::MongoDb(mongo) = &db else { return };
+        db.drop_database().await;
+        mongo
+            .db()
+            .collection::<Document>("command_permissions")
+            .insert_one(doc! {
+                "_id": "s:a:a",
+                "server_id": "s",
+                "application_id": "a",
+                "permissions": [{ "id": "r", "type": "Nonsense", "permission": false }],
+            })
+            .await
+            .unwrap();
+        assert!(db.fetch_command_permissions("s", Some("a")).await.is_err());
+        assert!(db.fetch_command_rules("s", "a", "c").await.is_err());
+        db.drop_database().await;
     }
 }

@@ -3,6 +3,7 @@ use revolt_result::{create_error, Result};
 use revolt_rocket_okapi::revolt_okapi::openapi3::OpenApi;
 use rocket::Route;
 
+pub mod command_permissions;
 mod commands;
 pub mod install;
 mod oauth_client;
