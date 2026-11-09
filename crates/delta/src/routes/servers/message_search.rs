@@ -30,7 +30,8 @@ pub async fn search_server(
 
     let server = target.as_server(db).await?;
     // not a member: the server is not there for you
-    db.fetch_member(&server.id, &user.id)
+    let member = db
+        .fetch_member(&server.id, &user.id)
         .await
         .map_err(|_| create_error!(NotFound))?;
 
@@ -49,11 +50,13 @@ pub async fn search_server(
     let mut readable = Vec::with_capacity(wanted.len());
     if mature || !server.nsfw {
         for channel in db.fetch_channels(&wanted).await? {
-            if !mature && channel.is_nsfw() {
+            // a channel of another server never counts here
+            if channel.server() != Some(server.id.as_str()) || (!mature && channel.is_nsfw()) {
                 continue;
             }
             let mut query = DatabasePermissionQuery::new(db, &user)
                 .server(&server)
+                .member(&member)
                 .channel(&channel);
             let permissions = calculate_channel_permissions(&mut query).await;
             if permissions.has_channel_permission(ChannelPermission::ViewChannel)

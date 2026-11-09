@@ -49,7 +49,20 @@ pub fn search_query(user: &User, options: v0::DataMessageSearch) -> Result<Messa
         include_users: _,
     } = options;
 
-    let mut authors: Vec<String> = author.into_iter().chain(authors.into_iter().flatten()).collect();
+    // ids are stored in upper case; a lower-case id would match nothing
+    let upper = |id: String| id.to_ascii_uppercase();
+    let (author, mentions, before, after) = (
+        author.map(upper),
+        mentions.map(upper),
+        before.map(upper),
+        after.map(upper),
+    );
+    let channels = channels.map(|list| list.into_iter().map(upper).collect::<Vec<_>>());
+
+    let mut authors: Vec<String> = author
+        .into_iter()
+        .chain(authors.into_iter().flatten().map(upper))
+        .collect();
     authors.sort();
     authors.dedup();
 

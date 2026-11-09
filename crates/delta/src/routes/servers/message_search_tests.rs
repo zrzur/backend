@@ -3,7 +3,8 @@
 
 use crate::{rocket, util::test::TestHarness};
 use iso8601_timestamp::{Duration, Timestamp};
-use revolt_database::{Channel, Member, Message, PartialChannel};
+use revolt_database::{AccountAge, Channel, Member, Message, PartialChannel, Server, Session, User};
+use revolt_models::v0;
 use revolt_permissions::{ChannelPermission, OverrideField};
 use rocket::http::{Header, Status};
 use serde_json::{json, Value};
@@ -215,4 +216,150 @@ async fn filters_through_the_api() {
     // a bad id in a list is refused
     let (status, _) = search(&harness, path, &session.token, json!({ "authors": ["x"] })).await;
     assert_eq!(status, Status::BadRequest);
+}
+
+/// Someone who turned `years` this month
+async fn person(harness: &TestHarness, years: i32) -> (Session, User) {
+    let (mut account, session, user) = harness.new_user().await;
+    let now = Timestamp::now_utc();
+    account.age = Some(AccountAge::declare((now.year() - years, u8::from(now.month()))));
+    account.save(&harness.db).await.unwrap();
+    (session, user)
+}
+
+/// Mature channels, and every channel of a mature server, stay out for
+/// someone who may not open mature content; an adult finds them
+#[rocket::async_test]
+async fn mature_content_is_left_out_for_minors() {
+    let harness = TestHarness::new().await;
+    let (owner_session, owner) = person(&harness, 30).await;
+    let (teen_session, teen) = person(&harness, 16).await;
+    let (server, channels) = harness.new_server(&owner).await;
+    let open = channels[0].clone();
+    let mut mature = harness.new_channel(&server).await;
+    mature
+        .update(
+            &harness.db,
+            PartialChannel {
+                nsfw: Some(true),
+                ..Default::default()
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
+    let server = harness.db.fetch_server(&server.id).await.unwrap();
+    Member::create(&harness.db, &server, &owner, None).await.unwrap();
+    Member::create(&harness.db, &server, &teen, None).await.unwrap();
+
+    let now = 1_800_000_000_000;
+    let (a, b) = (id_at(now, 1), id_at(now, 2));
+    put(&harness, &a, open.id(), &owner.id).await;
+    put(&harness, &b, mature.id(), &owner.id).await;
+    let path = format!("/servers/{}/messages/search", server.id);
+
+    let (status, body) = search(&harness, path.clone(), &teen_session.token, json!({})).await;
+    assert_eq!(status, Status::Ok, "{body}");
+    assert_eq!(ids(&body), vec![a.clone()]);
+    let (_, body) = search(&harness, path, &owner_session.token, json!({})).await;
+    assert_eq!(ids(&body), vec![b, a]);
+
+    // a mature server: nothing at all for the teen, and no error either
+    let (mature_server, mature_channels) = Server::create(
+        &harness.db,
+        v0::DataCreateServer {
+            name: "Mature".to_string(),
+            nsfw: Some(true),
+            ..Default::default()
+        },
+        &owner,
+        true,
+    )
+    .await
+    .unwrap();
+    Member::create(&harness.db, &mature_server, &teen, None).await.unwrap();
+    put(&harness, &id_at(now, 3), mature_channels[0].id(), &owner.id).await;
+    let (status, body) = search(
+        &harness,
+        format!("/servers/{}/messages/search", mature_server.id),
+        &teen_session.token,
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, Status::Ok, "{body}");
+    assert!(ids(&body).is_empty(), "{body}");
+}
+
+/// The channel route searches its own channel only, whatever `channels` says
+#[rocket::async_test]
+async fn a_channel_search_stays_in_its_channel() {
+    let harness = TestHarness::new().await;
+    let (_, session, owner) = harness.new_user().await;
+    let (server, channels) = harness.new_server(&owner).await;
+    let other = harness.new_channel(&server).await;
+    let now = 1_800_000_000_000;
+    let (a, b) = (id_at(now, 1), id_at(now, 2));
+    put(&harness, &a, channels[0].id(), &owner.id).await;
+    put(&harness, &b, other.id(), &owner.id).await;
+
+    let (status, body) = search(
+        &harness,
+        format!("/channels/{}/search", channels[0].id()),
+        &session.token,
+        json!({ "channels": [other.id()] }),
+    )
+    .await;
+    assert_eq!(status, Status::Ok, "{body}");
+    assert_eq!(ids(&body), vec![a]);
+}
+
+/// Ids in lower case find the same messages
+#[rocket::async_test]
+async fn ids_in_lower_case_work() {
+    let harness = TestHarness::new().await;
+    let (_, session, owner) = harness.new_user().await;
+    let (server, channels) = harness.new_server(&owner).await;
+    Member::create(&harness.db, &server, &owner, None).await.unwrap();
+    let now = 1_800_000_000_000;
+    let a = id_at(now, 1);
+    put(&harness, &a, channels[0].id(), &owner.id).await;
+    let (status, body) = search(
+        &harness,
+        format!("/servers/{}/messages/search", server.id),
+        &session.token,
+        json!({
+            "authors": [owner.id.to_lowercase()],
+            "channels": [channels[0].id().to_lowercase()],
+        }),
+    )
+    .await;
+    assert_eq!(status, Status::Ok, "{body}");
+    assert_eq!(ids(&body), vec![a]);
+}
+
+/// One search bucket per person, shared by every server
+#[rocket::async_test]
+async fn server_searches_share_one_bucket() {
+    let harness = TestHarness::new().await;
+    let (_, session, owner) = harness.new_user().await;
+    let (first, _) = harness.new_server(&owner).await;
+    let (second, _) = harness.new_server(&owner).await;
+    Member::create(&harness.db, &first, &owner, None).await.unwrap();
+    Member::create(&harness.db, &second, &owner, None).await.unwrap();
+    let mut buckets = vec![];
+    for server in [&first, &second] {
+        let response = harness
+            .client
+            .post(format!("/servers/{}/messages/search", server.id))
+            .header(Header::new("x-session-token", session.token.clone()))
+            .header(Header::new("content-type", "application/json"))
+            .body("{}")
+            .dispatch()
+            .await;
+        assert_eq!(response.status(), Status::Ok);
+        assert_eq!(response.headers().get_one("x-ratelimit-limit"), Some("5"));
+        buckets.push(response.headers().get_one("x-ratelimit-bucket").map(str::to_string));
+    }
+    assert!(buckets[0].is_some());
+    assert_eq!(buckets[0], buckets[1]);
 }
