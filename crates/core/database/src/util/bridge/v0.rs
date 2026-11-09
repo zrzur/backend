@@ -517,6 +517,7 @@ impl From<File> for crate::File {
             uploaded_at: None,
             uploader_id: None,
             used_for: None,
+            forwarded_from: None,
         }
     }
 }

@@ -124,6 +124,7 @@ async fn upload(harness: &TestHarness, user_id: &str) -> String {
             user_id: None,
             server_id: None,
             object_id: None,
+            forwarded_from: None,
         })
         .await
         .unwrap();

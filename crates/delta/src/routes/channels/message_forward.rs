@@ -66,6 +66,9 @@ pub async fn forward(
         return Err(create_error!(NotFound));
     }
 
+    // Zrzur's own messages are read where they were sent, not passed on
+    revolt_database::assert_not_official_message(db, &original).await?;
+
     // Join notes, pins and other system lines are not messages to pass on
     if original.system.is_some() {
         return Err(create_error!(InvalidOperation));
@@ -82,28 +85,42 @@ pub async fn forward(
     // Before copying files: may this user post them here at all, so a refusal
     // leaves no copies behind (the full set of send rules runs again below,
     // with its own clearer errors for direct messages)
-    let has_files = original.attachments.as_ref().is_some_and(|files| !files.is_empty())
-        || original.embeds.iter().flatten().any(|embed| matches!(embed, v0::Embed::Text(_)));
-    if has_files && !matches!(target_channel, revolt_database::Channel::DirectMessage { .. }) {
+    let has_files = original.attachments.as_ref().is_some_and(|files| !files.is_empty());
+    let has_rich_embeds = original
+        .embeds
+        .iter()
+        .flatten()
+        .any(|embed| matches!(embed, v0::Embed::Text(_)));
+    if (has_files || has_rich_embeds)
+        && !matches!(target_channel, revolt_database::Channel::DirectMessage { .. })
+    {
         let mut target_query = DatabasePermissionQuery::new(db, &user).channel(&target_channel);
         let target_permissions = calculate_channel_permissions(&mut target_query).await;
         target_permissions.throw_if_lacking_channel_permission(ChannelPermission::SendMessage)?;
-        if original.attachments.as_ref().is_some_and(|files| !files.is_empty()) {
+        if has_files {
             target_permissions
                 .throw_if_lacking_channel_permission(ChannelPermission::UploadFiles)?;
+        }
+        if has_rich_embeds {
+            target_permissions
+                .throw_if_lacking_channel_permission(ChannelPermission::SendEmbeds)?;
         }
     }
 
     // Files: a fresh record of the same stored file for each, claimed by the
     // new message like an upload, so the Upload Files and size rules of the
-    // target apply. Files removed or reported since are left out.
+    // target apply. Files removed or reported since, and old files without a
+    // hash, are left out.
+    let mut copies = Vec::new();
     let mut attachments = Vec::new();
     for file in original.attachments.iter().flatten() {
         if let Ok(current) = db.fetch_attachment("attachments", &file.id).await {
-            if current.deleted == Some(true) || current.reported == Some(true) {
+            if !can_share(&current) {
                 continue;
             }
-            attachments.push(File::copy_unused(db, &current, &user.id).await?.id);
+            let copy = File::copy_unused(db, &current, &user.id).await?.id;
+            copies.push(copy.clone());
+            attachments.push(copy);
         }
     }
 
@@ -112,15 +129,21 @@ pub async fn forward(
     let mut embeds = Vec::new();
     for embed in original.embeds.iter().flatten() {
         if let v0::Embed::Text(text) = embed {
-            embeds.push(sendable_from_text(db, text, &user.id).await?);
+            let sendable = sendable_from_text(db, text, &user.id).await?;
+            copies.extend(sendable.media.iter().chain(sendable.thumbnail.iter()).cloned());
+            embeds.push(sendable);
         }
     }
 
+    // Where it came from: a server channel only, and only when the original
+    // was sent under its author's own name (direct messages, groups and
+    // masquerades stay private)
+    let names_place = matches!(source, revolt_database::Channel::TextChannel { .. })
+        && original.masquerade.is_none();
     let forwarded = v0::MessageForward {
-        channel: source.id().to_string(),
-        server: source.server().map(str::to_string),
+        channel: names_place.then(|| source.id().to_string()),
+        server: if names_place { source.server().map(str::to_string) } else { None },
         message: original.id.clone(),
-        author: original.author.clone(),
         sent_at: sent_at(&original.id),
         note: data.note.filter(|note| !note.trim().is_empty()),
     };
@@ -138,7 +161,7 @@ pub async fn forward(
         flags: None,
     };
 
-    super::message_send::send_inner(
+    let result = super::message_send::send_inner(
         db,
         amqp,
         user,
@@ -148,7 +171,19 @@ pub async fn forward(
         false,
         Some(forwarded),
     )
-    .await
+    .await;
+
+    // Refused after all: the copies made for it go at once
+    if result.is_err() && !copies.is_empty() {
+        db.mark_attachments_as_deleted(&copies).await.ok();
+    }
+    result
+}
+
+/// Whether a file can go along: still there, not under report, and stored
+/// under a hash (old uploads without one can't be shared)
+fn can_share(file: &File) -> bool {
+    file.deleted != Some(true) && file.reported != Some(true) && file.hash.is_some()
 }
 
 /// When a message was sent, read from its id
@@ -174,7 +209,7 @@ async fn sendable_from_text(
             return Ok(None);
         };
         match db.fetch_attachment("attachments", &file.id).await {
-            Ok(current) if current.deleted != Some(true) && current.reported != Some(true) => {
+            Ok(current) if can_share(&current) => {
                 Ok(Some(File::copy_unused(db, &current, user_id).await?.id))
             }
             _ => Ok(None),

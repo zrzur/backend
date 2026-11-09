@@ -58,6 +58,12 @@ auto_derived_partial!(
         /// Id of the object this file is associated with
         #[serde(skip_serializing_if = "Option::is_none")]
         pub object_id: Option<String>,
+
+        /// A forwarded copy: id of the first record of this file (the one
+        /// first uploaded). Safety actions and deleting the original reach
+        /// every copy through it.
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        pub forwarded_from: Option<String>,
     },
     "PartialFile"
 );
@@ -111,10 +117,77 @@ impl File {
             user_id: None,
             server_id: None,
             object_id: None,
+            forwarded_from: Some(file.root_id().to_string()),
             ..file.clone()
         };
         db.insert_attachment(&copy).await?;
         Ok(copy)
+    }
+
+    /// Id of the first record of this file: itself, unless it is a
+    /// forwarded copy
+    pub fn root_id(&self) -> &str {
+        self.forwarded_from.as_deref().unwrap_or(&self.id)
+    }
+
+    /// Every record of these files: the originals and every forwarded copy
+    /// of them, the given ones included
+    pub async fn with_copies(db: &Database, files: &[File]) -> Result<Vec<File>> {
+        let mut all: Vec<File> = Vec::new();
+        for file in files {
+            let family = match &file.hash {
+                Some(hash) => db.fetch_file_family(hash, file.root_id()).await?,
+                None => vec![],
+            };
+            for member in family.into_iter().chain(std::iter::once(file.clone())) {
+                if !all.iter().any(|known| known.id == member.id) {
+                    all.push(member);
+                }
+            }
+        }
+        Ok(all)
+    }
+
+    /// Copies forwarded from these files, when they are originals (a copy
+    /// going takes nothing else with it)
+    pub async fn forwarded_copies(db: &Database, files: &[File]) -> Result<Vec<File>> {
+        let originals: Vec<File> = files
+            .iter()
+            .filter(|file| file.forwarded_from.is_none())
+            .cloned()
+            .collect();
+        Ok(File::with_copies(db, &originals)
+            .await?
+            .into_iter()
+            .filter(|file| file.forwarded_from.is_some())
+            .collect())
+    }
+
+    /// Safety: these files, the originals they were forwarded from and every
+    /// copy become unavailable at once and leave CDN caches
+    pub async fn remove_with_copies(db: &Database, files: &[File]) -> Result<()> {
+        let all = File::with_copies(db, files).await?;
+        if all.is_empty() {
+            return Ok(());
+        }
+        let ids: Vec<String> = all.iter().map(|file| file.id.clone()).collect();
+        db.mark_attachments_as_deleted(&ids).await?;
+        crate::util::cdn_purge::purge_files_later(all);
+        Ok(())
+    }
+
+    /// Safety: keep this file and every record of the same forwarded file as
+    /// evidence (when deleted later, they stay stored for the case)
+    pub async fn mark_reported_with_copies(db: &Database, tag: &str, id: &str) -> Result<()> {
+        db.mark_attachment_as_reported(id).await?;
+        if let Ok(file) = db.fetch_attachment(tag, id).await {
+            for other in File::with_copies(db, &[file]).await? {
+                if other.id != id {
+                    db.mark_attachment_as_reported(&other.id).await?;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Get the hash entry for this file

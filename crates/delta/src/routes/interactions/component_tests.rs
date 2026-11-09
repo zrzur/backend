@@ -995,6 +995,7 @@ async fn updates_keep_blocks_that_point_at_the_message_files() {
             user_id: None,
             server_id: None,
             object_id: None,
+            forwarded_from: None,
         })
         .await
         .unwrap();

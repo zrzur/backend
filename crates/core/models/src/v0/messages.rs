@@ -211,17 +211,17 @@ auto_derived!(
     ///
     /// The forwarded copy keeps the text, files and embeds; this only says
     /// where they came from. Readers who can't open the original channel
-    /// still see the copy, just without a working link back.
+    /// still see the copy, just without a working link back. Direct
+    /// messages, groups and messages sent under another name name no place.
     pub struct MessageForward {
-        /// Id of the channel the original message is in
-        pub channel: String,
-        /// Id of the server of that channel, if it is in one
+        /// Id of the server channel the original message is in
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        pub channel: Option<String>,
+        /// Id of the server of that channel
         #[serde(skip_serializing_if = "Option::is_none", default)]
         pub server: Option<String>,
         /// Id of the original message
         pub message: String,
-        /// Id of the user or webhook that wrote the original message
-        pub author: String,
         /// When the original message was sent
         pub sent_at: Timestamp,
         /// Short note the person forwarding added

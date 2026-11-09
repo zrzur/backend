@@ -1330,6 +1330,7 @@ mod tests {
                 user_id: None,
                 server_id: None,
                 object_id: None,
+                forwarded_from: None,
             };
 
             user.update(

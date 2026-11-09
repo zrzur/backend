@@ -106,6 +106,19 @@ impl AbstractAttachments for MongoDb {
         )
     }
 
+    /// Every record of a forwarded file (served by the `hash` index)
+    async fn fetch_file_family(&self, hash: &str, root: &str) -> Result<Vec<File>> {
+        query!(
+            self,
+            find,
+            COL,
+            doc! {
+                "hash": hash,
+                "$or": [ { "_id": root }, { "forwarded_from": root } ]
+            }
+        )
+    }
+
     /// Count references to a given hash.
     async fn count_file_hash_references(&self, hash: &str) -> Result<usize> {
         query!(

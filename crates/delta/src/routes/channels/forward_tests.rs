@@ -113,7 +113,7 @@ impl Setup {
         channel
     }
 
-    async fn upload(&self, uploader: &User, hash: &str) -> String {
+    async fn upload(&self, uploader: &User, hash: Option<&str>) -> String {
         let id = ulid::Ulid::new().to_string();
         self.harness
             .db
@@ -121,7 +121,7 @@ impl Setup {
                 id: id.clone(),
                 tag: "attachments".to_string(),
                 filename: "a.png".to_string(),
-                hash: Some(hash.to_string()),
+                hash: hash.map(str::to_string),
                 uploaded_at: Some(iso8601_timestamp::Timestamp::now_utc()),
                 uploader_id: Some(uploader.id.clone()),
                 used_for: None,
@@ -140,6 +140,7 @@ impl Setup {
                 user_id: None,
                 server_id: None,
                 object_id: None,
+                forwarded_from: None,
             })
             .await
             .unwrap();
@@ -195,10 +196,9 @@ async fn round_trip_keeps_the_text_and_records_the_origin() {
     assert_eq!(copy.mentions, None);
 
     let origin = copy.forwarded.clone().expect("origin");
-    assert_eq!(origin.channel, s.general.id());
+    assert_eq!(origin.channel.as_deref(), Some(s.general.id()));
     assert_eq!(origin.server.as_deref(), Some(s.server.id.as_str()));
     assert_eq!(origin.message, original.id);
-    assert_eq!(origin.author, s.owner.id);
     assert_eq!(origin.note.as_deref(), Some("for you all"));
 
     // stored, not just answered
@@ -341,7 +341,7 @@ async fn mature_messages_stay_in_mature_channels() {
 async fn files_are_shared_not_moved() {
     forwarding_on().await;
     let s = setup().await;
-    let file = s.upload(&s.owner, "forward-test-hash").await;
+    let file = s.upload(&s.owner, Some("forward-test-hash")).await;
     let original = s
         .send(
             &s.owner_session,
@@ -403,7 +403,7 @@ async fn files_are_shared_not_moved() {
 async fn deleted_files_are_left_out() {
     forwarding_on().await;
     let s = setup().await;
-    let file = s.upload(&s.owner, "forward-deleted-hash").await;
+    let file = s.upload(&s.owner, Some("forward-deleted-hash")).await;
     let original = s
         .send(
             &s.owner_session,
@@ -455,4 +455,482 @@ async fn rich_embeds_go_along_where_embeds_are_allowed() {
         matches!(error, Some(ErrorType::MissingPermission { ref permission }) if permission == "SendEmbeds"),
         "{error:?}"
     );
+}
+
+// ---- review round: refusals, origin privacy, safety cascade -------------
+
+/// A message written straight into the database (system lines, other
+/// people's conversations)
+async fn stored(s: &Setup, channel: &str, author: &str, content: &str) -> revolt_database::Message {
+    let message = revolt_database::Message {
+        id: ulid::Ulid::new().to_string(),
+        channel: channel.to_string(),
+        author: author.to_string(),
+        content: Some(content.to_string()),
+        ..Default::default()
+    };
+    s.harness.db.insert_message(&message).await.unwrap();
+    message
+}
+
+fn body(channel: &str, message: &str) -> Value {
+    json!({ "channel": channel, "message": message })
+}
+
+async fn group_with(s: &Setup, recipients: Vec<String>) -> Channel {
+    let group = Channel::Group {
+        id: ulid::Ulid::new().to_string(),
+        name: "Trip".to_string(),
+        owner: s.owner.id.clone(),
+        description: None,
+        recipients,
+        icon: None,
+        last_message_id: None,
+        permissions: None,
+        nsfw: false,
+    };
+    s.harness.db.insert_channel(&group).await.unwrap();
+    group
+}
+
+#[rocket::async_test]
+async fn official_messages_are_not_forwarded() {
+    forwarding_on().await;
+    let s = setup().await;
+    let official = revolt_database::official_account(
+        &s.harness.db,
+        revolt_database::OfficialAccount::Updates,
+    )
+    .await
+    .unwrap();
+    let news = stored(&s, s.general.id(), &official.id, "News").await;
+    let (status, _, error) = s
+        .forward(&s.member_session, s.other.id(), body(s.general.id(), &news.id))
+        .await;
+    assert_eq!(status, Status::Forbidden, "{error:?}");
+    assert!(matches!(error, Some(ErrorType::OfficialAccount)), "{error:?}");
+}
+
+#[rocket::async_test]
+async fn conversations_the_person_is_not_in_are_out_of_reach() {
+    forwarding_on().await;
+    let s = setup().await;
+    let (_, _, stranger) = s.harness.new_user().await;
+
+    // a group the member left (no longer a recipient)
+    let group = group_with(&s, vec![s.owner.id.clone(), stranger.id.clone()]).await;
+    let in_group = stored(&s, group.id(), &s.owner.id, "plans").await;
+    let (status, _, error) = s
+        .forward(&s.member_session, s.other.id(), body(group.id(), &in_group.id))
+        .await;
+    assert_eq!(status, Status::NotFound, "left group: {error:?}");
+
+    // a direct message between two other people
+    let dm = Channel::DirectMessage {
+        id: ulid::Ulid::new().to_string(),
+        active: true,
+        recipients: vec![s.owner.id.clone(), stranger.id.clone()],
+        last_message_id: None,
+    };
+    s.harness.db.insert_channel(&dm).await.unwrap();
+    let in_dm = stored(&s, dm.id(), &s.owner.id, "between us").await;
+    let (status, _, error) = s
+        .forward(&s.member_session, s.other.id(), body(dm.id(), &in_dm.id))
+        .await;
+    assert_eq!(status, Status::NotFound, "DM of others: {error:?}");
+}
+
+#[rocket::async_test]
+async fn deleted_and_system_messages_are_refused() {
+    forwarding_on().await;
+    let s = setup().await;
+    let gone = s
+        .send(&s.owner_session, s.general.id(), json!({ "content": "soon gone" }))
+        .await;
+    s.harness.db.delete_message(&gone.id).await.unwrap();
+    let (status, _, _) = s
+        .forward(&s.member_session, s.other.id(), body(s.general.id(), &gone.id))
+        .await;
+    assert_eq!(status, Status::NotFound);
+
+    let line = revolt_database::Message {
+        id: ulid::Ulid::new().to_string(),
+        channel: s.general.id().to_string(),
+        author: "00000000000000000000000000".to_string(),
+        system: Some(revolt_database::SystemMessage::Text {
+            content: "Welcome".to_string(),
+        }),
+        ..Default::default()
+    };
+    s.harness.db.insert_message(&line).await.unwrap();
+    let (status, _, error) = s
+        .forward(&s.member_session, s.other.id(), body(s.general.id(), &line.id))
+        .await;
+    assert_eq!(status, Status::BadRequest, "{error:?}");
+    assert!(matches!(error, Some(ErrorType::InvalidOperation)), "{error:?}");
+}
+
+#[rocket::async_test]
+async fn reported_and_legacy_files_are_left_out() {
+    forwarding_on().await;
+    let s = setup().await;
+    let reported = s.upload(&s.owner, Some("forward-reported-hash")).await;
+    let legacy = s.upload(&s.owner, None).await;
+    let original = s
+        .send(
+            &s.owner_session,
+            s.general.id(),
+            json!({ "content": "two files", "attachments": [reported, legacy] }),
+        )
+        .await;
+    s.harness.db.mark_attachment_as_reported(&reported).await.unwrap();
+
+    let (status, copy, error) = s
+        .forward(&s.member_session, s.other.id(), body(s.general.id(), &original.id))
+        .await;
+    assert_eq!(status, Status::Ok, "{error:?}");
+    let copy = copy.unwrap();
+    assert_eq!(copy.attachments, None);
+    assert_eq!(copy.content.as_deref(), Some("two files"));
+}
+
+#[rocket::async_test]
+async fn bots_do_not_forward() {
+    forwarding_on().await;
+    let s = setup().await;
+    let (bot, bot_user) = s.harness.new_bot(&s.owner).await;
+    Member::create(&s.harness.db, &s.server, &bot_user, None).await.unwrap();
+    let original = s
+        .send(&s.owner_session, s.general.id(), json!({ "content": "hi" }))
+        .await;
+    let response = s
+        .harness
+        .client
+        .post(format!("/channels/{}/messages/forward", s.other.id()))
+        .header(ContentType::JSON)
+        .header(Header::new("x-bot-token", bot.token.clone()))
+        .body(body(s.general.id(), &original.id).to_string())
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::BadRequest);
+    let error: Error = response.into_json().await.unwrap();
+    assert!(matches!(error.error_type, ErrorType::IsBot));
+}
+
+#[rocket::async_test]
+async fn automod_reads_the_note_and_a_refusal_leaves_no_copies() {
+    forwarding_on().await;
+    let s = setup().await;
+    let rule: v0::AutoModRule = serde_json::from_value(json!({
+        "id": "rule",
+        "name": "House rules",
+        "enabled": true,
+        "trigger": { "type": "Keywords", "words": ["forbidden"] },
+        "actions": { "block": true },
+    }))
+    .unwrap();
+    let mut server = s.server.clone();
+    server
+        .update(
+            &s.harness.db,
+            revolt_database::PartialServer {
+                automod: Some(vec![rule]),
+                ..Default::default()
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
+
+    let file = s.upload(&s.owner, Some("forward-automod-hash")).await;
+    let original = s
+        .send(
+            &s.owner_session,
+            s.general.id(),
+            json!({ "content": "fine", "attachments": [file] }),
+        )
+        .await;
+    let (status, _, error) = s
+        .forward(
+            &s.member_session,
+            s.other.id(),
+            json!({ "channel": s.general.id(), "message": original.id, "note": "a forbidden word" }),
+        )
+        .await;
+    assert_eq!(status, Status::Forbidden, "{error:?}");
+    assert!(matches!(error, Some(ErrorType::AutoModBlocked { .. })), "{error:?}");
+
+    // the copy made for the refused send is marked deleted at once
+    let dangling = s
+        .harness
+        .db
+        .fetch_dangling_files()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|f| f.hash.as_deref() == Some("forward-automod-hash"))
+        .count();
+    assert_eq!(dangling, 0);
+    let deleted = s
+        .harness
+        .db
+        .fetch_deleted_attachments()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|f| f.hash.as_deref() == Some("forward-automod-hash"))
+        .count();
+    assert_eq!(deleted, 1);
+}
+
+#[rocket::async_test]
+async fn a_forwarded_copy_pings_no_role_and_nobody_at_all() {
+    forwarding_on().await;
+    let s = setup().await;
+    let role = s.harness.new_role(&s.server, 1, None).await;
+    let original = s
+        .send(
+            &s.owner_session,
+            s.general.id(),
+            json!({ "content": format!("@everyone and <%{}> and <@{}>", role.id, s.member.id) }),
+        )
+        .await;
+    assert!(original.role_mentions.is_some(), "the original pings the role");
+
+    let (status, copy, error) = s
+        .forward(&s.member_session, s.other.id(), body(s.general.id(), &original.id))
+        .await;
+    assert_eq!(status, Status::Ok, "{error:?}");
+    let copy = copy.unwrap();
+    assert_eq!(copy.mentions, None);
+    assert_eq!(copy.role_mentions, None);
+    assert_eq!(copy.flags & ((1 << 2) | (1 << 3)), 0, "no @everyone or @online");
+}
+
+#[rocket::async_test]
+async fn a_teen_cannot_forward_from_a_mature_channel() {
+    forwarding_on().await;
+    let s = setup().await;
+    let mut mature = s.harness.new_channel(&s.server).await;
+    mature
+        .update(
+            &s.harness.db,
+            PartialChannel {
+                nsfw: Some(true),
+                ..Default::default()
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
+    let original = s
+        .send(&s.owner_session, mature.id(), json!({ "content": "adults only" }))
+        .await;
+
+    let mut account = s.harness.db.fetch_account(&s.member.id).await.unwrap();
+    let now = iso8601_timestamp::Timestamp::now_utc();
+    account.age = Some(revolt_database::AccountAge::declare((
+        now.year() - 16,
+        u8::from(now.month()),
+    )));
+    account.save(&s.harness.db).await.unwrap();
+
+    let (status, _, error) = s
+        .forward(&s.member_session, mature.id(), body(mature.id(), &original.id))
+        .await;
+    assert_eq!(status, Status::Forbidden, "{error:?}");
+    assert!(matches!(error, Some(ErrorType::AgeRestricted)), "{error:?}");
+}
+
+#[rocket::async_test]
+async fn the_origin_names_no_place_for_private_or_masqueraded_messages() {
+    forwarding_on().await;
+    let s = setup().await;
+
+    let group = group_with(&s, vec![s.owner.id.clone(), s.member.id.clone()]).await;
+    let in_group = s
+        .send(&s.owner_session, group.id(), json!({ "content": "plans" }))
+        .await;
+    let (status, copy, error) = s
+        .forward(&s.member_session, s.other.id(), body(group.id(), &in_group.id))
+        .await;
+    assert_eq!(status, Status::Ok, "group: {error:?}");
+    let origin = copy.unwrap().forwarded.unwrap();
+    assert_eq!(origin.channel, None);
+    assert_eq!(origin.server, None);
+
+    let masked = s
+        .send(
+            &s.owner_session,
+            s.general.id(),
+            json!({ "content": "hello", "masquerade": { "name": "Narrator" } }),
+        )
+        .await;
+    let (status, copy, error) = s
+        .forward(&s.member_session, s.other.id(), body(s.general.id(), &masked.id))
+        .await;
+    assert_eq!(status, Status::Ok, "masquerade: {error:?}");
+    let origin = copy.unwrap().forwarded.unwrap();
+    assert_eq!(origin.channel, None);
+    assert_eq!(origin.server, None);
+}
+
+#[rocket::async_test]
+async fn staff_removing_the_original_removes_every_copy() {
+    forwarding_on().await;
+    let s = setup().await;
+    let file = s.upload(&s.owner, Some("forward-safety-hash")).await;
+    let original = s
+        .send(
+            &s.owner_session,
+            s.general.id(),
+            json!({ "content": "bad picture", "attachments": [file] }),
+        )
+        .await;
+    let (status, copy, error) = s
+        .forward(&s.member_session, s.other.id(), body(s.general.id(), &original.id))
+        .await;
+    assert_eq!(status, Status::Ok, "{error:?}");
+    let copy_file = copy.unwrap().attachments.unwrap()[0].id.clone();
+
+    // a member reports the original: the copy is kept as evidence too
+    let (_, reporter_session, reporter) = s.harness.new_user().await;
+    Member::create(&s.harness.db, &s.server, &reporter, None).await.unwrap();
+    let response = s
+        .harness
+        .client
+        .post("/safety/reports")
+        .header(ContentType::JSON)
+        .header(token(&reporter_session))
+        .body(
+            json!({
+                "target": { "kind": "Message", "id": original.id },
+                "category": "Harassment",
+                "subcategory": "targeted",
+                "description": "keeps posting this"
+            })
+            .to_string(),
+        )
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Ok);
+    let receipt: v0::SafetyReceipt = response.into_json().await.unwrap();
+    let copy_record = s.harness.db.fetch_attachment("attachments", &copy_file).await.unwrap();
+    assert_eq!(copy_record.reported, Some(true), "the report reaches the copy");
+
+    // staff remove the original message
+    let (_, staff_session, staff) = s.harness.new_user().await;
+    s.harness
+        .db
+        .save_platform_role(&revolt_database::PlatformRole {
+            id: staff.id.clone(),
+            permissions: vec![
+                revolt_database::PlatformPermission::SafetyReview,
+                revolt_database::PlatformPermission::SafetyAction,
+            ],
+            creator: None,
+            show_public_name: false,
+            updated_at: 0,
+            updated_by: "test".to_string(),
+        })
+        .await
+        .unwrap();
+    let case = s.harness.db.fetch_safety_case(&receipt.id).await.unwrap();
+    let response = s
+        .harness
+        .client
+        .post(format!("/safety/admin/reports/{}/actions", case.id))
+        .header(ContentType::JSON)
+        .header(token(&staff_session))
+        .body(
+            json!({
+                "kind": "RemoveMessage", "public_reason": "Harassment", "version": case.version,
+                "statement": { "ground": { "type": "Terms", "rule": "rule:Harassment" }, "facts": "Posted to harass" }
+            })
+            .to_string(),
+        )
+        .dispatch()
+        .await;
+    let status = response.status();
+    let text = response.into_string().await.unwrap_or_default();
+    assert_eq!(status, Status::Ok, "{text}");
+
+    for id in [&file, &copy_file] {
+        let record = s.harness.db.fetch_attachment("attachments", id).await.unwrap();
+        assert_eq!(record.deleted, Some(true), "{id} is unavailable");
+    }
+}
+
+#[rocket::async_test]
+async fn staff_removing_a_copy_removes_the_original_too() {
+    forwarding_on().await;
+    let s = setup().await;
+    let file = s.upload(&s.owner, Some("forward-copy-safety-hash")).await;
+    let original = s
+        .send(
+            &s.owner_session,
+            s.general.id(),
+            json!({ "content": "bad picture", "attachments": [file] }),
+        )
+        .await;
+    let (_, copy, _) = s
+        .forward(&s.member_session, s.other.id(), body(s.general.id(), &original.id))
+        .await;
+    let copy = s.harness.db.fetch_message(&copy.unwrap().id).await.unwrap();
+
+    revolt_database::File::remove_with_copies(&s.harness.db, copy.attachments.as_deref().unwrap_or_default())
+        .await
+        .unwrap();
+    let record = s.harness.db.fetch_attachment("attachments", &file).await.unwrap();
+    assert_eq!(record.deleted, Some(true));
+}
+
+#[rocket::async_test]
+async fn deleting_the_original_removes_the_copies_but_not_the_other_way() {
+    forwarding_on().await;
+    let s = setup().await;
+    let file = s.upload(&s.owner, Some("forward-delete-hash")).await;
+    let original = s
+        .send(
+            &s.owner_session,
+            s.general.id(),
+            json!({ "content": "photo", "attachments": [file] }),
+        )
+        .await;
+    let (_, first, _) = s
+        .forward(&s.member_session, s.other.id(), body(s.general.id(), &original.id))
+        .await;
+    let (_, second, _) = s
+        .forward(&s.member_session, s.other.id(), body(s.general.id(), &original.id))
+        .await;
+    let first = first.unwrap();
+    let second = second.unwrap();
+    let first_file = first.attachments.clone().unwrap()[0].id.clone();
+    let second_file = second.attachments.clone().unwrap()[0].id.clone();
+
+    // the forwarder deletes one copy: the original and the other copy stay
+    s.harness
+        .db
+        .fetch_message(&first.id)
+        .await
+        .unwrap()
+        .delete(&s.harness.db)
+        .await
+        .unwrap();
+    for (id, deleted) in [(&file, None), (&first_file, Some(true)), (&second_file, None)] {
+        let record = s.harness.db.fetch_attachment("attachments", id).await.unwrap();
+        assert_eq!(record.deleted, deleted, "{id}");
+    }
+
+    // the author deletes the original: the remaining copy goes with it
+    s.harness
+        .db
+        .fetch_message(&original.id)
+        .await
+        .unwrap()
+        .delete(&s.harness.db)
+        .await
+        .unwrap();
+    let record = s.harness.db.fetch_attachment("attachments", &second_file).await.unwrap();
+    assert_eq!(record.deleted, Some(true));
 }

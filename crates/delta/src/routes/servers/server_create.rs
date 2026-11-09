@@ -495,6 +495,7 @@ mod test {
             purged: None,
             message_id: None,
             object_id: None,
+            forwarded_from: None,
             server_id: None,
             user_id: None,
             uploaded_at: None,

@@ -1313,6 +1313,21 @@ impl Message {
         // crond would get to them within a minute; violating content goes now
         crate::util::cdn_purge::purge_files_later(self.attachments.clone().unwrap_or_default());
 
+        // files first posted here leave every place they were forwarded to;
+        // a forwarded copy going takes only itself
+        let mut own_files = self.attachments.clone().unwrap_or_default();
+        for id in Message::embed_file_ids(self.embeds.as_deref()) {
+            if let Ok(file) = db.fetch_attachment("attachments", &id).await {
+                own_files.push(file);
+            }
+        }
+        let copies = File::forwarded_copies(db, &own_files).await?;
+        if !copies.is_empty() {
+            let ids: Vec<String> = copies.iter().map(|file| file.id.clone()).collect();
+            db.mark_attachments_as_deleted(&ids).await?;
+            crate::util::cdn_purge::purge_files_later(copies);
+        }
+
         db.delete_message(&self.id).await?;
 
         if let Ok(mut channel) = db.fetch_channel(&self.channel).await {

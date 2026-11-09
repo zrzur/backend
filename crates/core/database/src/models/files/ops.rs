@@ -32,6 +32,10 @@ pub trait AbstractAttachments: Sync + Send {
     /// current image, a waiting revision and images it used before.
     async fn fetch_community_item_files(&self, item_id: &str) -> Result<Vec<File>>;
 
+    /// Every record of a forwarded file: the record `root` and the copies
+    /// made from it (all share the stored `hash`)
+    async fn fetch_file_family(&self, hash: &str, root: &str) -> Result<Vec<File>>;
+
     /// Count references to a given hash.
     async fn count_file_hash_references(&self, hash: &str) -> Result<usize>;
 
