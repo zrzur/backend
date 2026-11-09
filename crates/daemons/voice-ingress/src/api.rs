@@ -122,22 +122,10 @@ pub async fn ingress(
             }
 
             let voice_state = create_voice_state(&voice_channel, user_id, joined_at).await?;
-            let server = if let Some(server_id) = channel.server() {
-                Some(Reference::from_unchecked(server_id).as_server(db).await?)
-            } else {
-                None
-            };
-            sync_user_voice_permissions(
-                db,
-                voice_client,
-                node,
-                &joined_user,
-                &channel,
-                server.as_ref(),
-                None,
-            )
-            .await?;
 
+            // Tell everyone at once: the voice state is stored, so people who reload already
+            // see this user. A later failure must never leave live clients without the join
+            // (owner report 2026-11-09: people in a room not shown to others).
             // Only publish one event when a user is moved from one channel to another.
             if let Some(moved_from) = moved_from {
                 EventV1::VoiceChannelMove {
@@ -156,6 +144,52 @@ pub async fn ingress(
                 .p(channel_id.to_string())
                 .await;
             };
+
+            // Room permissions (speak, video, screen) must match the user's channel
+            // permissions. One retry; if it still fails, take the user out of the room rather
+            // than leave them with LiveKit's defaults. The leave webhook then clears the state
+            // and tells everyone.
+            let mut synced = Ok(());
+            for attempt in 1..=2 {
+                synced = async {
+                    let server = if let Some(server_id) = channel.server() {
+                        Some(Reference::from_unchecked(server_id).as_server(db).await?)
+                    } else {
+                        None
+                    };
+                    sync_user_voice_permissions(
+                        db,
+                        voice_client,
+                        node,
+                        &joined_user,
+                        &channel,
+                        server.as_ref(),
+                        None,
+                    )
+                    .await
+                }
+                .await;
+                match &synced {
+                    Ok(()) => break,
+                    Err(error) => {
+                        log::warn!("voice permission sync failed for {user_id} in {channel_id} (attempt {attempt}): {error:?}");
+                        if attempt == 1 {
+                            rocket::tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                        }
+                    }
+                }
+            }
+            if let Err(error) = synced {
+                revolt_config::capture_internal_error!(&error);
+                log::error!("removing {user_id} from {channel_id}: voice permissions could not be applied");
+                if let Err(remove_error) = voice_client.remove_user(node, user_id, channel_id).await {
+                    // The user is still in the room with the token's grants: fail the webhook so
+                    // LiveKit sends it again (the steps above are safe to run twice).
+                    revolt_config::capture_internal_error!(&remove_error);
+                    return Err(remove_error);
+                }
+                return Ok(EmptyResponse);
+            }
 
             let participants = voice_client.get_room_participants(node, channel_id).await?;
 

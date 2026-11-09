@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+- voice-ingress: a join is announced as soon as the voice state is stored. Before, a failed LiveKit permission sync stopped the `VoiceChannelJoin` event, so people already in the room never saw the newcomer (they saw them only after a reload). The sync now retries once; if it still fails, the user is taken out of the room instead of keeping LiveKit's default permissions.
+
 ## Zrzur 26.0.0 (unreleased)
 
 Zrzur's first release, built on Stoat 0.15.5 (below).
