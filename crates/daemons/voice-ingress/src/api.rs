@@ -169,15 +169,25 @@ pub async fn ingress(
                     .await
                 }
                 .await;
-                if synced.is_ok() {
-                    break;
+                match &synced {
+                    Ok(()) => break,
+                    Err(error) => {
+                        log::warn!("voice permission sync failed for {user_id} in {channel_id} (attempt {attempt}): {error:?}");
+                        if attempt == 1 {
+                            rocket::tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                        }
+                    }
                 }
-                log::warn!("voice permission sync failed for {user_id} in {channel_id} (attempt {attempt})");
             }
             if let Err(error) = synced {
                 revolt_config::capture_internal_error!(&error);
                 log::error!("removing {user_id} from {channel_id}: voice permissions could not be applied");
-                let _ = voice_client.remove_user(node, user_id, channel_id).await;
+                if let Err(remove_error) = voice_client.remove_user(node, user_id, channel_id).await {
+                    // The user is still in the room with the token's grants: fail the webhook so
+                    // LiveKit sends it again (the steps above are safe to run twice).
+                    revolt_config::capture_internal_error!(&remove_error);
+                    return Err(remove_error);
+                }
                 return Ok(EmptyResponse);
             }
 
