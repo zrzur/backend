@@ -1633,6 +1633,7 @@ mod search_filter_tests {
             user_id: None,
             server_id: None,
             object_id: None,
+            forwarded_from: None,
         }
     }
 
