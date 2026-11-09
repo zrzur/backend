@@ -63,6 +63,19 @@ pub async fn calculate_server_permissions<P: PermissionQuery>(query: &mut P) -> 
         return 0_u64.into();
     }
 
+    if is_administrator(query).await {
+        let mut permissions: PermissionValue = ChannelPermission::GrantAllSafe.into();
+        // a server mute and deafen still hold; a timeout does not
+        if !query.do_we_have_publish_overwrites().await {
+            permissions.revoke(ChannelPermission::Speak as u64);
+            permissions.revoke(ChannelPermission::Video as u64);
+        }
+        if !query.do_we_have_receive_overwrites().await {
+            permissions.revoke(ChannelPermission::Listen as u64);
+        }
+        return permissions;
+    }
+
     let mut permissions: PermissionValue = query.get_default_server_permissions().await.into();
     revoke_default_masquerade_for_bots(query, &mut permissions).await;
 
@@ -149,7 +162,13 @@ pub async fn calculate_channel_permissions<P: PermissionQuery>(query: &mut P) ->
             if query.are_we_server_owner().await {
                 ChannelPermission::GrantAllSafe.into()
             } else if query.are_we_a_member().await {
-                let mut permissions = granted_in_channel(query).await;
+                // an administrator gets everything, whatever the channel says
+                let administrator = is_administrator(query).await;
+                let mut permissions = if administrator {
+                    ChannelPermission::GrantAllSafe.into()
+                } else {
+                    granted_in_channel(query).await
+                };
 
                 // Server mute is the microphone. Camera and screen share stay on Video.
                 if !query.do_we_have_publish_overwrites().await {
@@ -160,7 +179,7 @@ pub async fn calculate_channel_permissions<P: PermissionQuery>(query: &mut P) ->
                     permissions.revoke(ChannelPermission::Listen as u64);
                 }
 
-                if query.are_we_timed_out().await {
+                if !administrator && query.are_we_timed_out().await {
                     permissions.restrict(*ALLOW_IN_TIMEOUT);
                 }
 
@@ -219,7 +238,21 @@ pub async fn calculate_standing_channel_permissions<P: PermissionQuery>(
     }
 
     query.are_we_a_member().await;
+    if is_administrator(query).await {
+        return ChannelPermission::GrantAllSafe.into();
+    }
     granted_in_channel(query).await
+}
+
+/// Whether the server default and the member's roles give Administrator.
+/// Only server-level permissions count: a channel can't make someone an
+/// administrator, nor take it away.
+async fn is_administrator<P: PermissionQuery>(query: &mut P) -> bool {
+    let mut permissions = PermissionValue::from(query.get_default_server_permissions().await);
+    for role_override in query.get_our_server_role_overrides().await {
+        permissions.apply(role_override);
+    }
+    permissions.has(ChannelPermission::Administrator as u64)
 }
 
 /// Bots may only masquerade with an explicit grant (their own role, another

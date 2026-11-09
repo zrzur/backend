@@ -14,3 +14,6 @@ pub use r#trait::*;
 
 #[cfg(test)]
 mod test;
+
+#[cfg(test)]
+mod test_admin;

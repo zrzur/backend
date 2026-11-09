@@ -118,8 +118,13 @@ pub enum ChannelPermission {
     /// Start a post in a forum
     CreateForumPosts = 1 << 45,
 
+    // * Administrator. Never a default; only someone who has it can give it,
+    // * and role ranks still decide which roles and members they can change.
+    /// Every right in every channel of the server, whatever its overrides say
+    Administrator = 1 << 46,
+
     // * Misc. permissions
-    // % Bits 46 to 52: free area
+    // % Bits 47 to 52: free area
     // % Bits 53 to 64: do not use
 
     // * Grant all permissions

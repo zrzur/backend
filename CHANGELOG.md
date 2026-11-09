@@ -6,6 +6,8 @@ Zrzur's first release, built on Stoat 0.15.5 (below).
 
 ### Features
 
+* **Administrator permission:** `Administrator` (bit 46) on a role gives every right in every channel of the server, whatever the channels' overrides say; a channel override can neither give nor take it, but a higher role can deny it. It is never a default and only someone who has it (or the owner) can give it; role ranks still decide which roles and members an administrator can change; a server mute or deafen still holds, and a timeout on an administrator is refused (`InvalidOperation`). Server templates can't create it.
+
 * **Account erasure removes designs:** `Account::mark_deleted` and `erase_completely` delete all of a person's community items with their favourites, use counts and review log, release every file the items claimed, take them off everyone wearing them, and clear the person's platform role.
 * **Creator rank is 18+:** `grant`, `reinstate` and `POST /admin/permissions` refuse anyone who has not declared an age of 18 or over (`FailedValidation`, rule `adult`), and `platform_permissions` drops `cosmetics.submit` for them, so someone under 18 who already has the rank cannot upload, create, edit or publish.
 * **Takedowns of every design:** decorations and nameplates taken down get the same Safety case, statement of reasons and appeal as effects, and their wearers are told.
