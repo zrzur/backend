@@ -1100,14 +1100,14 @@ async fn a_kept_message_is_not_replayed_after_its_channel_was_hidden() {
     assert!(matches!(removal, EventV1::ChannelDelete { .. }));
 
     assert!(
-        !state.may_replay(&db, &kept).await.is_some(),
+        state.may_replay(&db, &kept).await.is_none(),
         "the message must not be sent again"
     );
-    let mut typing = EventV1::ChannelStartTyping {
+    let typing = EventV1::ChannelStartTyping {
         id: CHANNEL.to_string(),
         user: OWNER.to_string(),
     };
-    assert!(!state.may_replay(&db, &typing).await.is_some());
+    assert!(state.may_replay(&db, &typing).await.is_none());
     // what takes the channel away is sent
     assert!(state.may_replay(&db, &removal).await.is_some());
 }
@@ -1133,8 +1133,8 @@ async fn kept_server_events_are_not_replayed_after_leaving() {
     };
     assert!(state.handle_incoming_event_v1(&db, &mut leave, SERVER).await);
 
-    assert!(!state.may_replay(&db, &update).await.is_some());
-    assert!(!state.may_replay(&db, &message_in(CHANNEL)).await.is_some());
+    assert!(state.may_replay(&db, &update).await.is_none());
+    assert!(state.may_replay(&db, &message_in(CHANNEL)).await.is_none());
     assert!(state.may_replay(&db, &leave).await.is_some());
 }
 
@@ -1145,7 +1145,7 @@ async fn a_kept_bulk_event_keeps_only_what_is_still_visible() {
     let mut state = state("member", &server, &[]).await;
     follow(&mut state, &channel(HashMap::new(), None)).await;
 
-    let mut bulk = EventV1::Bulk {
+    let bulk = EventV1::Bulk {
         v: vec![
             message_in(CHANNEL),
             message_in("elsewhere"),
@@ -1160,10 +1160,10 @@ async fn a_kept_bulk_event_keeps_only_what_is_still_visible() {
     assert!(matches!(&v[0], EventV1::Message(m) if m.channel == CHANNEL));
     assert!(matches!(&v[1], EventV1::ChannelDelete { .. }));
 
-    let mut nothing_left = EventV1::Bulk {
+    let nothing_left = EventV1::Bulk {
         v: vec![message_in("elsewhere")],
     };
-    assert!(!state.may_replay(&db, &nothing_left).await.is_some());
+    assert!(state.may_replay(&db, &nothing_left).await.is_none());
 }
 
 /// Review S3: what is about one channel follows that channel on a resume
