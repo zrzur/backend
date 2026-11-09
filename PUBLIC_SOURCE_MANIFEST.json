@@ -208,8 +208,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "d7a82a78fcb84014e3d25d19d9d6a8f0712d794bbdec92ee70683e7749e2a55a",
-      "bytes": 62207,
+      "sha256": "6c9f7df6fcf0683e242bf86112cdac771e3203425c660da510c079da0f346afe",
+      "bytes": 62608,
       "category": "public-documentation"
     },
     {
@@ -364,8 +364,8 @@
     },
     {
       "path": "crates/bonfire/src/events/impl.rs",
-      "sha256": "ed4dc6ddad99d9749ab03773f57fb2f0d11fb352a32907c9caf2f897ee103ce2",
-      "bytes": 43164,
+      "sha256": "0441353db3feb584495ad595b6130c5631c7f88ea92461edd9a83c40cf9d360f",
+      "bytes": 43476,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -3142,8 +3142,8 @@
     },
     {
       "path": "crates/daemons/voice-ingress/src/api.rs",
-      "sha256": "e74e5dae280d9b894b268685637337ebeeec580d02ebfff835fd6d8efbf4944b",
-      "bytes": 18610,
+      "sha256": "199390c094c9389bdcf1821412ef7755779302296629c40bf57ee291cb78a25d",
+      "bytes": 20608,
       "category": "product-source-or-build-manifest"
     },
     {
