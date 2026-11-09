@@ -1,9 +1,9 @@
-use revolt_models::v0::ApplicationCommand;
+use revolt_models::v0::{ApplicationCommand, CommandPermissions};
 use revolt_result::Result;
 
 use crate::ReferenceDb;
 
-use super::AbstractApplicationCommands;
+use super::{command_permissions_key, AbstractApplicationCommands};
 
 fn same_slot(a: &ApplicationCommand, b: &ApplicationCommand) -> bool {
     a.id != b.id
@@ -108,6 +108,43 @@ impl AbstractApplicationCommands for ReferenceDb {
             .lock()
             .await
             .retain(|_, c| c.application_id != application_id);
+        Ok(())
+    }
+
+    async fn fetch_command_permissions(
+        &self,
+        server_id: &str,
+        application_id: Option<&str>,
+    ) -> Result<Vec<CommandPermissions>> {
+        Ok(self
+            .command_permissions
+            .lock()
+            .await
+            .values()
+            .filter(|p| {
+                p.server_id == server_id
+                    && application_id.is_none_or(|id| p.application_id == id)
+            })
+            .cloned()
+            .collect())
+    }
+
+    async fn set_command_permissions(&self, permissions: &CommandPermissions) -> Result<()> {
+        let key = command_permissions_key(permissions);
+        let mut store = self.command_permissions.lock().await;
+        if permissions.permissions.is_empty() {
+            store.remove(&key);
+        } else {
+            store.insert(key, permissions.clone());
+        }
+        Ok(())
+    }
+
+    async fn delete_command_permissions(&self, server_id: &str, application_id: &str) -> Result<()> {
+        self.command_permissions
+            .lock()
+            .await
+            .retain(|_, p| !(p.server_id == server_id && p.application_id == application_id));
         Ok(())
     }
 }

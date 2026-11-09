@@ -17,6 +17,7 @@ use revolt_result::{create_error, Result};
 use rocket::{serde::json::Json, State};
 
 use super::options::{invalid, OptionContext};
+use crate::routes::applications::command_permissions::ServerCommandRules;
 use crate::util::interaction_endpoint;
 
 fn accepted(interaction: &Interaction) -> InteractionAccepted {
@@ -42,8 +43,8 @@ struct Scope {
 }
 
 /// Check the channel, the user's access, and that the bot is installed and can
-/// see the channel. Components and forms (`in_dm`) also work in the person's
-/// DM with the bot itself; commands stay in server channels.
+/// see the channel. With `in_dm`, the person's DM with the bot itself works
+/// too (components, forms, and the bot's global commands).
 async fn scope(
     db: &Database,
     user: &User,
@@ -168,12 +169,9 @@ async fn command(
         .command_id
         .as_deref()
         .ok_or_else(|| invalid("command_id is required"))?;
-    let scope = scope(db, user, &data.channel_id, application_id, true, false).await?;
-    // commands never reach the DM path of `scope`
-    let server = scope
-        .server
-        .as_ref()
-        .ok_or_else(|| invalid("interactions are only available in server channels"))?;
+    // in a server channel, or in the person's DM with the bot (global commands only)
+    let scope = scope(db, user, &data.channel_id, application_id, true, true).await?;
+    let server = scope.server.as_ref();
 
     // The command must belong to the bot, be global or for this server, and be current
     let command = db
@@ -184,7 +182,7 @@ async fn command(
         || command
             .server_id
             .as_ref()
-            .is_some_and(|id| id != &server.id)
+            .is_some_and(|id| server.is_none_or(|server| id != &server.id))
     {
         return Err(create_error!(UnknownCommand));
     }
@@ -199,15 +197,37 @@ async fn command(
     if command.nsfw && !channel_nsfw {
         return Err(create_error!(UnknownCommand));
     }
-    if let Some(required) = command.default_member_permissions {
-        if !scope.user_permissions.has(required as u64) {
-            return Err(create_error!(MissingPermission {
-                permission: "Command".to_string()
-            }));
+    match server {
+        Some(server) => {
+            // the server's command permission rules, then default_member_permissions
+            let rules = ServerCommandRules::load(db, &server.id).await?;
+            let roles = scope
+                .member
+                .as_ref()
+                .map(|member| member.roles.clone())
+                .unwrap_or_default();
+            let access = rules.access(
+                &command,
+                server,
+                &user.id,
+                &roles,
+                Some(scope.channel.id()),
+                scope.user_permissions,
+            );
+            if !access.allowed() {
+                return Err(create_error!(MissingPermission {
+                    permission: "Command".to_string()
+                }));
+            }
         }
+        // commands that need server permissions make no sense in a DM
+        None if command.default_member_permissions.is_some() => {
+            return Err(create_error!(UnknownCommand));
+        }
+        None => {}
     }
 
-    let mut context = OptionContext::new(db, user, &scope.bot_user, Some(server));
+    let mut context = OptionContext::new(db, user, &scope.bot_user, server);
     if autocomplete {
         if command.kind != ApplicationCommandType::ChatInput {
             return Err(create_error!(InvalidOperation));
@@ -254,7 +274,7 @@ async fn command(
         data.kind,
         scope.bot.id.clone(),
         user.id.clone(),
-        Some(server.id.clone()),
+        server.map(|server| server.id.clone()),
         scope.channel.id().to_string(),
         data.nonce,
     );

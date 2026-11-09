@@ -25,6 +25,8 @@ database_derived!(
         pub channel_webhooks: Arc<Mutex<HashMap<String, Webhook>>>,
         pub application_commands:
             Arc<Mutex<HashMap<String, revolt_models::v0::ApplicationCommand>>>,
+        pub command_permissions:
+            Arc<Mutex<HashMap<String, revolt_models::v0::CommandPermissions>>>,
         pub interactions: Arc<Mutex<HashMap<String, crate::Interaction>>>,
         pub oauth: Arc<Mutex<crate::ReferenceOAuth>>,
         pub emojis: Arc<Mutex<HashMap<String, Emoji>>>,

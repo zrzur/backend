@@ -1,4 +1,4 @@
-use revolt_models::v0::ApplicationCommand;
+use revolt_models::v0::{ApplicationCommand, CommandPermissions};
 use revolt_result::Result;
 
 #[cfg(feature = "mongodb")]
@@ -39,4 +39,32 @@ pub trait AbstractApplicationCommands: Sync + Send {
 
     /// Delete every command of an application, in all scopes
     async fn delete_all_application_commands(&self, application_id: &str) -> Result<()>;
+
+    /// Command permission rules set in a server: every application when
+    /// `application_id` is `None`
+    async fn fetch_command_permissions(
+        &self,
+        server_id: &str,
+        application_id: Option<&str>,
+    ) -> Result<Vec<CommandPermissions>>;
+
+    /// Store the rules of one scope; an empty list removes the scope
+    async fn set_command_permissions(&self, permissions: &CommandPermissions) -> Result<()>;
+
+    /// Remove every rule of an application in a server (when it is removed)
+    async fn delete_command_permissions(&self, server_id: &str, application_id: &str) -> Result<()>;
 }
+
+/// Storage key of one scope
+pub fn command_permissions_key(permissions: &CommandPermissions) -> String {
+    format!(
+        "{}:{}:{}",
+        permissions.server_id,
+        permissions.application_id,
+        permissions
+            .command_id
+            .as_deref()
+            .unwrap_or(&permissions.application_id)
+    )
+}
+

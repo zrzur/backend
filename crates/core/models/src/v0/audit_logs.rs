@@ -152,6 +152,12 @@ auto_derived!(
         BotRemove {
             bot: String,
         },
+        /// Who may use a bot's commands changed (`command` absent: the whole bot)
+        CommandPermissionsUpdate {
+            bot: String,
+            #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+            command: Option<String>,
+        },
         /// AutoMod acted on a message (actions: block, alert, timeout)
         AutoModAction {
             rule: String,

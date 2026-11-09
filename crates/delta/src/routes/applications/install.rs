@@ -191,6 +191,7 @@ pub async fn uninstall_server_app(
             .await?;
         server.cleanup_managed_bot_role(db, &bot.id).await?;
     }
+    db.delete_command_permissions(server_id, &bot.id).await?;
     db.delete_app_install(server_id, &bot.id).await?;
     Ok(EmptyResponse)
 }

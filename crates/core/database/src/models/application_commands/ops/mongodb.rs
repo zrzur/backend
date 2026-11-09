@@ -1,12 +1,26 @@
 use futures::StreamExt;
-use revolt_models::v0::ApplicationCommand;
+use revolt_models::v0::{ApplicationCommand, CommandPermission, CommandPermissions};
+use serde::{Deserialize, Serialize};
 use revolt_result::Result;
 
 use crate::MongoDb;
 
-use super::AbstractApplicationCommands;
+use super::{command_permissions_key, AbstractApplicationCommands};
 
 pub(crate) static COL: &str = "application_commands";
+static PERMISSIONS_COL: &str = "command_permissions";
+
+/// One scope of command permission rules as stored
+#[derive(Serialize, Deserialize)]
+struct StoredCommandPermissions {
+    #[serde(rename = "_id")]
+    id: String,
+    server_id: String,
+    application_id: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    command_id: Option<String>,
+    permissions: Vec<CommandPermission>,
+}
 
 fn is_duplicate(error: &mongodb::error::Error) -> bool {
     error.to_string().contains("E11000")
@@ -130,5 +144,61 @@ impl AbstractApplicationCommands for MongoDb {
             .await
             .map(|_| ())
             .map_err(|_| create_database_error!("delete_many", COL))
+    }
+
+    async fn fetch_command_permissions(
+        &self,
+        server_id: &str,
+        application_id: Option<&str>,
+    ) -> Result<Vec<CommandPermissions>> {
+        let mut filter = doc! { "server_id": server_id };
+        if let Some(application_id) = application_id {
+            filter.insert("application_id", application_id);
+        }
+        Ok(self
+            .col::<StoredCommandPermissions>(PERMISSIONS_COL)
+            .find(filter)
+            .await
+            .map_err(|_| create_database_error!("find", PERMISSIONS_COL))?
+            .filter_map(|s| async { s.ok() })
+            .map(|stored| CommandPermissions {
+                server_id: stored.server_id,
+                application_id: stored.application_id,
+                command_id: stored.command_id,
+                permissions: stored.permissions,
+            })
+            .collect()
+            .await)
+    }
+
+    async fn set_command_permissions(&self, permissions: &CommandPermissions) -> Result<()> {
+        let id = command_permissions_key(permissions);
+        let col = self.col::<StoredCommandPermissions>(PERMISSIONS_COL);
+        if permissions.permissions.is_empty() {
+            col.delete_one(doc! { "_id": &id })
+                .await
+                .map_err(|_| create_database_error!("delete_one", PERMISSIONS_COL))?;
+            return Ok(());
+        }
+        let stored = StoredCommandPermissions {
+            id: id.clone(),
+            server_id: permissions.server_id.clone(),
+            application_id: permissions.application_id.clone(),
+            command_id: permissions.command_id.clone(),
+            permissions: permissions.permissions.clone(),
+        };
+        col.replace_one(doc! { "_id": &id }, &stored)
+            .upsert(true)
+            .await
+            .map(|_| ())
+            .map_err(|_| create_database_error!("replace_one", PERMISSIONS_COL))
+    }
+
+    async fn delete_command_permissions(&self, server_id: &str, application_id: &str) -> Result<()> {
+        self.col::<StoredCommandPermissions>(PERMISSIONS_COL)
+            .delete_many(doc! { "server_id": server_id, "application_id": application_id })
+            .await
+            .map(|_| ())
+            .map_err(|_| create_database_error!("delete_many", PERMISSIONS_COL))
     }
 }
