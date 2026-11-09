@@ -6,6 +6,9 @@ use std::collections::{HashMap, HashSet};
 
 #[cfg(feature = "rocket")]
 use rocket::FromForm;
+#[cfg(feature = "validator")]
+#[allow(unused_imports)]
+use validator::Validate;
 
 auto_derived!(
     /// Channel
@@ -217,6 +220,18 @@ auto_derived!(
         /// Forum tags
         #[cfg_attr(feature = "serde", serde(default))]
         pub tags: Vec<String>,
+        /// Embeds of the first message. The first message is sent as by
+        /// `POST /channels/{target}/messages` in the new thread: the same
+        /// permissions (Send Embeds), the same mention rules (pinging a role
+        /// needs Mention Roles), and if it is refused no thread is made.
+        /// A forum post still needs `content`.
+        #[cfg_attr(feature = "validator", validate)]
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub embeds: Option<Vec<super::SendableEmbed>>,
+        /// Buttons and selects of the first message (bots only, as on
+        /// message send)
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub components: Option<Vec<super::ComponentBlock>>,
     }
 
     /// Change a thread

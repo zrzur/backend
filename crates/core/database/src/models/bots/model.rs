@@ -375,9 +375,13 @@ use crate::{Bot, FieldsBot, PartialBot, User};
                 Ok(I::DEFAULT)
             );
             // an intent the owner never switched on still closes it
+            // and says what is switched on, so the owner sees what was read
             assert_eq!(
                 crate::connection_intents(&db, &user, Some(I::PRESENCE)).await,
-                Err(vec!["PRESENCE"])
+                Err(crate::IntentRefusal::Missing {
+                    missing: vec!["PRESENCE"],
+                    switched_on: vec!["MESSAGE_CONTENT"],
+                })
             );
 
             bot.update(
@@ -478,15 +482,46 @@ pub async fn connection_intents(
     db: &Database,
     user: &User,
     requested: Option<u64>,
-) -> std::result::Result<u64, Vec<&'static str>> {
+) -> std::result::Result<u64, IntentRefusal> {
     use revolt_models::v0::GatewayIntents;
-    let switched_on = db
-        .fetch_bot(&user.id)
-        .await
-        .map(|bot| bot.privileged_intents)
-        .unwrap_or(0);
-    let intents = GatewayIntents::resolve(requested, switched_on)?;
+    // A bot that can't be read is not a bot without intents: refusing with
+    // 4014 here told bots "switched off" (and made them stop) when only the
+    // read failed
+    let switched_on = match db.fetch_bot(&user.id).await {
+        Ok(bot) => bot.privileged_intents,
+        Err(error) if matches!(error.error_type, revolt_result::ErrorType::NotFound) => 0,
+        Err(_) => return Err(IntentRefusal::Unavailable),
+    };
+    let intents = GatewayIntents::resolve(requested, switched_on).map_err(|missing| {
+        IntentRefusal::Missing {
+            missing,
+            switched_on: GatewayIntents::privileged_names(switched_on as u64),
+        }
+    })?;
     Ok(intents & (!GatewayIntents::PRIVILEGED | enabled_intents(db, user).await))
+}
+
+/// Why a bot's gateway connection can't have the intents it asked for
+#[derive(Debug, PartialEq, Eq)]
+pub enum IntentRefusal {
+    /// Privileged intents asked for but not switched on, and the ones that
+    /// are switched on (as read for this connection)
+    Missing {
+        missing: Vec<&'static str>,
+        switched_on: Vec<&'static str>,
+    },
+    /// The bot could not be read; try again later
+    Unavailable,
+}
+
+impl IntentRefusal {
+    /// The names asked for but not switched on
+    pub fn missing(&self) -> &[&'static str] {
+        match self {
+            IntentRefusal::Missing { missing, .. } => missing,
+            IntentRefusal::Unavailable => &[],
+        }
+    }
 }
 
 /// Hide who is online, and their status, from a bot without the Presence

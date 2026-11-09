@@ -156,23 +156,26 @@ pub async fn create_thread(
         .p(server.clone())
         .await;
 
-    if let Some(content) = data.content {
+    // The first message is an ordinary message of this user in the thread:
+    // what message send allows or refuses (Send Embeds, components for bots
+    // only, Mention Roles for a role ping) applies as it is
+    if data.content.is_some() || data.embeds.is_some() || data.components.is_some() {
         let first = super::message_send::send(
             db,
             amqp,
             user,
             Reference::from_unchecked(thread.id()),
             Json(v0::DataMessageSend {
-                content: Some(content),
+                content: data.content,
                 nonce: None,
                 attachments: None,
                 replies: None,
-                embeds: None,
+                embeds: data.embeds,
                 masquerade: None,
                 interactions: None,
                 interaction: None,
                 flags: None,
-                components: None,
+                components: data.components,
             }),
             IdempotencyKey::unchecked_from_string(ulid::Ulid::new().to_string()),
             true,

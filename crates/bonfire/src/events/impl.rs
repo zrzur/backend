@@ -458,6 +458,7 @@ impl State {
             channel_unreads,
 
             policy_changes,
+            session_id: None,
         };
         self.limit_ready(&mut ready);
         Ok(ready)
@@ -1124,6 +1125,67 @@ impl State {
             _ => {}
         }
         true
+    }
+
+    /// Whether a kept event may be sent again on a resume. It passed every
+    /// check when it came in; what the session lost since (a channel it can
+    /// no longer see, a server it left, webhooks it no longer manages) is
+    /// not sent again. Events that take something away always are.
+    pub async fn may_replay<'e>(
+        &self,
+        db: &Database,
+        event: &'e EventV1,
+    ) -> Option<std::borrow::Cow<'e, EventV1>> {
+        use std::borrow::Cow;
+        if let EventV1::Bulk { v } = event {
+            let mut kept = Vec::with_capacity(v.len());
+            for inner in v {
+                if self.still_visible(db, inner).await {
+                    kept.push(inner.clone());
+                }
+            }
+            if kept.is_empty() {
+                return None;
+            }
+            if kept.len() == v.len() {
+                return Some(Cow::Borrowed(event));
+            }
+            return Some(Cow::Owned(EventV1::Bulk { v: kept }));
+        }
+        self.still_visible(db, event)
+            .await
+            .then_some(Cow::Borrowed(event))
+    }
+
+    async fn still_visible(&self, db: &Database, event: &EventV1) -> bool {
+        use crate::resume::{scope, Scope};
+        match scope(event) {
+            Scope::Always => true,
+            Scope::Channel(id) => self.follows_channel(id).await,
+            Scope::Webhooks(id) => {
+                self.follows_channel(id).await && self.cache.can_manage_webhooks(db, id).await
+            }
+            Scope::Channels(from, to) => {
+                self.follows_channel(from).await || self.follows_channel(to).await
+            }
+            Scope::Server(id) => self.cache.servers.contains_key(id),
+            Scope::Emoji(id) => match db.fetch_emoji(id).await {
+                Ok(emoji) => match emoji.parent {
+                    revolt_database::EmojiParent::Server { id } => {
+                        self.cache.servers.contains_key(&id)
+                    }
+                    revolt_database::EmojiParent::Detached => true,
+                },
+                // gone since: its EmojiDelete says so
+                Err(_) => false,
+            },
+        }
+    }
+
+    /// A channel this session can see and still follows
+    async fn follows_channel(&self, id: &str) -> bool {
+        self.cache.channels.get(id).is_some_and(|channel| self.cache.may_receive(channel))
+            && self.subscribed.read().await.contains(id)
     }
 
     /// Follow or drop every cached channel by the current age rules; a

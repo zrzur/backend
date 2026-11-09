@@ -378,6 +378,24 @@ fn gateway_schema_document() -> Value {
         },
         "privileged_intents": GatewayIntents::PRIVILEGED,
         "default_intents": GatewayIntents::DEFAULT,
+        // How the gateway closes a socket. Errors come first as an `Error`
+        // event; only 4014 has its own code.
+        "close_codes": {
+            "1005": "Closed without a code: logged out, or the session ended or expired (`Logout` came first). Authenticate again with a valid token.",
+            "1013": "Try again later: the bot could not be read (`Error` `InternalError` came first). Reconnect with backoff.",
+            "4014": "Disallowed intents: a privileged intent is not switched on for this bot (`Error` `MissingIntent` came first). Do not retry with the same intents.",
+        },
+        // Every event after `Ready` (except `Pong`) carries `seq`, counted
+        // per session from 1. Sessions asked for with
+        // `Authenticate { resumable: true }` can be resumed after a drop.
+        "resume": {
+            "seq": "Every event from the session's stream carries seq, from 1, one per packet (a Bulk has one; its items have none). Authenticated, Ready, UserSlowmodes, Pong, Error, InvalidSession and Resumed have none. Typing events get a seq but are not kept for a resume, so a replay has gaps there and where access was lost.",
+            "window_seconds": 120,
+            "max_events": 1000,
+            "max_bytes": 4194304,
+            "dropped_sessions_per_user": 3,
+            "flow": "Authenticate { resumable: true } -> Ready { session_id }. After a drop, on a new socket: Resume { token, session_id, seq } -> the missed events the session may still see, in order, then Resumed; or InvalidSession { resumable: false } -> send Authenticate on the same socket and catch up over the API. Events dropped since (lost access) leave gaps in seq.",
+        },
     })
 }
 
@@ -417,6 +435,22 @@ mod gateway_schema_tests {
             assert!(!events.contains(&internal), "{internal} must stay internal");
         }
         assert_eq!(document["intents"]["PRESENCE"], 1 << 12);
-        assert!(document["client"]["oneOf"].as_array().unwrap().len() >= 5);
+        assert!(document["client"]["oneOf"].as_array().unwrap().len() >= 6);
+
+        // resuming is described: its messages and events, and the close codes
+        for public in ["Resumed", "InvalidSession"] {
+            assert!(events.contains(&public), "{public} missing from {events:?}");
+        }
+        let client: Vec<&str> = document["client"]["oneOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|message| message["properties"]["type"]["enum"][0].as_str())
+            .collect();
+        assert!(client.contains(&"Resume"), "{client:?}");
+        assert!(document["close_codes"]["4014"].is_string());
+        assert!(document["close_codes"]["1013"].is_string(), "a bot that can't be read");
+        assert!(document["resume"]["seq"].is_string(), "which events carry seq");
+        assert_eq!(document["resume"]["window_seconds"], 120);
     }
 }

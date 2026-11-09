@@ -11,6 +11,7 @@ pub mod config;
 pub mod events;
 
 mod database;
+mod resume;
 mod typing;
 mod websocket;
 

@@ -95,6 +95,21 @@ pub enum EventV1 {
 
         #[serde(skip_serializing_if = "Option::is_none")]
         policy_changes: Option<Vec<PolicyChange>>,
+
+        /// Id of this gateway session, for `Resume`. Only given when the
+        /// client asked for a resumable session.
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        session_id: Option<String>,
+    },
+
+    /// The session was resumed: every missed event the client may still
+    /// see was sent before this, in order
+    Resumed,
+
+    /// The session can't be resumed; send `Authenticate` on this socket
+    /// for a new one (and catch up over the API)
+    InvalidSession {
+        resumable: bool,
     },
 
     /// Ping response
