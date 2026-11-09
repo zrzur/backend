@@ -20,6 +20,7 @@ mod member_experimental_query;
 mod member_fetch;
 mod member_fetch_all;
 mod member_remove;
+mod message_search;
 mod category_permissions;
 mod permissions_set;
 mod permissions_set_default;
@@ -59,6 +60,9 @@ mod rules_screening_tests;
 
 #[cfg(test)]
 mod kick_reason_tests;
+
+#[cfg(test)]
+mod message_search_tests;
 
 pub fn routes() -> (Vec<Route>, OpenApi) {
     openapi_get_routes_spec![
@@ -105,6 +109,7 @@ pub fn routes() -> (Vec<Route>, OpenApi) {
         emoji_list::list_emoji,
         roles_edit_positions::edit_role_ranks,
         audit_log_query::query,
+        message_search::search_server,
         discover::discover_add::discover_add,
         discover::discover_edit::discover_edit,
         discover::discover_get::discover_get,

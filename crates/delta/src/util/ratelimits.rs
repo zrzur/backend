@@ -85,6 +85,11 @@ impl<'a> RatelimitResolver<Request<'a>> for DeltaRatelimits {
                 {
                     ("member_list", Some(id))
                 }
+                // server-wide message search: as many as a channel search,
+                // apart from the server actions
+                ("servers", Some(id), Method::Post) if extra == Some("messages") => {
+                    ("message_search", Some(id))
+                }
                 ("servers", Some(id), _) => ("servers", Some(id)),
                 ("auth", _, _) => {
                     if request.method() == Method::Delete {
@@ -143,6 +148,7 @@ impl<'a> RatelimitResolver<Request<'a>> for DeltaRatelimits {
             "channels" => 15,
             "servers" => 5,
             "member_list" => 15,
+            "message_search" => 15,
             "auth" => self.auth_limit,
             "auth_delete" => 255,
             "default_avatar" => 255,
