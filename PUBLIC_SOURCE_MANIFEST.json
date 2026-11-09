@@ -3646,8 +3646,8 @@
     },
     {
       "path": "crates/delta/src/routes/channels/message_forward.rs",
-      "sha256": "723b5ab1bf510921ed4ac0bceae9481e48d07d1ef4420386632e0a2ef361e873",
-      "bytes": 7197,
+      "sha256": "a0e7927c374406a96d95da65bbaaa924e76e9dc739e7669b3bd05c01038b57b6",
+      "bytes": 7619,
       "category": "product-source-or-build-manifest"
     },
     {
