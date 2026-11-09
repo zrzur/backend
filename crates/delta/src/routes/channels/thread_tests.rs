@@ -246,3 +246,89 @@ async fn threads_go_with_their_channel_and_follow_its_mature_flag() {
     assert_eq!(status, Status::NoContent);
     assert!(Reference::from_unchecked(&thread_id).as_channel(&s.harness.db).await.is_err());
 }
+
+/// Gap 18: the first message of a thread follows the message rules of its
+/// author. A role ping without Mention Roles is refused exactly as on
+/// message send (the error names the permission), and no thread is left.
+#[rocket::async_test]
+async fn a_role_ping_in_the_first_message_is_refused_as_on_message_send() {
+    use rocket::http::Method::Get;
+    let s = setup().await;
+    let general = s.channel(json!({ "type": "Text", "name": "general" })).await;
+    let staff = s.harness.new_role(&s.server, 1, None).await;
+    let ping = format!("New ticket <%{}>", staff.id);
+
+    let (sent_status, sent) = s.send(&s.member, &general, &ping).await;
+    let (thread_status, thread) = s
+        .thread(&s.member, &general, json!({ "name": "ticket", "content": ping }))
+        .await;
+    assert_eq!(sent_status, Status::Forbidden, "{sent}");
+    assert_eq!(sent["type"], "MissingPermission");
+    assert_eq!(sent["permission"], "MentionRoles");
+    assert_eq!((thread_status, &thread), (sent_status, &sent), "the same answer");
+
+    let (_, threads) = s.call(&s.owner, Get, format!("/channels/{general}/threads"), None).await;
+    assert_eq!(threads.as_array().map(Vec::len), Some(0), "no thread left: {threads}");
+
+    // with the permission both go through
+    let (status, thread) = s
+        .thread(&s.owner, &general, json!({ "name": "ticket", "content": ping }))
+        .await;
+    assert_eq!(status, Status::Ok, "{thread}");
+}
+
+/// The first message can carry what message send allows its author:
+/// embeds for everyone with Send Embeds, components for bots
+#[rocket::async_test]
+async fn the_first_message_carries_embeds_and_a_bots_components() {
+    use rocket::http::Method::{Get, Post};
+    let s = setup().await;
+    let general = s.channel(json!({ "type": "Text", "name": "general" })).await;
+    let owner = s
+        .harness
+        .db
+        .fetch_user(&s.server.owner)
+        .await
+        .unwrap();
+    let (bot, bot_user) = s.harness.new_bot(&owner).await;
+    Member::create(&s.harness.db, &s.server, &bot_user, None).await.unwrap();
+
+    let card = json!({
+        "name": "ticket-1",
+        "embeds": [{ "title": "Ticket", "description": "From a member" }],
+        "components": [{ "type": "ActionRow", "components": [
+            { "type": "Button", "style": "Danger", "label": "Close", "custom_id": "close:1" }
+        ]}]
+    });
+    let response = s
+        .harness
+        .client
+        .post(format!("/channels/{general}/threads"))
+        .header(Header::new("x-bot-token", bot.token.clone()))
+        .header(ContentType::JSON)
+        .body(card.to_string())
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Ok);
+    let thread: Value = response.into_json().await.unwrap();
+    let thread_id = thread["_id"].as_str().unwrap().to_string();
+
+    let (status, messages) = s
+        .call(&s.owner, Get, format!("/channels/{thread_id}/messages"), None)
+        .await;
+    assert_eq!(status, Status::Ok, "{messages}");
+    let first = &messages.as_array().expect("messages")[0];
+    assert_eq!(first["embeds"][0]["title"], "Ticket", "{first}");
+    assert_eq!(first["components"][0]["components"][0]["custom_id"], "close:1", "{first}");
+
+    // a person can't send components on a message, nor as a thread's first
+    let components = json!({ "components": card["components"].clone() });
+    let (sent_status, sent) = s
+        .call(&s.member, Post, format!("/channels/{general}/messages"), Some(components.clone()))
+        .await;
+    let mut body = components;
+    body["name"] = json!("not-a-bot");
+    let (thread_status, refused) = s.thread(&s.member, &general, body).await;
+    assert_ne!(sent_status, Status::Ok, "{sent}");
+    assert_eq!((thread_status, &refused), (sent_status, &sent));
+}
