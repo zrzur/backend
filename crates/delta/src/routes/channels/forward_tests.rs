@@ -934,3 +934,122 @@ async fn deleting_the_original_removes_the_copies_but_not_the_other_way() {
     let record = s.harness.db.fetch_attachment("attachments", &second_file).await.unwrap();
     assert_eq!(record.deleted, Some(true));
 }
+
+// ---- review round 2: bulk deletion, account erasure, embed images -------
+
+async fn deleted(s: &Setup, id: &str) -> Option<bool> {
+    s.harness
+        .db
+        .fetch_attachment("attachments", id)
+        .await
+        .unwrap()
+        .deleted
+}
+
+#[rocket::async_test]
+async fn moderator_bulk_delete_removes_the_files_and_their_copies() {
+    forwarding_on().await;
+    let s = setup().await;
+    let file = s.upload(&s.owner, Some("forward-bulk-hash")).await;
+    let original = s
+        .send(
+            &s.owner_session,
+            s.general.id(),
+            json!({ "content": "photo", "attachments": [file] }),
+        )
+        .await;
+    let kept = s
+        .send(&s.owner_session, s.general.id(), json!({ "content": "stays" }))
+        .await;
+    let (_, copy, _) = s
+        .forward(&s.member_session, s.other.id(), body(s.general.id(), &original.id))
+        .await;
+    let copy_file = copy.unwrap().attachments.unwrap()[0].id.clone();
+
+    let response = s
+        .harness
+        .client
+        .delete(format!("/channels/{}/messages/bulk", s.general.id()))
+        .header(ContentType::JSON)
+        .header(token(&s.owner_session))
+        .body(json!({ "ids": [original.id] }).to_string())
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::NoContent);
+
+    assert_eq!(deleted(&s, &file).await, Some(true), "the file of the message");
+    assert_eq!(deleted(&s, &copy_file).await, Some(true), "its forwarded copy");
+    assert!(
+        s.harness.db.fetch_message(&kept.id).await.is_ok(),
+        "a message not named stays"
+    );
+}
+
+#[rocket::async_test]
+async fn account_erasure_removes_the_files_and_their_copies() {
+    forwarding_on().await;
+    let s = setup().await;
+    let (_, author_session, mut author) = s.harness.new_user().await;
+    Member::create(&s.harness.db, &s.server, &author, None).await.unwrap();
+    let file = s.upload(&author, Some("forward-erasure-hash")).await;
+    let original = s
+        .send(
+            &author_session,
+            s.general.id(),
+            json!({ "content": "mine", "attachments": [file] }),
+        )
+        .await;
+    let (_, copy, _) = s
+        .forward(&s.member_session, s.other.id(), body(s.general.id(), &original.id))
+        .await;
+    let copy_file = copy.unwrap().attachments.unwrap()[0].id.clone();
+
+    author.delete(&s.harness.db).await.unwrap();
+
+    assert!(s.harness.db.fetch_message(&original.id).await.is_err());
+    assert_eq!(deleted(&s, &file).await, Some(true), "the file of the message");
+    assert_eq!(deleted(&s, &copy_file).await, Some(true), "its forwarded copy");
+}
+
+#[rocket::async_test]
+async fn images_inside_forwarded_rich_embeds_are_copies_and_follow_the_original() {
+    forwarding_on().await;
+    let s = setup().await;
+    let image = s.upload(&s.owner, Some("forward-embed-hash")).await;
+    let original = s
+        .send(
+            &s.owner_session,
+            s.general.id(),
+            json!({ "embeds": [{ "title": "Poster", "media": image }] }),
+        )
+        .await;
+
+    let (status, copy, error) = s
+        .forward(&s.member_session, s.other.id(), body(s.general.id(), &original.id))
+        .await;
+    assert_eq!(status, Status::Ok, "{error:?}");
+    let copied_image = match copy.unwrap().embeds.as_deref() {
+        Some([v0::Embed::Text(text)]) => text.media.clone().expect("image").id,
+        other => panic!("expected one text embed, got {other:?}"),
+    };
+    assert_ne!(copied_image, image, "a new record, not the original");
+    let record = s
+        .harness
+        .db
+        .fetch_attachment("attachments", &copied_image)
+        .await
+        .unwrap();
+    assert_eq!(record.forwarded_from.as_deref(), Some(image.as_str()));
+    assert_eq!(record.hash.as_deref(), Some("forward-embed-hash"));
+
+    s.harness
+        .db
+        .fetch_message(&original.id)
+        .await
+        .unwrap()
+        .delete(&s.harness.db)
+        .await
+        .unwrap();
+    assert_eq!(deleted(&s, &image).await, Some(true));
+    assert_eq!(deleted(&s, &copied_image).await, Some(true), "the copied image goes too");
+}

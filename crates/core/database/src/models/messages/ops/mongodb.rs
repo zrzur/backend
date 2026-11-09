@@ -453,9 +453,28 @@ impl AbstractMessages for MongoDb {
     }
 
     async fn delete_messages_by_user(&self, user_id: &str) -> Result<()> {
+        // files are removed before this through their messages
+        // (Message::remove_files); the legacy `message_id` path stays for
+        // records from before attachments were kept on the message
         self.delete_bulk_messages(doc! {
             "author": user_id,
         }).await
+    }
+
+    async fn fetch_messages_with_files_by_author(&self, author: &str) -> Result<Vec<Message>> {
+        self.find_with_options(
+            COL,
+            doc! {
+                "author": author,
+                "$or": [
+                    { "attachments.0": { "$exists": true } },
+                    { "embeds.0": { "$exists": true } },
+                ]
+            },
+            None,
+        )
+        .await
+        .map_err(|_| create_database_error!("find", COL))
     }
 }
 

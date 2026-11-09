@@ -323,10 +323,12 @@ impl AbstractMessages for ReferenceDb {
 
     /// Delete messages from a channel by their ids and corresponding channel id
     async fn delete_messages(&self, channel: &str, ids: &[String]) -> Result<()> {
+        // keep everything but the named messages of this channel (this kept
+        // only other channels before, deleting all of this one)
         self.messages
             .lock()
             .await
-            .retain(|id, message| message.channel != channel && !ids.contains(id));
+            .retain(|id, message| message.channel != channel || !ids.contains(id));
 
         Ok(())
     }
@@ -390,10 +392,25 @@ impl AbstractMessages for ReferenceDb {
     async fn delete_messages_by_user(&self, user_id: &str) -> Result<()> {
         let mut messages = self.messages.lock().await;
 
+        // files are removed before this through their messages
+        // (Message::remove_files)
         messages.retain(|_, message| message.author != user_id);
 
-        // TODO: remove attachments as well
-
         Ok(())
+    }
+
+    async fn fetch_messages_with_files_by_author(&self, author: &str) -> Result<Vec<Message>> {
+        Ok(self
+            .messages
+            .lock()
+            .await
+            .values()
+            .filter(|message| {
+                message.author == author
+                    && (message.attachments.as_ref().is_some_and(|files| !files.is_empty())
+                        || message.embeds.as_ref().is_some_and(|embeds| !embeds.is_empty()))
+            })
+            .cloned()
+            .collect())
     }
 }

@@ -1294,39 +1294,45 @@ impl Message {
         }
     }
 
-    /// Delete a message
-    pub async fn delete(&self, db: &Database) -> Result<()> {
-        // attachments and the files embeds show: nothing stays reachable
-        // after the message is gone
-        let file_ids = self
-            .attachments
-            .iter()
-            .flatten()
-            .map(|file| file.id.clone())
-            .chain(Message::embed_file_ids(self.embeds.as_deref()))
-            .collect::<Vec<_>>();
-
-        if !file_ids.is_empty() {
-            db.mark_attachments_as_deleted(&file_ids).await?;
-        }
-
-        // crond would get to them within a minute; violating content goes now
-        crate::util::cdn_purge::purge_files_later(self.attachments.clone().unwrap_or_default());
-
-        // files first posted here leave every place they were forwarded to;
-        // a forwarded copy going takes only itself
-        let mut own_files = self.attachments.clone().unwrap_or_default();
-        for id in Message::embed_file_ids(self.embeds.as_deref()) {
-            if let Ok(file) = db.fetch_attachment("attachments", &id).await {
-                own_files.push(file);
+    /// The files of messages that are going: their attachments and the
+    /// images their rich embeds show become unavailable, and so does every
+    /// copy forwarded from a file first posted in them (a forwarded copy
+    /// going takes only itself). All of them leave CDN caches now; crond
+    /// would only get to them within a minute.
+    pub async fn remove_files(db: &Database, messages: &[Message]) -> Result<()> {
+        let mut files: Vec<File> = Vec::new();
+        // embed images whose record can't be read: still marked by their id
+        let mut unread_ids: Vec<String> = Vec::new();
+        for message in messages {
+            files.extend(message.attachments.iter().flatten().cloned());
+            for id in Message::embed_file_ids(message.embeds.as_deref()) {
+                match db.fetch_attachment("attachments", &id).await {
+                    Ok(file) => files.push(file),
+                    Err(_) => unread_ids.push(id),
+                }
             }
         }
-        let copies = File::forwarded_copies(db, &own_files).await?;
-        if !copies.is_empty() {
-            let ids: Vec<String> = copies.iter().map(|file| file.id.clone()).collect();
-            db.mark_attachments_as_deleted(&ids).await?;
-            crate::util::cdn_purge::purge_files_later(copies);
+        if files.is_empty() && unread_ids.is_empty() {
+            return Ok(());
         }
+
+        let copies = File::forwarded_copies(db, &files).await?;
+        files.extend(copies);
+        let ids: Vec<String> = files
+            .iter()
+            .map(|file| file.id.clone())
+            .chain(unread_ids)
+            .collect();
+        db.mark_attachments_as_deleted(&ids).await?;
+        crate::util::cdn_purge::purge_files_later(files);
+        Ok(())
+    }
+
+    /// Delete a message
+    pub async fn delete(&self, db: &Database) -> Result<()> {
+        // attachments and the files embeds show, and their forwarded copies:
+        // nothing stays reachable after the message is gone
+        Message::remove_files(db, std::slice::from_ref(self)).await?;
 
         db.delete_message(&self.id).await?;
 
@@ -1378,14 +1384,17 @@ impl Message {
     /// Bulk delete messages of one channel; ids of other channels are skipped.
     /// Returns how many were deleted.
     pub async fn bulk_delete(db: &Database, channel: &str, ids: Vec<String>) -> Result<usize> {
-        let valid_ids = db
+        let valid = db
             .fetch_messages_by_id(&ids)
             .await?
             .into_iter()
             .filter(|msg| msg.channel == channel)
-            .map(|msg| msg.id)
-            .collect::<Vec<String>>();
+            .collect::<Vec<Message>>();
 
+        // their files go as with a single delete, forwarded copies included
+        Message::remove_files(db, &valid).await?;
+
+        let valid_ids = valid.into_iter().map(|msg| msg.id).collect::<Vec<String>>();
         db.delete_messages(channel, &valid_ids).await?;
         let count = valid_ids.len();
         EventV1::BulkMessageDelete {

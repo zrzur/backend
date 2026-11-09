@@ -64,4 +64,8 @@ pub trait AbstractMessages: Sync + Send {
     ) -> Result<HashMap<String, Vec<String>>>;
 
     async fn delete_messages_by_user(&self, user_id: &str) -> Result<()>;
+
+    /// Messages of an author that carry files (attachments or embeds), so
+    /// erasing the account can remove the files first
+    async fn fetch_messages_with_files_by_author(&self, author: &str) -> Result<Vec<Message>>;
 }
