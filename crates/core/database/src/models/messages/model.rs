@@ -1328,6 +1328,30 @@ impl Message {
         Ok(())
     }
 
+    /// [`Message::remove_files`] for the messages of an author, read `page`
+    /// at a time (account erasure and bans can reach a great many):
+    /// optionally only in `channels` and only from the message id `since`
+    pub async fn remove_files_of_author(
+        db: &Database,
+        author: &str,
+        channels: Option<&[String]>,
+        since: Option<&str>,
+        page: usize,
+    ) -> Result<()> {
+        let page = page.max(1);
+        let mut after: Option<String> = None;
+        loop {
+            let messages = db
+                .fetch_messages_with_files(author, channels, since, after.as_deref(), page)
+                .await?;
+            Message::remove_files(db, &messages).await?;
+            if messages.len() < page {
+                return Ok(());
+            }
+            after = messages.last().map(|message| message.id.clone());
+        }
+    }
+
     /// Delete a message
     pub async fn delete(&self, db: &Database) -> Result<()> {
         // attachments and the files embeds show, and their forwarded copies:
@@ -1413,6 +1437,12 @@ impl Message {
         author: &str,
         since: SystemTime,
     ) -> Result<()> {
+        // their files first, as a single delete would (forwarded copies and
+        // rich-embed images included), page by page
+        let threshold = Ulid::from_datetime(since).to_string();
+        Message::remove_files_of_author(db, author, Some(channels), Some(&threshold), 500)
+            .await?;
+
         let deleted_groups = db
             .delete_messages_by_author_since(channels, author, since)
             .await?;

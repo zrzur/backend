@@ -1053,3 +1053,79 @@ async fn images_inside_forwarded_rich_embeds_are_copies_and_follow_the_original(
     assert_eq!(deleted(&s, &image).await, Some(true));
     assert_eq!(deleted(&s, &copied_image).await, Some(true), "the copied image goes too");
 }
+
+// ---- review round 3: ban with message deletion, paged erasure ----------
+
+#[rocket::async_test]
+async fn a_ban_that_deletes_messages_removes_their_files_and_copies() {
+    forwarding_on().await;
+    let s = setup().await;
+    let (_, author_session, author) = s.harness.new_user().await;
+    Member::create(&s.harness.db, &s.server, &author, None).await.unwrap();
+    // the author may send embeds like anyone with the default rights
+    let file = s.upload(&author, Some("forward-ban-hash")).await;
+    let image = s.upload(&author, Some("forward-ban-embed-hash")).await;
+    let original = s
+        .send(
+            &author_session,
+            s.general.id(),
+            json!({ "content": "spam", "attachments": [file], "embeds": [{ "title": "Ad", "media": image }] }),
+        )
+        .await;
+    let (status, copy, error) = s
+        .forward(&s.member_session, s.other.id(), body(s.general.id(), &original.id))
+        .await;
+    assert_eq!(status, Status::Ok, "{error:?}");
+    let copy = copy.unwrap();
+    let copy_file = copy.attachments.clone().unwrap()[0].id.clone();
+    let copy_image = match copy.embeds.as_deref() {
+        Some([v0::Embed::Text(text)]) => text.media.clone().expect("image").id,
+        other => panic!("expected one text embed, got {other:?}"),
+    };
+
+    let response = s
+        .harness
+        .client
+        .put(format!("/servers/{}/bans/{}", s.server.id, author.id))
+        .header(ContentType::JSON)
+        .header(token(&s.owner_session))
+        .body(json!({ "reason": "spam", "delete_message_seconds": 3600 }).to_string())
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Ok);
+
+    assert!(s.harness.db.fetch_message(&original.id).await.is_err());
+    for (id, what) in [
+        (&file, "the file"),
+        (&image, "the embed image"),
+        (&copy_file, "the forwarded copy"),
+        (&copy_image, "the copied embed image"),
+    ] {
+        assert_eq!(deleted(&s, id).await, Some(true), "{what}");
+    }
+}
+
+#[rocket::async_test]
+async fn files_of_an_author_are_removed_page_by_page() {
+    forwarding_on().await;
+    let s = setup().await;
+    let mut files = Vec::new();
+    for n in 0..5 {
+        let file = s.upload(&s.owner, Some(&format!("forward-page-hash-{n}"))).await;
+        s.send(
+            &s.owner_session,
+            s.general.id(),
+            json!({ "content": format!("photo {n}"), "attachments": [file] }),
+        )
+        .await;
+        files.push(file);
+    }
+
+    // two at a time: five messages take three pages
+    revolt_database::Message::remove_files_of_author(&s.harness.db, &s.owner.id, None, None, 2)
+        .await
+        .unwrap();
+    for file in &files {
+        assert_eq!(deleted(&s, file).await, Some(true), "{file}");
+    }
+}

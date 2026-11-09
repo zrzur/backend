@@ -1130,8 +1130,7 @@ impl User {
         self.clear_relationships(db).await?;
         // their files first, as each message would on its own (forwarded
         // copies of them included), then the messages
-        let with_files = db.fetch_messages_with_files_by_author(&self.id).await?;
-        crate::Message::remove_files(db, &with_files).await?;
+        crate::Message::remove_files_of_author(db, &self.id, None, None, 500).await?;
         db.delete_messages_by_user(&self.id).await?;
         self.mark_deleted(db).await?;
 

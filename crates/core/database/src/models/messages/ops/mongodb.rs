@@ -461,17 +461,42 @@ impl AbstractMessages for MongoDb {
         }).await
     }
 
-    async fn fetch_messages_with_files_by_author(&self, author: &str) -> Result<Vec<Message>> {
+    async fn fetch_messages_with_files(
+        &self,
+        author: &str,
+        channels: Option<&[String]>,
+        since: Option<&str>,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<Message>> {
+        let mut filter = doc! {
+            "author": author,
+            "$or": [
+                { "attachments.0": { "$exists": true } },
+                { "embeds.0": { "$exists": true } },
+            ]
+        };
+        if let Some(channels) = channels {
+            filter.insert("channel", doc! { "$in": channels });
+        }
+        let mut id = Document::new();
+        if let Some(since) = since {
+            id.insert("$gte", since);
+        }
+        if let Some(after) = after {
+            id.insert("$gt", after);
+        }
+        if !id.is_empty() {
+            filter.insert("_id", id);
+        }
+
         self.find_with_options(
             COL,
-            doc! {
-                "author": author,
-                "$or": [
-                    { "attachments.0": { "$exists": true } },
-                    { "embeds.0": { "$exists": true } },
-                ]
-            },
-            None,
+            filter,
+            FindOptions::builder()
+                .sort(doc! { "_id": 1_i32 })
+                .limit(limit as i64)
+                .build(),
         )
         .await
         .map_err(|_| create_database_error!("find", COL))

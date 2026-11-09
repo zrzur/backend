@@ -399,8 +399,15 @@ impl AbstractMessages for ReferenceDb {
         Ok(())
     }
 
-    async fn fetch_messages_with_files_by_author(&self, author: &str) -> Result<Vec<Message>> {
-        Ok(self
+    async fn fetch_messages_with_files(
+        &self,
+        author: &str,
+        channels: Option<&[String]>,
+        since: Option<&str>,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<Message>> {
+        let mut page: Vec<Message> = self
             .messages
             .lock()
             .await
@@ -409,8 +416,14 @@ impl AbstractMessages for ReferenceDb {
                 message.author == author
                     && (message.attachments.as_ref().is_some_and(|files| !files.is_empty())
                         || message.embeds.as_ref().is_some_and(|embeds| !embeds.is_empty()))
+                    && channels.is_none_or(|channels| channels.contains(&message.channel))
+                    && since.is_none_or(|since| message.id.as_str() >= since)
+                    && after.is_none_or(|after| message.id.as_str() > after)
             })
             .cloned()
-            .collect())
+            .collect();
+        page.sort_by(|a, b| a.id.cmp(&b.id));
+        page.truncate(limit);
+        Ok(page)
     }
 }
