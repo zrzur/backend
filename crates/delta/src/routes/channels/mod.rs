@@ -15,6 +15,7 @@ mod message_clear_reactions;
 mod message_delete;
 mod message_edit;
 mod message_fetch;
+mod message_forward;
 mod message_pin;
 mod message_query;
 mod message_react;
@@ -40,6 +41,8 @@ mod bot_api_tests;
 mod masquerade_tests;
 #[cfg(test)]
 mod official_tests;
+#[cfg(test)]
+mod forward_tests;
 
 #[cfg(test)]
 mod invite_defaults_tests;
@@ -56,6 +59,7 @@ pub fn routes() -> (Vec<Route>, OpenApi) {
         channel_edit::edit,
         invite_create::create_invite,
         message_send::message_send,
+        message_forward::forward,
         message_query::query,
         message_search::search,
         typing::start_typing,

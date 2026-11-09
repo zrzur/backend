@@ -89,6 +89,34 @@ auto_derived!(
 );
 
 impl File {
+    /// A second record for the same stored file, used by nothing yet, so a
+    /// message can claim it like a fresh upload (forwarding). The original
+    /// record stays with its own message; the stored file is removed only
+    /// once no record points at its hash. Files without a hash (legacy
+    /// uploads) can't be shared this way.
+    pub async fn copy_unused(db: &Database, file: &File, uploader_id: &str) -> Result<File> {
+        if file.hash.is_none() {
+            return Err(revolt_result::create_error!(InvalidOperation));
+        }
+
+        let copy = File {
+            id: ulid::Ulid::new().to_string(),
+            uploaded_at: Some(Timestamp::now_utc()),
+            uploader_id: Some(uploader_id.to_owned()),
+            used_for: None,
+            deleted: None,
+            reported: None,
+            purged: None,
+            message_id: None,
+            user_id: None,
+            server_id: None,
+            object_id: None,
+            ..file.clone()
+        };
+        db.insert_attachment(&copy).await?;
+        Ok(copy)
+    }
+
     /// Get the hash entry for this file
     pub async fn as_hash(&self, db: &Database) -> Result<FileHash> {
         db.fetch_attachment_hash(self.hash.as_ref().unwrap()).await

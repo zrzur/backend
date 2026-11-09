@@ -598,6 +598,7 @@ impl crate::Message {
             masquerade: self.masquerade.map(Into::into),
             flags: self.flags.unwrap_or_default(),
             pinned: self.pinned,
+            forwarded: self.forwarded,
         }
     }
 }
@@ -629,6 +630,7 @@ impl From<crate::PartialMessage> for PartialMessage {
             masquerade: value.masquerade.map(Into::into),
             flags: value.flags,
             pinned: value.pinned,
+            forwarded: value.forwarded,
         }
     }
 }

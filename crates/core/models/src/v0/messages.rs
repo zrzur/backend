@@ -77,6 +77,9 @@ auto_derived_partial!(
         /// Whether or not the message in pinned
         #[serde(skip_serializing_if = "crate::if_option_false")]
         pub pinned: Option<bool>,
+        /// Where this message was forwarded from
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        pub forwarded: Option<MessageForward>,
 
         /// Bitfield of message flags
         ///
@@ -202,6 +205,42 @@ auto_derived!(
         /// Command name (commands only)
         #[serde(skip_serializing_if = "Option::is_none", default)]
         pub name: Option<String>,
+    }
+
+    /// Origin of a forwarded message
+    ///
+    /// The forwarded copy keeps the text, files and embeds; this only says
+    /// where they came from. Readers who can't open the original channel
+    /// still see the copy, just without a working link back.
+    pub struct MessageForward {
+        /// Id of the channel the original message is in
+        pub channel: String,
+        /// Id of the server of that channel, if it is in one
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        pub server: Option<String>,
+        /// Id of the original message
+        pub message: String,
+        /// Id of the user or webhook that wrote the original message
+        pub author: String,
+        /// When the original message was sent
+        pub sent_at: Timestamp,
+        /// Short note the person forwarding added
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        pub note: Option<String>,
+    }
+
+    /// Message to forward
+    #[cfg_attr(feature = "validator", derive(Validate))]
+    pub struct DataMessageForward {
+        /// Id of the channel the message is in
+        #[cfg_attr(feature = "validator", validate(length(min = 1, max = 128)))]
+        pub channel: String,
+        /// Id of the message to forward
+        #[cfg_attr(feature = "validator", validate(length(min = 1, max = 128)))]
+        pub message: String,
+        /// Short note shown with the forwarded message
+        #[cfg_attr(feature = "validator", validate(length(min = 1, max = 1000)))]
+        pub note: Option<String>,
     }
 
     /// Appended Information

@@ -58,6 +58,8 @@ pub struct RevoltFeatures {
     /// Whether plugins are open on this server. Off, every plugin route
     /// answers `PluginsDisabled` and clients load no plugin
     pub plugins: bool,
+    /// Whether messages can be forwarded to another channel
+    pub forwarding: bool,
     /// File server service configuration
     pub autumn: Feature,
     /// Proxy service configuration
@@ -216,6 +218,7 @@ pub async fn root() -> Result<Json<RevoltConfig>> {
             webhooks: config.features.webhooks_enabled,
             community_effects: config.features.community.effects_enabled,
             plugins: config.features.plugins_enabled,
+            forwarding: config.features.message_forwarding_enabled,
             autumn: Feature {
                 enabled: !config.hosts.autumn.is_empty(),
                 url: config.hosts.autumn.clone(),

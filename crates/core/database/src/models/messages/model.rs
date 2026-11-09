@@ -79,6 +79,9 @@ auto_derived_partial!(
         /// Whether or not the message in pinned
         #[serde(skip_serializing_if = "crate::if_option_false")]
         pub pinned: Option<bool>,
+        /// Where this message was forwarded from
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        pub forwarded: Option<revolt_models::v0::MessageForward>,
 
         /// Bitfield of message flags
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -275,6 +278,7 @@ impl Default for Message {
             masquerade: None,
             flags: None,
             pinned: None,
+            forwarded: None,
         }
     }
 }
@@ -325,10 +329,47 @@ impl Message {
         user: Option<v0::User>,
         member: Option<v0::Member>,
         limits: FeaturesLimits,
+        idempotency: IdempotencyKey,
+        generate_embeds: bool,
+        allow_mentions: bool,
+        allowed_mentions: Option<&v0::AllowedMentions>,
+    ) -> Result<Message> {
+        Message::create_full(
+            db,
+            amqp,
+            channel,
+            data,
+            author,
+            user,
+            member,
+            limits,
+            idempotency,
+            generate_embeds,
+            allow_mentions,
+            allowed_mentions,
+            None,
+        )
+        .await
+    }
+
+    /// [`Message::create_with_mentions`] for a forwarded copy: `forwarded`
+    /// records where it came from, and a forwarded copy pings nobody (the
+    /// text was written for another audience)
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_full(
+        db: &Database,
+        amqp: Option<&AMQP>,
+        channel: Channel,
+        data: DataMessageSend,
+        author: MessageAuthor<'_>,
+        user: Option<v0::User>,
+        member: Option<v0::Member>,
+        limits: FeaturesLimits,
         mut idempotency: IdempotencyKey,
         generate_embeds: bool,
         allow_mentions: bool,
         allowed_mentions: Option<&v0::AllowedMentions>,
+        forwarded: Option<v0::MessageForward>,
     ) -> Result<Message> {
         let config = config().await;
 
@@ -453,6 +494,8 @@ impl Message {
             interaction: data.interaction,
             ..Default::default()
         };
+        let is_forward = forwarded.is_some();
+        message.forwarded = forwarded;
 
         // Parse mentions in message.
 
@@ -464,6 +507,15 @@ impl Message {
 
         message_mentions.mentions_everyone |= mentions_everyone;
         message_mentions.mentions_online |= mentions_online;
+
+        // A forwarded copy notifies nobody: the text keeps its mentions as
+        // written, but they were meant for the original channel
+        if is_forward {
+            message_mentions.user_mentions.clear();
+            message_mentions.role_mentions.clear();
+            message_mentions.mentions_everyone = false;
+            message_mentions.mentions_online = false;
+        }
 
         let revolt_parser::MessageResults {
             mut user_mentions,

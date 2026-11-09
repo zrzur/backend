@@ -512,6 +512,9 @@ pub enum ErrorType {
     AgeRequirementNotMet,
     AgeChangeNotAllowed,
     AgeRestricted,
+    /// A message from a mature channel can only be forwarded into another
+    /// mature channel
+    ForwardMatureContent,
 }
 
 #[macro_export]
