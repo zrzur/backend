@@ -79,13 +79,19 @@ pub async fn forward(
         return Err(create_error!(ForwardMatureContent));
     }
 
-    // Before copying anything: may this user post here at all (the full set
-    // of send rules runs again below)
-    let mut target_query = DatabasePermissionQuery::new(db, &user).channel(&target_channel);
-    let target_permissions = calculate_channel_permissions(&mut target_query).await;
-    target_permissions.throw_if_lacking_channel_permission(ChannelPermission::SendMessage)?;
-    if original.attachments.as_ref().is_some_and(|files| !files.is_empty()) {
-        target_permissions.throw_if_lacking_channel_permission(ChannelPermission::UploadFiles)?;
+    // Before copying files: may this user post them here at all, so a refusal
+    // leaves no copies behind (the full set of send rules runs again below,
+    // with its own clearer errors for direct messages)
+    let has_files = original.attachments.as_ref().is_some_and(|files| !files.is_empty())
+        || original.embeds.iter().flatten().any(|embed| matches!(embed, v0::Embed::Text(_)));
+    if has_files && !matches!(target_channel, revolt_database::Channel::DirectMessage { .. }) {
+        let mut target_query = DatabasePermissionQuery::new(db, &user).channel(&target_channel);
+        let target_permissions = calculate_channel_permissions(&mut target_query).await;
+        target_permissions.throw_if_lacking_channel_permission(ChannelPermission::SendMessage)?;
+        if original.attachments.as_ref().is_some_and(|files| !files.is_empty()) {
+            target_permissions
+                .throw_if_lacking_channel_permission(ChannelPermission::UploadFiles)?;
+        }
     }
 
     // Files: a fresh record of the same stored file for each, claimed by the
