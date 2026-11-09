@@ -498,3 +498,113 @@ async fn bot_must_be_installed_and_online() {
         .await;
     assert_eq!(response.status(), Status::BadRequest);
 }
+
+/// Live 2026-11-09: in a ticket thread `/reply` reached a modmail bot and
+/// `/close` did not. The modmail commands, registered as the bot does
+/// (global, with a left-over server copy of `close`), are used in a thread
+/// the way the app sends them: every one reaches the bot, under its name.
+#[rocket::async_test]
+async fn every_modmail_command_reaches_the_bot_in_a_thread() {
+    let s = setup().await;
+    let bot_put = |path: String, body: serde_json::Value| {
+        s.harness
+            .client
+            .put(path)
+            .header(Header::new("x-bot-token", s.bot.token.clone()))
+            .header(ContentType::JSON)
+            .body(body.to_string())
+    };
+    let commands = json!([
+        { "name": "reply", "description": "Answer the member", "options": [
+            { "type": "String", "name": "message", "description": "Your answer", "required": true, "max_length": 4000 },
+            { "type": "Attachment", "name": "file", "description": "A file", "required": false },
+            { "type": "Boolean", "name": "anonymous", "description": "Hide your name", "required": false }
+        ]},
+        { "name": "close", "description": "Close this ticket", "options": [
+            { "type": "String", "name": "note", "description": "Short note", "required": false, "max_length": 1000 }
+        ]},
+        { "name": "tickets", "description": "List open tickets" }
+    ]);
+    let response = bot_put(format!("/applications/{}/commands", s.bot.id), commands)
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Ok);
+    drop(response);
+    let response = bot_put(
+        format!("/applications/{}/servers/{}/commands", s.bot.id, s.server.id),
+        json!([{ "name": "close", "description": "Old server copy" }]),
+    )
+    .dispatch()
+    .await;
+    assert_eq!(response.status(), Status::Ok);
+    drop(response);
+
+    // a ticket thread, as the bot makes it
+    let response = s
+        .harness
+        .client
+        .post(format!("/channels/{}/threads", s.channel.id()))
+        .header(Header::new("x-bot-token", s.bot.token.clone()))
+        .header(ContentType::JSON)
+        .body(json!({ "name": "ticket-test", "content": "New ticket" }).to_string())
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Ok);
+    let thread: serde_json::Value = response.into_json().await.unwrap();
+    let thread = thread["_id"].as_str().unwrap().to_string();
+
+    // what the app's picker lists for the member
+    let response = s
+        .harness
+        .client
+        .get(format!("/servers/{}/commands", s.server.id))
+        .header(Header::new("x-session-token", s.user_session.clone()))
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Ok);
+    let listed: v0::ServerCommands = response.into_json().await.unwrap();
+    let mine: Vec<&v0::ApplicationCommand> = listed
+        .commands
+        .iter()
+        .filter(|command| command.application_id == s.bot.id)
+        .collect();
+    assert_eq!(
+        mine.iter().filter(|command| command.name == "close").count(),
+        2,
+        "the global and the server copy are both listed"
+    );
+
+    let mut bot_events = PubSubTestHelper::new(&format!("{}!", s.bot.id)).await;
+    let mut nonce = 0;
+    for command in mine {
+        // options left out, as the app sends a command without values
+        let mut options = json!([]);
+        if command.name == "reply" {
+            options = json!([{ "type": "String", "name": "message", "value": "hello" }]);
+        }
+        for options in [Some(options.clone()), None] {
+            if options.is_none() && command.name == "reply" {
+                continue;
+            }
+            nonce += 1;
+            let mut body = json!({
+                "type": "Command",
+                "application_id": s.bot.id,
+                "channel_id": thread,
+                "command_id": command.id,
+                "command_version": command.version,
+                "nonce": format!("modmail-{nonce}"),
+            });
+            if let Some(options) = options {
+                body["options"] = options;
+            }
+            let (status, accepted) = s.invoke(body.to_string()).await;
+            assert_eq!(status, Status::Ok, "/{} was refused", command.name);
+
+            let interaction = next_interaction(&mut bot_events).await;
+            assert_eq!(interaction.id, accepted.unwrap().id);
+            assert_eq!(interaction.channel_id, thread);
+            assert_eq!(interaction.command.unwrap().name, command.name);
+        }
+    }
+}
