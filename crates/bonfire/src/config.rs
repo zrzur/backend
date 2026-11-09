@@ -11,14 +11,14 @@ static READY_PAYLOAD_FIELD_REGEX: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#"^(\w+)(?:\[(\S+)\])?$"#).unwrap());
 
 /// Enumeration of supported protocol formats
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ProtocolFormat {
     Json,
     Msgpack,
 }
 
 /// User-provided protocol configuration
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ProtocolConfiguration {
     protocol_version: i32,
     format: ProtocolFormat,
@@ -26,6 +26,9 @@ pub struct ProtocolConfiguration {
     ready_payload_fields: ReadyPayloadFields,
     /// Gateway intents a bot asked for (`?intents=` or `Authenticate`)
     intents: Option<u64>,
+    /// The client can resume this session after a drop (`?resumable=true`
+    /// or `Authenticate { resumable: true }`)
+    resumable: bool,
 }
 
 impl ProtocolConfiguration {
@@ -42,7 +45,18 @@ impl ProtocolConfiguration {
             session_token,
             ready_payload_fields,
             intents: None,
+            resumable: false,
         }
+    }
+
+    /// Ask for a session that can be resumed
+    pub fn set_resumable(&mut self, resumable: bool) {
+        self.resumable |= resumable;
+    }
+
+    /// Whether the client asked for a session that can be resumed
+    pub fn is_resumable(&self) -> bool {
+        self.resumable
     }
 
     /// Decode some WebSocket message into a T: Deserialize using the client's specified protocol format
@@ -143,6 +157,7 @@ impl handshake::server::Callback for WebsocketHandshakeCallback {
         let mut format = ProtocolFormat::Json;
         let mut session_token = None;
         let mut intents = None;
+        let mut resumable = false;
         let mut ready_payload_fields = if params.iter().any(|(k, _)| *k == "ready") {
             // If they pass the ready field, set all fields to false
 
@@ -176,6 +191,7 @@ impl handshake::server::Callback for WebsocketHandshakeCallback {
                 },
                 "token" => session_token = Some(value.into()),
                 "intents" => intents = value.parse().ok(),
+                "resumable" => resumable = matches!(value, "true" | "1"),
                 "ready" => {
                     // Re-enable all the fields the client specifies
                     if let Some(captures) = READY_PAYLOAD_FIELD_REGEX.captures(value) {
@@ -215,6 +231,7 @@ impl handshake::server::Callback for WebsocketHandshakeCallback {
                 session_token,
                 ready_payload_fields,
                 intents,
+                resumable,
             })
             .is_ok()
         {

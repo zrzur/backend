@@ -350,15 +350,20 @@ impl GatewayIntents {
         if missing == 0 {
             return Ok(requested);
         }
-        Err([
+        Err(Self::privileged_names(missing))
+    }
+
+    /// Names of the privileged intents among `bits`
+    pub fn privileged_names(bits: u64) -> Vec<&'static str> {
+        [
             (Self::MESSAGE_CONTENT, "MESSAGE_CONTENT"),
             (Self::SERVER_MEMBERS, "SERVER_MEMBERS"),
             (Self::PRESENCE, "PRESENCE"),
         ]
         .into_iter()
-        .filter(|(bit, _)| missing & bit != 0)
+        .filter(|(bit, _)| bits & bit != 0)
         .map(|(_, name)| name)
-        .collect())
+        .collect()
     }
 }
 

@@ -823,6 +823,7 @@ fn ready(channels: Vec<Channel>) -> EventV1 {
         user_settings: None,
         channel_unreads: None,
         policy_changes: None,
+        session_id: None,
     }
 }
 
@@ -1063,4 +1064,104 @@ async fn webhook_events_are_for_managers_only() {
     let mut owner = state(OWNER, &server, &[]).await;
     follow(&mut owner, &everyone_sees).await;
     assert_eq!(webhook_events(&mut owner, &db, CHANNEL).await, [true; 3]);
+}
+
+// Resume: a kept event is sent again only if the session may still see it
+
+fn message_in(channel: &str) -> EventV1 {
+    EventV1::Message(
+        serde_json::from_value(serde_json::json!({
+            "_id": "message",
+            "channel": channel,
+            "author": OWNER,
+            "content": "for those who can see the channel",
+        }))
+        .expect("valid message"),
+    )
+}
+
+#[tokio::test]
+async fn a_kept_message_is_not_replayed_after_its_channel_was_hidden() {
+    let db = db().await;
+    let server = server(false);
+    let mut state = state("member", &server, &[]).await;
+    follow(&mut state, &channel(HashMap::new(), None)).await;
+
+    // kept while the socket was down
+    let kept = message_in(CHANNEL);
+    assert!(state.may_replay(&db, &mut kept.clone()).await);
+
+    // then, before the resume, @everyone loses the channel
+    let mut removal = permissions_update(PartialChannel {
+        default_permissions: Some(OverrideField { a: 0, d: view() }),
+        ..Default::default()
+    });
+    assert!(state.handle_incoming_event_v1(&db, &mut removal, CHANNEL).await);
+    assert!(matches!(removal, EventV1::ChannelDelete { .. }));
+
+    assert!(
+        !state.may_replay(&db, &mut kept.clone()).await,
+        "the message must not be sent again"
+    );
+    let mut typing = EventV1::ChannelStartTyping {
+        id: CHANNEL.to_string(),
+        user: OWNER.to_string(),
+    };
+    assert!(!state.may_replay(&db, &mut typing).await);
+    // what takes the channel away is sent
+    assert!(state.may_replay(&db, &mut removal).await);
+}
+
+#[tokio::test]
+async fn kept_server_events_are_not_replayed_after_leaving() {
+    let db = db().await;
+    let server = server(false);
+    let mut state = state("member", &server, &[]).await;
+    follow(&mut state, &channel(HashMap::new(), None)).await;
+
+    let update = EventV1::ServerUpdate {
+        id: SERVER.to_string(),
+        data: Default::default(),
+        clear: vec![],
+    };
+    assert!(state.may_replay(&db, &mut update.clone()).await);
+
+    let mut leave = EventV1::ServerMemberLeave {
+        id: SERVER.to_string(),
+        user: "member".to_string(),
+        reason: v0::RemovalIntention::Kick,
+    };
+    assert!(state.handle_incoming_event_v1(&db, &mut leave, SERVER).await);
+
+    assert!(!state.may_replay(&db, &mut update.clone()).await);
+    assert!(!state.may_replay(&db, &mut message_in(CHANNEL)).await);
+    assert!(state.may_replay(&db, &mut leave).await);
+}
+
+#[tokio::test]
+async fn a_kept_bulk_event_keeps_only_what_is_still_visible() {
+    let db = db().await;
+    let server = server(false);
+    let mut state = state("member", &server, &[]).await;
+    follow(&mut state, &channel(HashMap::new(), None)).await;
+
+    let mut bulk = EventV1::Bulk {
+        v: vec![
+            message_in(CHANNEL),
+            message_in("elsewhere"),
+            EventV1::ChannelDelete {
+                id: "gone".to_string(),
+            },
+        ],
+    };
+    assert!(state.may_replay(&db, &mut bulk).await);
+    let EventV1::Bulk { v } = &bulk else { panic!() };
+    assert_eq!(v.len(), 2);
+    assert!(matches!(&v[0], EventV1::Message(m) if m.channel == CHANNEL));
+    assert!(matches!(&v[1], EventV1::ChannelDelete { .. }));
+
+    let mut nothing_left = EventV1::Bulk {
+        v: vec![message_in("elsewhere")],
+    };
+    assert!(!state.may_replay(&db, &mut nothing_left).await);
 }

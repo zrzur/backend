@@ -454,6 +454,7 @@ impl State {
             channel_unreads,
 
             policy_changes,
+            session_id: None,
         };
         self.limit_ready(&mut ready);
         Ok(ready)
@@ -1120,6 +1121,42 @@ impl State {
             _ => {}
         }
         true
+    }
+
+    /// Whether a kept event may be sent again on a resume. It passed every
+    /// check when it came in; what the session lost since (a channel it can
+    /// no longer see, a server it left, webhooks it no longer manages) is
+    /// not sent again. Events that take something away always are.
+    pub async fn may_replay(&self, db: &Database, event: &mut EventV1) -> bool {
+        if let EventV1::Bulk { v } = event {
+            let mut kept = Vec::with_capacity(v.len());
+            for inner in std::mem::take(v) {
+                if self.still_visible(db, &inner).await {
+                    kept.push(inner);
+                }
+            }
+            *v = kept;
+            return !v.is_empty();
+        }
+        self.still_visible(db, event).await
+    }
+
+    async fn still_visible(&self, db: &Database, event: &EventV1) -> bool {
+        use crate::resume::{scope, Scope};
+        match scope(event) {
+            Scope::Always => true,
+            Scope::Channel(id) => self.follows_channel(id).await,
+            Scope::Webhooks(id) => {
+                self.follows_channel(id).await && self.cache.can_manage_webhooks(db, id).await
+            }
+            Scope::Server(id) => self.cache.servers.contains_key(id),
+        }
+    }
+
+    /// A channel this session can see and still follows
+    async fn follows_channel(&self, id: &str) -> bool {
+        self.cache.channels.get(id).is_some_and(|channel| self.cache.may_receive(channel))
+            && self.subscribed.read().await.contains(id)
     }
 
     /// Follow or drop every cached channel by the current age rules; a
