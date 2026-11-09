@@ -1064,3 +1064,111 @@ async fn webhook_events_are_for_managers_only() {
     follow(&mut owner, &everyone_sees).await;
     assert_eq!(webhook_events(&mut owner, &db, CHANNEL).await, [true; 3]);
 }
+
+// A channel made private, then reopened by a role change (owner report 2026-11-09)
+
+/// The bulk the gateway forwards after a role change, as event type names
+fn created_in(event: &EventV1) -> bool {
+    match event {
+        EventV1::ChannelCreate(_) => true,
+        EventV1::Bulk { v } => v.iter().any(created_in),
+        _ => false,
+    }
+}
+
+fn member_roles(roles: &[&str]) -> EventV1 {
+    EventV1::ServerMemberUpdate {
+        id: v0::MemberCompositeKey {
+            server: SERVER.to_string(),
+            user: "member".to_string(),
+        },
+        data: v0::PartialMember {
+            roles: Some(roles.iter().map(|r| r.to_string()).collect()),
+            ..Default::default()
+        },
+        clear: vec![],
+    }
+}
+
+/// Everyone sees the channel, then @everyone is denied: the member's
+/// connection drops it, as it would never have got it on Ready.
+async fn made_private(db: &Database, state: &mut State) {
+    let deny = OverrideField { a: 0, d: view() };
+    db.insert_channel(&channel(staff_can_view(), Some(deny.clone())))
+        .await
+        .unwrap();
+    follow(state, &channel(staff_can_view(), None)).await;
+    let mut event = permissions_update(PartialChannel {
+        default_permissions: Some(deny),
+        ..Default::default()
+    });
+    assert!(state.handle_incoming_event_v1(db, &mut event, CHANNEL).await);
+    assert!(matches!(event, EventV1::ChannelDelete { .. }));
+    assert!(!state.cache.channels.contains_key(CHANNEL));
+}
+
+#[tokio::test]
+async fn private_channel_arrives_when_role_is_given() {
+    let db = db().await;
+    let server = server(false);
+    let mut state = state("member", &server, &[]).await;
+    made_private(&db, &mut state).await;
+
+    let mut event = member_roles(&[STAFF]);
+    assert!(state.handle_incoming_event_v1(&db, &mut event, SERVER).await);
+    assert!(created_in(&event), "no ChannelCreate in {event:?}");
+    assert!(subscribed(&state, CHANNEL).await);
+}
+
+#[tokio::test]
+async fn private_channel_arrives_when_role_gains_view() {
+    let db = db().await;
+    let server = server(false);
+    // this role's channel override is not there: it gets View server-wide
+    let mut state = state("member", &server, &[STAFF]).await;
+    let deny = OverrideField { a: 0, d: view() };
+    db.insert_channel(&channel(HashMap::new(), Some(deny.clone())))
+        .await
+        .unwrap();
+    follow(&mut state, &channel(HashMap::new(), None)).await;
+    let mut event = permissions_update(PartialChannel {
+        default_permissions: Some(deny),
+        ..Default::default()
+    });
+    assert!(state.handle_incoming_event_v1(&db, &mut event, CHANNEL).await);
+    assert!(matches!(event, EventV1::ChannelDelete { .. }));
+
+    let mut event = EventV1::ServerRoleUpdate {
+        id: SERVER.to_string(),
+        role_id: STAFF.to_string(),
+        data: v0::PartialRole {
+            permissions: Some(OverrideField { a: view(), d: 0 }),
+            ..Default::default()
+        },
+        clear: vec![],
+    };
+    assert!(state.handle_incoming_event_v1(&db, &mut event, SERVER).await);
+    assert!(created_in(&event), "no ChannelCreate in {event:?}");
+    assert!(subscribed(&state, CHANNEL).await);
+}
+
+#[tokio::test]
+async fn private_channel_leaves_and_returns_with_the_role() {
+    let db = db().await;
+    let server = server(false);
+    let mut state = state("member", &server, &[]).await;
+    made_private(&db, &mut state).await;
+
+    let mut event = member_roles(&[STAFF]);
+    assert!(state.handle_incoming_event_v1(&db, &mut event, SERVER).await);
+    assert!(created_in(&event));
+
+    let mut event = member_roles(&[]);
+    assert!(state.handle_incoming_event_v1(&db, &mut event, SERVER).await);
+    assert!(!subscribed(&state, CHANNEL).await);
+    assert!(!state.cache.channels.contains_key(CHANNEL));
+
+    let mut event = member_roles(&[STAFF]);
+    assert!(state.handle_incoming_event_v1(&db, &mut event, SERVER).await);
+    assert!(created_in(&event), "no ChannelCreate in {event:?}");
+}

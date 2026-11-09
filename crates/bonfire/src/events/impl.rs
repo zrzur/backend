@@ -724,13 +724,18 @@ impl State {
                 }
 
                 if !self.cache.channels.contains_key(id) {
-                    if let Ok(channel) = db.fetch_channel(id).await {
-                        self.cache.channels.insert(id.clone(), channel);
+                    match db.fetch_channel(id).await {
+                        Ok(channel) => {
+                            self.cache.channels.insert(id.clone(), channel);
+                        }
+                        // gone or unreadable: nothing to tell this user about
+                        Err(_) => return false,
                     }
                 }
 
                 let channel_id = id.clone();
                 let mut hidden = false;
+                let mut now_hidden = false;
                 if let Some(channel) = self.cache.channels.get(id) {
                     let can_view = self.cache.can_view_channel(db, channel).await;
                     if could_view != can_view {
@@ -740,6 +745,7 @@ impl State {
                         } else {
                             queue_remove = Some(id.clone());
                             *event = EventV1::ChannelDelete { id: id.clone() };
+                            now_hidden = true;
                         }
                     } else if !can_view {
                         hidden = true;
@@ -756,6 +762,13 @@ impl State {
                     // on Ready, and say nothing about it.
                     self.cache.channels.remove(&channel_id);
                     return false;
+                }
+
+                if now_hidden {
+                    // The cache holds only channels this user can see. A hidden
+                    // one left behind would be "known" to recalculate_server,
+                    // which then never announces it when a role reopens it.
+                    self.cache.channels.remove(&channel_id);
                 }
             }
             EventV1::ChannelDelete { id } => {

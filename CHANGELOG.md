@@ -69,6 +69,7 @@ Zrzur's first release, built on Stoat 0.15.5 (below).
 
 ### Bug Fixes
 
+* **Private channels arrive at once:** a channel made private while someone could see it stayed in their gateway connection's list of channels, so a role change that let them in again was never announced and the channel showed only after reconnecting. The gateway now drops a channel from the connection as soon as it is hidden, and ignores updates for a channel it cannot load.
 * **Your own messages are read for you:** sending a message acks it for the author (not for bots), as `PUT /channels/:id/ack/:message` does, so `/sync/unreads` after a reconnect and every other session start after it. The author is never a mention recipient: replying to your own message, naming yourself, or your own `@everyone` or role mention adds no mention and sends no push to you (`Message::mention_recipients`, and the mass-mention consumer in pushd).
 * **Official account:** it shows the logo, the controller face version B, instead of the old bird. Nobody can start a conversation with it or report it when signed in; the conversation it started still opens read-only.
 * **Public reports by custom link:** a report that names a server or a Discover page by its custom link now finds the server and its owner, so the case can be acted on, also when the name looks like an id. Only our own sites or a bare name count, and an id in the query names nothing.
