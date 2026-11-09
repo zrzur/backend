@@ -33,6 +33,7 @@ async fn upload(harness: &TestHarness, user: &User) -> String {
             user_id: None,
             server_id: None,
             object_id: None,
+            forwarded_from: None,
         })
         .await
         .expect("attachment");

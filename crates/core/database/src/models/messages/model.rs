@@ -79,6 +79,9 @@ auto_derived_partial!(
         /// Whether or not the message in pinned
         #[serde(skip_serializing_if = "crate::if_option_false")]
         pub pinned: Option<bool>,
+        /// Where this message was forwarded from
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        pub forwarded: Option<revolt_models::v0::MessageForward>,
 
         /// Bitfield of message flags
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -283,6 +286,7 @@ impl Default for Message {
             masquerade: None,
             flags: None,
             pinned: None,
+            forwarded: None,
         }
     }
 }
@@ -333,10 +337,47 @@ impl Message {
         user: Option<v0::User>,
         member: Option<v0::Member>,
         limits: FeaturesLimits,
+        idempotency: IdempotencyKey,
+        generate_embeds: bool,
+        allow_mentions: bool,
+        allowed_mentions: Option<&v0::AllowedMentions>,
+    ) -> Result<Message> {
+        Message::create_full(
+            db,
+            amqp,
+            channel,
+            data,
+            author,
+            user,
+            member,
+            limits,
+            idempotency,
+            generate_embeds,
+            allow_mentions,
+            allowed_mentions,
+            None,
+        )
+        .await
+    }
+
+    /// [`Message::create_with_mentions`] for a forwarded copy: `forwarded`
+    /// records where it came from, and a forwarded copy pings nobody (the
+    /// text was written for another audience)
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_full(
+        db: &Database,
+        amqp: Option<&AMQP>,
+        channel: Channel,
+        data: DataMessageSend,
+        author: MessageAuthor<'_>,
+        user: Option<v0::User>,
+        member: Option<v0::Member>,
+        limits: FeaturesLimits,
         mut idempotency: IdempotencyKey,
         generate_embeds: bool,
         allow_mentions: bool,
         allowed_mentions: Option<&v0::AllowedMentions>,
+        forwarded: Option<v0::MessageForward>,
     ) -> Result<Message> {
         let config = config().await;
 
@@ -461,6 +502,8 @@ impl Message {
             interaction: data.interaction,
             ..Default::default()
         };
+        let is_forward = forwarded.is_some();
+        message.forwarded = forwarded;
 
         // Parse mentions in message.
 
@@ -472,6 +515,15 @@ impl Message {
 
         message_mentions.mentions_everyone |= mentions_everyone;
         message_mentions.mentions_online |= mentions_online;
+
+        // A forwarded copy notifies nobody: the text keeps its mentions as
+        // written, but they were meant for the original channel
+        if is_forward {
+            message_mentions.user_mentions.clear();
+            message_mentions.role_mentions.clear();
+            message_mentions.mentions_everyone = false;
+            message_mentions.mentions_online = false;
+        }
 
         let revolt_parser::MessageResults {
             mut user_mentions,
@@ -1250,24 +1302,69 @@ impl Message {
         }
     }
 
-    /// Delete a message
-    pub async fn delete(&self, db: &Database) -> Result<()> {
-        // attachments and the files embeds show: nothing stays reachable
-        // after the message is gone
-        let file_ids = self
-            .attachments
-            .iter()
-            .flatten()
-            .map(|file| file.id.clone())
-            .chain(Message::embed_file_ids(self.embeds.as_deref()))
-            .collect::<Vec<_>>();
-
-        if !file_ids.is_empty() {
-            db.mark_attachments_as_deleted(&file_ids).await?;
+    /// The files of messages that are going: their attachments and the
+    /// images their rich embeds show become unavailable, and so does every
+    /// copy forwarded from a file first posted in them (a forwarded copy
+    /// going takes only itself). All of them leave CDN caches now; crond
+    /// would only get to them within a minute.
+    pub async fn remove_files(db: &Database, messages: &[Message]) -> Result<()> {
+        let mut files: Vec<File> = Vec::new();
+        // embed images whose record can't be read: still marked by their id
+        let mut unread_ids: Vec<String> = Vec::new();
+        for message in messages {
+            files.extend(message.attachments.iter().flatten().cloned());
+            for id in Message::embed_file_ids(message.embeds.as_deref()) {
+                match db.fetch_attachment("attachments", &id).await {
+                    Ok(file) => files.push(file),
+                    Err(_) => unread_ids.push(id),
+                }
+            }
+        }
+        if files.is_empty() && unread_ids.is_empty() {
+            return Ok(());
         }
 
-        // crond would get to them within a minute; violating content goes now
-        crate::util::cdn_purge::purge_files_later(self.attachments.clone().unwrap_or_default());
+        let copies = File::forwarded_copies(db, &files).await?;
+        files.extend(copies);
+        let ids: Vec<String> = files
+            .iter()
+            .map(|file| file.id.clone())
+            .chain(unread_ids)
+            .collect();
+        db.mark_attachments_as_deleted(&ids).await?;
+        crate::util::cdn_purge::purge_files_later(files);
+        Ok(())
+    }
+
+    /// [`Message::remove_files`] for the messages of an author, read `page`
+    /// at a time (account erasure and bans can reach a great many):
+    /// optionally only in `channels` and only from the message id `since`
+    pub async fn remove_files_of_author(
+        db: &Database,
+        author: &str,
+        channels: Option<&[String]>,
+        since: Option<&str>,
+        page: usize,
+    ) -> Result<()> {
+        let page = page.max(1);
+        let mut after: Option<String> = None;
+        loop {
+            let messages = db
+                .fetch_messages_with_files(author, channels, since, after.as_deref(), page)
+                .await?;
+            Message::remove_files(db, &messages).await?;
+            if messages.len() < page {
+                return Ok(());
+            }
+            after = messages.last().map(|message| message.id.clone());
+        }
+    }
+
+    /// Delete a message
+    pub async fn delete(&self, db: &Database) -> Result<()> {
+        // attachments and the files embeds show, and their forwarded copies:
+        // nothing stays reachable after the message is gone
+        Message::remove_files(db, std::slice::from_ref(self)).await?;
 
         db.delete_message(&self.id).await?;
 
@@ -1319,14 +1416,17 @@ impl Message {
     /// Bulk delete messages of one channel; ids of other channels are skipped.
     /// Returns how many were deleted.
     pub async fn bulk_delete(db: &Database, channel: &str, ids: Vec<String>) -> Result<usize> {
-        let valid_ids = db
+        let valid = db
             .fetch_messages_by_id(&ids)
             .await?
             .into_iter()
             .filter(|msg| msg.channel == channel)
-            .map(|msg| msg.id)
-            .collect::<Vec<String>>();
+            .collect::<Vec<Message>>();
 
+        // their files go as with a single delete, forwarded copies included
+        Message::remove_files(db, &valid).await?;
+
+        let valid_ids = valid.into_iter().map(|msg| msg.id).collect::<Vec<String>>();
         db.delete_messages(channel, &valid_ids).await?;
         let count = valid_ids.len();
         EventV1::BulkMessageDelete {
@@ -1345,6 +1445,12 @@ impl Message {
         author: &str,
         since: SystemTime,
     ) -> Result<()> {
+        // their files first, as a single delete would (forwarded copies and
+        // rich-embed images included), page by page
+        let threshold = Ulid::from_datetime(since).to_string();
+        Message::remove_files_of_author(db, author, Some(channels), Some(&threshold), 500)
+            .await?;
+
         let deleted_groups = db
             .delete_messages_by_author_since(channels, author, since)
             .await?;

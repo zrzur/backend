@@ -154,7 +154,7 @@ pub(crate) async fn file_report(
     for mut item in evidence {
         item.case_id = id.clone();
         for file in &item.files {
-            db.mark_attachment_as_reported(&file.id).await.ok();
+            revolt_database::File::mark_reported_with_copies(db, &file.tag, &file.id).await.ok();
         }
         evidence_ids.push(item.id.clone());
         db.insert_safety_evidence(&item).await?;

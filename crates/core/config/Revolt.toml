@@ -295,6 +295,12 @@ webhooks_enabled = false
 # also for people who installed one. Stored data stays; turning this on brings
 # it back (restart delta).
 plugins_enabled = false
+# Forwarding a message to another channel (copy with a "Forwarded" origin).
+# Off, the route answers FeatureDisabled and the app hides the action.
+# Turn it on only after the stable web app (app.zrzur.com) ships the
+# "Forwarded" frame (ForwardedFrame): before that, readers on stable see a
+# forwarded copy as if the forwarder wrote it, without the note.
+message_forwarding_enabled = false
 # Enable push notifications for mass pings (everyone, online, roles)
 # When false this will still ping in-client but will not send notifications from pushd
 mass_mentions_send_notifications = true

@@ -847,6 +847,7 @@ async fn a_file_can_be_reported_without_an_account() {
             user_id: None,
             server_id: None,
             object_id: None,
+            forwarded_from: None,
         })
         .await
         .unwrap();
@@ -1096,6 +1097,7 @@ fn reported_file(id: &str, uploader: &str, used_for: Option<revolt_database::Fil
         user_id: None,
         server_id: None,
         object_id: None,
+        forwarded_from: None,
     }
 }
 

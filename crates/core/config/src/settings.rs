@@ -1189,6 +1189,10 @@ pub struct Features {
     /// Unset means off.
     #[serde(default)]
     pub plugins_enabled: bool,
+    /// Messages can be forwarded to another channel
+    /// (`POST /channels/{target}/messages/forward`). Unset means off.
+    #[serde(default)]
+    pub message_forwarding_enabled: bool,
 
     #[serde(default)]
     pub advanced: FeaturesAdvanced,

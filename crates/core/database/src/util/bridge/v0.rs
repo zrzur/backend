@@ -517,6 +517,7 @@ impl From<File> for crate::File {
             uploaded_at: None,
             uploader_id: None,
             used_for: None,
+            forwarded_from: None,
         }
     }
 }
@@ -598,6 +599,7 @@ impl crate::Message {
             masquerade: self.masquerade.map(Into::into),
             flags: self.flags.unwrap_or_default(),
             pinned: self.pinned,
+            forwarded: self.forwarded,
         }
     }
 }
@@ -629,6 +631,7 @@ impl From<crate::PartialMessage> for PartialMessage {
             masquerade: value.masquerade.map(Into::into),
             flags: value.flags,
             pinned: value.pinned,
+            forwarded: value.forwarded,
         }
     }
 }

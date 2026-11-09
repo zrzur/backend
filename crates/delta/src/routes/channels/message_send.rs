@@ -43,7 +43,22 @@ pub async fn send(
     idempotency: IdempotencyKey,
     opens_thread: bool,
 ) -> Result<Json<v0::Message>> {
-    let data = data.into_inner();
+    send_inner(db, amqp, user, target, data.into_inner(), idempotency, opens_thread, None).await
+}
+
+/// [`send`] with every rule of a normal send; `forwarded` makes the message
+/// a forwarded copy (see `message_forward`)
+#[allow(clippy::too_many_arguments)]
+pub async fn send_inner(
+    db: &State<Database>,
+    amqp: &State<AMQP>,
+    user: User,
+    target: Reference<'_>,
+    data: v0::DataMessageSend,
+    idempotency: IdempotencyKey,
+    opens_thread: bool,
+    forwarded: Option<v0::MessageForward>,
+) -> Result<Json<v0::Message>> {
     data.validate().map_err(|error| revolt_database::util::validation::validation_failed(&error))?;
 
     // Ensure we have permissions to send a message
@@ -97,6 +112,20 @@ pub async fn send(
                 revolt_database::util::automod::Check::Send,
             )
             .await?;
+
+            // the forwarder's own words pass the same rules
+            if let Some(note) = forwarded.as_ref().and_then(|origin| origin.note.as_deref()) {
+                revolt_database::util::automod::check_message(
+                    db,
+                    &server,
+                    channel.id(),
+                    &user,
+                    member.as_ref(),
+                    note,
+                    revolt_database::util::automod::Check::Send,
+                )
+                .await?;
+            }
         }
     }
 
@@ -288,7 +317,7 @@ pub async fn send(
         .as_ref()
         .map(|member| member.clone().into_owned().into());
 
-    let message = Message::create_from_api(
+    let message = Message::create_full(
         db,
         Some(amqp),
         channel,
@@ -300,6 +329,8 @@ pub async fn send(
         idempotency,
         permissions.has_channel_permission(ChannelPermission::SendEmbeds),
         allow_mentions,
+        None,
+        forwarded,
     )
     .await?;
 

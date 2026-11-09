@@ -85,6 +85,15 @@ async fn enforce(
                 if let Some(owner) = &owner {
                     check_subject(db, actor, owner).await?;
                 }
+                // the same files forwarded elsewhere, or the original a
+                // removed copy came from, go as well
+                let mut files = message.attachments.clone().unwrap_or_default();
+                for id in revolt_database::Message::embed_file_ids(message.embeds.as_deref()) {
+                    if let Ok(file) = db.fetch_attachment("attachments", &id).await {
+                        files.push(file);
+                    }
+                }
+                revolt_database::File::remove_with_copies(db, &files).await?;
                 message.delete(db).await?;
             }
             Ok((owner, None))
@@ -212,7 +221,7 @@ pub(crate) async fn record_takedown(
     let mut evidence = targets::community_item_evidence(item, now);
     evidence.case_id = id.clone();
     for file in &evidence.files {
-        db.mark_attachment_as_reported(&file.id).await.ok();
+        revolt_database::File::mark_reported_with_copies(db, &file.tag, &file.id).await.ok();
     }
     db.insert_safety_evidence(&evidence).await?;
 
@@ -842,7 +851,7 @@ pub(crate) async fn capture_public_evidence(db: &Database, reviewer: &User, case
         snap.expires_at = None;
     }
     for file in &snap.files {
-        db.mark_attachment_as_reported(&file.id).await.ok();
+        revolt_database::File::mark_reported_with_copies(db, &file.tag, &file.id).await.ok();
     }
     db.insert_safety_evidence(&snap).await?;
     case.evidence_ids.push(snap.id.clone());

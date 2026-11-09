@@ -84,6 +84,19 @@ impl AbstractAttachments for ReferenceDb {
             .count())
     }
 
+    /// Every record of a forwarded file
+    async fn fetch_file_family(&self, hash: &str, root: &str) -> Result<Vec<File>> {
+        let files = self.files.lock().await;
+        Ok(files
+            .values()
+            .filter(|file| {
+                file.hash.as_deref() == Some(hash)
+                    && (file.id == root || file.forwarded_from.as_deref() == Some(root))
+            })
+            .cloned()
+            .collect())
+    }
+
     /// Find an attachment by its details and mark it as used by a given parent.
     async fn find_and_use_attachment(
         &self,

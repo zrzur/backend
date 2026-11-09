@@ -1128,6 +1128,9 @@ impl User {
         crate::end_billing_for_user(db, &self.id).await?;
         db.clear_memberships(&self.id).await?;
         self.clear_relationships(db).await?;
+        // their files first, as each message would on its own (forwarded
+        // copies of them included), then the messages
+        crate::Message::remove_files_of_author(db, &self.id, None, None, 500).await?;
         db.delete_messages_by_user(&self.id).await?;
         self.mark_deleted(db).await?;
 
@@ -1330,6 +1333,7 @@ mod tests {
                 user_id: None,
                 server_id: None,
                 object_id: None,
+                forwarded_from: None,
             };
 
             user.update(

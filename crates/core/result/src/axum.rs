@@ -170,6 +170,7 @@ impl IntoResponse for Error {
             ErrorType::AgeRequirementNotMet => StatusCode::FORBIDDEN,
             ErrorType::AgeChangeNotAllowed => StatusCode::FORBIDDEN,
             ErrorType::AgeRestricted => StatusCode::FORBIDDEN,
+            ErrorType::ForwardMatureContent => StatusCode::FORBIDDEN,
             ErrorType::OperationFailed => StatusCode::INTERNAL_SERVER_ERROR,
             ErrorType::IncorrectData { .. } => StatusCode::BAD_REQUEST,
         };

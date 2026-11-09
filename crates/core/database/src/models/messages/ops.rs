@@ -64,4 +64,18 @@ pub trait AbstractMessages: Sync + Send {
     ) -> Result<HashMap<String, Vec<String>>>;
 
     async fn delete_messages_by_user(&self, user_id: &str) -> Result<()>;
+
+    /// One page of an author's messages that carry files (attachments or
+    /// embeds), oldest first, so their files can be removed before the
+    /// messages: optionally only in `channels`, only from the id `since`
+    /// onwards, and only after the id `after` (the last one of the page
+    /// before)
+    async fn fetch_messages_with_files(
+        &self,
+        author: &str,
+        channels: Option<&[String]>,
+        since: Option<&str>,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<Message>>;
 }
