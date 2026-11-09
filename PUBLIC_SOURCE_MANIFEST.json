@@ -5476,8 +5476,8 @@
     },
     {
       "path": "docs/docs/developers/endpoints.md",
-      "sha256": "1dd02510ec18b9a305500433d0889513fe68599f8e819a62ea586932f5490990",
-      "bytes": 1024,
+      "sha256": "5710cc851bf67da88c96b27d7124621651dbc54c421709fc96302a79874b576a",
+      "bytes": 1028,
       "category": "public-documentation"
     },
     {
@@ -5488,8 +5488,8 @@
     },
     {
       "path": "docs/docs/developers/events/establishing.md",
-      "sha256": "cb6b33ab28acf24205eacb82163a1400ad2b75b7cfe162ab6b99e95373b98c73",
-      "bytes": 3785,
+      "sha256": "d1fefe190f63c5819e16f9f9a25375edaf4ecb343ca26f3e93373cc3fc54feb6",
+      "bytes": 3802,
       "category": "public-documentation"
     },
     {
