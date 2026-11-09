@@ -1,4 +1,4 @@
-use revolt_models::v0::{ApplicationCommand, CommandPermissions};
+use revolt_models::v0::{ApplicationCommand, CommandPermissionType, CommandPermissions};
 use revolt_result::Result;
 
 use crate::ReferenceDb;
@@ -99,8 +99,12 @@ impl AbstractApplicationCommands for ReferenceDb {
             .lock()
             .await
             .remove(id)
-            .map(|_| ())
-            .ok_or_else(|| create_error!(UnknownCommand))
+            .ok_or_else(|| create_error!(UnknownCommand))?;
+        self.command_permissions
+            .lock()
+            .await
+            .retain(|_, p| p.command_id.as_deref() != Some(id));
+        Ok(())
     }
 
     async fn delete_all_application_commands(&self, application_id: &str) -> Result<()> {
@@ -108,6 +112,61 @@ impl AbstractApplicationCommands for ReferenceDb {
             .lock()
             .await
             .retain(|_, c| c.application_id != application_id);
+        self.command_permissions
+            .lock()
+            .await
+            .retain(|_, p| p.application_id != application_id);
+        Ok(())
+    }
+
+    async fn fetch_command_rules(
+        &self,
+        server_id: &str,
+        application_id: &str,
+        command_id: &str,
+    ) -> Result<Vec<CommandPermissions>> {
+        Ok(self
+            .command_permissions
+            .lock()
+            .await
+            .values()
+            .filter(|p| {
+                p.server_id == server_id
+                    && p.application_id == application_id
+                    && p.command_id.as_deref().is_none_or(|id| id == command_id)
+            })
+            .cloned()
+            .collect())
+    }
+
+    async fn fetch_command_permissions_of(
+        &self,
+        server_id: &str,
+        application_ids: &[String],
+    ) -> Result<Vec<CommandPermissions>> {
+        Ok(self
+            .command_permissions
+            .lock()
+            .await
+            .values()
+            .filter(|p| p.server_id == server_id && application_ids.contains(&p.application_id))
+            .cloned()
+            .collect())
+    }
+
+    async fn remove_command_permission_target(
+        &self,
+        server_id: &str,
+        kind: CommandPermissionType,
+        id: &str,
+    ) -> Result<()> {
+        let mut store = self.command_permissions.lock().await;
+        for rules in store.values_mut() {
+            if rules.server_id == server_id {
+                rules.permissions.retain(|rule| !(rule.kind == kind && rule.id == id));
+            }
+        }
+        store.retain(|_, rules| !rules.permissions.is_empty());
         Ok(())
     }
 

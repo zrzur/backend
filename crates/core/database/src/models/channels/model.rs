@@ -1235,6 +1235,21 @@ impl Channel {
             }
         }
 
+        // command permission rules about this channel go too
+        if let Channel::TextChannel {
+            server,
+            parent: None,
+            ..
+        } = self
+        {
+            db.remove_command_permission_target(
+                server,
+                revolt_models::v0::CommandPermissionType::Channel,
+                self.id(),
+            )
+            .await?;
+        }
+
         let id = self.id().to_string();
         EventV1::ChannelDelete { id: id.clone() }.p(id).await;
         // TODO: missing functionality:

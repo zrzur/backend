@@ -1,4 +1,4 @@
-use revolt_models::v0::{ApplicationCommand, CommandPermissions};
+use revolt_models::v0::{ApplicationCommand, CommandPermissionType, CommandPermissions};
 use revolt_result::Result;
 
 #[cfg(feature = "mongodb")]
@@ -34,10 +34,11 @@ pub trait AbstractApplicationCommands: Sync + Send {
     /// Replace a stored command with a new revision
     async fn replace_application_command(&self, command: &ApplicationCommand) -> Result<()>;
 
-    /// Delete a command by its id
+    /// Delete a command by its id, with the rules servers set for it
     async fn delete_application_command(&self, id: &str) -> Result<()>;
 
-    /// Delete every command of an application, in all scopes
+    /// Delete every command of an application, in all scopes, with every
+    /// rule servers set for it
     async fn delete_all_application_commands(&self, application_id: &str) -> Result<()>;
 
     /// Command permission rules set in a server: every application when
@@ -47,6 +48,31 @@ pub trait AbstractApplicationCommands: Sync + Send {
         server_id: &str,
         application_id: Option<&str>,
     ) -> Result<Vec<CommandPermissions>>;
+
+    /// The rules that decide one command in a server: the command's own and
+    /// the whole app's (`command_id` the command or absent)
+    async fn fetch_command_rules(
+        &self,
+        server_id: &str,
+        application_id: &str,
+        command_id: &str,
+    ) -> Result<Vec<CommandPermissions>>;
+
+    /// The rules of some applications in a server (the command list)
+    async fn fetch_command_permissions_of(
+        &self,
+        server_id: &str,
+        application_ids: &[String],
+    ) -> Result<Vec<CommandPermissions>>;
+
+    /// Take every rule about one role, member or channel out of a server's
+    /// rules (it was deleted)
+    async fn remove_command_permission_target(
+        &self,
+        server_id: &str,
+        kind: CommandPermissionType,
+        id: &str,
+    ) -> Result<()>;
 
     /// Store the rules of one scope; an empty list removes the scope
     async fn set_command_permissions(&self, permissions: &CommandPermissions) -> Result<()>;

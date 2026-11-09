@@ -46,6 +46,7 @@ pub async fn edit_bot(
         && data.remove.is_empty()
         && data.default_permissions.is_none()
         && data.privileged_intents.is_none()
+        && data.show_creator.is_none()
     {
         return Ok(Json(v0::BotWithUserResponse {
             bot: bot.into(),
@@ -60,6 +61,7 @@ pub async fn edit_bot(
         remove,
         default_permissions,
         privileged_intents,
+        show_creator,
         ..
     } = data;
 
@@ -76,6 +78,7 @@ pub async fn edit_bot(
         interactions_url,
         default_permissions,
         privileged_intents,
+        show_creator,
         ..Default::default()
     };
 

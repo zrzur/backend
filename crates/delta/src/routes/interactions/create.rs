@@ -17,7 +17,7 @@ use revolt_result::{create_error, Result};
 use rocket::{serde::json::Json, State};
 
 use super::options::{invalid, OptionContext};
-use crate::routes::applications::command_permissions::ServerCommandRules;
+use crate::routes::applications::command_permissions::{rules_channel, ServerCommandRules};
 use crate::util::interaction_endpoint;
 
 fn accepted(interaction: &Interaction) -> InteractionAccepted {
@@ -154,6 +154,84 @@ async fn payload(
     }
 }
 
+/// The server's rules for a command (a thread follows its channel), then
+/// its `default_member_permissions`
+async fn check_command_rules(
+    db: &Database,
+    user: &User,
+    scope: &Scope,
+    server: &Server,
+    command: &v0::ApplicationCommand,
+) -> Result<()> {
+    let rules = ServerCommandRules::load_for_command(db, &server.id, command).await?;
+    let roles = scope
+        .member
+        .as_ref()
+        .map(|member| member.roles.clone())
+        .unwrap_or_default();
+    let access = rules.access(
+        command,
+        server,
+        &user.id,
+        &roles,
+        Some(rules_channel(&scope.channel)),
+        scope.user_permissions,
+    );
+    if access.allowed() {
+        Ok(())
+    } else {
+        Err(create_error!(MissingPermission {
+            permission: "Command".to_string()
+        }))
+    }
+}
+
+/// The command a message with components answered, if any: its rules also
+/// decide who may use its buttons and menus
+enum CommandOrigin {
+    /// A channel message sent as the answer to this interaction
+    Interaction { id: String, name: Option<String> },
+    /// A private answer to this command
+    Command(String),
+    None,
+}
+
+/// Find the command behind `origin`. The interaction record expires; then
+/// the command is found by its name among the app's commands here (the
+/// server's own copy first).
+async fn origin_command(
+    db: &Database,
+    application_id: &str,
+    server_id: &str,
+    origin: CommandOrigin,
+) -> Result<Option<v0::ApplicationCommand>> {
+    let (command_id, name) = match origin {
+        CommandOrigin::None => return Ok(None),
+        CommandOrigin::Command(id) => (Some(id), None),
+        CommandOrigin::Interaction { id, name } => (
+            db.fetch_interaction(&id)
+                .await
+                .ok()
+                .and_then(|interaction| interaction.command_id),
+            name,
+        ),
+    };
+    if let Some(id) = command_id {
+        if let Ok(command) = db.fetch_application_command(&id).await {
+            return Ok(Some(command));
+        }
+    }
+    let Some(name) = name else { return Ok(None) };
+    let mut found: Vec<v0::ApplicationCommand> = db
+        .fetch_server_application_commands(server_id, &[application_id.to_string()])
+        .await?
+        .into_iter()
+        .filter(|command| command.name == name && command.kind == ApplicationCommandType::ChatInput)
+        .collect();
+    found.sort_by_key(|command| command.server_id.is_none());
+    Ok(found.into_iter().next())
+}
+
 /// Command or autocomplete: check the command and its options
 async fn command(
     db: &Database,
@@ -200,25 +278,7 @@ async fn command(
     match server {
         Some(server) => {
             // the server's command permission rules, then default_member_permissions
-            let rules = ServerCommandRules::load(db, &server.id).await?;
-            let roles = scope
-                .member
-                .as_ref()
-                .map(|member| member.roles.clone())
-                .unwrap_or_default();
-            let access = rules.access(
-                &command,
-                server,
-                &user.id,
-                &roles,
-                Some(scope.channel.id()),
-                scope.user_permissions,
-            );
-            if !access.allowed() {
-                return Err(create_error!(MissingPermission {
-                    permission: "Command".to_string()
-                }));
-            }
+            check_command_rules(db, user, &scope, server, &command).await?;
         }
         // commands that need server permissions make no sense in a DM
         None if command.default_member_permissions.is_some() => {
@@ -416,7 +476,7 @@ async fn component(
         .ok_or_else(|| invalid("custom_id is required"))?;
 
     // A channel message by a bot, or this user's own ephemeral answer
-    let (application_id, components, source) = match db.fetch_message(message_id).await {
+    let (application_id, components, source, origin) = match db.fetch_message(message_id).await {
         Ok(message) if message.channel == data.channel_id => (
             // a webhook has no one to answer: clicks go to the bot that made it
             match message.webhook {
@@ -426,6 +486,13 @@ async fn component(
             message.components.unwrap_or_default(),
             InteractionSource::Message {
                 id: message.id.clone(),
+            },
+            match &message.interaction {
+                Some(used) if used.kind == InteractionType::Command => CommandOrigin::Interaction {
+                    id: used.id.clone(),
+                    name: used.name.clone(),
+                },
+                _ => CommandOrigin::None,
             },
         ),
         _ => {
@@ -445,6 +512,10 @@ async fn component(
                 InteractionSource::Ephemeral {
                     interaction_id: parent.id.clone(),
                     message_id: message.id,
+                },
+                match &parent.command_id {
+                    Some(id) => CommandOrigin::Command(id.clone()),
+                    None => CommandOrigin::None,
                 },
             )
         }
@@ -475,6 +546,12 @@ async fn component(
         return Err(create_error!(InvalidOperation));
     }
     check_restriction(component, user, &scope.member)?;
+    // buttons and menus on a command's answer follow that command's rules
+    if let Some(server) = scope.server.as_ref() {
+        if let Some(command) = origin_command(db, &application_id, &server.id, origin).await? {
+            check_command_rules(db, user, &scope, server, &command).await?;
+        }
+    }
 
     let mut context = OptionContext::new(db, user, &scope.bot_user, scope.server.as_ref());
     let values =

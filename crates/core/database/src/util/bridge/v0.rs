@@ -48,6 +48,7 @@ impl From<crate::Bot> for Bot {
             approved_intents: value.approved_intents,
             interactions_endpoint: value.interactions_endpoint,
             interactions_secret_version: value.interactions_secret_version,
+            show_creator: value.show_creator,
         }
     }
 }

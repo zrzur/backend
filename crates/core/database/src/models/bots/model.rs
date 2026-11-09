@@ -68,6 +68,10 @@ auto_derived_partial!(
         /// itself is derived (`interactions_secret`), never stored.
         #[serde(default)]
         pub interactions_secret_version: i32,
+
+        /// The owner chose to show who made the bot on its public page
+        #[serde(skip_serializing_if = "crate::if_false", default)]
+        pub show_creator: bool,
     },
     "PartialBot"
 );
@@ -104,6 +108,7 @@ impl Default for Bot {
             approved_intents: Default::default(),
             interactions_endpoint: Default::default(),
             interactions_secret_version: Default::default(),
+            show_creator: Default::default(),
         }
     }
 }

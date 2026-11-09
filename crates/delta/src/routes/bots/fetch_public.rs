@@ -8,8 +8,8 @@ use rocket::State;
 /// # Fetch Public Bot
 ///
 /// Fetch details of a public (or owned) bot by its id: its profile, the
-/// permissions it asks for, whether it is verified, who made it and how
-/// many servers it is in.
+/// permissions it asks for, whether it is verified, how many servers it is
+/// in and, if its owner chose to show it, who made it.
 #[openapi(tag = "Bots")]
 #[get("/<target>/invite")]
 pub async fn fetch_public_bot(
@@ -23,15 +23,18 @@ pub async fn fetch_public_bot(
     }
 
     let bot_user = db.fetch_user(&bot.id).await?;
-    let creator = db
-        .fetch_user(&bot.owner)
-        .await
-        .ok()
-        .map(|owner| PublicBotCreator {
-            id: owner.id,
-            username: owner.username,
-            display_name: owner.display_name,
-        });
+    // who made it is the owner's choice (`show_creator`, off by default)
+    let creator = if bot.show_creator {
+        db.fetch_user(&bot.owner)
+            .await
+            .ok()
+            .map(|owner| PublicBotCreator {
+                username: owner.username,
+                display_name: owner.display_name,
+            })
+    } else {
+        None
+    };
     let server_count = db.fetch_server_count(&bot.id).await.ok().map(|n| n as i64);
 
     let mut public = bot.into_public_bot(bot_user);
@@ -76,11 +79,7 @@ mod test {
 
         let public_bot: v0::PublicBot = response.into_json().await.expect("`PublicBot`");
         let mut expected = bot.into_public_bot(bot_user);
-        expected.creator = Some(v0::PublicBotCreator {
-            id: user.id.clone(),
-            username: user.username.clone(),
-            display_name: user.display_name.clone(),
-        });
+        // the maker stays hidden until the owner turns on show_creator
         expected.server_count = Some(0);
         assert_eq!(public_bot, expected);
         // the add dialog needs these to ask for the right permissions

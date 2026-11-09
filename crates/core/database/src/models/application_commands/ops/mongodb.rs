@@ -1,5 +1,7 @@
 use futures::StreamExt;
-use revolt_models::v0::{ApplicationCommand, CommandPermission, CommandPermissions};
+use revolt_models::v0::{
+    ApplicationCommand, CommandPermission, CommandPermissionType, CommandPermissions,
+};
 use serde::{Deserialize, Serialize};
 use revolt_result::Result;
 
@@ -36,6 +38,34 @@ impl MongoDb {
             .filter_map(|s| async { s.ok() })
             .collect()
             .await)
+    }
+
+    /// Rules as stored. A document that does not read is an error, never
+    /// skipped: a missing deny would let people in.
+    async fn find_command_permissions(
+        &self,
+        filter: bson::Document,
+    ) -> Result<Vec<CommandPermissions>> {
+        let stored: Vec<std::result::Result<StoredCommandPermissions, _>> = self
+            .col::<StoredCommandPermissions>(PERMISSIONS_COL)
+            .find(filter)
+            .await
+            .map_err(|_| create_database_error!("find", PERMISSIONS_COL))?
+            .collect()
+            .await;
+        stored
+            .into_iter()
+            .map(|entry| {
+                entry
+                    .map(|stored| CommandPermissions {
+                        server_id: stored.server_id,
+                        application_id: stored.application_id,
+                        command_id: stored.command_id,
+                        permissions: stored.permissions,
+                    })
+                    .map_err(|_| create_database_error!("decode", PERMISSIONS_COL))
+            })
+            .collect()
     }
 }
 
@@ -135,15 +165,79 @@ impl AbstractApplicationCommands for MongoDb {
         if result.deleted_count == 0 {
             return Err(create_error!(UnknownCommand));
         }
-        Ok(())
+        self.col::<StoredCommandPermissions>(PERMISSIONS_COL)
+            .delete_many(doc! { "command_id": id })
+            .await
+            .map(|_| ())
+            .map_err(|_| create_database_error!("delete_many", PERMISSIONS_COL))
     }
 
     async fn delete_all_application_commands(&self, application_id: &str) -> Result<()> {
         self.col::<ApplicationCommand>(COL)
             .delete_many(doc! { "application_id": application_id })
             .await
+            .map_err(|_| create_database_error!("delete_many", COL))?;
+        self.col::<StoredCommandPermissions>(PERMISSIONS_COL)
+            .delete_many(doc! { "application_id": application_id })
+            .await
             .map(|_| ())
-            .map_err(|_| create_database_error!("delete_many", COL))
+            .map_err(|_| create_database_error!("delete_many", PERMISSIONS_COL))
+    }
+
+    async fn fetch_command_rules(
+        &self,
+        server_id: &str,
+        application_id: &str,
+        command_id: &str,
+    ) -> Result<Vec<CommandPermissions>> {
+        self.find_command_permissions(doc! {
+            "server_id": server_id,
+            "application_id": application_id,
+            "$or": [
+                { "command_id": command_id },
+                { "command_id": { "$exists": false } },
+            ],
+        })
+        .await
+    }
+
+    async fn fetch_command_permissions_of(
+        &self,
+        server_id: &str,
+        application_ids: &[String],
+    ) -> Result<Vec<CommandPermissions>> {
+        if application_ids.is_empty() {
+            return Ok(vec![]);
+        }
+        self.find_command_permissions(doc! {
+            "server_id": server_id,
+            "application_id": { "$in": application_ids },
+        })
+        .await
+    }
+
+    async fn remove_command_permission_target(
+        &self,
+        server_id: &str,
+        kind: CommandPermissionType,
+        id: &str,
+    ) -> Result<()> {
+        let kind = match kind {
+            CommandPermissionType::Role => "Role",
+            CommandPermissionType::Member => "Member",
+            CommandPermissionType::Channel => "Channel",
+        };
+        let col = self.col::<StoredCommandPermissions>(PERMISSIONS_COL);
+        col.update_many(
+            doc! { "server_id": server_id },
+            doc! { "$pull": { "permissions": { "type": kind, "id": id } } },
+        )
+        .await
+        .map_err(|_| create_database_error!("update_many", PERMISSIONS_COL))?;
+        col.delete_many(doc! { "server_id": server_id, "permissions": { "$size": 0 } })
+            .await
+            .map(|_| ())
+            .map_err(|_| create_database_error!("delete_many", PERMISSIONS_COL))
     }
 
     async fn fetch_command_permissions(
@@ -155,20 +249,7 @@ impl AbstractApplicationCommands for MongoDb {
         if let Some(application_id) = application_id {
             filter.insert("application_id", application_id);
         }
-        Ok(self
-            .col::<StoredCommandPermissions>(PERMISSIONS_COL)
-            .find(filter)
-            .await
-            .map_err(|_| create_database_error!("find", PERMISSIONS_COL))?
-            .filter_map(|s| async { s.ok() })
-            .map(|stored| CommandPermissions {
-                server_id: stored.server_id,
-                application_id: stored.application_id,
-                command_id: stored.command_id,
-                permissions: stored.permissions,
-            })
-            .collect()
-            .await)
+        self.find_command_permissions(filter).await
     }
 
     async fn set_command_permissions(&self, permissions: &CommandPermissions) -> Result<()> {

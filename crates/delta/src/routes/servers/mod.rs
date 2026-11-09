@@ -68,6 +68,7 @@ pub fn routes() -> (Vec<Route>, OpenApi) {
         super::applications::install::list_server_apps,
         super::applications::install::uninstall_server_app,
         super::applications::command_permissions::fetch_command_permissions,
+        super::applications::command_permissions::fetch_app_commands,
         super::applications::command_permissions::edit_app_command_permissions,
         super::applications::command_permissions::edit_command_permissions,
         server_delete::delete,

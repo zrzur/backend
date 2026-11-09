@@ -588,7 +588,9 @@ async fn rules_for_deleted_things_go_away() {
         .unwrap();
     assert_eq!(left[0].permissions.len(), 1);
 
-    // a deleted role's rule is dropped on the next save, not refused
+    // a deleted role's rule is dropped on the next save, not refused (an id
+    // that was never stored would be refused, see unknown_targets_are_refused)
+    let rules = json!([{ "id": s.role, "type": "Role", "permission": true }]);
     let response = s
         .harness
         .client

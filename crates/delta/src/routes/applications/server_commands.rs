@@ -4,7 +4,7 @@ use revolt_permissions::calculate_server_permissions;
 use revolt_result::{create_error, Result};
 use rocket::{serde::json::Json, State};
 
-use super::command_permissions::ServerCommandRules;
+use super::command_permissions::{rules_channel, ServerCommandRules};
 
 /// # Fetch Server Commands
 ///
@@ -12,8 +12,8 @@ use super::command_permissions::ServerCommandRules;
 /// installed here, global or limited to this server. Commands that need
 /// server permissions the member lacks, or that the server's command
 /// permission rules keep from them, are left out. With `channel`, the
-/// channel rules count too; the channel is checked again when a command is
-/// used.
+/// channel rules count too (a thread or forum post uses its channel's); the
+/// channel is checked again when a command is used.
 #[openapi(tag = "Application Commands")]
 #[get("/<server_id>/commands?<channel>")]
 pub async fn fetch_server_commands(
@@ -42,14 +42,31 @@ pub async fn fetch_server_commands(
         .member(&member);
     let permissions = calculate_server_permissions(&mut query).await;
 
-    let rules = ServerCommandRules::load(db, server_id).await?;
+    // a thread follows its channel; a channel of another server counts as none
+    let channel = match channel {
+        Some(id) => match db.fetch_channel(id).await {
+            Ok(channel) if channel.server() == Some(server_id) => {
+                Some(rules_channel(&channel).to_string())
+            }
+            _ => return Err(create_error!(UnknownChannel)),
+        },
+        None => None,
+    };
+    let rules = ServerCommandRules::load_for_apps(db, server_id, &installed).await?;
     let commands = db
         .fetch_server_application_commands(server_id, &installed)
         .await?
         .into_iter()
         .filter(|command| {
             rules
-                .access(command, &server, &user.id, &member.roles, channel, permissions)
+                .access(
+                    command,
+                    &server,
+                    &user.id,
+                    &member.roles,
+                    channel.as_deref(),
+                    permissions,
+                )
                 .allowed()
         })
         .collect();
