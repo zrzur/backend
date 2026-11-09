@@ -52,6 +52,7 @@ pub async fn edit(
         && data.lobby.is_none()
         && data.threads_disabled.is_none()
         && data.forums_disabled.is_none()
+        && data.default_notifications.is_none()
         && data.remove.is_empty()
     {
         // an empty edit returns the server: only to its members, like a
@@ -71,6 +72,7 @@ pub async fn edit(
         || data.lobby.is_some()
         || data.threads_disabled.is_some()
         || data.forums_disabled.is_some()
+        || data.default_notifications.is_some()
         || data.access.is_some()
         || data.verification_level.is_some()
         || data.rules_screening.is_some()
@@ -126,6 +128,7 @@ pub async fn edit(
         lobby,
         threads_disabled,
         forums_disabled,
+        default_notifications,
         access: new_access,
         verification_level,
         rules_screening,
@@ -156,6 +159,7 @@ pub async fn edit(
         lobby,
         threads_disabled,
         forums_disabled,
+        default_notifications,
         ..Default::default()
     };
 

@@ -49,6 +49,9 @@ mod member_page_tests;
 mod verification_level_tests;
 
 #[cfg(test)]
+mod default_notifications_tests;
+
+#[cfg(test)]
 mod safety_pause_tests;
 
 #[cfg(test)]

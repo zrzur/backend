@@ -6,6 +6,7 @@ Zrzur's first release, built on Stoat 0.15.5 (below).
 
 ### Features
 
+* **Server default notifications:** optional `default_notifications` on the server (`All` or `Mentions`; missing reads as `Mentions`), set by `PATCH /servers/:id` with Manage Server and kept in the server's audit log edit entry. Additive: old clients ignore it.
 * **Account erasure removes designs:** `Account::mark_deleted` and `erase_completely` delete all of a person's community items with their favourites, use counts and review log, release every file the items claimed, take them off everyone wearing them, and clear the person's platform role.
 * **Creator rank is 18+:** `grant`, `reinstate` and `POST /admin/permissions` refuse anyone who has not declared an age of 18 or over (`FailedValidation`, rule `adult`), and `platform_permissions` drops `cosmetics.submit` for them, so someone under 18 who already has the rank cannot upload, create, edit or publish.
 * **Takedowns of every design:** decorations and nameplates taken down get the same Safety case, statement of reasons and appeal as effects, and their wearers are told.
