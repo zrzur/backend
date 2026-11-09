@@ -224,6 +224,7 @@ auto_derived!(
         /// `POST /channels/{target}/messages` in the new thread: the same
         /// permissions (Send Embeds), the same mention rules (pinging a role
         /// needs Mention Roles), and if it is refused no thread is made.
+        /// A forum post still needs `content`.
         #[cfg_attr(feature = "validator", validate)]
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
         pub embeds: Option<Vec<super::SendableEmbed>>,
