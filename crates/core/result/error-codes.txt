@@ -51,6 +51,7 @@ FileTooSmall
 FileTypeNotAllowed
 ForumThreadRequired
 ForumsDisabled
+ForwardMatureContent
 GroupInvitesRestricted
 GroupTooLarge
 HeaderTooLarge
