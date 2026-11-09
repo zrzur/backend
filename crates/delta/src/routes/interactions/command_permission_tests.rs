@@ -19,6 +19,7 @@ struct Setup {
     owner_session: String,
     user_id: String,
     user_session: String,
+    other_id: String,
     other_session: String,
     server: Server,
     channel: Channel,
@@ -94,6 +95,7 @@ async fn setup() -> Setup {
         owner_session: owner_session.token,
         user_id: user.id,
         user_session: user_session.token,
+        other_id: other.id.clone(),
         other_session: other_session.token,
         server,
         channel: channels.into_iter().next().unwrap(),
@@ -431,4 +433,447 @@ async fn commands_do_not_work_in_a_dm_with_someone_else() {
         .dispatch()
         .await;
     assert_eq!(response.status(), Status::BadRequest);
+}
+
+// ----- review round: who may write which rules, threads, cleanup -----
+
+const MANAGE_SERVER: u64 = 1 << 1;
+const MANAGE_ROLE: u64 = 1 << 3;
+const BAN_MEMBERS: u64 = 1 << 7;
+
+/// A member with a "Mods" role (Manage Server and Manage Roles), ranked
+/// below Helpers; returns their session token
+async fn moderator(s: &Setup) -> String {
+    let (_, session, user) = s.harness.new_user().await;
+    Member::create(&s.harness.db, &s.server, &user, None).await.unwrap();
+    let response = s
+        .harness
+        .client
+        .post(format!("/servers/{}/roles", s.server.id))
+        .header(Header::new("x-session-token", s.owner_session.clone()))
+        .header(ContentType::JSON)
+        .body(json!({ "name": "Mods" }).to_string())
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Ok);
+    let role: Value = response.into_json().await.unwrap();
+    let role = role["id"].as_str().unwrap().to_string();
+    let response = s
+        .harness
+        .client
+        .put(format!("/servers/{}/permissions/{role}", s.server.id))
+        .header(Header::new("x-session-token", s.owner_session.clone()))
+        .header(ContentType::JSON)
+        .body(json!({ "permissions": { "allow": MANAGE_SERVER | MANAGE_ROLE, "deny": 0 } }).to_string())
+        .dispatch()
+        .await;
+    assert!(response.status().code < 300, "{}", response.status());
+    let mut member = s.harness.db.fetch_member(&s.server.id, &user.id).await.unwrap();
+    member
+        .update(
+            &s.harness.db,
+            PartialMember {
+                roles: Some(vec![role]),
+                ..Default::default()
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
+    session.token
+}
+
+async fn command_needing(s: &Setup, name: &str, permissions: u64) -> v0::ApplicationCommand {
+    revolt_database::create_application_command(
+        &s.harness.db,
+        &s.bot.id,
+        None,
+        v0::DataApplicationCommand {
+            name: name.into(),
+            description: "Needs permissions".into(),
+            default_member_permissions: Some(permissions as i64),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap()
+}
+
+/// B1: an Allow can only hand out what the editor may use themselves
+#[rocket::async_test]
+async fn an_allow_needs_the_permissions_the_command_asks_for() {
+    let s = setup().await;
+    let mods = moderator(&s).await;
+    let ban = command_needing(&s, "ban", BAN_MEMBERS).await;
+    let everyone = s.server.id.clone();
+    let allow = json!([{ "id": everyone, "type": "Role", "permission": true }]);
+    let deny = json!([{ "id": everyone, "type": "Role", "permission": false }]);
+
+    // the moderator cannot Ban, so cannot open /ban to everyone
+    assert_eq!(s.put(&mods, Some(&ban.id), allow.clone()).await, Status::Forbidden);
+    // nor every command of the app at once (the app has /ban)
+    assert_eq!(s.put(&mods, None, allow.clone()).await, Status::Forbidden);
+    // a Deny hands out nothing
+    assert!(s.put(&mods, Some(&ban.id), deny).await.code < 300);
+    // /hello needs nothing, so an Allow there is fine
+    assert!(s.put(&mods, Some(&s.command.id), allow.clone()).await.code < 300);
+    // the owner may do anything
+    assert!(s.put(&s.owner_session, Some(&ban.id), allow).await.code < 300);
+}
+
+/// B1: no rules for roles at or above the editor, or members who outrank them
+#[rocket::async_test]
+async fn rules_stop_at_the_editors_rank() {
+    let s = setup().await;
+    let mods = moderator(&s).await;
+    // Helpers was made first, so it ranks above Mods
+    let higher_role = json!([{ "id": s.role, "type": "Role", "permission": false }]);
+    assert_eq!(s.put(&mods, None, higher_role).await, Status::Forbidden);
+    // the member holding Helpers outranks the moderator
+    let higher_member = json!([{ "id": s.user_id, "type": "Member", "permission": false }]);
+    assert_eq!(s.put(&mods, None, higher_member).await, Status::Forbidden);
+    // a member without roles ranks below
+    let lower_member = json!([{ "id": s.other_id, "type": "Member", "permission": false }]);
+    assert!(s.put(&mods, None, lower_member).await.code < 300);
+    // removing a rule about a higher role is refused too
+    assert!(s
+        .put(
+            &s.owner_session,
+            Some(&s.command.id),
+            json!([{ "id": s.role, "type": "Role", "permission": false }])
+        )
+        .await
+        .code
+        < 300);
+    assert_eq!(s.put(&mods, Some(&s.command.id), json!([])).await, Status::Forbidden);
+}
+
+/// S6: ids must be roles, channels and members of this server
+#[rocket::async_test]
+async fn unknown_targets_are_refused() {
+    let s = setup().await;
+    for rule in [
+        json!({ "id": "01ARZ3NDEKTSV4RRFFQ69G5FAV", "type": "Role", "permission": false }),
+        json!({ "id": "01ARZ3NDEKTSV4RRFFQ69G5FAV", "type": "Channel", "permission": false }),
+        json!({ "id": "01ARZ3NDEKTSV4RRFFQ69G5FAV", "type": "Member", "permission": false }),
+    ] {
+        assert_eq!(s.put(&s.owner_session, None, json!([rule])).await, Status::BadRequest);
+    }
+}
+
+/// S4: rules for things that are gone are dropped, not refused
+#[rocket::async_test]
+async fn rules_for_deleted_things_go_away() {
+    let s = setup().await;
+    let rules = json!([
+        { "id": s.second_channel, "type": "Channel", "permission": false },
+        { "id": s.role, "type": "Role", "permission": true }
+    ]);
+    assert!(s.put(&s.owner_session, Some(&s.command.id), rules.clone()).await.code < 300);
+
+    // deleting the channel removes its rule at once
+    let response = s
+        .harness
+        .client
+        .delete(format!("/channels/{}", s.second_channel))
+        .header(Header::new("x-session-token", s.owner_session.clone()))
+        .dispatch()
+        .await;
+    assert!(response.status().code < 300);
+    let left = s
+        .harness
+        .db
+        .fetch_command_permissions(&s.server.id, Some(&s.bot.id))
+        .await
+        .unwrap();
+    assert_eq!(left[0].permissions.len(), 1);
+
+    // a deleted role's rule is dropped on the next save, not refused
+    let response = s
+        .harness
+        .client
+        .delete(format!("/servers/{}/roles/{}", s.server.id, s.role))
+        .header(Header::new("x-session-token", s.owner_session.clone()))
+        .dispatch()
+        .await;
+    assert!(response.status().code < 300);
+    let response = s
+        .harness
+        .client
+        .put(format!(
+            "/servers/{}/applications/{}/commands/{}/permissions",
+            s.server.id, s.bot.id, s.command.id
+        ))
+        .header(Header::new("x-session-token", s.owner_session.clone()))
+        .header(ContentType::JSON)
+        .body(json!({ "permissions": rules }).to_string())
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Ok);
+    let saved: v0::CommandPermissions = response.into_json().await.unwrap();
+    assert!(saved.permissions.is_empty());
+
+    // deleting the command removes its rules
+    assert!(s
+        .put(
+            &s.owner_session,
+            Some(&s.command.id),
+            json!([{ "id": s.server.id, "type": "Role", "permission": false }])
+        )
+        .await
+        .code
+        < 300);
+    let response = s
+        .harness
+        .client
+        .delete(format!("/applications/{}/commands/{}", s.bot.id, s.command.id))
+        .header(Header::new("x-bot-token", s.bot.token.clone()))
+        .dispatch()
+        .await;
+    assert!(response.status().code < 300, "{}", response.status());
+    let left = s
+        .harness
+        .db
+        .fetch_command_permissions(&s.server.id, Some(&s.bot.id))
+        .await
+        .unwrap();
+    assert!(left.iter().all(|rules| rules.command_id.is_none()));
+}
+
+/// S5: the audit entry says what the rules were and became
+#[rocket::async_test]
+async fn the_audit_log_keeps_before_and_after() {
+    let s = setup().await;
+    let first = json!([{ "id": s.role, "type": "Role", "permission": true }]);
+    let second = json!([{ "id": s.role, "type": "Role", "permission": false }]);
+    assert!(s.put(&s.owner_session, None, first).await.code < 300);
+    assert!(s.put(&s.owner_session, None, second).await.code < 300);
+    let mut found = None;
+    for _ in 0..40 {
+        found = s
+            .harness
+            .db
+            .get_server_audit_logs(
+                &s.server.id,
+                AuditLogQuery {
+                    user: None,
+                    target: None,
+                    r#type: None,
+                    before: None,
+                    after: None,
+                    limit: 100,
+                },
+            )
+            .await
+            .unwrap()
+            .into_iter()
+            .find_map(|entry| match entry.action {
+                AuditLogEntryAction::CommandPermissionsUpdate { before, after, .. }
+                    if !before.is_empty() =>
+                {
+                    Some((before, after))
+                }
+                _ => None,
+            });
+        if found.is_some() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    let (before, after) = found.expect("an entry with the earlier rules");
+    assert!(before[0].permission);
+    assert!(!after[0].permission);
+}
+
+/// B2: a thread follows the rules of the channel it is in
+#[rocket::async_test]
+async fn threads_use_their_channels_rules() {
+    let s = setup().await;
+    let response = s
+        .harness
+        .client
+        .post(format!("/channels/{}/threads", s.channel.id()))
+        .header(Header::new("x-session-token", s.owner_session.clone()))
+        .header(ContentType::JSON)
+        .body(json!({ "name": "Talk", "content": "first" }).to_string())
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Ok);
+    let thread: Value = response.into_json().await.unwrap();
+    let thread = thread["_id"].as_str().unwrap().to_string();
+
+    // denied in the parent channel: denied in its thread too
+    let deny_parent = json!([{ "id": s.channel.id(), "type": "Channel", "permission": false }]);
+    assert!(s.put(&s.owner_session, None, deny_parent).await.code < 300);
+    assert_eq!(s.invoke_in(&thread, &s.command).await, Status::Forbidden);
+    assert!(s.listed(Some(&thread)).await.is_empty());
+
+    // only in the parent channel: allowed in its thread as well
+    let only_parent = json!([
+        { "id": s.server.id, "type": "Channel", "permission": false },
+        { "id": s.channel.id(), "type": "Channel", "permission": true }
+    ]);
+    assert!(s.put(&s.owner_session, None, only_parent).await.code < 300);
+    assert_eq!(s.invoke_in(&thread, &s.command).await, Status::Ok);
+    assert_eq!(s.listed(Some(&thread)).await, vec!["hello".to_string()]);
+}
+
+/// B5: managers see every command of the app here, unfiltered
+#[rocket::async_test]
+async fn managers_list_every_command_of_an_app() {
+    let s = setup().await;
+    command_needing(&s, "ban", BAN_MEMBERS).await;
+    revolt_database::create_application_command(
+        &s.harness.db,
+        &s.bot.id,
+        Some(&s.server.id),
+        v0::DataApplicationCommand {
+            name: "hello".into(),
+            description: "Server copy".into(),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    // even a rule that keeps everyone out does not hide them here
+    assert!(s
+        .put(
+            &s.owner_session,
+            None,
+            json!([{ "id": s.server.id, "type": "Role", "permission": false }])
+        )
+        .await
+        .code
+        < 300);
+    let path = format!("/servers/{}/applications/{}/commands", s.server.id, s.bot.id);
+    let response = s
+        .harness
+        .client
+        .get(path.clone())
+        .header(Header::new("x-session-token", s.owner_session.clone()))
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Ok);
+    let commands: Vec<v0::ApplicationCommand> = response.into_json().await.unwrap();
+    let mut names: Vec<_> = commands.iter().map(|c| c.name.as_str()).collect();
+    names.sort();
+    assert_eq!(names, vec!["ban", "hello", "hello"]);
+
+    let response = s
+        .harness
+        .client
+        .get(path)
+        .header(Header::new("x-session-token", s.user_session.clone()))
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Forbidden);
+}
+
+/// S9: buttons on a command's answer follow that command's rules
+#[rocket::async_test]
+async fn buttons_on_a_commands_answer_follow_its_rules() {
+    let s = setup().await;
+    let mut bot_events = PubSubTestHelper::new(&format!("{}!", s.bot.id)).await;
+    let mut channel_events = PubSubTestHelper::new(s.channel.id()).await;
+    assert_eq!(s.invoke().await, Status::Ok);
+    let interaction = match bot_events
+        .wait_for_event(|event| matches!(event, EventV1::InteractionCreate { .. }))
+        .await
+    {
+        EventV1::InteractionCreate { interaction } => interaction,
+        _ => unreachable!(),
+    };
+    let response = s
+        .harness
+        .client
+        .post(format!(
+            "/interactions/{}/{}/callback",
+            interaction.id,
+            interaction.token.unwrap()
+        ))
+        .header(ContentType::JSON)
+        .body(
+            json!({ "type": "Message", "data": { "content": "Vote", "components": [
+                { "type": "ActionRow", "components": [
+                    { "type": "Button", "style": "Primary", "label": "Yes", "custom_id": "yes" }
+                ]}
+            ]}})
+            .to_string(),
+        )
+        .dispatch()
+        .await;
+    assert!(response.status().code < 300);
+    let message = channel_events.wait_for_message().await;
+
+    let press = |nonce: &'static str| {
+        let body = json!({
+            "type": "Component",
+            "channel_id": s.channel.id(),
+            "message_id": message.id,
+            "custom_id": "yes",
+            "nonce": nonce,
+        })
+        .to_string();
+        let client = &s.harness.client;
+        let session = s.user_session.clone();
+        async move {
+            client
+                .post("/interactions")
+                .header(Header::new("x-session-token", session))
+                .header(ContentType::JSON)
+                .body(body)
+                .dispatch()
+                .await
+                .status()
+        }
+    };
+    assert_eq!(press("click-1").await, Status::Ok);
+    assert!(s
+        .put(
+            &s.owner_session,
+            Some(&s.command.id),
+            json!([{ "id": s.user_id, "type": "Member", "permission": false }])
+        )
+        .await
+        .code
+        < 300);
+    assert_eq!(press("click-2").await, Status::Forbidden);
+}
+
+/// B3: the maker of a bot is only shown when they chose so, and never by id
+#[rocket::async_test]
+async fn the_bot_page_shows_its_maker_only_when_asked() {
+    let s = setup().await;
+    let edit = |body: Value| {
+        let client = &s.harness.client;
+        let session = s.owner_session.clone();
+        let path = format!("/bots/{}", s.bot.id);
+        async move {
+            client
+                .patch(path)
+                .header(Header::new("x-session-token", session))
+                .header(ContentType::JSON)
+                .body(body.to_string())
+                .dispatch()
+                .await
+                .status()
+        }
+    };
+    let page = || {
+        let client = &s.harness.client;
+        let path = format!("/bots/{}/invite", s.bot.id);
+        async move {
+            let response = client.get(path).dispatch().await;
+            assert_eq!(response.status(), Status::Ok);
+            response.into_json::<Value>().await.unwrap()
+        }
+    };
+    assert!(edit(json!({ "public": true })).await.code < 300);
+    let hidden = page().await;
+    assert!(hidden.get("creator").is_none(), "{hidden}");
+
+    assert!(edit(json!({ "show_creator": true })).await.code < 300);
+    let shown = page().await;
+    assert!(shown["creator"]["username"].is_string(), "{shown}");
+    assert!(shown["creator"].get("_id").is_none(), "{shown}");
 }

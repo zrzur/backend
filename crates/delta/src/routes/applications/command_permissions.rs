@@ -140,6 +140,8 @@ async fn store(
     AuditLogEntryAction::CommandPermissionsUpdate {
         bot: application_id.to_string(),
         command: command_id.map(str::to_string),
+        before: vec![],
+        after: vec![],
     }
     .insert(
         db,

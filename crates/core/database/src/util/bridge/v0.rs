@@ -1914,9 +1914,17 @@ impl From<crate::AuditLogEntryAction> for AuditLogEntryAction {
                 scopes,
             },
             crate::AuditLogEntryAction::BotRemove { bot } => AuditLogEntryAction::BotRemove { bot },
-            crate::AuditLogEntryAction::CommandPermissionsUpdate { bot, command } => {
-                AuditLogEntryAction::CommandPermissionsUpdate { bot, command }
-            }
+            crate::AuditLogEntryAction::CommandPermissionsUpdate {
+                bot,
+                command,
+                before,
+                after,
+            } => AuditLogEntryAction::CommandPermissionsUpdate {
+                bot,
+                command,
+                before,
+                after,
+            },
             crate::AuditLogEntryAction::AutoModAction {
                 rule,
                 user,

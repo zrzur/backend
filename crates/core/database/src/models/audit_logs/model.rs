@@ -170,6 +170,12 @@ auto_derived!(
             bot: String,
             #[serde(skip_serializing_if = "Option::is_none", default)]
             command: Option<String>,
+            /// The rules before the change
+            #[serde(skip_serializing_if = "Vec::is_empty", default)]
+            before: Vec<revolt_models::v0::CommandPermission>,
+            /// The rules after it
+            #[serde(skip_serializing_if = "Vec::is_empty", default)]
+            after: Vec<revolt_models::v0::CommandPermission>,
         },
         /// AutoMod acted on a message (actions: block, alert, timeout)
         AutoModAction {

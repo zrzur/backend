@@ -157,6 +157,12 @@ auto_derived!(
             bot: String,
             #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
             command: Option<String>,
+            /// The rules before the change
+            #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Vec::is_empty", default))]
+            before: Vec<super::CommandPermission>,
+            /// The rules after it
+            #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Vec::is_empty", default))]
+            after: Vec<super::CommandPermission>,
         },
         /// AutoMod acted on a message (actions: block, alert, timeout)
         AutoModAction {
