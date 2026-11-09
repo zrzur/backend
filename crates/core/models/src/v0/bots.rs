@@ -134,7 +134,40 @@ auto_derived!(
             feature = "serde",
             serde(skip_serializing_if = "Option::is_none", default)
         )]
-        pub default_permissions: Option<i64>
+        pub default_permissions: Option<i64>,
+        /// Verified by Trust & Safety
+        #[cfg_attr(
+            feature = "serde",
+            serde(skip_serializing_if = "crate::if_false", default)
+        )]
+        pub verified: bool,
+        /// Who made the bot
+        #[cfg_attr(
+            feature = "serde",
+            serde(skip_serializing_if = "Option::is_none", default)
+        )]
+        pub creator: Option<PublicBotCreator>,
+        /// Servers the bot is in
+        #[cfg_attr(
+            feature = "serde",
+            serde(skip_serializing_if = "Option::is_none", default)
+        )]
+        pub server_count: Option<i64>,
+    }
+
+    /// The person who made a public bot
+    pub struct PublicBotCreator {
+        /// User id
+        #[cfg_attr(feature = "serde", serde(rename = "_id"))]
+        pub id: String,
+        /// Username
+        pub username: String,
+        /// Display name
+        #[cfg_attr(
+            feature = "serde",
+            serde(skip_serializing_if = "Option::is_none", default)
+        )]
+        pub display_name: Option<String>,
     }
 
     /// Where a bot receives its interactions over HTTP

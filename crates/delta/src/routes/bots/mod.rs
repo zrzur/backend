@@ -8,6 +8,7 @@ mod edit;
 mod fetch;
 mod fetch_owned;
 mod fetch_public;
+mod fetch_public_commands;
 mod interactions_endpoint;
 mod invite;
 mod token_reset;
@@ -22,6 +23,7 @@ pub fn routes() -> (Vec<Route>, OpenApi) {
         interactions_endpoint::set_endpoint,
         interactions_endpoint::remove_endpoint,
         fetch_public::fetch_public_bot,
+        fetch_public_commands::fetch_public_bot_commands,
         fetch::fetch_bot,
         fetch_owned::fetch_owned_bots,
         edit::edit_bot,
