@@ -547,7 +547,7 @@ impl From<crate::Metadata> for Metadata {
                 width: width as usize,
                 height: height as usize,
             },
-            crate::Metadata::Audio => Metadata::Audio,
+            crate::Metadata::Audio { duration_ms } => Metadata::Audio { duration_ms },
         }
     }
 }
@@ -572,7 +572,7 @@ impl From<Metadata> for crate::Metadata {
                 width: width as isize,
                 height: height as isize,
             },
-            Metadata::Audio => crate::Metadata::Audio,
+            Metadata::Audio { duration_ms } => crate::Metadata::Audio { duration_ms },
         }
     }
 }
@@ -1929,6 +1929,15 @@ impl From<crate::AuditLogEntryAction> for AuditLogEntryAction {
             },
             crate::AuditLogEntryAction::EmojiDelete { emoji, name } => {
                 AuditLogEntryAction::EmojiDelete { emoji, name }
+            }
+            crate::AuditLogEntryAction::SoundboardSoundCreate { sound, name } => {
+                AuditLogEntryAction::SoundboardSoundCreate { sound, name }
+            }
+            crate::AuditLogEntryAction::SoundboardSoundDelete { sound, name } => {
+                AuditLogEntryAction::SoundboardSoundDelete { sound, name }
+            }
+            crate::AuditLogEntryAction::StageEnd { channel } => {
+                AuditLogEntryAction::StageEnd { channel }
             }
             crate::AuditLogEntryAction::BotAdd {
                 bot,

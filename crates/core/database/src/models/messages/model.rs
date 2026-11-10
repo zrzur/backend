@@ -1785,7 +1785,7 @@ mod search_filter_tests {
                 attachments: Some(vec![file(Metadata::Video { width: 1, height: 1 })]),
                 ..base(7, "A")
             },
-            Message { attachments: Some(vec![file(Metadata::Audio)]), ..base(8, "A") },
+            Message { attachments: Some(vec![file(Metadata::Audio { duration_ms: None })]), ..base(8, "A") },
             Message { embeds: Some(vec![embed]), ..base(9, "A") },
             Message { pinned: Some(true), ..base(10, "A") },
             Message { author: "bob".to_string(), ..base(11, "B") },

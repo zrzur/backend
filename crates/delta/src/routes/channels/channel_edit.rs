@@ -1,6 +1,6 @@
 use revolt_database::{
     util::{permissions::DatabasePermissionQuery, reference::Reference},
-    voice::{delete_voice_channel, UserVoiceChannel, VoiceClient},
+    voice::{delete_voice_channel, get_voice_channel_members, UserVoiceChannel, VoiceClient},
     AuditLogEntryAction, Channel, Database, FieldsChannel, File, PartialChannel, SystemMessage,
     User, AMQP,
 };
@@ -290,9 +290,29 @@ pub async fn edit(
                 partial.nsfw = Some(new_nsfw);
             }
 
-            if let Some(new_voice) = data.voice {
-                *voice = Some(new_voice.clone().into());
-                partial.voice = Some(new_voice.into());
+            if let Some(edit) = data.voice {
+                // fields left out keep their value (a user limit change must
+                // not turn a stage back into a plain voice channel)
+                let mut new_voice = voice.clone().unwrap_or_default();
+                if let Some(max_users) = edit.max_users {
+                    new_voice.max_users = Some(max_users);
+                }
+                if let Some(stage) = edit.stage {
+                    // who may publish changes with it: only while the call is empty
+                    if stage != new_voice.stage
+                        && get_voice_channel_members(&UserVoiceChannel {
+                            id: id.clone(),
+                            server_id: None,
+                        })
+                        .await?
+                        .is_some()
+                    {
+                        return Err(create_error!(InvalidOperation));
+                    }
+                    new_voice.stage = stage;
+                }
+                *voice = Some(new_voice.clone());
+                partial.voice = Some(new_voice);
             }
 
             if let Some(new_slowmode) = data.slowmode {

@@ -56,6 +56,10 @@ auto_derived!(
         /// File is a video with specific dimensions
         Video { width: usize, height: usize },
         /// File is audio
-        Audio,
+        Audio {
+            /// Measured length in milliseconds (soundboard sounds)
+            #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+            duration_ms: Option<u32>,
+        },
     }
 );

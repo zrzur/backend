@@ -2,7 +2,10 @@
 //! only people who can see the channel fetch it.
 use revolt_database::{
     iso8601_timestamp::Timestamp,
-    voice::{create_voice_state, delete_stream_preview, update_voice_state, UserVoiceChannel},
+    voice::{
+        create_voice_state, delete_stream_preview, delete_voice_state, update_voice_state,
+        UserVoiceChannel,
+    },
     Channel, Member, Server, Session, User,
 };
 use revolt_models::v0::{self, PartialUserVoiceState};
@@ -168,4 +171,111 @@ async fn a_preview_is_small_and_a_picture() {
     let png = encode([0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0]);
     let (status, _) = send(&harness, &sharer_session, true, put, Some(json!({ "image": png }))).await;
     assert_eq!(status, Status::BadRequest);
+}
+
+/// A sharer with a preview stored, and the viewer's session
+async fn sharing() -> (TestHarness, User, Session, Session, Channel, UserVoiceChannel) {
+    let (harness, sharer, sharer_session, viewer_session, channel) = setup().await;
+    let seat = UserVoiceChannel::from_channel(&channel);
+    delete_stream_preview(channel.id(), &sharer.id).await.unwrap();
+    create_voice_state(&seat, &sharer.id, Timestamp::now_utc())
+        .await
+        .unwrap();
+    update_voice_state(
+        &seat,
+        &sharer.id,
+        &PartialUserVoiceState {
+            screensharing: Some(true),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let (status, _) = send(
+        &harness,
+        &sharer_session,
+        true,
+        format!("/channels/{}/stream_preview", channel.id()),
+        Some(json!({ "image": jpeg() })),
+    )
+    .await;
+    assert_eq!(status, Status::NoContent);
+    (harness, sharer, sharer_session, viewer_session, channel, seat)
+}
+
+#[rocket::async_test]
+async fn a_stopped_share_has_no_preview() {
+    let (harness, sharer, _, viewer_session, channel, seat) = sharing().await;
+    let get = format!("/channels/{}/stream_preview/{}", channel.id(), sharer.id);
+    assert_eq!(send(&harness, &viewer_session, false, get.clone(), None).await.0, Status::Ok);
+
+    update_voice_state(
+        &seat,
+        &sharer.id,
+        &PartialUserVoiceState {
+            screensharing: Some(false),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(send(&harness, &viewer_session, false, get, None).await.0, Status::NotFound);
+}
+
+#[rocket::async_test]
+async fn leaving_the_call_takes_the_preview_away() {
+    let (harness, sharer, _, viewer_session, channel, seat) = sharing().await;
+    let get = format!("/channels/{}/stream_preview/{}", channel.id(), sharer.id);
+    delete_voice_state(&seat, &sharer.id).await.unwrap();
+    assert_eq!(send(&harness, &viewer_session, false, get, None).await.0, Status::NotFound);
+}
+
+#[rocket::async_test]
+async fn a_preview_is_for_those_who_may_listen() {
+    let (harness, sharer, sharer_session, viewer_session, channel, _) = sharing().await;
+    let get = format!("/channels/{}/stream_preview/{}", channel.id(), sharer.id);
+
+    // the owner takes Listen away in this channel
+    let response = harness
+        .client
+        .put(format!("/channels/{}/permissions/default", channel.id()))
+        .header(Header::new("x-session-token", sharer_session.token.clone()))
+        .header(ContentType::JSON)
+        .body(
+            json!({ "permissions": { "allow": 0, "deny": revolt_permissions::ChannelPermission::Listen as u64 } })
+                .to_string(),
+        )
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Ok);
+    assert_eq!(send(&harness, &viewer_session, false, get, None).await.0, Status::Forbidden);
+}
+
+#[rocket::async_test]
+async fn a_server_deafened_member_sees_no_preview() {
+    let (harness, sharer, _, viewer_session, channel, _) = sharing().await;
+    let get = format!("/channels/{}/stream_preview/{}", channel.id(), sharer.id);
+    let viewer = harness
+        .db
+        .fetch_session_by_token(&viewer_session.token)
+        .await
+        .unwrap()
+        .user_id;
+    let mut member = harness
+        .db
+        .fetch_member(channel.server().unwrap(), &viewer)
+        .await
+        .unwrap();
+    member
+        .update(
+            &harness.db,
+            revolt_database::PartialMember {
+                can_receive: Some(false),
+                ..Default::default()
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
+    assert_eq!(send(&harness, &viewer_session, false, get, None).await.0, Status::Forbidden);
 }

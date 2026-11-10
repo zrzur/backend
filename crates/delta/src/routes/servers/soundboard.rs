@@ -5,7 +5,8 @@
 use revolt_database::{
     server_supercharge_level, soundboard_limit,
     util::{permissions::DatabasePermissionQuery, reference::Reference},
-    Database, File, PartialSoundboardSound, SoundboardSound, User, SOUNDBOARD_MAX_DURATION_MS,
+    AuditLogEntryAction, Database, File, Metadata, PartialSoundboardSound, SoundboardSound, User,
+    SOUNDBOARD_MAX_DURATION_MS,
 };
 use revolt_models::v0;
 use revolt_permissions::{calculate_server_permissions, ChannelPermission, PermissionQuery};
@@ -13,6 +14,8 @@ use revolt_result::{create_error, Result};
 use rocket::{serde::json::Json, State};
 use rocket_empty::EmptyResponse;
 use validator::Validate;
+
+use crate::util::audit_log_reason::AuditLogReason;
 
 async fn assert_can_manage(db: &Database, user: &User, server: &revolt_database::Server) -> Result<()> {
     let mut query = DatabasePermissionQuery::new(db, user).server(server);
@@ -53,6 +56,7 @@ pub async fn list_sounds(
 pub async fn create_sound(
     db: &State<Database>,
     user: User,
+    reason: AuditLogReason,
     target: Reference<'_>,
     sound_id: String,
     data: Json<v0::DataCreateSoundboardSound>,
@@ -68,7 +72,21 @@ pub async fn create_sound(
         return Err(create_error!(TooManySounds { max }));
     }
 
-    File::use_soundboard_sound(db, &sound_id, &server.id, &user.id).await?;
+    let file = File::use_soundboard_sound(db, &sound_id, &server.id, &user.id).await?;
+
+    // the length autumn measured wins over the one the client sends
+    let measured = match file.metadata {
+        Metadata::Audio {
+            duration_ms: Some(duration_ms),
+        } => Some(duration_ms),
+        _ => None,
+    };
+    if measured.is_some_and(|ms| ms > SOUNDBOARD_MAX_DURATION_MS) {
+        db.mark_attachment_as_deleted(&sound_id).await?;
+        return Err(revolt_result::failed_validation(vec![
+            revolt_result::ValidationProblem::new("duration_ms", "too_long"),
+        ]));
+    }
 
     let sound = SoundboardSound {
         id: sound_id,
@@ -76,10 +94,19 @@ pub async fn create_sound(
         creator_id: user.id.clone(),
         name: data.name.trim().to_string(),
         emoji: data.emoji,
-        duration_ms: data.duration_ms.min(SOUNDBOARD_MAX_DURATION_MS),
+        duration_ms: measured.unwrap_or(data.duration_ms).min(SOUNDBOARD_MAX_DURATION_MS),
         volume: data.volume.unwrap_or(100),
     };
-    sound.create(db).await?;
+    if !sound.create(db, max).await? {
+        db.mark_attachment_as_deleted(&sound.id).await?;
+        return Err(create_error!(TooManySounds { max }));
+    }
+    AuditLogEntryAction::SoundboardSoundCreate {
+        sound: sound.id.clone(),
+        name: sound.name.clone(),
+    }
+    .insert(db, server.id.clone(), reason, user.id, None)
+    .await;
     Ok(Json(sound.into()))
 }
 
@@ -127,6 +154,7 @@ pub async fn edit_sound(
 pub async fn delete_sound(
     db: &State<Database>,
     user: User,
+    reason: AuditLogReason,
     target: Reference<'_>,
     sound_id: String,
 ) -> Result<EmptyResponse> {
@@ -137,6 +165,10 @@ pub async fn delete_sound(
     if sound.server != server.id {
         return Err(create_error!(NotFound));
     }
+    let (id, name) = (sound.id.clone(), sound.name.clone());
     sound.delete(db).await?;
+    AuditLogEntryAction::SoundboardSoundDelete { sound: id, name }
+        .insert(db, server.id.clone(), reason, user.id, None)
+        .await;
     Ok(EmptyResponse)
 }

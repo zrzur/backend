@@ -3625,8 +3625,9 @@ mod command_permission_index_tests {
     }
 }
 
-/// Marks a server whose default permissions got Use Soundboard, so running
-/// this again never gives back a right an owner took away since
+/// Marks a server whose default permissions got Use Soundboard (and names
+/// the claim with the cutoff), so running this again never gives back a
+/// right an owner took away since
 const SOUNDBOARD_DONE: &str = "soundboard_default_done";
 
 /// The soundboard index (sounds of a server, oldest first), and Use
@@ -3640,9 +3641,23 @@ pub async fn create_soundboard(db: &crate::mongodb::Database) {
     .await
     .expect("Failed to create the soundboard index");
 
+    // servers made after the first run already have it in their defaults:
+    // the cutoff is saved once, so a second run never touches them (an owner
+    // may have taken it away since)
+    let claims = db.collection::<Document>("migration_claims");
+    let _ = claims
+        .insert_one(doc! { "_id": SOUNDBOARD_DONE, "before": Ulid::new().to_string() })
+        .await;
+    let before = claims
+        .find_one(doc! { "_id": SOUNDBOARD_DONE })
+        .await
+        .expect("Failed to read the soundboard claim")
+        .and_then(|claim| claim.get_str("before").ok().map(str::to_string))
+        .expect("The soundboard claim was not saved");
+
     db.collection::<Document>("servers")
         .update_many(
-            doc! { SOUNDBOARD_DONE: { "$ne": true } },
+            doc! { "_id": { "$lt": &before }, SOUNDBOARD_DONE: { "$ne": true } },
             doc! {
                 "$bit": { "default_permissions": { "or": ChannelPermission::UseSoundboard as i64 } },
                 "$set": { SOUNDBOARD_DONE: true },

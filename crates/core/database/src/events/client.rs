@@ -489,7 +489,7 @@ pub enum EventV1 {
     /// The live state of a stage changed (topic, speakers or raised hands)
     StageUpdate {
         id: String,
-        data: revolt_models::v0::StageState,
+        data: revolt_models::v0::StageChange,
     },
     /// Someone played a soundboard sound in a voice channel
     SoundboardPlay {

@@ -16,11 +16,11 @@ pub const STREAM_PREVIEW_INTERVAL_SECS: u64 = 25;
 /// How long a preview is kept without a newer one
 pub const STREAM_PREVIEW_TTL_SECS: u64 = 75;
 
-fn preview_key(channel_id: &str, user_id: &str) -> String {
+pub(crate) fn preview_key(channel_id: &str, user_id: &str) -> String {
     format!("stream_preview:{channel_id}:{user_id}")
 }
 
-fn cooldown_key(channel_id: &str, user_id: &str) -> String {
+pub(crate) fn cooldown_key(channel_id: &str, user_id: &str) -> String {
     format!("stream_preview_cd:{channel_id}:{user_id}")
 }
 

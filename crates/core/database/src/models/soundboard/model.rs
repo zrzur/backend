@@ -49,13 +49,19 @@ pub fn soundboard_limit(wings_level: usize) -> usize {
 
 #[allow(clippy::disallowed_methods)]
 impl SoundboardSound {
-    /// Save a new sound and tell the server
-    pub async fn create(&self, db: &Database) -> Result<()> {
+    /// Save a new sound and tell the server. The limit is checked after the
+    /// insert, so two uploads at once can't both take the last place: the
+    /// one over the limit is taken back. Returns false when it was.
+    pub async fn create(&self, db: &Database, max: usize) -> Result<bool> {
         db.insert_soundboard_sound(self).await?;
+        if db.count_soundboard_sounds(&self.server).await? > max {
+            db.delete_soundboard_sound(&self.id).await?;
+            return Ok(false);
+        }
         EventV1::SoundboardSoundCreate(self.clone().into())
             .p(self.server.clone())
             .await;
-        Ok(())
+        Ok(true)
     }
 
     /// Change a sound and tell the server

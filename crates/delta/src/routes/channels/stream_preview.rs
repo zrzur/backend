@@ -61,11 +61,28 @@ pub async fn fetch_preview(
 ) -> Result<Json<v0::StreamPreview>> {
     let channel = target.as_channel(db).await?;
     let mut query = perms(db, &user).channel(&channel);
-    calculate_channel_permissions(&mut query)
-        .await
-        .throw_if_lacking_channel_permission(ChannelPermission::ViewChannel)?;
+    let permissions = calculate_channel_permissions(&mut query).await;
+    permissions.throw_if_lacking_channel_permission(ChannelPermission::ViewChannel)?;
+    // seeing someone's screen is like being in the call: Listen, and not
+    // server-deafened
+    permissions.throw_if_lacking_channel_permission(ChannelPermission::Listen)?;
+    if let Some(server) = channel.server() {
+        if !db.fetch_member(server, &user.id).await?.can_receive {
+            return Err(create_error!(MissingPermission {
+                permission: ChannelPermission::Listen.to_string()
+            }));
+        }
+    }
     // a mature channel's screen is for adults only, like the channel
     revolt_database::util::age::assert_can_view_channel(db, &user, &channel).await?;
+
+    // only while they still share their screen there
+    let sharing = get_voice_state(&UserVoiceChannel::from_channel(&channel), member.id)
+        .await?
+        .is_some_and(|state| state.screensharing);
+    if !sharing {
+        return Err(create_error!(NotFound));
+    }
 
     get_stream_preview(channel.id(), member.id)
         .await?

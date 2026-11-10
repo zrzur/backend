@@ -266,6 +266,43 @@ auto_derived!(
         pub stage: bool,
     }
 
+    /// Change of a voice channel's voice information
+    #[derive(Default)]
+    #[cfg_attr(feature = "validator", derive(validator::Validate))]
+    pub struct DataEditVoiceInformation {
+        /// Most users in the call at once
+        #[cfg_attr(feature = "validator", validate(range(min = 1)))]
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub max_users: Option<usize>,
+        /// Make it a stage, or a plain voice channel again (only while
+        /// nobody is in the call)
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub stage: Option<bool>,
+    }
+
+    /// What changed on a stage (sent as `StageUpdate`)
+    #[derive(Default)]
+    pub struct StageChange {
+        /// New topic; an empty string clears it
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub topic: Option<String>,
+        /// Became speakers
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Vec::is_empty", default))]
+        pub speakers_added: Vec<String>,
+        /// Went back to the audience (or left)
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Vec::is_empty", default))]
+        pub speakers_removed: Vec<String>,
+        /// Raised a hand
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Vec::is_empty", default))]
+        pub hands_raised: Vec<String>,
+        /// Hand went down
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Vec::is_empty", default))]
+        pub hands_lowered: Vec<String>,
+        /// The stage ended: topic, speakers and hands are gone
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "crate::if_false", default))]
+        pub ended: bool,
+    }
+
     /// Live state of a stage channel
     #[derive(Default)]
     pub struct StageState {
@@ -378,8 +415,9 @@ auto_derived!(
         /// Whether this channel is archived
         pub archived: Option<bool>,
 
-        /// Voice Information for voice channels
-        pub voice: Option<VoiceInformation>,
+        /// Voice Information for voice channels (fields left out keep
+        /// their value)
+        pub voice: Option<DataEditVoiceInformation>,
 
         /// The channel's slow mode delay in seconds, up to 6 hours
         #[cfg_attr(feature = "validator", validate(range(min = 0, max = 21600)))]

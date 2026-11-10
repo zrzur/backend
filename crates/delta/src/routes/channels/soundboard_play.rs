@@ -5,7 +5,10 @@
 use revolt_database::{
     events::client::EventV1,
     util::{permissions::DatabasePermissionQuery, reference::Reference},
-    voice::{is_in_voice_channel, is_stage_channel, is_stage_speaker, UserVoiceChannel},
+    voice::{
+        get_voice_channel_members, is_in_voice_channel, is_stage_channel, is_stage_speaker,
+        UserVoiceChannel,
+    },
     Database, User,
 };
 use revolt_permissions::{calculate_channel_permissions, ChannelPermission};
@@ -60,12 +63,16 @@ pub async fn play_sound(
         return Err(create_error!(NotFound));
     }
 
+    // to the people in the call only, not everyone who sees the channel
+    let listeners = get_voice_channel_members(&UserVoiceChannel::from_channel(&channel))
+        .await?
+        .unwrap_or_default();
     EventV1::SoundboardPlay {
         channel_id: channel.id().to_string(),
         sound_id: sound.id,
         user: user.id.clone(),
     }
-    .p(channel.id().to_string())
+    .p_broadcast(listeners)
     .await;
     Ok(EmptyResponse)
 }

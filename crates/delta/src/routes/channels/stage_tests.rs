@@ -424,3 +424,208 @@ async fn ending_the_stage_empties_it() {
         })
         .await;
 }
+
+/// The event a stage sends, as JSON (what clients read)
+async fn next_stage_event(events: &mut PubSubTestHelper) -> serde_json::Value {
+    let event = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        events.wait_for_event(|event| matches!(event, EventV1::StageUpdate { .. })),
+    )
+    .await
+    .expect("a StageUpdate");
+    serde_json::to_value(&event).unwrap()["data"].clone()
+}
+
+/// A member holding a role of this rank with these permissions
+async fn member_with(
+    s: &Setup,
+    rank: i64,
+    allow: &[revolt_permissions::ChannelPermission],
+) -> (User, Session) {
+    let (_, session, user) = s.harness.new_user().await;
+    let server = s.harness.db.fetch_server(s.stage.server().unwrap()).await.unwrap();
+    let bits = allow.iter().fold(0i64, |bits, p| bits | *p as i64);
+    let mut role = s
+        .harness
+        .new_role(&server, rank, Some(revolt_permissions::OverrideField { a: bits, d: 0 }))
+        .await;
+    // the harness leaves the rank as created: set it here
+    role.update(
+        &s.harness.db,
+        &server.id,
+        revolt_database::PartialRole {
+            rank: Some(rank),
+            ..Default::default()
+        },
+        vec![],
+    )
+    .await
+    .unwrap();
+    let server = s.harness.db.fetch_server(&server.id).await.unwrap();
+    let (mut member, _) = Member::create(&s.harness.db, &server, &user, None).await.unwrap();
+    member
+        .update(
+            &s.harness.db,
+            revolt_database::PartialMember {
+                roles: Some(vec![role.id.clone()]),
+                ..Default::default()
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
+    (user, session)
+}
+
+#[rocket::async_test]
+async fn changing_the_user_limit_keeps_the_stage() {
+    let s = setup().await;
+    let response = s
+        .harness
+        .client
+        .patch(format!("/channels/{}", s.stage.id()))
+        .header(Header::new("x-session-token", s.owner_session.token.clone()))
+        .header(ContentType::JSON)
+        .body(json!({ "voice": { "max_users": 5 } }).to_string())
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Ok);
+    let body: serde_json::Value =
+        serde_json::from_str(&response.into_string().await.unwrap()).unwrap();
+    assert_eq!(body["voice"]["max_users"], json!(5));
+    assert_eq!(body["voice"]["stage"], json!(true), "the stage was lost: {body}");
+}
+
+#[rocket::async_test]
+async fn a_stage_turns_on_or_off_only_while_the_call_is_empty() {
+    let s = setup().await;
+    let seat = sit_in(&s.stage, &s.member.id).await;
+    let turn_off = || {
+        s.harness
+            .client
+            .patch(format!("/channels/{}", s.stage.id()))
+            .header(Header::new("x-session-token", s.owner_session.token.clone()))
+            .header(ContentType::JSON)
+            .body(json!({ "voice": { "stage": false } }).to_string())
+    };
+    assert_eq!(turn_off().dispatch().await.status(), Status::BadRequest);
+
+    delete_voice_state(&seat, &s.member.id).await.unwrap();
+    let response = turn_off().dispatch().await;
+    assert_eq!(response.status(), Status::Ok);
+    let body: serde_json::Value =
+        serde_json::from_str(&response.into_string().await.unwrap()).unwrap();
+    assert!(body["voice"].get("stage").is_none(), "{body}");
+}
+
+#[rocket::async_test]
+async fn closing_the_stage_needs_move_members_too() {
+    use revolt_permissions::ChannelPermission::*;
+    let s = setup().await;
+    let (moderator, session) = member_with(&s, 5, &[MuteMembers]).await;
+    sit_in(&s.stage, &moderator.id).await;
+    let (status, _, _) = call(
+        &s.harness,
+        &session,
+        "DELETE",
+        format!("/channels/{}/stage", s.stage.id()),
+        None,
+    )
+    .await;
+    assert_eq!(status, Status::Forbidden);
+}
+
+#[rocket::async_test]
+async fn a_moderator_cannot_move_someone_ranked_higher() {
+    use revolt_permissions::ChannelPermission::*;
+    let s = setup().await;
+    let stage = s.stage.id();
+    let (moderator, session) = member_with(&s, 10, &[MuteMembers]).await;
+    let (senior, _) = member_with(&s, 1, &[]).await;
+    sit_in(&s.stage, &moderator.id).await;
+    sit_in(&s.stage, &senior.id).await;
+
+    // the owner gives the senior member the floor; the moderator can't take it
+    let (status, _, _) = call(
+        &s.harness,
+        &s.owner_session,
+        "PUT",
+        format!("/channels/{stage}/stage/speakers/{}", senior.id),
+        None,
+    )
+    .await;
+    assert_eq!(status, Status::Ok);
+    let (status, _, error) = call(
+        &s.harness,
+        &session,
+        "DELETE",
+        format!("/channels/{stage}/stage/speakers/{}", senior.id),
+        None,
+    )
+    .await;
+    assert_eq!(status, Status::Forbidden);
+    assert!(matches!(error, Some(ErrorType::NotElevated)), "{error:?}");
+
+    // nor give the floor to the owner, ranked above everyone
+    sit_in(&s.stage, &s.owner.id).await;
+    let (status, _, error) = call(
+        &s.harness,
+        &session,
+        "PUT",
+        format!("/channels/{stage}/stage/speakers/{}", s.owner.id),
+        None,
+    )
+    .await;
+    assert_eq!(status, Status::Forbidden);
+    assert!(matches!(error, Some(ErrorType::NotElevated)), "{error:?}");
+}
+
+#[rocket::async_test]
+async fn a_hand_goes_up_at_most_once_every_twenty_seconds() {
+    let s = setup().await;
+    let stage = s.stage.id();
+    sit_in(&s.stage, &s.member.id).await;
+    let raise = || call(&s.harness, &s.member_session, "PUT", format!("/channels/{stage}/stage/hand"), None);
+    assert_eq!(raise().await.0, Status::Ok);
+    let (status, _, _) = call(
+        &s.harness,
+        &s.member_session,
+        "DELETE",
+        format!("/channels/{stage}/stage/hands/@me"),
+        None,
+    )
+    .await;
+    assert_eq!(status, Status::Ok);
+    assert_eq!(raise().await.0, Status::TooManyRequests);
+}
+
+#[rocket::async_test]
+async fn stage_events_carry_only_what_changed() {
+    let s = setup().await;
+    let stage = s.stage.id();
+    sit_in(&s.stage, &s.member.id).await;
+    let mut events = PubSubTestHelper::new(stage).await;
+    call(&s.harness, &s.member_session, "PUT", format!("/channels/{stage}/stage/hand"), None).await;
+    let data = next_stage_event(&mut events).await;
+    assert_eq!(data["hands_raised"], json!([s.member.id]), "{data}");
+    assert!(data.get("speakers").is_none(), "the whole state was sent: {data}");
+}
+
+#[rocket::async_test]
+async fn a_speaker_who_leaves_is_gone_from_the_stage_at_once() {
+    let s = setup().await;
+    let stage = s.stage.id();
+    let seat = sit_in(&s.stage, &s.member.id).await;
+    call(
+        &s.harness,
+        &s.owner_session,
+        "PUT",
+        format!("/channels/{stage}/stage/speakers/{}", s.member.id),
+        None,
+    )
+    .await;
+    let mut events = PubSubTestHelper::new(stage).await;
+    delete_voice_state(&seat, &s.member.id).await.unwrap();
+    let data = next_stage_event(&mut events).await;
+    assert_eq!(data["speakers_removed"], json!([s.member.id]), "{data}");
+}
