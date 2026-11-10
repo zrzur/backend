@@ -43,6 +43,8 @@ const PENDING_COMMAND_PERMISSIONS_INDEX: i32 = 80;
 const PENDING_POLL_INDEX: i32 = 81;
 // Number given by the coordinator at merge (stream events)
 const PENDING_SERVER_EVENT_INDEXES: i32 = 82;
+// Number given by the coordinator at merge (stream profile-mutuals-status)
+const PENDING_STATUS_MUTUAL_INDEXES: i32 = -1;
 
 /// The earliest day a session from before expiry can expire. At least 30
 /// days out, also with expiry switched off (0), for the day it is switched on.
@@ -2598,6 +2600,11 @@ pub async fn run_migrations(db: &MongoDb, revision: i32) -> i32 {
         create_server_event_indexes(&db.db()).await;
     }
 
+    if revision <= PENDING_STATUS_MUTUAL_INDEXES {
+        info!("Running migration [revision {PENDING_STATUS_MUTUAL_INDEXES} / 10-11-2026]: Indexes for status expiry and mutual friends");
+        create_status_mutual_indexes(&db.db()).await;
+    }
+
     // Reminder to update LATEST_REVISION when adding new migrations.
     LATEST_REVISION.max(revision)
 }
@@ -2775,6 +2782,29 @@ pub async fn create_staff_feature_indexes(db: &crate::mongodb::Database) {
             .await
             .unwrap_or_else(|error| panic!("Failed to create an index on {collection}: {error}"));
     }
+}
+
+/// Users by the time their custom status runs out (only those with one),
+/// for crond's minute sweep; and users by friend, for the mutual friends
+/// on a profile, which read the whole collection without it. Safe to run
+/// twice (creating an index that exists is a no-op).
+pub async fn create_status_mutual_indexes(db: &crate::mongodb::Database) {
+    db.run_command(doc! {
+        "createIndexes": "users",
+        "indexes": [
+            {
+                "key": { "status.expires_at": 1_i32 },
+                "name": "status_expires_at",
+                "partialFilterExpression": { "status.expires_at": { "$exists": true } },
+            },
+            {
+                "key": { "relations._id": 1_i32, "relations.status": 1_i32 },
+                "name": "relations_id_status",
+            },
+        ]
+    })
+    .await
+    .expect("Failed to create the status and mutual friends indexes");
 }
 
 /// Polls by the time they end, for crond to close them and post their
@@ -3171,6 +3201,22 @@ mod statement_migration_tests {
         };
         for _ in 0..2 {
             super::create_poll_index(&mongo.db()).await;
+        }
+        db.drop_database().await;
+    }
+
+    /// MongoDB only: the status and mutual friends indexes can be made twice
+    #[tokio::test]
+    async fn status_mutual_indexes_run_twice_on_mongodb() {
+        let db = crate::DatabaseInfo::Test("status_mutual_index_migration".to_string())
+            .connect()
+            .await
+            .expect("Database connection failed.");
+        let crate::Database::MongoDb(mongo) = &db else {
+            return;
+        };
+        for _ in 0..2 {
+            super::create_status_mutual_indexes(&mongo.db()).await;
         }
         db.drop_database().await;
     }
