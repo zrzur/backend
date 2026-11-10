@@ -1177,3 +1177,42 @@ async fn the_crond_pass_skips_servers_with_events_off() {
     assert_eq!(report.started, 1, "{report:?}");
     assert_eq!(status(due.id.clone()).await, v0::ServerEventStatus::Active);
 }
+
+/// Deleting with `series=true` ends a repeating series: this occurrence goes
+/// and nothing next is scheduled. Without it, the next one is still written.
+#[rocket::async_test]
+async fn deleting_the_whole_series_schedules_nothing_next() {
+    let s = setup(true).await;
+    let db = &s.harness.db;
+    let base = format!("/servers/{}/events", s.server.id);
+    let weekly = || {
+        let mut data = body(voice_place(&s));
+        data["repeat"] = json!("Weekly");
+        Some(data)
+    };
+
+    // one occurrence: the series goes on
+    let (_, first) = call(&s.harness, Method::Post, &base, &s.owner_session, weekly()).await;
+    let first = first["_id"].as_str().unwrap().to_string();
+    let (status, _) = call(&s.harness, Method::Delete, &format!("{base}/{first}"), &s.owner_session, None).await;
+    assert_eq!(status, Status::NoContent);
+    let upcoming = db.fetch_upcoming_server_events(&s.server.id).await.unwrap();
+    let next = upcoming
+        .iter()
+        .find(|e| e.previous.as_deref() == Some(first.as_str()))
+        .expect("the series goes on")
+        .clone();
+
+    // the whole series: nothing of it is scheduled any more
+    let (status, _) = call(&s.harness, Method::Delete, &format!("{base}/{}?series=true", next.id), &s.owner_session, None).await;
+    assert_eq!(status, Status::NoContent);
+    let upcoming = db.fetch_upcoming_server_events(&s.server.id).await.unwrap();
+    assert!(upcoming.is_empty(), "{:?}", upcoming.iter().map(|e| (&e.id, &e.previous)).collect::<Vec<_>>());
+    assert!(db.fetch_server_event(&next.id).await.is_err());
+
+    // a member may not
+    let (_, other) = call(&s.harness, Method::Post, &base, &s.owner_session, weekly()).await;
+    let other = other["_id"].as_str().unwrap().to_string();
+    let (status, _) = call(&s.harness, Method::Delete, &format!("{base}/{other}?series=true"), &s.member_session, None).await;
+    assert_eq!(status, Status::Forbidden);
+}

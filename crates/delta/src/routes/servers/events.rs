@@ -505,21 +505,24 @@ pub async fn cancel(
 
 /// # Delete Server Event
 ///
-/// Remove an event and its interested list for good. A repeating event's
-/// series goes on with the next occurrence. Needs Manage Server.
+/// Remove an event and its interested list for good. For a repeating event
+/// the series goes on with the next occurrence; `series=true` deletes this
+/// occurrence and schedules nothing next, so the series ends. Needs Manage
+/// Server.
 #[openapi(tag = "Server Events")]
-#[delete("/<target>/events/<event>")]
+#[delete("/<target>/events/<event>?<options..>")]
 pub async fn delete(
     db: &State<Database>,
     user: User,
     target: Reference<'_>,
     event: &str,
+    options: v0::OptionsDeleteServerEvent,
     reason: AuditLogReason,
 ) -> Result<EmptyResponse> {
     let (server, member) = membership(db, &user, &target).await?;
     let event = visible_event(db, &user, &server, &member, event).await?;
     require_manager(db, &user, &server, &member).await?;
-    event.delete(db).await?;
+    event.delete(db, options.series == Some(true)).await?;
 
     AuditLogEntryAction::ServerEventDelete {
         event: event.id.clone(),

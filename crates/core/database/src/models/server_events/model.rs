@@ -527,9 +527,12 @@ impl ServerEvent {
     }
 
     /// Delete it for good. A repeating event's series goes on with the next
-    /// occurrence. Its cover file is released.
-    pub async fn delete(&self, db: &Database) -> Result<()> {
-        if self.is_upcoming() {
+    /// occurrence, unless `whole_series`: then nothing comes after it and the
+    /// series ends. Its cover file is released.
+    pub async fn delete(&self, db: &Database, whole_series: bool) -> Result<()> {
+        // one occurrence of a series: the next one is written first; the
+        // whole series: nothing comes after this one
+        if self.is_upcoming() && !whole_series {
             self.schedule_next(db, Timestamp::now_utc()).await?;
         }
         db.delete_server_event(&self.id).await?;
