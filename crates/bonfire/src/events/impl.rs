@@ -405,11 +405,20 @@ impl State {
             .map(|x| (x.id().to_string(), x))
             .collect();
 
-        // Make all users appear from our perspective.
+        // Make all users appear from our perspective. A custom status emoji
+        // shows only from a server we share: our side is the servers list.
+        let our_servers: HashSet<String> = servers.iter().map(|server| server.id.clone()).collect();
         let mut users: Vec<v0::User> = join_all(users.into_iter().map(|other_user| async {
             let is_online = online_ids.contains(&other_user.id);
             let mut known = other_user.into_known(&user, is_online).await;
-            status_emoji::hide_for(db, &mut known.status, &known.id, Some(&user.id)).await;
+            status_emoji::hide_for_member_of(
+                db,
+                &mut known.status,
+                &known.id,
+                &user.id,
+                &|server| our_servers.contains(server),
+            )
+            .await;
             known
         }))
         .await;
@@ -684,9 +693,19 @@ impl State {
 
         // a custom status emoji never tells this viewer about a server they
         // are not in (see revolt_database::util::status_emoji)
+        // (this connection's servers are the viewer's side; only the
+        // owner's membership is looked up, cached)
         if let EventV1::UserUpdate { id, data, .. } = event {
             if id != &self.cache.user_id {
-                status_emoji::hide_for(db, &mut data.status, id, Some(&self.cache.user_id)).await;
+                let servers = &self.cache.servers;
+                status_emoji::hide_for_member_of(
+                    db,
+                    &mut data.status,
+                    id,
+                    &self.cache.user_id,
+                    &|server| servers.contains_key(server),
+                )
+                .await;
             }
         }
 

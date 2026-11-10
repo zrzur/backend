@@ -8,13 +8,15 @@
 //! emoji are always shown.
 //!
 //! Cost: only statuses that carry a custom emoji are checked. The emoji's
-//! server is kept for ten minutes (emoji rarely move), and "is this person
-//! in that server" for one minute, both in small process-wide LRU caches,
-//! so a member list or a Ready asks the database at most once per emoji
-//! and once per (server, person) a minute; each such ask is one indexed
-//! point read (`server_members` by `_id`). Joining or leaving a server
-//! drops the cached answer in this process at once; other processes
-//! follow within the minute.
+//! server is kept for ten minutes (emoji rarely move), and "is the owner in
+//! that server" for one minute, both in small process-wide LRU caches. The
+//! viewer's side comes from what is already known: a gateway connection's
+//! servers, or one membership lookup before a list (only when some status
+//! in it has a custom emoji). So a member list or a Ready asks the
+//! database at most once per emoji, once per (server, owner) a minute, and
+//! once for the viewer; each ask is one indexed read. Joining or leaving a
+//! server drops the cached owner answer in this process at once; other
+//! processes follow within the minute.
 
 use std::num::NonZeroUsize;
 use std::str::FromStr;
@@ -84,7 +86,9 @@ pub fn forget_membership(server: &str, user: &str) {
 }
 
 /// Whether `viewer` may see `owner`'s status emoji. `viewer` None (no one
-/// in particular, e.g. a message broadcast) sees no custom emoji.
+/// in particular, e.g. a message broadcast) sees no custom emoji. The
+/// viewer's membership comes from the cache; for many users at once, or on
+/// a gateway connection that knows its servers, use [`hide_for_member_of`].
 pub async fn may_see(db: &Database, emoji: &str, owner: &str, viewer: Option<&str>) -> bool {
     if !is_custom(emoji) {
         return true;
@@ -98,7 +102,54 @@ pub async fn may_see(db: &Database, emoji: &str, owner: &str, viewer: Option<&st
     let Some(server) = emoji_server(db, emoji).await else {
         return false;
     };
-    is_member(db, &server, owner).await && is_member(db, &server, viewer).await
+    is_member(db, &server, viewer).await && is_member(db, &server, owner).await
+}
+
+/// The same check with the viewer's servers already known (a gateway
+/// connection's servers, or one membership lookup before a list): only the
+/// owner side asks the cache
+async fn may_see_member_of(
+    db: &Database,
+    emoji: &str,
+    owner: &str,
+    viewer: &str,
+    viewer_in: &(dyn Fn(&str) -> bool + Sync),
+) -> bool {
+    if !is_custom(emoji) || viewer == owner {
+        return true;
+    }
+    let Some(server) = emoji_server(db, emoji).await else {
+        return false;
+    };
+    viewer_in(&server) && is_member(db, &server, owner).await
+}
+
+/// Drop a custom emoji from a status meant for no one in particular (a
+/// message broadcast); a unicode emoji stays
+pub fn drop_custom_emoji(status: &mut Option<v0::UserStatus>) {
+    if status
+        .as_ref()
+        .and_then(|status| status.emoji.as_deref())
+        .is_some_and(is_custom)
+    {
+        drop_emoji(status);
+    }
+}
+
+/// Drop the emoji from a status shown to someone who may not see it
+fn drop_emoji(status: &mut Option<v0::UserStatus>) {
+    let Some(shown) = status.as_mut() else {
+        return;
+    };
+    shown.emoji = None;
+    if shown.text.is_none() {
+        // nothing left to expire
+        shown.expires_at = None;
+        if shown.presence.is_none() {
+            // an emoji-only status with its emoji hidden is no status
+            *status = None;
+        }
+    }
 }
 
 /// Drop a custom status emoji `viewer` may not see from a status shown to them
@@ -108,21 +159,36 @@ pub async fn hide_for(
     owner: &str,
     viewer: Option<&str>,
 ) {
-    let Some(shown) = status.as_mut() else {
+    let Some(emoji) = status.as_ref().and_then(|status| status.emoji.clone()) else {
         return;
     };
-    let Some(emoji) = shown.emoji.as_deref() else {
+    if !may_see(db, &emoji, owner, viewer).await {
+        drop_emoji(status);
+    }
+}
+
+/// [`hide_for`] for a viewer whose servers are known: `viewer_in(server)`
+/// says whether the viewer is in a server
+pub async fn hide_for_member_of(
+    db: &Database,
+    status: &mut Option<v0::UserStatus>,
+    owner: &str,
+    viewer: &str,
+    viewer_in: &(dyn Fn(&str) -> bool + Sync),
+) {
+    let Some(emoji) = status.as_ref().and_then(|status| status.emoji.clone()) else {
         return;
     };
-    if may_see(db, emoji, owner, viewer).await {
-        return;
+    if !may_see_member_of(db, &emoji, owner, viewer, viewer_in).await {
+        drop_emoji(status);
     }
-    shown.emoji = None;
-    if shown.text.is_none() && shown.presence.is_none() {
-        // an emoji-only status with its emoji hidden is no status
-        *status = None;
-    } else if shown.text.is_none() {
-        // nothing left to expire
-        shown.expires_at = None;
-    }
+}
+
+/// Whether any of these statuses has a custom emoji (so a list need not
+/// look up the viewer's servers when none does)
+pub fn any_custom<'a>(statuses: impl IntoIterator<Item = Option<&'a v0::UserStatus>>) -> bool {
+    statuses
+        .into_iter()
+        .flatten()
+        .any(|status| status.emoji.as_deref().is_some_and(is_custom))
 }
