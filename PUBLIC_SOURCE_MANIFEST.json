@@ -382,8 +382,8 @@
     },
     {
       "path": "crates/bonfire/src/events/tests.rs",
-      "sha256": "c067adb3fbbad4020909fd08cdddd3f5e6c5d2dcaa18f303285e894c10ec7d9f",
-      "bytes": 47927,
+      "sha256": "d07597b6b259f8ef4c172aa846d590d7db63fc09962d1133c48b193123055f5b",
+      "bytes": 47929,
       "category": "product-source-or-build-manifest"
     },
     {
