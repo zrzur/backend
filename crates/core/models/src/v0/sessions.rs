@@ -68,6 +68,11 @@ auto_derived!(
             password: String,
             /// Friendly name used for the session
             friendly_name: Option<String>,
+            /// Captcha token. Asked for only after many wrong passwords for
+            /// this address, and only when the server has a captcha set up
+            /// (the answer is then `CaptchaFailed`).
+            #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+            captcha: Option<String>,
         },
         MFA {
             /// Unvalidated or authorised MFA ticket

@@ -12,6 +12,7 @@ pub mod idempotency;
 pub mod mail_limit;
 pub mod mfa_limit;
 pub mod ip;
+pub mod login_limit;
 pub mod masquerade;
 pub mod password;
 pub mod proxy_ticket;
