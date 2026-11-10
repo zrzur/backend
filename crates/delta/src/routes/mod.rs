@@ -165,7 +165,8 @@ fn custom_openapi_spec() -> OpenApi {
             "tags": [
               "Server Information",
               "Server Members",
-              "Server Permissions"
+              "Server Permissions",
+              "Server Events"
             ]
           },
           {
@@ -328,6 +329,11 @@ fn custom_openapi_spec() -> OpenApi {
             Tag {
                 name: "Server Permissions".to_owned(),
                 description: Some("Manage permissions for servers".to_owned()),
+                ..Default::default()
+            },
+            Tag {
+                name: "Server Events".to_owned(),
+                description: Some("Schedule events in servers and mark them Interested".to_owned()),
                 ..Default::default()
             },
             Tag {

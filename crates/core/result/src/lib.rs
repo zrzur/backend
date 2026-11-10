@@ -270,6 +270,10 @@ pub enum ErrorType {
     TooManyReplies {
         max: usize,
     },
+    /// A server has this many scheduled and active events already
+    TooManyServerEvents {
+        max: usize,
+    },
     TooManyChannels {
         max: usize,
     },

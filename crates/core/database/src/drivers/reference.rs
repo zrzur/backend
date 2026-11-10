@@ -8,7 +8,8 @@ use crate::{
     Supercharge,
     DiscoverBan, DiscoverRequest, DiscoverRequestType, Emoji, File, FileHash, Invite, MFATicket,
     Member, MemberCompositeKey, Message, PolicyChange, RatelimitEvent, Report, Server, ServerBan,
-    ServerJoinRequest, Session, Snapshot, User, UserSettings, Webhook,
+    ServerEvent, ServerEventInterest, ServerEventInterestKey, ServerJoinRequest, Session, Snapshot,
+    User, UserSettings, Webhook,
 };
 
 database_derived!(
@@ -65,6 +66,9 @@ database_derived!(
         pub users: Arc<Mutex<HashMap<String, User>>>,
         pub server_bans: Arc<Mutex<HashMap<MemberCompositeKey, ServerBan>>>,
         pub server_join_requests: Arc<Mutex<HashMap<MemberCompositeKey, ServerJoinRequest>>>,
+        pub server_events: Arc<Mutex<HashMap<String, ServerEvent>>>,
+        pub server_event_interests:
+            Arc<Mutex<HashMap<ServerEventInterestKey, ServerEventInterest>>>,
         pub server_members: Arc<Mutex<HashMap<MemberCompositeKey, Member>>>,
         pub servers: Arc<Mutex<HashMap<String, Server>>>,
         pub safety_reports: Arc<Mutex<HashMap<String, Report>>>,

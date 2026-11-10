@@ -7,8 +7,8 @@ use revolt_models::v0::{
     FieldsChannel, FieldsMember, FieldsMessage, FieldsRole, FieldsServer, FieldsUser,
     FieldsWebhook, Member, MemberCompositeKey, Message, PartialChannel, PartialEmoji,
     PartialMember, PartialMessage, PartialRole, PartialServer, PartialUser, PartialUserVoiceState,
-    PartialWebhook, PolicyChange, PollAnswerCount, RemovalIntention, Report, Server, User, UserSettings,
-    UserVoiceState, Webhook,
+    PartialWebhook, PolicyChange, PollAnswerCount, RemovalIntention, Report, Server, ServerEvent,
+    User, UserSettings, UserVoiceState, Webhook,
 };
 
 use crate::{Account, Database, Session, amqp::get_amqp};
@@ -397,6 +397,33 @@ pub enum EventV1 {
     WebhookDelete {
         id: String,
         channel_id: String,
+    },
+
+    /// New scheduled server event (sent to the place's channel, or to the
+    /// server for external places)
+    ServerEventCreate(ServerEvent),
+
+    /// A scheduled server event changed (status included)
+    ServerEventUpdate {
+        event: ServerEvent,
+    },
+
+    /// A scheduled server event is gone, or no longer visible to you
+    ServerEventDelete {
+        id: String,
+        server: String,
+    },
+
+    /// Someone marked or unmarked a scheduled server event "Interested"
+    ServerEventInterest {
+        id: String,
+        server: String,
+        /// The place's channel, for channel places
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        channel: Option<String>,
+        user: String,
+        interested: bool,
+        count: u32,
     },
 
     /// Auth events

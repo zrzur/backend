@@ -107,6 +107,7 @@ impl<'r> Responder<'r, 'static> for Error {
             ErrorType::PromotionSlotsFull => Status::Conflict,
             ErrorType::NotOnDiscover => Status::BadRequest,
             ErrorType::TooManyChannels { .. } => Status::BadRequest,
+            ErrorType::TooManyServerEvents { .. } => Status::BadRequest,
             ErrorType::TooManyRoles { .. } => Status::BadRequest,
 
             ErrorType::ReachedMaximumBots => Status::BadRequest,

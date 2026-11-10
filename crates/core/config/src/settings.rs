@@ -1197,6 +1197,9 @@ pub struct Features {
     /// closes them). Unset means off.
     #[serde(default)]
     pub polls_enabled: bool,
+    /// Scheduled server events (`/servers/{target}/events`). Unset means off.
+    #[serde(default)]
+    pub server_events_enabled: bool,
 
     #[serde(default)]
     pub advanced: FeaturesAdvanced,

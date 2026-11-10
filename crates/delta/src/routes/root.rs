@@ -62,6 +62,8 @@ pub struct RevoltFeatures {
     pub forwarding: bool,
     /// Whether messages can carry polls
     pub polls: bool,
+    /// Whether servers can schedule events
+    pub server_events: bool,
     /// File server service configuration
     pub autumn: Feature,
     /// Proxy service configuration
@@ -222,6 +224,7 @@ pub async fn root() -> Result<Json<RevoltConfig>> {
             plugins: config.features.plugins_enabled,
             forwarding: config.features.message_forwarding_enabled,
             polls: config.features.polls_enabled,
+            server_events: config.features.server_events_enabled,
             autumn: Feature {
                 enabled: !config.hosts.autumn.is_empty(),
                 url: config.hosts.autumn.clone(),

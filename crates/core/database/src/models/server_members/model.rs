@@ -319,6 +319,10 @@ impl Member {
         silent: bool,
     ) -> Result<()> {
         db.soft_delete_member(&self.id).await?;
+        // their "Interested" marks go too, so counts are members only
+        if let Err(error) = crate::ServerEvent::forget_member(db, &server.id, &self.id.user).await {
+            log::warn!("Could not remove the event marks of a member who left: {error:?}");
+        }
 
         // supercharges leave with their owner
         let mut moved = false;
