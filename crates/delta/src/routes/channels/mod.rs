@@ -17,6 +17,7 @@ mod message_edit;
 mod message_fetch;
 mod message_forward;
 mod message_pin;
+mod message_polls;
 mod message_query;
 mod message_react;
 pub(crate) mod message_search;
@@ -43,6 +44,8 @@ mod masquerade_tests;
 mod official_tests;
 #[cfg(test)]
 mod forward_tests;
+#[cfg(test)]
+mod poll_tests;
 
 #[cfg(test)]
 mod invite_defaults_tests;
@@ -84,6 +87,10 @@ pub fn routes() -> (Vec<Route>, OpenApi) {
         message_react::react_message,
         message_unreact::unreact_message,
         message_clear_reactions::clear_reactions,
+        message_polls::vote,
+        message_polls::unvote,
+        message_polls::voters,
+        message_polls::end,
         webhook_create::create_webhook,
         webhook_fetch_all::fetch_webhooks,
     ]

@@ -66,6 +66,13 @@ impl<'a> RatelimitResolver<Request<'a>> for DeltaRatelimits {
                 ("interactions", Some("autocomplete"), _) => ("interactions_autocomplete", None),
                 ("interactions", Some(id), _) => ("interaction_callbacks", Some(id)),
                 ("interactions", _, _) => ("interactions", None),
+                // votes: their own bucket per channel, so a busy poll can't
+                // slow down sending messages
+                ("channels", Some(id), Method::Put | Method::Delete)
+                    if extra == Some("messages") && request.routed_segment(4) == Some("polls") =>
+                {
+                    ("poll_votes", Some(id))
+                }
                 ("channels", Some(id), _) => {
                     if request.method() == Method::Post {
                         if let Some("messages") = extra {
@@ -145,6 +152,7 @@ impl<'a> RatelimitResolver<Request<'a>> for DeltaRatelimits {
             "interaction_callbacks" => 10,
             "messaging" => 10,
             "typing" => 5,
+            "poll_votes" => 10,
             "webhook_send" => 100,
             "channels" => 15,
             "servers" => 5,

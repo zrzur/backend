@@ -20,7 +20,8 @@ use validator::Validate;
 /// history) and to send here, with the same rules as any message you send
 /// (files need Upload Files, rich embeds need Send Embeds). A message from a
 /// mature channel goes only into another mature channel. A forwarded copy
-/// notifies nobody it mentions.
+/// notifies nobody it mentions. A poll is forwarded as text: its question and
+/// answers, without votes.
 #[openapi(tag = "Messaging")]
 #[post("/<target>/messages/forward", data = "<data>")]
 pub async fn forward(
@@ -148,9 +149,22 @@ pub async fn forward(
         note: data.note.filter(|note| !note.trim().is_empty()),
     };
 
+    // A poll goes as text: its question and answers, without votes (they
+    // belong to the original, and nobody could end the copy)
+    let content = match (&original.content, &original.poll) {
+        (text, Some(poll)) => {
+            let summary = v0::Poll::from(poll.clone()).summary();
+            Some(match text.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+                Some(text) => format!("{text}\n\n{summary}"),
+                None => summary,
+            })
+        }
+        (text, None) => text.clone(),
+    };
+
     let send = v0::DataMessageSend {
         nonce: None,
-        content: original.content.clone(),
+        content,
         attachments: Some(attachments).filter(|list| !list.is_empty()),
         replies: None,
         embeds: Some(embeds).filter(|list| !list.is_empty()),
@@ -158,6 +172,7 @@ pub async fn forward(
         interactions: None,
         components: None,
         interaction: None,
+        poll: None,
         flags: None,
     };
 
