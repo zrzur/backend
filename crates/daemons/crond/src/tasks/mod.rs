@@ -11,3 +11,4 @@ pub mod expire_sessions;
 pub mod end_polls;
 pub mod server_events;
 pub mod expire_statuses;
+pub mod server_insights;

@@ -457,6 +457,8 @@ impl Server {
         db.unplace_supercharges_from_server(&self.id).await?;
         // its paid Discover places go to whoever waits next
         db.delete_promotions_for_target(&self.id).await?;
+        // its insights go with it, not at the end of their retention
+        db.delete_server_insights_of(&self.id).await?;
         db.delete_server(&self.id).await
     }
 
@@ -627,6 +629,16 @@ impl Server {
                 )
                 .await;
             count
+        }
+    }
+
+    /// Drop the cached member count after a join or a leave, so the next
+    /// read counts again (one indexed count). Errors are ignored (a cache).
+    pub async fn forget_cached_member_count(server_id: &str) {
+        if let Ok(mut redis) = get_connection().await {
+            let _ = redis
+                .del::<_, ()>(format!("member_count:{server_id}"))
+                .await;
         }
     }
 

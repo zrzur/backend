@@ -1185,6 +1185,13 @@ impl User {
         self.remove_from_all_groups(db).await?;
         // Plus ends and supercharges come off their servers
         crate::end_billing_for_user(db, &self.id).await?;
+        // each server they were in counts a leave (insights), and its
+        // member count is read again
+        for member in db.fetch_all_memberships(&self.id).await? {
+            crate::Server::forget_cached_member_count(&member.id.server).await;
+            // once per server even when the deletion is tried again
+            crate::ServerInsightDay::count_account_leave(db, &member.id.server, &self.id).await;
+        }
         db.clear_memberships(&self.id).await?;
         self.clear_relationships(db).await?;
         // their files first, as each message would on its own (forwarded

@@ -456,6 +456,7 @@ pub async fn create_database(db: &MongoDb) {
     super::scripts::create_poll_index(&db).await;
     super::scripts::create_server_event_indexes(&db).await;
     super::scripts::create_status_mutual_indexes(&db).await;
+    super::scripts::create_server_insight_indexes(&db).await;
     super::scripts::create_data_export_indexes(&db).await;
     super::scripts::create_webhook_indexes(&db).await;
     super::scripts::seed_platform_words(&db).await;
