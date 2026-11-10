@@ -460,6 +460,7 @@ pub async fn webhook_execute_github(
         interactions: None,
         components: None,
         interaction: None,
+        poll: None,
         flags: None,
     };
     let delivery = Delivery {

@@ -33,7 +33,7 @@ pub async fn fetch(
         return Err(create_error!(NotFound));
     }
 
-    let mut message = message.into_model(None, None);
+    let mut message = message.into_model_for(&user.id, None, None);
     revolt_database::hide_message_content(
         std::slice::from_mut(&mut message),
         &user.id,

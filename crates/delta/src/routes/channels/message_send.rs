@@ -113,6 +113,24 @@ pub async fn send_inner(
             )
             .await?;
 
+            // a poll's question and every answer pass the same rules
+            if let Some(poll) = &data.poll {
+                let text = std::iter::once(poll.question.as_str())
+                    .chain(poll.answers.iter().map(|answer| answer.text.as_str()))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                revolt_database::util::automod::check_message(
+                    db,
+                    &server,
+                    channel.id(),
+                    &user,
+                    member.as_ref(),
+                    &text,
+                    revolt_database::util::automod::Check::Send,
+                )
+                .await?;
+            }
+
             // the forwarder's own words pass the same rules
             if let Some(note) = forwarded.as_ref().and_then(|origin| origin.note.as_deref()) {
                 revolt_database::util::automod::check_message(
@@ -478,6 +496,7 @@ mod test {
                 interactions: None,
                 components: None,
                 interaction: None,
+                poll: None,
                 flags: None,
             },
             v0::MessageAuthor::User(&user.clone().into(&harness.db, Some(&user)).await),
@@ -520,6 +539,7 @@ mod test {
                 interactions: None,
                 components: None,
                 interaction: None,
+                poll: None,
                 flags: None,
             },
             v0::MessageAuthor::User(&user.clone().into(&harness.db, Some(&user)).await),
@@ -572,6 +592,7 @@ mod test {
                 interactions: None,
                 components: None,
                 interaction: None,
+                poll: None,
                 flags: None,
             },
             v0::MessageAuthor::User(&user.clone().into(&harness.db, Some(&user)).await),
@@ -620,6 +641,7 @@ mod test {
                 interactions: None,
                 components: None,
                 interaction: None,
+                poll: None,
                 flags: None,
             },
             v0::MessageAuthor::User(&user.clone().into(&harness.db, Some(&user)).await),
@@ -673,6 +695,7 @@ mod test {
                 interactions: None,
                 components: None,
                 interaction: None,
+                poll: None,
                 flags: None,
             },
             v0::MessageAuthor::User(&user.clone().into(&harness.db, Some(&user)).await),
@@ -712,6 +735,7 @@ mod test {
                 interactions: None,
                 components: None,
                 interaction: None,
+                poll: None,
                 flags: None,
             },
             v0::MessageAuthor::User(&user.clone().into(&harness.db, Some(&user)).await),
@@ -745,6 +769,7 @@ mod test {
                 interactions: None,
                 components: None,
                 interaction: None,
+                poll: None,
                 flags: None,
             },
             v0::MessageAuthor::User(&user.clone().into(&harness.db, Some(&user)).await),
@@ -797,6 +822,7 @@ mod test {
                 interactions: None,
                 components: None,
                 interaction: None,
+                poll: None,
                 flags: None,
             },
             v0::MessageAuthor::User(
@@ -844,6 +870,7 @@ mod test {
                 interactions: None,
                 components: None,
                 interaction: None,
+                poll: None,
                 flags: None,
             },
             v0::MessageAuthor::User(
@@ -917,6 +944,7 @@ mod test {
                 interactions: None,
                 components: None,
                 interaction: None,
+                poll: None,
                 flags: None,
             },
             v0::MessageAuthor::User(

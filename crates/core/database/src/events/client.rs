@@ -7,7 +7,7 @@ use revolt_models::v0::{
     FieldsChannel, FieldsMember, FieldsMessage, FieldsRole, FieldsServer, FieldsUser,
     FieldsWebhook, Member, MemberCompositeKey, Message, PartialChannel, PartialEmoji,
     PartialMember, PartialMessage, PartialRole, PartialServer, PartialUser, PartialUserVoiceState,
-    PartialWebhook, PolicyChange, RemovalIntention, Report, Server, User, UserSettings,
+    PartialWebhook, PolicyChange, PollAnswerCount, RemovalIntention, Report, Server, User, UserSettings,
     UserVoiceState, Webhook,
 };
 
@@ -166,6 +166,51 @@ pub enum EventV1 {
         id: String,
         channel_id: String,
         emoji_id: String,
+    },
+
+    /// Someone chose an answer of a poll: the counts of every answer after
+    /// it (who voted is read on request, never sent to everyone)
+    MessagePollVoteAdd {
+        id: String,
+        channel_id: String,
+        answer_id: u32,
+        answers: Vec<PollAnswerCount>,
+        /// Votes of every answer together
+        total: u32,
+        /// Poll version after this change; older events can be dropped
+        version: u64,
+    },
+
+    /// Someone took back their choice of an answer: the counts after it
+    MessagePollVoteRemove {
+        id: String,
+        channel_id: String,
+        answer_id: u32,
+        answers: Vec<PollAnswerCount>,
+        /// Votes of every answer together
+        total: u32,
+        /// Poll version after this change; older events can be dropped
+        version: u64,
+    },
+
+    /// Your own choice on a poll changed (to your sessions only)
+    MessagePollChoice {
+        id: String,
+        channel_id: String,
+        answers: Vec<u32>,
+        /// Poll version after this change
+        version: u64,
+    },
+
+    /// A poll closed (ended early or after its time): final counts
+    MessagePollEnd {
+        id: String,
+        channel_id: String,
+        answers: Vec<PollAnswerCount>,
+        /// Votes of every answer together
+        total: u32,
+        /// Poll version after this change; older events can be dropped
+        version: u64,
     },
 
     /// Bulk delete messages
@@ -471,6 +516,7 @@ impl EventV1 {
             | UserRelationship { .. }
             | UserSettingsUpdate { .. }
             | UserSlowmodes { .. }
+            | MessagePollChoice { .. }
             | UserMoveVoiceChannel { .. }
             | InteractionCreate { .. }
             | InteractionStateUpdate { .. }

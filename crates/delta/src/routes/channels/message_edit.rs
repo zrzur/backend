@@ -40,8 +40,9 @@ pub async fn edit(
     revolt_database::util::threads::assert_can_write(db, &channel, &permissions).await?;
 
     let mut message = msg.as_message_in_channel(db, channel.id()).await?;
-    // A forwarded copy shows someone else's words: it can be deleted, not edited
-    if message.author != user.id || message.forwarded.is_some() {
+    // A forwarded copy shows someone else's words: it can be deleted, not
+    // edited. A poll can't change under the people who voted on it.
+    if message.author != user.id || message.forwarded.is_some() || message.poll.is_some() {
         return Err(create_error!(CannotEditMessage));
     }
 

@@ -11,7 +11,7 @@ use rocket::{FromForm, FromFormField};
 
 use iso8601_timestamp::Timestamp;
 
-use super::{Channel, ComponentBlock, InteractionType, Embed, EmbedAuthor, EmbedField, EmbedFooter, File, Member, MessageWebhook, User, Webhook, RE_COLOUR};
+use super::{Channel, ComponentBlock, DataPoll, InteractionType, Embed, Poll, EmbedAuthor, EmbedField, EmbedFooter, File, Member, MessageWebhook, User, Webhook, RE_COLOUR};
 
 auto_derived_partial!(
     /// Message
@@ -80,6 +80,9 @@ auto_derived_partial!(
         /// Where this message was forwarded from
         #[serde(skip_serializing_if = "Option::is_none", default)]
         pub forwarded: Option<MessageForward>,
+        /// Poll carried by this message
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        pub poll: Option<Poll>,
 
         /// Bitfield of message flags
         ///
@@ -157,6 +160,24 @@ auto_derived!(
             rule: String,
             channel: String,
             content: String,
+        },
+        /// A poll closed; sent as a reply to the poll's message
+        #[serde(rename = "poll_ended")]
+        PollEnded {
+            /// Id of the message with the poll
+            id: String,
+            /// The poll's question
+            question: String,
+            /// Text of the answers with the most votes (more than one is a
+            /// tie, none means nobody voted)
+            #[serde(default)]
+            winners: Vec<String>,
+            /// Votes of each winning answer
+            #[serde(default)]
+            votes: u32,
+            /// Votes of every answer together
+            #[serde(default)]
+            total: u32,
         },
     }
 
@@ -393,6 +414,9 @@ auto_derived!(
         /// Set by the server for answers to an interaction; never read from a request
         #[serde(skip)]
         pub interaction: Option<MessageInteraction>,
+        /// Poll to attach (needs Send Embeds as well as Send Messages)
+        #[serde(default)]
+        pub poll: Option<DataPoll>,
 
         /// Bitfield of message flags
         ///
@@ -683,6 +707,19 @@ impl MessageAuthor<'_> {
     }
 }
 
+impl Message {
+    /// Text that stands for this message where only text fits (push
+    /// notifications, previews): its content, or the poll's summary when it
+    /// has no text
+    pub fn preview_text(&self) -> Option<String> {
+        match (&self.content, &self.poll) {
+            (Some(content), _) if !content.trim().is_empty() => Some(content.clone()),
+            (_, Some(poll)) => Some(poll.summary()),
+            (content, None) => content.clone(),
+        }
+    }
+}
+
 /// What a bot without the Message Content intent sees of a message: who
 /// sent it and where, but no text, embeds, files or components.
 impl Message {
@@ -700,6 +737,11 @@ impl Message {
         self.embeds = None;
         self.attachments = None;
         self.components = None;
+        self.poll = None;
+        if let Some(SystemMessage::PollEnded { question, winners, .. }) = &mut self.system {
+            question.clear();
+            winners.clear();
+        }
     }
 }
 
@@ -718,6 +760,11 @@ impl PartialMessage {
         self.embeds = None;
         self.attachments = None;
         self.components = None;
+        self.poll = None;
+        if let Some(SystemMessage::PollEnded { question, winners, .. }) = &mut self.system {
+            question.clear();
+            winners.clear();
+        }
     }
 }
 
@@ -749,6 +796,7 @@ impl From<SystemMessage> for String {
             SystemMessage::MessageUnpinned { .. } => "Message unpinned.".to_string(),
             SystemMessage::CallStarted { .. } => "Call started.".to_string(),
             SystemMessage::AutoModAlert { .. } => "AutoMod flagged a message.".to_string(),
+            SystemMessage::PollEnded { question, .. } => format!("Poll ended: {question}"),
             SystemMessage::RaidAlert { .. } => {
                 "Many people joined in a short time.".to_string()
             }
@@ -779,8 +827,8 @@ impl PushNotification {
 
         let body = if let Some(ref sys) = msg.system {
             sys.clone().into()
-        } else if let Some(ref text) = msg.content {
-            text.clone()
+        } else if let Some(text) = msg.preview_text() {
+            text
         } else if let Some(text) = msg.embeds.as_ref().and_then(|embeds| match embeds.first() {
             Some(Embed::Image(_)) => Some("Sent an image".to_string()),
             Some(Embed::Video(_)) => Some("Sent a video".to_string()),

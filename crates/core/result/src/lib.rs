@@ -515,6 +515,10 @@ pub enum ErrorType {
     /// A message from a mature channel can only be forwarded into another
     /// mature channel
     ForwardMatureContent,
+
+    // ? Polls
+    /// The poll is over: no more votes, and it can't be ended again
+    PollEnded,
 }
 
 #[macro_export]

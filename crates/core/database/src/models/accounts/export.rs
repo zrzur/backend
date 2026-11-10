@@ -222,7 +222,18 @@ pub async fn build_export_zip(db: &Database, account: &Account, user: &User) -> 
         })
         .collect();
 
-    let messages = db.export_documents(&user.id, ExportSource::Messages).await?;
+    // their polls show how many chose each answer, not who (other people's
+    // votes are theirs)
+    let mut messages = db.export_documents(&user.id, ExportSource::Messages).await?;
+    messages.iter_mut().for_each(strip_poll_voters);
+
+    // the votes they cast on polls
+    let poll_votes: Vec<Value> = db
+        .fetch_messages_voted_by(&user.id, DATA_EXPORT_MAX_MESSAGES)
+        .await?
+        .iter()
+        .filter_map(|message| own_poll_vote(message, &user.id))
+        .collect();
     let truncated = messages.len() as i64 >= DATA_EXPORT_MAX_MESSAGES;
 
     let files: Vec<Value> = db
@@ -343,7 +354,7 @@ pub async fn build_export_zip(db: &Database, account: &Account, user: &User) -> 
         "Zrzur data export
 Created: {}
 
-This ZIP holds your own data as JSON files: account.json (no password or secrets), profile.json, messages.json (messages you sent, up to {DATA_EXPORT_MAX_MESSAGES}), files.json (files you uploaded, with links that work while the file exists), servers.json, purchases.json, reports.json (reports you filed), support.json (your support tickets), bots.json (bots you own, without tokens), creations.json (designs you made, with your rights confirmations) and settings.json. Other people appear as ids only.
+This ZIP holds your own data as JSON files: account.json (no password or secrets), profile.json, messages.json (messages you sent, up to {DATA_EXPORT_MAX_MESSAGES}; polls show how many chose each answer), poll_votes.json (the answers you chose in polls), files.json (files you uploaded, with links that work while the file exists), servers.json, purchases.json, reports.json (reports you filed), support.json (your support tickets), bots.json (bots you own, without tokens), creations.json (designs you made, with your rights confirmations) and settings.json. Other people appear as ids only.
 {cap_note}
 Why we use this data, who receives it, how long we keep it, your rights and how to complain to the Austrian data protection authority: https://zrzur.com/legal/privacy . Questions: {ACCOUNT_CONTACT_EMAIL}.
 ",
@@ -357,6 +368,7 @@ Why we use this data, who receives it, how long we keep it, your rights and how 
         ("account.json".into(), compact(account_json)),
         ("profile.json".into(), compact(profile)),
         ("messages.json".into(), compact(Value::Array(messages))),
+        ("poll_votes.json".into(), compact(Value::Array(poll_votes))),
         ("files.json".into(), compact(Value::Array(files))),
         (
             "servers.json".into(),
@@ -369,6 +381,47 @@ Why we use this data, who receives it, how long we keep it, your rights and how 
         ("creations.json".into(), compact(Value::Array(creations))),
         ("settings.json".into(), compact(Value::Array(settings))),
     ]))
+}
+
+/// A message of the export: on a poll, each answer keeps how many chose it
+/// (`count`) instead of who (`voters`)
+pub fn strip_poll_voters(message: &mut Value) {
+    let Some(answers) = message
+        .get_mut("poll")
+        .and_then(|poll| poll.get_mut("answers"))
+        .and_then(Value::as_array_mut)
+    else {
+        return;
+    };
+    for answer in answers {
+        if let Some(object) = answer.as_object_mut() {
+            let count = object
+                .remove("voters")
+                .and_then(|voters| voters.as_array().map(Vec::len))
+                .unwrap_or(0);
+            object.insert("count".to_string(), json!(count));
+        }
+    }
+}
+
+/// One line of poll_votes.json: the poll and the answers this user chose
+pub fn own_poll_vote(message: &crate::Message, user: &str) -> Option<Value> {
+    let poll = message.poll.as_ref()?;
+    let chosen: Vec<Value> = poll
+        .answers
+        .iter()
+        .filter(|answer| answer.voters.contains(user))
+        .map(|answer| json!({ "id": answer.id, "text": answer.text }))
+        .collect();
+    if chosen.is_empty() {
+        return None;
+    }
+    Some(json!({
+        "message": message.id,
+        "channel": message.channel,
+        "question": poll.question,
+        "answers": chosen,
+    }))
 }
 
 fn crc32(data: &[u8]) -> u32 {
@@ -451,6 +504,50 @@ pub fn zip_stored(files: Vec<(String, Vec<u8>)>) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn own_polls_show_counts_not_voters() {
+        let mut message = json!({
+            "_id": "M",
+            "poll": { "question": "q", "answers": [
+                { "id": 1, "text": "a", "voters": ["X", "Y"] },
+                { "id": 2, "text": "b" }
+            ] }
+        });
+        strip_poll_voters(&mut message);
+        assert_eq!(message["poll"]["answers"][0], json!({ "id": 1, "text": "a", "count": 2 }));
+        assert_eq!(message["poll"]["answers"][1]["count"], json!(0));
+        assert!(!message.to_string().contains("\"X\""));
+
+        let mut plain = json!({ "_id": "N", "content": "hi" });
+        strip_poll_voters(&mut plain);
+        assert_eq!(plain, json!({ "_id": "N", "content": "hi" }));
+    }
+
+    #[test]
+    fn poll_votes_list_only_the_users_answers() {
+        let poll: crate::Poll = serde_json::from_value(json!({
+            "question": "q",
+            "answers": [
+                { "id": 1, "text": "a", "voters": ["U", "X"] },
+                { "id": 2, "text": "b", "voters": ["X"] }
+            ],
+            "expires_at": "2026-11-10T00:00:00.000Z"
+        }))
+        .unwrap();
+        let message = crate::Message {
+            id: "M".to_string(),
+            channel: "C".to_string(),
+            poll: Some(poll),
+            ..Default::default()
+        };
+        assert_eq!(
+            own_poll_vote(&message, "U"),
+            Some(json!({ "message": "M", "channel": "C", "question": "q",
+                "answers": [{ "id": 1, "text": "a" }] }))
+        );
+        assert_eq!(own_poll_vote(&message, "Z"), None);
+    }
 
     #[test]
     fn crc32_matches_the_standard_check_value() {

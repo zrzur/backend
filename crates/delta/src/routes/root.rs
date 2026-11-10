@@ -60,6 +60,8 @@ pub struct RevoltFeatures {
     pub plugins: bool,
     /// Whether messages can be forwarded to another channel
     pub forwarding: bool,
+    /// Whether messages can carry polls
+    pub polls: bool,
     /// File server service configuration
     pub autumn: Feature,
     /// Proxy service configuration
@@ -219,6 +221,7 @@ pub async fn root() -> Result<Json<RevoltConfig>> {
             community_effects: config.features.community.effects_enabled,
             plugins: config.features.plugins_enabled,
             forwarding: config.features.message_forwarding_enabled,
+            polls: config.features.polls_enabled,
             autumn: Feature {
                 enabled: !config.hosts.autumn.is_empty(),
                 url: config.hosts.autumn.clone(),

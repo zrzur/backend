@@ -51,6 +51,7 @@ pub async fn webhook_send_test(
         interactions: None,
         components: None,
         interaction: None,
+        poll: None,
         flags: Some(1 << v0::MessageFlags::SuppressNotifications as u32),
     };
     let delivery = Delivery {

@@ -378,6 +378,116 @@ impl AbstractMessages for MongoDb {
             .map_err(|_| create_database_error!("update_one", COL))
     }
 
+    /// Add a vote to an open poll, in one write
+    async fn add_poll_vote(
+        &self,
+        id: &str,
+        user: &str,
+        answer: u32,
+        single: bool,
+        answer_count: usize,
+        now: iso8601_timestamp::Timestamp,
+    ) -> Result<Option<Message>> {
+        let mut add = Document::new();
+        let mut pull = Document::new();
+        for index in 0..answer_count {
+            let path = format!("poll.answers.{index}.voters");
+            if index as u32 + 1 == answer {
+                add.insert(path, user);
+            } else if single {
+                pull.insert(path, user);
+            }
+        }
+        let mut update = doc! { "$addToSet": add, "$inc": { "poll.version": 1_i64 } };
+        if !pull.is_empty() {
+            update.insert("$pull", pull);
+        }
+        self.update_open_poll(id, now, update).await
+    }
+
+    /// Take a vote off an open poll
+    async fn remove_poll_vote(
+        &self,
+        id: &str,
+        user: &str,
+        answer: u32,
+        now: iso8601_timestamp::Timestamp,
+    ) -> Result<Option<Message>> {
+        let path = format!("poll.answers.{}.voters", answer.saturating_sub(1));
+        self.update_open_poll(
+            id,
+            now,
+            doc! { "$pull": { path: user }, "$inc": { "poll.version": 1_i64 } },
+        )
+        .await
+    }
+
+    /// Close a poll
+    async fn end_poll(&self, id: &str, now: iso8601_timestamp::Timestamp) -> Result<bool> {
+        // stored the way the driver writes every Timestamp (milliseconds)
+        let (now, _) = timestamp_forms(now)?;
+        self.col::<Document>(COL)
+            .update_one(
+                doc! { "_id": id, "poll.ended": false },
+                doc! {
+                    "$set": { "poll.ended": true, "poll.ended_at": now },
+                    "$inc": { "poll.version": 1_i64 },
+                },
+            )
+            .await
+            .map(|result| result.modified_count == 1)
+            .map_err(|_| create_database_error!("update_one", COL))
+    }
+
+    /// The poll's reply is posted
+    async fn mark_poll_replied(&self, id: &str) -> Result<()> {
+        self.col::<Document>(COL)
+            .update_one(doc! { "_id": id }, doc! { "$set": { "poll.replied": true } })
+            .await
+            .map(|_| ())
+            .map_err(|_| create_database_error!("update_one", COL))
+    }
+
+    /// Polls crond still has to finish (index `polls_to_close`)
+    async fn fetch_polls_to_close(
+        &self,
+        before: iso8601_timestamp::Timestamp,
+        limit: i64,
+    ) -> Result<Vec<Message>> {
+        let (as_millis, as_text) = timestamp_forms(before)?;
+        self.find_with_options(
+            COL,
+            doc! {
+                "poll.replied": false,
+                "$or": [
+                    { "poll.ended": true },
+                    { "poll.expires_at": { "$lte": as_millis } },
+                    { "poll.expires_at": { "$lte": as_text } },
+                ],
+            },
+            FindOptions::builder()
+                .sort(doc! { "poll.expires_at": 1_i32 })
+                .limit(limit)
+                .build(),
+        )
+        .await
+        .map_err(|_| create_database_error!("find", COL))
+    }
+
+    /// Polls the user voted on
+    async fn fetch_messages_voted_by(&self, user: &str, limit: i64) -> Result<Vec<Message>> {
+        self.find_with_options(
+            COL,
+            doc! { "poll.answers.voters": user },
+            FindOptions::builder()
+                .sort(doc! { "_id": -1_i32 })
+                .limit(limit)
+                .build(),
+        )
+        .await
+        .map_err(|_| create_database_error!("find", COL))
+    }
+
     /// Delete a message from the database by its id
     async fn delete_message(&self, id: &str) -> Result<()> {
         query!(self, delete_one_by_id, COL, id).map(|_| ())
@@ -612,5 +722,49 @@ impl MongoDb {
             .await
             .map(|_| ())
             .map_err(|_| create_database_error!("delete_many", COL))
+    }
+}
+
+/// A Timestamp as the driver stores it in a document (milliseconds since
+/// 1970, as an int64: its raw serializer is not "human readable") and as
+/// `to_bson` writes it (text). MongoDB compares only values of one type, so
+/// poll queries give both.
+fn timestamp_forms(at: iso8601_timestamp::Timestamp) -> Result<(i64, bson::Bson)> {
+    let millis = at
+        .duration_since(iso8601_timestamp::Timestamp::UNIX_EPOCH)
+        .whole_milliseconds() as i64;
+    let text = to_bson(&at).map_err(|_| create_database_error!("to_bson", COL))?;
+    Ok((millis, text))
+}
+
+impl MongoDb {
+    /// Apply `update` to a message's poll only while it is open (not ended,
+    /// `expires_at` after `now`); the message after the change, or None
+    async fn update_open_poll(
+        &self,
+        id: &str,
+        now: iso8601_timestamp::Timestamp,
+        update: Document,
+    ) -> Result<Option<Message>> {
+        let (as_millis, as_text) = timestamp_forms(now)?;
+        self.col::<Message>(COL)
+            .find_one_and_update(
+                doc! {
+                    "_id": id,
+                    "poll.ended": false,
+                    "$or": [
+                        { "poll.expires_at": { "$gt": as_millis } },
+                        { "poll.expires_at": { "$gt": as_text } },
+                    ],
+                },
+                update,
+            )
+            .with_options(
+                mongodb::options::FindOneAndUpdateOptions::builder()
+                    .return_document(mongodb::options::ReturnDocument::After)
+                    .build(),
+            )
+            .await
+            .map_err(|_| create_database_error!("find_one_and_update", COL))
     }
 }

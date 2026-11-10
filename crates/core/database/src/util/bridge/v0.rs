@@ -605,6 +605,7 @@ impl crate::Message {
             flags: self.flags.unwrap_or_default(),
             pinned: self.pinned,
             forwarded: self.forwarded,
+            poll: self.poll.map(Into::into),
         }
     }
 }
@@ -637,6 +638,7 @@ impl From<crate::PartialMessage> for PartialMessage {
             flags: value.flags,
             pinned: value.pinned,
             forwarded: value.forwarded,
+            poll: value.poll.map(Into::into),
         }
     }
 }
@@ -665,6 +667,19 @@ impl From<crate::SystemMessage> for SystemMessage {
                 Self::CallStarted { by, finished_at }
             }
             crate::SystemMessage::RaidAlert { joins, minutes } => Self::RaidAlert { joins, minutes },
+            crate::SystemMessage::PollEnded {
+                id,
+                question,
+                winners,
+                votes,
+                total,
+            } => Self::PollEnded {
+                id,
+                question,
+                winners,
+                votes,
+                total,
+            },
             crate::SystemMessage::AutoModAlert {
                 user,
                 rule,

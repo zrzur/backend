@@ -101,6 +101,7 @@ OfficialAccount
 OperationFailed
 PayloadTooLarge
 PluginsDisabled
+PollEnded
 ProfileTextFiltered
 PromotionSlotsFull
 ProxyError

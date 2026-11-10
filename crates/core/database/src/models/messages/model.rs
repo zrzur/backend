@@ -82,12 +82,60 @@ auto_derived_partial!(
         /// Where this message was forwarded from
         #[serde(skip_serializing_if = "Option::is_none", default)]
         pub forwarded: Option<revolt_models::v0::MessageForward>,
+        /// Poll carried by this message, with its votes
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        pub poll: Option<Poll>,
 
         /// Bitfield of message flags
         #[serde(skip_serializing_if = "Option::is_none")]
         pub flags: Option<u32>,
     },
     "PartialMessage"
+);
+
+auto_derived!(
+    /// Poll as stored: every answer keeps the ids of the people who chose it
+    pub struct Poll {
+        /// The question asked
+        pub question: String,
+        /// Answers; answer `n` is at position `n - 1`
+        pub answers: Vec<PollAnswer>,
+        /// Whether people may choose more than one answer
+        #[serde(default)]
+        pub allow_multiselect: bool,
+        /// When voting closes
+        pub expires_at: Timestamp,
+        /// Closed for good: ended early, or closed by crond after
+        /// `expires_at`. Always stored (the index of open polls filters on
+        /// `false`).
+        #[serde(default)]
+        pub ended: bool,
+        /// When it was closed
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        pub ended_at: Option<Timestamp>,
+        /// Whether the "poll ended" reply is posted. Always stored (the
+        /// index of polls crond still has to finish filters on `false`).
+        #[serde(default)]
+        pub replied: bool,
+        /// Goes up by one with every change (votes, closing), so clients
+        /// can drop events older than what they have
+        #[serde(default)]
+        pub version: u64,
+    }
+
+    /// Stored answer of a poll
+    pub struct PollAnswer {
+        /// Answer id, 1 to 10
+        pub id: u32,
+        /// Answer text
+        pub text: String,
+        /// Unicode emoji or custom emoji id
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        pub emoji: Option<String>,
+        /// Who chose it, oldest vote first
+        #[serde(default)]
+        pub voters: IndexSet<String>,
+    }
 );
 
 auto_derived!(
@@ -136,6 +184,18 @@ auto_derived!(
             rule: String,
             channel: String,
             content: String,
+        },
+        /// A poll closed; a reply to the poll's message
+        #[serde(rename = "poll_ended")]
+        PollEnded {
+            id: String,
+            question: String,
+            #[serde(default)]
+            winners: Vec<String>,
+            #[serde(default)]
+            votes: u32,
+            #[serde(default)]
+            total: u32,
         },
     }
 
@@ -287,6 +347,7 @@ impl Default for Message {
             flags: None,
             pinned: None,
             forwarded: None,
+            poll: None,
         }
     }
 }
@@ -397,9 +458,60 @@ impl Message {
             && (data.attachments.as_ref().is_none_or(|v| v.is_empty()))
             && (data.embeds.as_ref().is_none_or(|v| v.is_empty()))
             && (data.components.as_ref().is_none_or(|v| v.is_empty()))
+            && data.poll.is_none()
         {
             return Err(create_error!(EmptyMessage));
         }
+
+        // Polls: from people and bots under their own account only (a
+        // webhook or a forwarded copy could never be ended by its author),
+        // with Send Embeds, and only emoji the author may use
+        let poll = if let Some(data_poll) = data.poll.clone() {
+            if !config.features.polls_enabled {
+                return Err(create_error!(FeatureDisabled {
+                    feature: "polls".to_string()
+                }));
+            }
+            let MessageAuthor::User(poll_author) = &author else {
+                return Err(create_error!(InvalidOperation));
+            };
+            if forwarded.is_some() {
+                return Err(create_error!(InvalidOperation));
+            }
+            data_poll
+                .validate_poll()
+                .map_err(|error| create_error!(FailedValidation { error }))?;
+
+            let owned_user: User = (*poll_author).to_owned().into();
+            let mut query = DatabasePermissionQuery::new(db, &owned_user).channel(&channel);
+            let permissions = calculate_channel_permissions(&mut query).await;
+            permissions.throw_if_lacking_channel_permission(ChannelPermission::SendEmbeds)?;
+
+            let emojis: Vec<String> = data_poll
+                .answers
+                .iter()
+                .filter_map(|answer| answer.emoji.clone())
+                .collect();
+            for emoji in &emojis {
+                if !Emoji::can_use(db, emoji).await? {
+                    return Err(create_error!(InvalidOperation));
+                }
+            }
+            if let Some(server_id) = channel.server() {
+                let custom: Vec<String> = emojis
+                    .into_iter()
+                    .filter(|emoji| Ulid::from_str(emoji).is_ok())
+                    .collect();
+                if !custom.is_empty() && Message::any_foreign_emoji(db, server_id, &custom).await? {
+                    permissions
+                        .throw_if_lacking_channel_permission(ChannelPermission::UseExternalEmojis)?;
+                }
+            }
+
+            Some(Poll::from_data(data_poll, Timestamp::now_utc()))
+        } else {
+            None
+        };
 
         let allow_mass_mentions = allow_mentions && config.features.mass_mentions_enabled;
 
@@ -500,6 +612,7 @@ impl Message {
             flags: data.flags,
             components: data.components.filter(|components| !components.is_empty()),
             interaction: data.interaction,
+            poll,
             ..Default::default()
         };
         let is_forward = forwarded.is_some();
@@ -1077,7 +1190,7 @@ impl Message {
             .fetch_messages(query)
             .await?
             .into_iter()
-            .map(|msg| msg.into_model(None, None))
+            .map(|msg| msg.into_model_for(&perspective.id, None, None))
             .collect();
 
         if let Some(true) = include_users {
@@ -1116,6 +1229,7 @@ impl Message {
                             }
                             v0::SystemMessage::CallStarted { by, .. } => users.push(by.clone()),
                             v0::SystemMessage::RaidAlert { .. } => {}
+                            v0::SystemMessage::PollEnded { .. } => {}
                             v0::SystemMessage::AutoModAlert { user, .. } => users.push(user.clone()),
                         }
                     }
