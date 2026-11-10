@@ -258,27 +258,16 @@ impl AbstractUsers for MongoDb {
         }
     }
 
-    /// Clear status texts whose expiry has passed; the users whose status
-    /// was cleared
-    async fn clear_expired_statuses(&self, now: Timestamp) -> Result<Vec<String>> {
-        let millis = now.duration_since(Timestamp::UNIX_EPOCH).whole_milliseconds() as i64;
-        let text = bson::to_bson(&now).map_err(|_| create_database_error!("to_bson", COL))?;
-        // stored as int64 millis or as text, depending on how it was written
-        let filter = doc! {
-            "$or": [
-                { "status.expires_at": { "$lte": millis } },
-                { "status.expires_at": { "$lte": text } },
-            ]
-        };
-
-        let ids: Vec<String> = self
+    /// Users whose status text expired, at most `limit` (index
+    /// `status_expires_at`)
+    async fn fetch_expired_status_ids(&self, now: Timestamp, limit: i64) -> Result<Vec<String>> {
+        Ok(self
             .col::<DocumentId>(COL)
-            .find(filter.clone())
-            // at most a batch a pass; crond runs again a minute later
+            .find(expired_status(now)?)
             .with_options(
                 FindOptions::builder()
                     .projection(doc! { "_id": 1 })
-                    .limit(1000)
+                    .limit(limit)
                     .build(),
             )
             .await
@@ -286,16 +275,18 @@ impl AbstractUsers for MongoDb {
             .filter_map(|s| async { s.ok() })
             .map(|user| user.id)
             .collect()
-            .await;
+            .await)
+    }
 
-        if ids.is_empty() {
-            return Ok(ids);
-        }
-
-        // the filter is applied again, so a status set in between stays
-        self.col::<User>(COL)
-            .update_many(
-                doc! { "$and": [ { "_id": { "$in": &ids } }, filter ] },
+    /// Clear one status if it is still expired: the filter is applied again
+    /// in the write, so a status set after the look stays
+    async fn clear_expired_status(&self, id: &str, now: Timestamp) -> Result<bool> {
+        let mut filter = expired_status(now)?;
+        filter.insert("_id", id);
+        let result = self
+            .col::<User>(COL)
+            .update_one(
+                filter,
                 doc! { "$unset": {
                     "status.text": 1_i32,
                     "status.emoji": 1_i32,
@@ -303,9 +294,8 @@ impl AbstractUsers for MongoDb {
                 } },
             )
             .await
-            .map_err(|_| create_database_error!("update_many", COL))?;
-
-        Ok(ids)
+            .map_err(|_| create_database_error!("update_one", COL))?;
+        Ok(result.modified_count == 1)
     }
 
     /// Set relationship with another user
@@ -404,6 +394,20 @@ impl AbstractUsers for MongoDb {
             .map(|_| ())
             .map_err(|_| create_database_error!("bulk_write", COL))
     }
+}
+
+/// Users whose status expired at or before `now`. The expiry is stored as
+/// int64 millis or as text depending on how it was written, so both forms
+/// are matched (as the poll queries do).
+fn expired_status(now: Timestamp) -> Result<bson::Document> {
+    let millis = now.duration_since(Timestamp::UNIX_EPOCH).whole_milliseconds() as i64;
+    let text = bson::to_bson(&now).map_err(|_| create_database_error!("to_bson", COL))?;
+    Ok(doc! {
+        "$or": [
+            { "status.expires_at": { "$lte": millis } },
+            { "status.expires_at": { "$lte": text } },
+        ]
+    })
 }
 
 /// A status path that has no `FieldsUser` of its own

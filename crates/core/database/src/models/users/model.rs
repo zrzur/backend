@@ -585,7 +585,15 @@ impl User {
         Ok(
             join_all(db.fetch_users(ids).await?.into_iter().map(|user| async {
                 let is_online = online_ids.contains(&user.id);
-                user.into_known(perspective, is_online).await
+                let mut known = user.into_known(perspective, is_online).await;
+                crate::util::status_emoji::hide_for(
+                    db,
+                    &mut known.status,
+                    &known.id,
+                    Some(&perspective.id),
+                )
+                .await;
+                known
             }))
             .await,
         )
@@ -909,18 +917,25 @@ impl User {
     /// already hide an expired status, so this only tidies storage and
     /// clients that hold the old value. Safe to run twice.
     pub async fn clear_expired_statuses(db: &Database) -> Result<usize> {
-        let cleared = db.clear_expired_statuses(Timestamp::now_utc()).await?;
-        for id in &cleared {
+        let now = Timestamp::now_utc();
+        let mut cleared = 0;
+        for id in db.fetch_expired_status_ids(now, 1000).await? {
+            // only a status this pass really cleared is announced: one set
+            // between the look and the write stays, and so does its event
+            if !db.clear_expired_status(&id, now).await? {
+                continue;
+            }
+            cleared += 1;
             EventV1::UserUpdate {
                 id: id.clone(),
                 data: v0::PartialUser::default(),
                 clear: vec![v0::FieldsUser::StatusText],
                 event_id: Some(Ulid::new().to_string()),
             }
-            .p(id.clone())
+            .p(id)
             .await;
         }
-        Ok(cleared.len())
+        Ok(cleared)
     }
 
     /// Remove a field from User object

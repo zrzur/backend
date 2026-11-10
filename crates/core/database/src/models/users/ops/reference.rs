@@ -161,23 +161,40 @@ impl AbstractUsers for ReferenceDb {
     }
 
     /// Clear status texts whose expiry has passed
-    async fn clear_expired_statuses(
+    async fn fetch_expired_status_ids(
         &self,
         now: iso8601_timestamp::Timestamp,
+        limit: i64,
     ) -> Result<Vec<String>> {
+        let users = self.users.lock().await;
+        Ok(users
+            .values()
+            .filter(|user| {
+                user.status
+                    .as_ref()
+                    .is_some_and(|status| status.expires_at.is_some_and(|at| at <= now))
+            })
+            .map(|user| user.id.clone())
+            .take(limit.max(0) as usize)
+            .collect())
+    }
+
+    async fn clear_expired_status(
+        &self,
+        id: &str,
+        now: iso8601_timestamp::Timestamp,
+    ) -> Result<bool> {
         let mut users = self.users.lock().await;
-        let mut cleared = Vec::new();
-        for user in users.values_mut() {
-            if let Some(status) = user.status.as_mut() {
-                if status.expires_at.is_some_and(|at| at <= now) {
-                    status.text = None;
-                    status.emoji = None;
-                    status.expires_at = None;
-                    cleared.push(user.id.clone());
-                }
-            }
+        let Some(status) = users.get_mut(id).and_then(|user| user.status.as_mut()) else {
+            return Ok(false);
+        };
+        if !status.expires_at.is_some_and(|at| at <= now) {
+            return Ok(false);
         }
-        Ok(cleared)
+        status.text = None;
+        status.emoji = None;
+        status.expires_at = None;
+        Ok(true)
     }
 
     /// Set relationship with another user
