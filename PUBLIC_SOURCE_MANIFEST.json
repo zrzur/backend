@@ -826,7 +826,7 @@
     },
     {
       "path": "crates/core/database/src/models/admin_migrations/ops/mongodb/scripts.rs",
-      "sha256": "e2f15250c7f7099554fee8c396703fdc8e4ed68519faf63f236c1bf9ea779201",
+      "sha256": "e955368b34e7360baea9ad5432d73fac3e68c718e8c5888a5f4229946a3a9d9b",
       "bytes": 139620,
       "category": "product-source-or-build-manifest"
     },
