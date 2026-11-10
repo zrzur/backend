@@ -1,8 +1,12 @@
+use std::str::FromStr;
+
+use iso8601_timestamp::{Duration, Timestamp};
 use revolt_database::FieldsUser;
 use revolt_database::{
-    util::reference::Reference, CommunityItemKind, CommunityItemStatus, Database, File,
-    PartialUser, User,
+    util::reference::Reference, CommunityItemKind, CommunityItemStatus, Database, Emoji,
+    EmojiParent, File, PartialUser, User,
 };
+use ulid::Ulid;
 use revolt_models::v0;
 use revolt_result::{create_error, Result};
 use rocket::serde::json::Json;
@@ -17,6 +21,44 @@ async fn refuse_listed_words(db: &Database, text: &str) -> Result<()> {
         })),
         None => Ok(()),
     }
+}
+
+/// Longest a status may stay up before the server clears it
+const STATUS_EXPIRY_MAX_DAYS: i64 = 7;
+
+/// A status emoji is one unicode emoji, or a custom emoji from a server the
+/// user is in (the same rule as using it in a message there)
+async fn check_status_emoji(db: &Database, user: &User, emoji: &str) -> Result<()> {
+    let refuse = || {
+        create_error!(FailedValidation {
+            error: "status.emoji is not an emoji you can use".to_string(),
+        })
+    };
+
+    if Ulid::from_str(emoji).is_ok() {
+        let found = db.fetch_emoji(emoji).await.map_err(|_| refuse())?;
+        let EmojiParent::Server { id: server } = found.parent else {
+            return Err(refuse());
+        };
+        db.fetch_member(&server, &user.id).await.map_err(|_| refuse())?;
+        Ok(())
+    } else if Emoji::is_permissible_unicode(emoji) {
+        Ok(())
+    } else {
+        Err(refuse())
+    }
+}
+
+/// An expiry lies in the future and at most a week away
+fn check_status_expiry(at: Timestamp) -> Result<()> {
+    let now = Timestamp::now_utc();
+    let latest = now + Duration::days(STATUS_EXPIRY_MAX_DAYS);
+    if at <= now || at > latest {
+        return Err(create_error!(FailedValidation {
+            error: "status.expires_at must be within the next 7 days".to_string(),
+        }));
+    }
+    Ok(())
 }
 
 /// # Edit User
@@ -213,8 +255,43 @@ pub async fn edit(
     // 3. Apply new status
     if let Some(status) = data.status {
         let mut new_status = user.status.take().unwrap_or_default();
+        // a status that already ran out is gone, whatever crond has done
+        if new_status.expires_at.is_some_and(|at| at <= Timestamp::now_utc()) {
+            new_status.text = None;
+            new_status.emoji = None;
+            new_status.expires_at = None;
+        }
+
+        if let Some(emoji) = &status.emoji {
+            check_status_emoji(db, &user, emoji).await?;
+        }
+        if let Some(at) = status.expires_at {
+            check_status_expiry(at)?;
+        }
+
         if let Some(text) = status.text {
+            // a new text brings its own emoji and expiry; an older client
+            // that only sends text never keeps a timer it cannot see
             new_status.text = Some(text);
+            new_status.emoji = status.emoji;
+            new_status.expires_at = status.expires_at;
+        } else {
+            if status.emoji.is_some() {
+                new_status.emoji = status.emoji;
+            }
+            if status.expires_at.is_some() {
+                new_status.expires_at = status.expires_at;
+            }
+        }
+
+        let has_text = new_status
+            .text
+            .as_deref()
+            .is_some_and(|text| !text.trim().is_empty());
+        if new_status.expires_at.is_some() && !has_text && new_status.emoji.is_none() {
+            return Err(create_error!(FailedValidation {
+                error: "status.expires_at needs a status text or emoji".to_string(),
+            }));
         }
 
         if let Some(presence) = status.presence {

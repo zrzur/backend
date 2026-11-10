@@ -173,6 +173,14 @@ auto_derived!(
         #[validate(length(min = 0, max = 128))]
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
         pub text: Option<String>,
+        /// Emoji shown before the status text: one unicode emoji, or the id
+        /// of a custom emoji from a server the user is in
+        #[validate(length(min = 1, max = 32))]
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub emoji: Option<String>,
+        /// When the status text (and its emoji) is cleared by the server
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub expires_at: Option<Timestamp>,
         /// Current presence option
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
         pub presence: Option<Presence>,

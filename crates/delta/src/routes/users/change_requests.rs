@@ -72,7 +72,7 @@ pub(crate) fn as_edit(request: &AccountChangeRequest) -> v0::DataEditUser {
         avatar: None,
         status: c.status_text.as_ref().map(|text| v0::UserStatus {
             text: Some(text.clone()),
-            presence: None,
+            ..Default::default()
         }),
         profile: c.bio.as_ref().map(|bio| v0::DataUserProfile {
             content: Some(bio.clone()),

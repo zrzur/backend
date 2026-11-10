@@ -155,6 +155,12 @@ auto_derived!(
         /// Custom status text
         #[serde(skip_serializing_if = "Option::is_none")]
         pub text: Option<String>,
+        /// Emoji before the text: unicode or a custom emoji id
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        pub emoji: Option<String>,
+        /// When the text and emoji run out
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        pub expires_at: Option<Timestamp>,
         /// Current presence option
         #[serde(skip_serializing_if = "Option::is_none")]
         pub presence: Option<Presence>,
@@ -898,13 +904,35 @@ impl User {
         Ok(())
     }
 
+    /// Clear every custom status whose expiry has passed and tell the
+    /// gateway, so other clients drop it too (crond, every minute). Reads
+    /// already hide an expired status, so this only tidies storage and
+    /// clients that hold the old value. Safe to run twice.
+    pub async fn clear_expired_statuses(db: &Database) -> Result<usize> {
+        let cleared = db.clear_expired_statuses(Timestamp::now_utc()).await?;
+        for id in &cleared {
+            EventV1::UserUpdate {
+                id: id.clone(),
+                data: v0::PartialUser::default(),
+                clear: vec![v0::FieldsUser::StatusText],
+                event_id: Some(Ulid::new().to_string()),
+            }
+            .p(id.clone())
+            .await;
+        }
+        Ok(cleared.len())
+    }
+
     /// Remove a field from User object
     pub fn remove_field(&mut self, field: &FieldsUser) {
         match field {
             FieldsUser::Avatar => self.avatar = None,
+            // the emoji and expiry belong to the text and go with it
             FieldsUser::StatusText => {
                 if let Some(x) = self.status.as_mut() {
                     x.text = None;
+                    x.emoji = None;
+                    x.expires_at = None;
                 }
             }
             FieldsUser::StatusPresence => {

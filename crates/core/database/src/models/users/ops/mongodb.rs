@@ -1,5 +1,6 @@
 use ::mongodb::options::{Collation, CollationStrength, FindOneOptions, FindOptions};
 use futures::StreamExt;
+use iso8601_timestamp::Timestamp;
 use revolt_result::Result;
 
 use crate::DocumentId;
@@ -228,6 +229,14 @@ impl AbstractUsers for MongoDb {
         partial: &PartialUser,
         remove: Vec<FieldsUser>,
     ) -> Result<()> {
+        // the status emoji and expiry go with the status text
+        let mut paths: Vec<&dyn IntoDocumentPath> =
+            remove.iter().map(|x| x as &dyn IntoDocumentPath).collect();
+        if remove.contains(&FieldsUser::StatusText) {
+            paths.push(&STATUS_EMOJI);
+            paths.push(&STATUS_EXPIRES_AT);
+        }
+
         if remove.contains(&FieldsUser::StatusText) && partial.status.is_some() {
             // workaround to fix mongo conflicting the same item
             let _: Result<()> = query!(
@@ -238,24 +247,65 @@ impl AbstractUsers for MongoDb {
                 PartialUser {
                     ..Default::default()
                 },
-                remove.iter().map(|x| x as &dyn IntoDocumentPath).collect(),
+                paths,
                 None
             )
             .map(|_| ());
 
             query!(self, update_one_by_id, COL, id, partial, vec![], None).map(|_| ())
         } else {
-            query!(
-                self,
-                update_one_by_id,
-                COL,
-                id,
-                partial,
-                remove.iter().map(|x| x as &dyn IntoDocumentPath).collect(),
-                None
-            )
-            .map(|_| ())
+            query!(self, update_one_by_id, COL, id, partial, paths, None).map(|_| ())
         }
+    }
+
+    /// Clear status texts whose expiry has passed; the users whose status
+    /// was cleared
+    async fn clear_expired_statuses(&self, now: Timestamp) -> Result<Vec<String>> {
+        let millis = now.duration_since(Timestamp::UNIX_EPOCH).whole_milliseconds() as i64;
+        let text = bson::to_bson(&now).map_err(|_| create_database_error!("to_bson", COL))?;
+        // stored as int64 millis or as text, depending on how it was written
+        let filter = doc! {
+            "$or": [
+                { "status.expires_at": { "$lte": millis } },
+                { "status.expires_at": { "$lte": text } },
+            ]
+        };
+
+        let ids: Vec<String> = self
+            .col::<DocumentId>(COL)
+            .find(filter.clone())
+            // at most a batch a pass; crond runs again a minute later
+            .with_options(
+                FindOptions::builder()
+                    .projection(doc! { "_id": 1 })
+                    .limit(1000)
+                    .build(),
+            )
+            .await
+            .map_err(|_| create_database_error!("find", COL))?
+            .filter_map(|s| async { s.ok() })
+            .map(|user| user.id)
+            .collect()
+            .await;
+
+        if ids.is_empty() {
+            return Ok(ids);
+        }
+
+        // the filter is applied again, so a status set in between stays
+        self.col::<User>(COL)
+            .update_many(
+                doc! { "$and": [ { "_id": { "$in": &ids } }, filter ] },
+                doc! { "$unset": {
+                    "status.text": 1_i32,
+                    "status.emoji": 1_i32,
+                    "status.expires_at": 1_i32,
+                } },
+            )
+            .await
+            .map_err(|_| create_database_error!("update_many", COL))?;
+
+        Ok(ids)
     }
 
     /// Set relationship with another user
@@ -353,6 +403,17 @@ impl AbstractUsers for MongoDb {
             .await
             .map(|_| ())
             .map_err(|_| create_database_error!("bulk_write", COL))
+    }
+}
+
+/// A status path that has no `FieldsUser` of its own
+struct StatusPath(&'static str);
+static STATUS_EMOJI: StatusPath = StatusPath("status.emoji");
+static STATUS_EXPIRES_AT: StatusPath = StatusPath("status.expires_at");
+
+impl IntoDocumentPath for StatusPath {
+    fn as_path(&self) -> Option<&'static str> {
+        Some(self.0)
     }
 }
 

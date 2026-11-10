@@ -50,6 +50,11 @@ pub trait AbstractUsers: Sync + Send {
         remove: Vec<FieldsUser>,
     ) -> Result<()>;
 
+    /// Clear status texts (with emoji and expiry) whose expiry is at or
+    /// before `now`; the ids of the users whose status was cleared
+    async fn clear_expired_statuses(&self, now: iso8601_timestamp::Timestamp)
+        -> Result<Vec<String>>;
+
     /// Set relationship with another user
     ///
     /// This should use pull_relationship if relationship is None.

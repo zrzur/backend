@@ -1600,8 +1600,20 @@ impl From<Presence> for crate::Presence {
 
 impl crate::UserStatus {
     fn into(self, discard_invisible: bool) -> Option<UserStatus> {
+        // a status past its expiry is never shown, even before crond clears it
+        let expired = self
+            .expires_at
+            .is_some_and(|at| at <= Timestamp::now_utc());
+        let (text, emoji, expires_at) = if expired {
+            (None, None, None)
+        } else {
+            (self.text, self.emoji, self.expires_at)
+        };
+
         let status = UserStatus {
-            text: self.text,
+            text,
+            emoji,
+            expires_at,
             presence: self.presence.and_then(|presence| {
                 if discard_invisible && presence == crate::Presence::Invisible {
                     None
@@ -1611,7 +1623,7 @@ impl crate::UserStatus {
             }),
         };
 
-        if status.text.is_none() && status.presence.is_none() {
+        if status.text.is_none() && status.emoji.is_none() && status.presence.is_none() {
             None
         } else {
             Some(status)
@@ -1623,6 +1635,8 @@ impl From<UserStatus> for crate::UserStatus {
     fn from(value: UserStatus) -> crate::UserStatus {
         crate::UserStatus {
             text: value.text,
+            emoji: value.emoji,
+            expires_at: value.expires_at,
             presence: value.presence.map(|presence| presence.into()),
         }
     }

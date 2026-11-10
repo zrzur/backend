@@ -160,6 +160,26 @@ impl AbstractUsers for ReferenceDb {
         }
     }
 
+    /// Clear status texts whose expiry has passed
+    async fn clear_expired_statuses(
+        &self,
+        now: iso8601_timestamp::Timestamp,
+    ) -> Result<Vec<String>> {
+        let mut users = self.users.lock().await;
+        let mut cleared = Vec::new();
+        for user in users.values_mut() {
+            if let Some(status) = user.status.as_mut() {
+                if status.expires_at.is_some_and(|at| at <= now) {
+                    status.text = None;
+                    status.emoji = None;
+                    status.expires_at = None;
+                    cleared.push(user.id.clone());
+                }
+            }
+        }
+        Ok(cleared)
+    }
+
     /// Set relationship with another user
     ///
     /// This should use pull_relationship if relationship is None or User.
