@@ -208,8 +208,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "0cf1965344e30c4b312fb0b7dc9f02f66caa95a3cdfaea8ce4b6a4a110c684f6",
-      "bytes": 70538,
+      "sha256": "073e5c45a54ef3dabd4240b664991c97c150dac0d84c61b2fddf4f3368f3e797",
+      "bytes": 71352,
       "category": "public-documentation"
     },
     {
@@ -2205,6 +2205,12 @@
       "category": "product-source-or-build-manifest"
     },
     {
+      "path": "crates/core/database/src/util/login_limit.rs",
+      "sha256": "1592af325dad9fe3a549418ccd6111ff26e5c35cfb4a7a83c9a09cb35123ba33",
+      "bytes": 5893,
+      "category": "product-source-or-build-manifest"
+    },
+    {
       "path": "crates/core/database/src/util/mail_limit.rs",
       "sha256": "0a509ecbdddeb6444c65d91d209f375445fc2571f6291e3161ed9b2a992be512",
       "bytes": 3694,
@@ -2224,8 +2230,8 @@
     },
     {
       "path": "crates/core/database/src/util/mod.rs",
-      "sha256": "576299b4473ee0b60c9d796b22a4ac6e1e54b6ad6c0794dee5e09968134fc4c4",
-      "bytes": 535,
+      "sha256": "0cadbe021012c44dd034e76ee55bf0f21c4bf403cc3f5ef5a89564ded2248e81",
+      "bytes": 556,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -2740,8 +2746,8 @@
     },
     {
       "path": "crates/core/models/src/v0/sessions.rs",
-      "sha256": "d8b95558462ffb822bc7bfc81b7f0819ba11002292eaee58f3abe4c7adc5053a",
-      "bytes": 2491,
+      "sha256": "ca03308324baf8e5189ab1e6f397c881690c2a93aa85b801c6d4a76d51bb3b9e",
+      "bytes": 2835,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -3502,8 +3508,8 @@
     },
     {
       "path": "crates/delta/src/routes/bots/edit.rs",
-      "sha256": "440f8fafe9371fb24c1be7019b0cefbd7a8c13c033d37a35885bcf411eb00fe4",
-      "bytes": 5759,
+      "sha256": "9b3786edb7e901d7de3db47c062a46edc133fa3d9a1f7ee21aef909cf8b86018",
+      "bytes": 7778,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4540,8 +4546,8 @@
     },
     {
       "path": "crates/delta/src/routes/session/login.rs",
-      "sha256": "fe1427a24c1b19f5aa054a7b94e897cdcb25037d007592a669bd4dee7ca81476",
-      "bytes": 26060,
+      "sha256": "572d0fb765975fdcd2432a9041c5b8c8e0a8634e1cb03bc841d7826dbd087a13",
+      "bytes": 26390,
       "category": "product-source-or-build-manifest"
     },
     {
