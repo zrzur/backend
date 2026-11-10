@@ -69,8 +69,10 @@ async fn setup() -> Setup {
 }
 
 /// A file as autumn stores it after an upload to `tag`
+/// A file as autumn stores it after an upload to `tag` (autumn measures
+/// every sound: 1.8 s here)
 async fn upload(harness: &TestHarness, user: &User, tag: &str, audio: bool) -> String {
-    upload_measured(harness, user, tag, audio, None).await
+    upload_measured(harness, user, tag, audio, audio.then_some(1800)).await
 }
 
 /// An upload whose length autumn measured
@@ -544,4 +546,53 @@ async fn adding_and_removing_a_sound_is_in_the_audit_log() {
         .collect();
     assert!(kinds.contains(&"SoundboardSoundCreate".to_string()), "{kinds:?}");
     assert!(kinds.contains(&"SoundboardSoundDelete".to_string()), "{kinds:?}");
+}
+
+#[rocket::async_test]
+async fn a_sound_autumn_did_not_measure_is_refused() {
+    let s = setup().await;
+    let file = upload_measured(&s.harness, &s.owner, "sounds", true, None).await;
+    let (status, body) = send(
+        &s.harness,
+        &s.owner_session,
+        "PUT",
+        format!("/servers/{}/soundboard/{file}", s.server.id),
+        Some(json!({ "name": "unmeasured", "duration_ms": 1000 })),
+    )
+    .await;
+    assert_eq!(status, Status::BadRequest, "{body}");
+}
+
+#[rocket::async_test]
+async fn two_uploads_at_once_cannot_pass_the_limit() {
+    let s = setup().await;
+    for n in 0..7 {
+        let (status, _) = add_sound(&s, &format!("s{n}")).await;
+        assert_eq!(status, Status::Ok);
+    }
+    // one place left, two managers add a sound at the same moment
+    let first = upload(&s.harness, &s.owner, "sounds", true).await;
+    let second = upload(&s.harness, &s.owner, "sounds", true).await;
+    let put = |file: String| {
+        let harness = &s.harness;
+        let session = &s.owner_session;
+        let server = s.server.id.clone();
+        async move {
+            send(
+                harness,
+                session,
+                "PUT",
+                format!("/servers/{server}/soundboard/{file}"),
+                Some(json!({ "name": "race", "duration_ms": 900 })),
+            )
+            .await
+            .0
+        }
+    };
+    let (a, b) = futures::join!(put(first), put(second));
+    let ok = [a, b].iter().filter(|status| **status == Status::Ok).count();
+    assert!(ok <= 1, "both took the last place: {a} {b}");
+    // counted in the database (the API's read bucket may be spent by now)
+    let count = s.harness.db.count_soundboard_sounds(&s.server.id).await.unwrap();
+    assert_eq!(count, 8, "a: {a}, b: {b}");
 }

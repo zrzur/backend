@@ -252,6 +252,9 @@ pub async fn edit(
                 }
             }
 
+            // the stage flag as stored, before anything below changes it
+            let stored_voice = voice.clone();
+
             for field in &data.remove {
                 match field {
                     v0::FieldsChannel::Description => {
@@ -291,28 +294,35 @@ pub async fn edit(
             }
 
             if let Some(edit) = data.voice {
-                // fields left out keep their value (a user limit change must
-                // not turn a stage back into a plain voice channel)
-                let mut new_voice = voice.clone().unwrap_or_default();
-                if let Some(max_users) = edit.max_users {
-                    new_voice.max_users = Some(max_users);
+                // fields left out keep the stored value, also when the same
+                // request removes the voice information first (a user limit
+                // change must not turn a stage back into a voice channel)
+                let mut new_voice = stored_voice.clone().unwrap_or_default();
+                match edit.max_users {
+                    Some(0) => new_voice.max_users = None,
+                    Some(max_users) => new_voice.max_users = Some(max_users),
+                    None => {}
                 }
                 if let Some(stage) = edit.stage {
-                    // who may publish changes with it: only while the call is empty
-                    if stage != new_voice.stage
-                        && get_voice_channel_members(&UserVoiceChannel {
-                            id: id.clone(),
-                            server_id: None,
-                        })
-                        .await?
-                        .is_some()
-                    {
-                        return Err(create_error!(InvalidOperation));
-                    }
                     new_voice.stage = stage;
                 }
                 *voice = Some(new_voice.clone());
                 partial.voice = Some(new_voice);
+            }
+
+            // who may publish changes with the stage flag: only while the
+            // call is empty, however the request got there
+            let was_stage = stored_voice.as_ref().is_some_and(|voice| voice.stage);
+            let is_stage = voice.as_ref().is_some_and(|voice| voice.stage);
+            if was_stage != is_stage
+                && get_voice_channel_members(&UserVoiceChannel {
+                    id: id.clone(),
+                    server_id: None,
+                })
+                .await?
+                .is_some()
+            {
+                return Err(create_error!(InvalidOperation));
             }
 
             if let Some(new_slowmode) = data.slowmode {

@@ -270,8 +270,8 @@ auto_derived!(
     #[derive(Default)]
     #[cfg_attr(feature = "validator", derive(validator::Validate))]
     pub struct DataEditVoiceInformation {
-        /// Most users in the call at once
-        #[cfg_attr(feature = "validator", validate(range(min = 1)))]
+        /// Most users in the call at once; 0 takes the limit away
+        #[cfg_attr(feature = "validator", validate(range(min = 0)))]
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
         pub max_users: Option<usize>,
         /// Make it a stage, or a plain voice channel again (only while

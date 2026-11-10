@@ -14,7 +14,8 @@ use revolt_database::{
     voice::{
         add_stage_speaker, clear_stage_state, get_channel_node, get_stage_state,
         get_voice_channel_members, is_in_voice_channel, is_stage_channel, is_stage_speaker,
-        lower_stage_hand, raise_stage_hand, remove_stage_speaker, remove_user_from_voice_channel,
+        delete_voice_state, lower_stage_hand, raise_stage_hand, remove_stage_speaker,
+        remove_user_from_voice_channel,
         revoke_voice_reentry, set_stage_topic, sync_user_voice_permissions, HandRaised,
         SpeakerAdded, UserVoiceChannel, VoiceClient, MAX_STAGE_SPEAKERS,
     },
@@ -70,11 +71,12 @@ async fn assert_outranks(db: &Database, user: &User, channel: &Channel, target_i
         return Err(create_error!(NotElevated));
     }
     let ours = db.fetch_member(&server.id, &user.id).await?.get_ranking(&server);
-    let theirs = db
-        .fetch_member(&server.id, target_id)
-        .await
-        .map(|member| member.get_ranking(&server))
-        .unwrap_or(i64::MAX);
+    // someone who is not a member (any more) ranks lowest; other errors are errors
+    let theirs = match db.fetch_member(&server.id, target_id).await {
+        Ok(member) => member.get_ranking(&server),
+        Err(error) if matches!(error.error_type, revolt_result::ErrorType::NotFound) => i64::MAX,
+        Err(error) => return Err(error),
+    };
     if theirs <= ours {
         return Err(create_error!(NotElevated));
     }
@@ -91,27 +93,52 @@ async fn publish(channel_id: &str, change: v0::StageChange) {
     .await;
 }
 
-/// Give LiveKit the user's new publish rights. A stage works without a voice
-/// server in the room (nobody joined yet, or no LiveKit at all).
-async fn sync_livekit(
+/// Who LiveKit has to be told about: `None` when there is no voice server
+/// for the room (nobody joined yet, or no LiveKit at all). Database errors
+/// come back as they are.
+struct LiveKitTarget {
+    node: String,
+    user: User,
+    server: Option<revolt_database::Server>,
+}
+
+async fn livekit_target(
     db: &Database,
     voice_client: &VoiceClient,
     channel: &Channel,
     user_id: &str,
-) -> Result<()> {
+) -> Result<Option<LiveKitTarget>> {
     if !voice_client.is_enabled() {
-        return Ok(());
+        return Ok(None);
     }
     let Some(node) = get_channel_node(channel.id()).await? else {
-        return Ok(());
+        return Ok(None);
     };
     let user = Reference::from_unchecked(user_id).as_user(db).await?;
     let server = match channel.server() {
         Some(id) => Some(db.fetch_server(id).await?),
         None => None,
     };
-    sync_user_voice_permissions(db, voice_client, &node, &user, channel, server.as_ref(), None)
-        .await
+    Ok(Some(LiveKitTarget { node, user, server }))
+}
+
+/// Give LiveKit the user's new publish rights
+async fn push_livekit(
+    db: &Database,
+    voice_client: &VoiceClient,
+    channel: &Channel,
+    target: &LiveKitTarget,
+) -> Result<()> {
+    sync_user_voice_permissions(
+        db,
+        voice_client,
+        &target.node,
+        &target.user,
+        channel,
+        target.server.as_ref(),
+        None,
+    )
+    .await
 }
 
 /// # Fetch Stage
@@ -266,6 +293,7 @@ pub async fn lower_hand(
     let member_id = if member.id == "@me" { user.id.as_str() } else { member.id };
     if member_id != user.id {
         require(&permissions, ChannelPermission::MuteMembers)?;
+        assert_outranks(db, &user, &channel, member_id).await?;
     }
 
     if lower_stage_hand(channel.id(), member_id).await? {
@@ -310,9 +338,11 @@ pub async fn add_speaker(
         }
         SpeakerAdded::Already => {}
         SpeakerAdded::Added { hand_lowered } => {
-            if let Err(error) = sync_livekit(db, voice_client, &channel, member_id).await {
-                // their join token still can't publish: they speak after a rejoin
-                log::warn!("stage: could not open the microphone of {member_id}: {error:?}");
+            if let Some(target) = livekit_target(db, voice_client, &channel, member_id).await? {
+                if let Err(error) = push_livekit(db, voice_client, &channel, &target).await {
+                    // their join token still can't publish: they speak after a rejoin
+                    log::warn!("stage: could not open the microphone of {member_id}: {error:?}");
+                }
             }
             publish(
                 channel.id(),
@@ -354,26 +384,33 @@ pub async fn remove_speaker(
     }
 
     if remove_stage_speaker(channel.id(), member_id).await? {
-        // try twice, then take them out of the call: a speaker sent back
-        // must not keep a microphone
-        let mut result = sync_livekit(db, voice_client, &channel, member_id).await;
-        if result.is_err() {
-            result = sync_livekit(db, voice_client, &channel, member_id).await;
-        }
-        if let Err(error) = result {
-            log::warn!("stage: could not close the microphone of {member_id}: {error:?}");
-            remove_user_from_voice_channel(
-                voice_client,
-                &UserVoiceChannel::from_channel(&channel),
-                member_id,
-            )
-            .await?;
-            EventV1::VoiceChannelLeave {
-                id: channel.id().to_string(),
-                user: member_id.to_string(),
+        // a speaker sent back must not keep a microphone: tell LiveKit (twice
+        // if needed), else take them out of the call; if even that fails, the
+        // moderator hears so. Database errors are returned, nobody is kicked.
+        if let Some(target) = livekit_target(db, voice_client, &channel, member_id).await? {
+            let mut result = push_livekit(db, voice_client, &channel, &target).await;
+            if result.is_err() {
+                result = push_livekit(db, voice_client, &channel, &target).await;
             }
-            .p(channel.id().to_string())
-            .await;
+            if let Err(error) = result {
+                // only a voice server that can't be reached takes them out
+                if !matches!(error.error_type, revolt_result::ErrorType::LiveKitUnavailable) {
+                    return Err(error);
+                }
+                log::warn!("stage: could not close the microphone of {member_id}: {error:?}");
+                revoke_voice_reentry(channel.id(), member_id).await?;
+                voice_client
+                    .remove_user(&target.node, member_id, channel.id())
+                    .await
+                    .map_err(|_| create_error!(LiveKitUnavailable))?;
+                delete_voice_state(&UserVoiceChannel::from_channel(&channel), member_id).await?;
+                EventV1::VoiceChannelLeave {
+                    id: channel.id().to_string(),
+                    user: member_id.to_string(),
+                }
+                .p(channel.id().to_string())
+                .await;
+            }
         }
         publish(
             channel.id(),

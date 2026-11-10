@@ -629,3 +629,129 @@ async fn a_speaker_who_leaves_is_gone_from_the_stage_at_once() {
     let data = next_stage_event(&mut events).await;
     assert_eq!(data["speakers_removed"], json!([s.member.id]), "{data}");
 }
+
+async fn edit_channel(s: &Setup, body: serde_json::Value) -> (Status, serde_json::Value) {
+    let response = s
+        .harness
+        .client
+        .patch(format!("/channels/{}", s.stage.id()))
+        .header(Header::new("x-session-token", s.owner_session.token.clone()))
+        .header(ContentType::JSON)
+        .body(body.to_string())
+        .dispatch()
+        .await;
+    let status = response.status();
+    let text = response.into_string().await.unwrap_or_default();
+    (status, serde_json::from_str(&text).unwrap_or(serde_json::Value::Null))
+}
+
+#[rocket::async_test]
+async fn the_user_limit_can_be_cleared_again() {
+    let s = setup().await;
+    let (status, body) = edit_channel(&s, json!({ "voice": { "max_users": 5 } })).await;
+    assert_eq!(status, Status::Ok, "{body}");
+    assert_eq!(body["voice"]["max_users"], json!(5));
+
+    // 0 clears the limit
+    let (status, body) = edit_channel(&s, json!({ "voice": { "max_users": 0 } })).await;
+    assert_eq!(status, Status::Ok, "{body}");
+    assert!(body["voice"].get("max_users").is_none(), "{body}");
+    assert_eq!(body["voice"]["stage"], json!(true), "{body}");
+}
+
+#[rocket::async_test]
+async fn removing_the_voice_info_cannot_drop_an_occupied_stage() {
+    let s = setup().await;
+    sit_in(&s.stage, &s.member.id).await;
+    let (status, body) = edit_channel(
+        &s,
+        json!({ "remove": ["Voice"], "voice": { "max_users": 3 } }),
+    )
+    .await;
+    // the edit builds on the stored voice information: still a stage
+    assert_eq!(status, Status::Ok, "{body}");
+    assert_eq!(body["voice"]["stage"], json!(true), "the stage was dropped: {body}");
+    assert_eq!(body["voice"]["max_users"], json!(3), "{body}");
+
+    // the same payload on a plain voice channel keeps working
+    let response = s
+        .harness
+        .client
+        .patch(format!("/channels/{}", s.voice.id()))
+        .header(Header::new("x-session-token", s.owner_session.token.clone()))
+        .header(ContentType::JSON)
+        .body(json!({ "remove": ["Voice"], "voice": { "max_users": 3 } }).to_string())
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Ok);
+}
+
+#[rocket::async_test]
+async fn a_moderator_cannot_lower_the_hand_of_someone_ranked_higher() {
+    use revolt_permissions::ChannelPermission::*;
+    let s = setup().await;
+    let stage = s.stage.id();
+    let (moderator, session) = member_with(&s, 10, &[MuteMembers]).await;
+    let (senior, senior_session) = member_with(&s, 1, &[]).await;
+    sit_in(&s.stage, &moderator.id).await;
+    sit_in(&s.stage, &senior.id).await;
+    let (status, _, _) = call(&s.harness, &senior_session, "PUT", format!("/channels/{stage}/stage/hand"), None).await;
+    assert_eq!(status, Status::Ok);
+    let (status, _, error) = call(
+        &s.harness,
+        &session,
+        "DELETE",
+        format!("/channels/{stage}/stage/hands/{}", senior.id),
+        None,
+    )
+    .await;
+    assert_eq!(status, Status::Forbidden);
+    assert!(matches!(error, Some(ErrorType::NotElevated)), "{error:?}");
+}
+
+#[rocket::async_test]
+async fn a_speaker_the_voice_server_cannot_silence_is_reported_to_the_moderator() {
+    let s = setup().await;
+    let stage = s.stage.id();
+    sit_in(&s.stage, &s.member.id).await;
+    revolt_database::voice::add_stage_speaker(stage, &s.member.id).await.unwrap();
+    // the room is on a node, but LiveKit knows no such participant: neither
+    // the update nor taking them out works
+    revolt_database::voice::set_channel_node(stage, "voicetest").await.unwrap();
+    let (status, _, error) = call(
+        &s.harness,
+        &s.owner_session,
+        "DELETE",
+        format!("/channels/{stage}/stage/speakers/{}", s.member.id),
+        None,
+    )
+    .await;
+    assert_ne!(status, Status::Ok);
+    assert!(matches!(error, Some(ErrorType::LiveKitUnavailable)), "{error:?}");
+    revolt_database::voice::delete_channel_node(stage).await.unwrap();
+}
+
+#[rocket::async_test]
+async fn a_database_error_takes_nobody_out_of_the_call() {
+    let s = setup().await;
+    let stage = s.stage.id();
+    // a seat whose user is gone from the database
+    let ghost = TestHarness::rand_string();
+    let seat = sit_in(&s.stage, &ghost).await;
+    revolt_database::voice::add_stage_speaker(stage, &ghost).await.unwrap();
+    revolt_database::voice::set_channel_node(stage, "voicetest").await.unwrap();
+    let (status, _, _) = call(
+        &s.harness,
+        &s.owner_session,
+        "DELETE",
+        format!("/channels/{stage}/stage/speakers/{ghost}"),
+        None,
+    )
+    .await;
+    assert_ne!(status, Status::Ok);
+    assert!(
+        get_voice_channel_members(&seat).await.unwrap().unwrap_or_default().contains(&ghost),
+        "the seat was taken"
+    );
+    revolt_database::voice::delete_channel_node(stage).await.unwrap();
+}

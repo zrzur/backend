@@ -81,12 +81,19 @@ pub async fn create_sound(
         } => Some(duration_ms),
         _ => None,
     };
-    if measured.is_some_and(|ms| ms > SOUNDBOARD_MAX_DURATION_MS) {
+    // a sound autumn could not measure is refused, whatever the client says
+    let refusal = match measured {
+        None => Some("not_measured"),
+        Some(ms) if ms > SOUNDBOARD_MAX_DURATION_MS => Some("too_long"),
+        Some(_) => None,
+    };
+    if let Some(code) = refusal {
         db.mark_attachment_as_deleted(&sound_id).await?;
         return Err(revolt_result::failed_validation(vec![
-            revolt_result::ValidationProblem::new("duration_ms", "too_long"),
+            revolt_result::ValidationProblem::new("duration_ms", code),
         ]));
     }
+    let measured = measured.unwrap_or_default();
 
     let sound = SoundboardSound {
         id: sound_id,
@@ -94,7 +101,7 @@ pub async fn create_sound(
         creator_id: user.id.clone(),
         name: data.name.trim().to_string(),
         emoji: data.emoji,
-        duration_ms: measured.unwrap_or(data.duration_ms).min(SOUNDBOARD_MAX_DURATION_MS),
+        duration_ms: measured,
         volume: data.volume.unwrap_or(100),
     };
     if !sound.create(db, max).await? {

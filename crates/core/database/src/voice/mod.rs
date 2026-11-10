@@ -728,7 +728,13 @@ pub async fn sync_user_voice_permissions(
                 },
                 track_source_ids(&sources),
             )
-            .await?;
+            .await
+            // callers tell a voice server that can't be reached from a
+            // database error by this type
+            .map_err(|error| {
+                log::warn!("LiveKit did not take new permissions for {}: {error:?}", user.id);
+                create_error!(LiveKitUnavailable)
+            })?;
 
         if update_event != before {
             EventV1::UserVoiceStateUpdate {

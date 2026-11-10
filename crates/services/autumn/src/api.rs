@@ -363,16 +363,6 @@ fn size_limit_for(limits: &std::collections::HashMap<String, usize>, tag: &Tag) 
     }
 }
 
-/// Longest soundboard sound, in milliseconds
-pub(crate) const SOUND_MAX_MS: u32 = 5_200;
-
-/// Length of an audio file in milliseconds, as ffprobe reads it
-pub(crate) fn sound_length_ms(path: &std::path::Path) -> Option<u32> {
-    let probe = ffprobe::ffprobe(path).ok()?;
-    let seconds: f64 = probe.format.duration.as_deref()?.parse().ok()?;
-    (seconds.is_finite() && seconds > 0.0).then(|| (seconds * 1000.0).round() as u32)
-}
-
 /// Size limit of a soundboard sound when the config names none
 const SOUND_SIZE_LIMIT: usize = 512_000;
 
@@ -562,16 +552,15 @@ async fn store_upload(
         return Err(create_error!(FileTypeNotAllowed));
     }
     let metadata = if matches!(tag, Tag::sounds) {
-        let path = contents.path().to_path_buf();
-        let duration_ms = tokio::task::spawn_blocking(move || sound_length_ms(&path))
+        let bytes = buf.len() as u64;
+        let duration_ms = crate::sound::measure(contents.path(), bytes, mime_type)
             .await
-            .map_err(|_| create_error!(InternalError))?
-            .ok_or_else(|| create_error!(FileTypeNotAllowed))?;
-        if duration_ms > SOUND_MAX_MS {
-            return Err(revolt_result::failed_validation(vec![
-                revolt_result::ValidationProblem::new("file", "too_long"),
-            ]));
-        }
+            .map_err(|refusal| {
+                revolt_result::failed_validation(vec![revolt_result::ValidationProblem::new(
+                    "file",
+                    refusal.code(),
+                )])
+            })?;
         Metadata::Audio {
             duration_ms: Some(duration_ms),
         }
@@ -1204,40 +1193,6 @@ mod sound_tests {
         assert_eq!(size_limit_for(&old, &Tag::emojis), 500_000);
         let new = HashMap::from([("sounds".to_string(), 300_000)]);
         assert_eq!(size_limit_for(&new, &Tag::sounds), 300_000);
-    }
-
-    /// A silent WAV of this many milliseconds (8 kHz, mono, 16 bit)
-    fn wav(ms: u32) -> tempfile::NamedTempFile {
-        use std::io::Write;
-        let samples = 8 * ms;
-        let mut bytes = Vec::new();
-        bytes.extend(b"RIFF");
-        bytes.extend((36 + samples * 2).to_le_bytes());
-        bytes.extend(b"WAVEfmt ");
-        bytes.extend(16u32.to_le_bytes());
-        bytes.extend(1u16.to_le_bytes());
-        bytes.extend(1u16.to_le_bytes());
-        bytes.extend(8000u32.to_le_bytes());
-        bytes.extend(16000u32.to_le_bytes());
-        bytes.extend(2u16.to_le_bytes());
-        bytes.extend(16u16.to_le_bytes());
-        bytes.extend(b"data");
-        bytes.extend((samples * 2).to_le_bytes());
-        bytes.resize(bytes.len() + (samples * 2) as usize, 0);
-        let mut file = tempfile::NamedTempFile::new().unwrap();
-        file.write_all(&bytes).unwrap();
-        file
-    }
-
-    #[test]
-    fn a_sound_is_measured_by_ffprobe() {
-        let short = wav(1500);
-        assert_eq!(super::sound_length_ms(short.path()), Some(1500));
-        let long = wav(6000);
-        assert!(super::sound_length_ms(long.path()).unwrap() > super::SOUND_MAX_MS);
-        let mut junk = tempfile::NamedTempFile::new().unwrap();
-        std::io::Write::write_all(&mut junk, b"not audio at all").unwrap();
-        assert_eq!(super::sound_length_ms(junk.path()), None);
     }
 
     #[test]
