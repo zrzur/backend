@@ -1265,6 +1265,7 @@ async fn a_kept_emoji_update_follows_its_server() {
     };
     assert!(state.handle_incoming_event_v1(&db, &mut leave, SERVER).await);
     assert!(state.may_replay(&db, &update).await.is_none());
+}
 
 // A channel made private, then reopened by a role change (owner report 2026-11-09)
 
