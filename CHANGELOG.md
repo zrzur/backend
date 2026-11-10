@@ -4,7 +4,8 @@
 
 ### Events off by default per server
 
-- Servers have `events_enabled` (missing = off, so no migration). A manager turns it on with `PATCH /servers/{id}` `{ "events_enabled": true }` (Manage Server); `ServerUpdate` carries it. While a server has events off, `POST /servers/{id}/events` answers `FeatureDisabled { feature: "server_events_server" }`; events made before stay stored and readable through the API.
+- Servers have `events_enabled` (missing = off, so no migration). A manager turns it on with `PATCH /servers/{id}` `{ "events_enabled": true }` (Manage Server); `ServerUpdate` carries it. While a server has events off, `POST /servers/{id}/events` answers `FeatureDisabled { feature: "server_events_server" }`; events made before stay stored.
+- While a server has events off, every `/servers/{id}/events` route (list, fetch, interested, edit, start, ...) answers the same `FeatureDisabled`, so bots and clients see what the app shows. crond leaves those events alone: nothing starts, is announced or gets a next occurrence; an event whose whole time passed while off (scheduled or active) is marked Completed quietly (no gateway event, message or push; `PassReport.missed`). Turned on again, an event still inside its time starts as usual and a repeating series gets its next occurrence.
 
 ### Server insights
 

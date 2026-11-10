@@ -8,7 +8,9 @@
 //! Server (being the creator gives no rights) and are refused while the
 //! person is timed out. The whole feature is behind
 //! `features.server_events_enabled`, and each server starts with events
-//! off: creating one needs the server's `events_enabled` switch.
+//! off: while its `events_enabled` switch is off every route answers
+//! FeatureDisabled (`server_events_server`) and crond leaves its events
+//! alone.
 
 use iso8601_timestamp::{Duration, Timestamp};
 use revolt_config::config;
@@ -41,7 +43,9 @@ async fn require_enabled() -> Result<()> {
     }
 }
 
-/// The server and your membership; NotFound for people outside it
+/// The server and your membership; NotFound for people outside it, and
+/// FeatureDisabled while the server has events off (off until a manager
+/// turns them on: nothing is listed, fetched or created, as in the app)
 async fn membership(db: &Database, user: &User, target: &Reference<'_>) -> Result<(Server, Member)> {
     require_enabled().await?;
     let server = target.as_server(db).await?;
@@ -49,6 +53,11 @@ async fn membership(db: &Database, user: &User, target: &Reference<'_>) -> Resul
         .fetch_member(&server.id, &user.id)
         .await
         .map_err(|_| create_error!(NotFound))?;
+    if !server.events_enabled {
+        return Err(create_error!(FeatureDisabled {
+            feature: "server_events_server".to_string()
+        }));
+    }
     Ok((server, member))
 }
 
@@ -262,12 +271,6 @@ pub async fn create(
         .map_err(|error| revolt_database::util::validation::validation_failed(&error))?;
     let (server, member) = membership(db, &user, &target).await?;
     require_manager(db, &user, &server, &member).await?;
-    // off until a manager turns events on for this server
-    if !server.events_enabled {
-        return Err(create_error!(FeatureDisabled {
-            feature: "server_events_server".to_string()
-        }));
-    }
 
     let title = data.title.trim().to_string();
     if title.is_empty() {

@@ -1118,4 +1118,62 @@ async fn events_are_off_until_a_manager_turns_them_on() {
     assert_eq!(status, Status::BadRequest, "{error}");
     assert_eq!(error["feature"], "server_events_server", "{error}");
     assert!(s.harness.db.fetch_server_event(&event_id).await.is_ok());
+
+    // bots and clients see what the app shows: nothing while off
+    let one = format!("{path}/{event_id}");
+    for (who, url) in [(&s.member_session, &path), (&s.owner_session, &path), (&s.member_session, &one)] {
+        let (status, error) = call(&s.harness, Method::Get, url, who, None).await;
+        assert_eq!(status, Status::BadRequest, "{url} {error}");
+        assert_eq!(error["feature"], "server_events_server", "{error}");
+    }
+
+    // on again: the stored event is back
+    let (status, _) = call(&s.harness, Method::Patch, &server_path, &s.owner_session, switch(true)).await;
+    assert_eq!(status, Status::Ok);
+    let (status, list) = call(&s.harness, Method::Get, &path, &s.member_session, None).await;
+    assert_eq!(status, Status::Ok, "{list}");
+    assert_eq!(list["events"][0]["_id"], event_id, "{list}");
+}
+
+/// While a server has events off, crond leaves its events alone: nothing
+/// starts or is announced, and an event whose whole time passed while off is
+/// marked Completed without a word. Turned on again, what is still due starts.
+#[rocket::async_test]
+async fn the_crond_pass_skips_servers_with_events_off() {
+    let s = setup_off(true).await;
+    let db = &s.harness.db;
+    let now = Timestamp::now_utc();
+    let place = || v0::ServerEventPlace::External { location: "Park".into() };
+    // due a minute ago, still running
+    let due = ServerEvent::new(&s.server.id, &s.owner.id, "Due".into(), None, now - Duration::minutes(1), Some(now + Duration::hours(1)), place(), None);
+    // its whole time passed while events were off
+    let missed = ServerEvent::new(&s.server.id, &s.owner.id, "Missed".into(), None, now - Duration::hours(3), Some(now - Duration::hours(1)), place(), None);
+    // started before events went off; its end has passed
+    let running = ServerEvent::new(&s.server.id, &s.owner.id, "Running".into(), None, now - Duration::hours(3), Some(now - Duration::minutes(5)), place(), None);
+    for event in [&due, &missed, &running] {
+        db.insert_server_event(event).await.unwrap();
+    }
+    db.set_server_event_status(&running.id, v0::ServerEventStatus::Scheduled, v0::ServerEventStatus::Active, now - Duration::hours(3))
+        .await
+        .unwrap();
+
+    let report = ServerEvent::run_pass(db, now).await.unwrap();
+    assert_eq!((report.started, report.completed), (0, 0), "{report:?}");
+    assert_eq!(report.missed, 2, "{report:?}");
+    let status = |id: String| async move { db.fetch_server_event(&id).await.unwrap().status };
+    assert_eq!(status(due.id.clone()).await, v0::ServerEventStatus::Scheduled);
+    assert_eq!(status(missed.id.clone()).await, v0::ServerEventStatus::Completed);
+    assert_eq!(status(running.id.clone()).await, v0::ServerEventStatus::Completed);
+
+    // a second pass changes nothing
+    let again = ServerEvent::run_pass(db, now).await.unwrap();
+    assert_eq!(again, Default::default(), "{again:?}");
+
+    // turned on: the event that is still due starts
+    db.update_server(&s.server.id, &PartialServer { events_enabled: Some(true), ..Default::default() }, vec![])
+        .await
+        .unwrap();
+    let report = ServerEvent::run_pass(db, Timestamp::now_utc()).await.unwrap();
+    assert_eq!(report.started, 1, "{report:?}");
+    assert_eq!(status(due.id.clone()).await, v0::ServerEventStatus::Active);
 }
