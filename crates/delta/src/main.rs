@@ -37,6 +37,12 @@ pub async fn web() -> Rocket<Build> {
 
     // Ensure environment variables are present
     config.preflight_checks();
+    // ZRZUR_DELTA_PORT that is no port falls back to 14702: say so
+    if let Ok(port) = std::env::var("ZRZUR_DELTA_PORT") {
+        if port.parse::<u16>().is_err() {
+            log::warn!("ZRZUR_DELTA_PORT={port:?} is not a port; delta listens on 14702");
+        }
+    }
 
     // Setup database
     let db = revolt_database::DatabaseInfo::Auto.connect().await.unwrap();
@@ -125,8 +131,8 @@ pub async fn web() -> Rocket<Build> {
                 .limit("file", 25.megabytes())
                 .limit("data-form", 130.megabytes()),
             address: Ipv4Addr::new(0, 0, 0, 0).into(),
-            // DELTA_PORT: a second API from a branch beside the dev stack's
-            port: std::env::var("DELTA_PORT")
+            // a second local stack runs beside the dev one on its own port
+            port: std::env::var("ZRZUR_DELTA_PORT")
                 .ok()
                 .and_then(|port| port.parse().ok())
                 .unwrap_or(14702),
