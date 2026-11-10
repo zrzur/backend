@@ -26,7 +26,7 @@ struct MigrationInfo {
     revision: i32,
 }
 
-pub const LATEST_REVISION: i32 = 86; // MUST BE +1 to last migration
+pub const LATEST_REVISION: i32 = 87; // MUST BE +1 to last migration
 // Number given only in the release after the one above, once no old delta runs:
 // a session an old delta wrote during the rollout has no date and never expires.
 const PENDING_SESSION_EXPIRY_FILL: i32 = -1;
@@ -47,6 +47,8 @@ const PENDING_SERVER_EVENT_INDEXES: i32 = 82;
 const PENDING_STATUS_MUTUAL_INDEXES: i32 = 83;
 // Number given by the coordinator at merge (stream insights)
 const PENDING_SERVER_INSIGHTS: i32 = 85;
+// Number given by the coordinator at merge (stream voice-extras)
+const PENDING_SOUNDBOARD: i32 = 86;
 
 /// The earliest day a session from before expiry can expire. At least 30
 /// days out, also with expiry switched off (0), for the day it is switched on.
@@ -2612,6 +2614,11 @@ pub async fn run_migrations(db: &MongoDb, revision: i32) -> i32 {
         create_server_insight_indexes(&db.db()).await;
     }
 
+    if revision <= PENDING_SOUNDBOARD {
+        info!("Running migration [revision {PENDING_SOUNDBOARD} / 10-11-2026]: Soundboard index, and every server's members may use the soundboard");
+        create_soundboard(&db.db()).await;
+    }
+
     // Reminder to update LATEST_REVISION when adding new migrations.
     LATEST_REVISION.max(revision)
 }
@@ -3725,4 +3732,46 @@ mod command_permission_index_tests {
         assert!(db.fetch_command_rules("s", "a", "c").await.is_err());
         db.drop_database().await;
     }
+}
+
+/// Marks a server whose default permissions got Use Soundboard (and names
+/// the claim with the cutoff), so running this again never gives back a
+/// right an owner took away since
+const SOUNDBOARD_DONE: &str = "soundboard_default_done";
+
+/// The soundboard index (sounds of a server, oldest first), and Use
+/// Soundboard in the default permissions of every existing server, as new
+/// servers get it. Safe to run twice.
+pub async fn create_soundboard(db: &crate::mongodb::Database) {
+    db.run_command(doc! {
+        "createIndexes": "soundboard_sounds",
+        "indexes": [{ "key": { "server": 1_i32, "_id": 1_i32 }, "name": "server_id" }]
+    })
+    .await
+    .expect("Failed to create the soundboard index");
+
+    // servers made after the first run already have it in their defaults:
+    // the cutoff is saved once, so a second run never touches them (an owner
+    // may have taken it away since)
+    let claims = db.collection::<Document>("migration_claims");
+    let _ = claims
+        .insert_one(doc! { "_id": SOUNDBOARD_DONE, "before": Ulid::new().to_string() })
+        .await;
+    let before = claims
+        .find_one(doc! { "_id": SOUNDBOARD_DONE })
+        .await
+        .expect("Failed to read the soundboard claim")
+        .and_then(|claim| claim.get_str("before").ok().map(str::to_string))
+        .expect("The soundboard claim was not saved");
+
+    db.collection::<Document>("servers")
+        .update_many(
+            doc! { "_id": { "$lt": &before }, SOUNDBOARD_DONE: { "$ne": true } },
+            doc! {
+                "$bit": { "default_permissions": { "or": ChannelPermission::UseSoundboard as i64 } },
+                "$set": { SOUNDBOARD_DONE: true },
+            },
+        )
+        .await
+        .expect("Failed to give servers the soundboard");
 }

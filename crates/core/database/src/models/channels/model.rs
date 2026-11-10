@@ -191,6 +191,9 @@ auto_derived!(
         /// Maximium amount of users allowed in the voice channel at once
         #[serde(skip_serializing_if = "Option::is_none")]
         pub max_users: Option<usize>,
+        /// Stage channel: speakers talk, the audience listens
+        #[serde(skip_serializing_if = "crate::if_false", default)]
+        pub stage: bool,
     }
 );
 

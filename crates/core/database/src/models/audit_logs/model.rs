@@ -154,6 +154,20 @@ auto_derived!(
             emoji: String,
             name: String,
         },
+        /// A soundboard sound was added
+        SoundboardSoundCreate {
+            sound: String,
+            name: String,
+        },
+        /// A soundboard sound was removed
+        SoundboardSoundDelete {
+            sound: String,
+            name: String,
+        },
+        /// A stage was closed (everyone left the call)
+        StageEnd {
+            channel: String,
+        },
         /// A bot was added to the server
         BotAdd {
             bot: String,
@@ -326,6 +340,9 @@ impl AuditLogEntry {
                 AuditLogEntryAction::EmojiCreate { .. } => {}
                 AuditLogEntryAction::EmojiUpdate { .. } => {}
                 AuditLogEntryAction::EmojiDelete { .. } => {}
+                AuditLogEntryAction::SoundboardSoundCreate { .. }
+                | AuditLogEntryAction::SoundboardSoundDelete { .. }
+                | AuditLogEntryAction::StageEnd { .. } => {}
                 // the bot's avatar is shown with the entry
                 AuditLogEntryAction::BotAdd { bot, .. }
                 | AuditLogEntryAction::BotRemove { bot }

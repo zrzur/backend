@@ -84,12 +84,15 @@ struct Entry {
     event: EventV1,
 }
 
-/// Whether an event is kept for a resume. Typing goes stale in seconds, so
-/// it gets a `seq` but is not sent again.
+/// Whether an event is kept for a resume. Typing goes stale in seconds, and
+/// a soundboard sound played again late would be noise, so they get a `seq`
+/// but are not sent again.
 fn kept_for_resume(event: &EventV1) -> bool {
     !matches!(
         event,
-        EventV1::ChannelStartTyping { .. } | EventV1::ChannelStopTyping { .. }
+        EventV1::ChannelStartTyping { .. }
+            | EventV1::ChannelStopTyping { .. }
+            | EventV1::SoundboardPlay { .. }
     )
 }
 
@@ -403,6 +406,9 @@ pub fn scope(event: &EventV1) -> Scope<'_> {
             Scope::Channel(channel_id)
         }
         UserMoveVoiceChannel { to, .. } => Scope::Channel(to),
+        StageUpdate { id, .. } => Scope::Channel(id),
+        SoundboardPlay { channel_id, .. } => Scope::Channel(channel_id),
+        SoundboardSoundCreate(sound) | SoundboardSoundUpdate(sound) => Scope::Server(&sound.server),
         VoiceChannelMove { from, to, .. } => Scope::Channels(from, to),
         EphemeralMessageCreate { message } | EphemeralMessageUpdate { message } => {
             Scope::Channel(&message.channel_id)

@@ -69,7 +69,7 @@ fn matches_filter(filter: &MessageFilter, message: &Message) -> bool {
         MessageHas::File => message.attachments.as_ref().is_some_and(|a| !a.is_empty()),
         MessageHas::Image => attachment(|m| matches!(m, Metadata::Image { .. })),
         MessageHas::Video => attachment(|m| matches!(m, Metadata::Video { .. })),
-        MessageHas::Sound => attachment(|m| matches!(m, Metadata::Audio)),
+        MessageHas::Sound => attachment(|m| matches!(m, Metadata::Audio { .. })),
         MessageHas::Embed => message.embeds.as_ref().is_some_and(|e| !e.is_empty()),
     })
 }

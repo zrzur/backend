@@ -18,7 +18,11 @@ use revolt_models::v0::{self, PartialUserVoiceState, UserVoiceState};
 use revolt_permissions::{calculate_channel_permissions, ChannelPermission, PermissionValue};
 use revolt_result::{create_error, Result, ToRevoltError};
 
+mod preview;
+mod stage;
 mod voice_client;
+pub use preview::*;
+pub use stage::*;
 pub use voice_client::VoiceClient;
 
 async fn get_connection() -> Result<Conn> {
@@ -185,6 +189,11 @@ pub fn track_source_ids(sources: &[&str]) -> Vec<i32> {
         .collect()
 }
 
+/// Whether a channel is a stage (speakers and an audience)
+pub fn is_stage_channel(channel: &Channel) -> bool {
+    channel.voice().is_some_and(|voice| voice.stage)
+}
+
 /// Member voice flags. Non-server channels have no server mute/deafen.
 pub async fn member_voice_flags(
     db: &Database,
@@ -290,10 +299,13 @@ const DELETE_VOICE_STATE_SCRIPT: &str = r"
 redis.call('SREM', KEYS[1], ARGV[1])
 redis.call('SREM', KEYS[2], ARGV[2])
 redis.call('DEL', KEYS[3])
+local speaker = redis.call('SREM', KEYS[10], ARGV[1])
+local hand = redis.call('ZREM', KEYS[11], ARGV[1])
+redis.call('DEL', KEYS[12], KEYS[13])
 if redis.call('GET', KEYS[4]) == ARGV[3] then
     redis.call('DEL', KEYS[4], KEYS[5], KEYS[6], KEYS[7], KEYS[8], KEYS[9])
 end
-return 0
+return speaker * 2 + hand
 ";
 
 /// Takes a seat's `joined_at` (read and deleted in one step, so two leaves
@@ -355,6 +367,25 @@ pub async fn note_voice_seconds(channel: &UserVoiceChannel, user_id: &str) {
 
 pub async fn delete_voice_state(channel: &UserVoiceChannel, user_id: &str) -> Result<()> {
     note_voice_seconds(channel, user_id).await;
+    let left = delete_voice_seat(channel, user_id).await?;
+    // the stage follows at once: no speaker who already left stays listed
+    if left > 0 {
+        EventV1::StageUpdate {
+            id: channel.id.clone(),
+            data: v0::StageChange {
+                speakers_removed: if left & 2 != 0 { vec![user_id.to_string()] } else { vec![] },
+                hands_lowered: if left & 1 != 0 { vec![user_id.to_string()] } else { vec![] },
+                ..Default::default()
+            },
+        }
+        .p(channel.id.clone())
+        .await;
+    }
+    Ok(())
+}
+
+/// Drop the seat; bit 2: was a stage speaker, bit 1: had a hand raised
+async fn delete_voice_seat(channel: &UserVoiceChannel, user_id: &str) -> Result<i64> {
     let unique_key = format!(
         "{}:{}",
         &user_id,
@@ -363,7 +394,7 @@ pub async fn delete_voice_state(channel: &UserVoiceChannel, user_id: &str) -> Re
 
     cmd("EVAL")
         .arg(DELETE_VOICE_STATE_SCRIPT)
-        .arg(9)
+        .arg(13)
         .arg(format!("vc_members:{}", &channel.id))
         .arg(format!("vc:{user_id}"))
         .arg(voice_session_key(&channel.id, user_id))
@@ -373,10 +404,16 @@ pub async fn delete_voice_state(channel: &UserVoiceChannel, user_id: &str) -> Re
         .arg(format!("is_receiving:{unique_key}"))
         .arg(format!("screensharing:{unique_key}"))
         .arg(format!("camera:{unique_key}"))
+        // a stage seat (speaker or raised hand) goes with the voice seat
+        .arg(stage::speakers_key(&channel.id))
+        .arg(stage::hands_key(&channel.id))
+        // and so does the preview of their screen share
+        .arg(preview::preview_key(&channel.id, user_id))
+        .arg(preview::cooldown_key(&channel.id, user_id))
         .arg(user_id)
         .arg(channel)
         .arg(&channel.id)
-        .query_async::<_, ()>(&mut get_connection().await?.into_inner())
+        .query_async(&mut get_connection().await?.into_inner())
         .await
         .to_internal_error()
 }
@@ -442,10 +479,18 @@ pub async fn delete_channel_voice_state(
     let mut pipeline = Pipeline::new();
     pipeline.del(format!("vc_members:{}", &channel.id));
     pipeline.del(format!("node:{}", &channel.id));
+    // the room is gone: so is its stage
+    pipeline.del(stage::topic_key(&channel.id));
+    pipeline.del(stage::speakers_key(&channel.id));
+    pipeline.del(stage::hands_key(&channel.id));
 
     for user_id in user_ids {
         let unique_key = format!("{user_id}:{parent_id}");
 
+        pipeline.del(&[
+            preview::preview_key(&channel.id, user_id),
+            preview::cooldown_key(&channel.id, user_id),
+        ]);
         pipeline.srem(format!("vc:{user_id}"), channel).del(&[
             format!("joined_at:{unique_key}"),
             format!("is_publishing:{unique_key}"),
@@ -520,6 +565,13 @@ pub async fn update_voice_state(
 
     if let Some(screensharing) = &partial.screensharing {
         pipeline.set(format!("screensharing:{unique_key}"), screensharing);
+        // a share that stopped has no preview
+        if !screensharing {
+            pipeline.del(&[
+                preview::preview_key(&channel.id, user_id),
+                preview::cooldown_key(&channel.id, user_id),
+            ]);
+        }
     }
 
     pipeline
@@ -707,7 +759,13 @@ pub async fn sync_user_voice_permissions(
 
         let server_can_publish = member.as_ref().is_none_or(|member| member.can_publish);
         let server_can_receive = member.as_ref().is_none_or(|member| member.can_receive);
-        let sources = get_allowed_sources(&limits, permissions, server_can_publish);
+        let is_stage = is_stage_channel(channel);
+        let is_speaker = is_stage && is_stage_speaker(channel_id, &user.id).await?;
+        let sources = stage_sources(
+            get_allowed_sources(&limits, permissions, server_can_publish),
+            is_stage,
+            is_speaker,
+        );
         let can_publish = !sources.is_empty();
         let can_listen = server_can_receive
             && permissions.has_channel_permission(ChannelPermission::Listen);
@@ -733,7 +791,13 @@ pub async fn sync_user_voice_permissions(
                 },
                 track_source_ids(&sources),
             )
-            .await?;
+            .await
+            // callers tell a voice server that can't be reached from a
+            // database error by this type
+            .map_err(|error| {
+                log::warn!("LiveKit did not take new permissions for {}: {error:?}", user.id);
+                create_error!(LiveKitUnavailable)
+            })?;
 
         if update_event != before {
             EventV1::UserVoiceStateUpdate {

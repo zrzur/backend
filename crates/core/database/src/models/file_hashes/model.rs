@@ -50,8 +50,11 @@ auto_derived!(
         },
         /// File is a video with specific dimensions
         Video { width: isize, height: isize },
-        /// File is audio
-        Audio,
+        /// File is audio; soundboard sounds carry their measured length
+        Audio {
+            #[serde(skip_serializing_if = "Option::is_none", default)]
+            duration_ms: Option<u32>,
+        },
     }
 );
 

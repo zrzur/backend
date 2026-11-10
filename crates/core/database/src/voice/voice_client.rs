@@ -77,8 +77,15 @@ impl VoiceClient {
         let limits = user.limits().await;
         let (server_can_publish, server_can_receive) =
             super::member_voice_flags(db, channel, &user.id).await?;
-        let allowed_sources =
-            get_allowed_sources(&limits, permissions, server_can_publish);
+        // On a stage only speakers publish: the audience gets a token that
+        // can subscribe but never publish, so its seat costs no tracks
+        let is_stage = super::is_stage_channel(channel);
+        let is_speaker = is_stage && super::is_stage_speaker(channel.id(), &user.id).await?;
+        let allowed_sources = super::stage_sources(
+            get_allowed_sources(&limits, permissions, server_can_publish),
+            is_stage,
+            is_speaker,
+        );
         let can_publish = !allowed_sources.is_empty();
         let can_subscribe = server_can_receive
             && permissions.has_channel_permission(ChannelPermission::Listen);

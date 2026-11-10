@@ -28,6 +28,13 @@ mod permissions_set;
 mod permissions_set_member;
 mod permissions_set_default;
 mod permissions_sync;
+mod soundboard_play;
+mod stage;
+mod stream_preview;
+#[cfg(test)]
+mod stream_preview_tests;
+#[cfg(test)]
+mod stage_tests;
 mod threads;
 mod typing;
 mod voice_join;
@@ -77,6 +84,16 @@ pub fn routes() -> (Vec<Route>, OpenApi) {
         group_remove_member::remove_member,
         voice_join::call,
         voice_stop_ring::stop_ring,
+        soundboard_play::play_sound,
+        stream_preview::set_preview,
+        stream_preview::fetch_preview,
+        stage::fetch_stage,
+        stage::edit_stage,
+        stage::end_stage,
+        stage::raise_hand,
+        stage::lower_hand,
+        stage::add_speaker,
+        stage::remove_speaker,
         permissions_set::set_role_permissions,
         permissions_set_member::set_member_permissions,
         permissions_set_default::set_default_channel_permissions,

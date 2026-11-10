@@ -8,7 +8,7 @@ use revolt_models::v0::{
     FieldsWebhook, Member, MemberCompositeKey, Message, PartialChannel, PartialEmoji,
     PartialMember, PartialMessage, PartialRole, PartialServer, PartialUser, PartialUserVoiceState,
     PartialWebhook, PolicyChange, PollAnswerCount, RemovalIntention, Report, Server, ServerEvent,
-    User, UserSettings, UserVoiceState, Webhook,
+    SoundboardSound, User, UserSettings, UserVoiceState, Webhook,
 };
 
 use crate::{Account, Database, Session, amqp::get_amqp};
@@ -333,6 +333,16 @@ pub enum EventV1 {
         id: String,
     },
 
+    /// New soundboard sound (sent to the server)
+    SoundboardSoundCreate(SoundboardSound),
+    /// A soundboard sound changed (the whole sound)
+    SoundboardSoundUpdate(SoundboardSound),
+    /// A soundboard sound was removed
+    SoundboardSoundDelete {
+        id: String,
+        server: String,
+    },
+
     /// New report
     ReportCreate(Report),
     /// New channel
@@ -475,6 +485,17 @@ pub enum EventV1 {
         from: String,
         to: String,
         token: String,
+    },
+    /// The live state of a stage changed (topic, speakers or raised hands)
+    StageUpdate {
+        id: String,
+        data: revolt_models::v0::StageChange,
+    },
+    /// Someone played a soundboard sound in a voice channel
+    SoundboardPlay {
+        channel_id: String,
+        sound_id: String,
+        user: String,
     },
     /// User's active slowmodes
     UserSlowmodes {

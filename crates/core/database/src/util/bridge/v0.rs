@@ -547,7 +547,7 @@ impl From<crate::Metadata> for Metadata {
                 width: width as usize,
                 height: height as usize,
             },
-            crate::Metadata::Audio => Metadata::Audio,
+            crate::Metadata::Audio { duration_ms } => Metadata::Audio { duration_ms },
         }
     }
 }
@@ -572,7 +572,7 @@ impl From<Metadata> for crate::Metadata {
                 width: width as isize,
                 height: height as isize,
             },
-            Metadata::Audio => crate::Metadata::Audio,
+            Metadata::Audio { duration_ms } => crate::Metadata::Audio { duration_ms },
         }
     }
 }
@@ -1820,6 +1820,7 @@ impl From<crate::VoiceInformation> for VoiceInformation {
     fn from(value: crate::VoiceInformation) -> Self {
         VoiceInformation {
             max_users: value.max_users,
+            stage: value.stage,
         }
     }
 }
@@ -1828,6 +1829,7 @@ impl From<VoiceInformation> for crate::VoiceInformation {
     fn from(value: VoiceInformation) -> Self {
         crate::VoiceInformation {
             max_users: value.max_users,
+            stage: value.stage,
         }
     }
 }
@@ -1969,6 +1971,15 @@ impl From<crate::AuditLogEntryAction> for AuditLogEntryAction {
             },
             crate::AuditLogEntryAction::EmojiDelete { emoji, name } => {
                 AuditLogEntryAction::EmojiDelete { emoji, name }
+            }
+            crate::AuditLogEntryAction::SoundboardSoundCreate { sound, name } => {
+                AuditLogEntryAction::SoundboardSoundCreate { sound, name }
+            }
+            crate::AuditLogEntryAction::SoundboardSoundDelete { sound, name } => {
+                AuditLogEntryAction::SoundboardSoundDelete { sound, name }
+            }
+            crate::AuditLogEntryAction::StageEnd { channel } => {
+                AuditLogEntryAction::StageEnd { channel }
             }
             crate::AuditLogEntryAction::BotAdd {
                 bot,
@@ -2405,6 +2416,20 @@ impl From<ForumTag> for crate::ForumTag {
             id: value.id,
             name: value.name,
             emoji: value.emoji,
+        }
+    }
+}
+
+impl From<crate::SoundboardSound> for SoundboardSound {
+    fn from(value: crate::SoundboardSound) -> Self {
+        SoundboardSound {
+            id: value.id,
+            server: value.server,
+            creator_id: value.creator_id,
+            name: value.name,
+            emoji: value.emoji,
+            duration_ms: value.duration_ms,
+            volume: value.volume,
         }
     }
 }

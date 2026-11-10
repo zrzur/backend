@@ -484,7 +484,7 @@ mod test {
                 name: "Voice".to_string(),
                 description: None,
                 nsfw: Some(false),
-                voice: Some(v0::VoiceInformation { max_users }),
+                voice: Some(v0::VoiceInformation { max_users, stage: false }),
                 announcement: None,
                 category: None,
                 private: None,

@@ -204,6 +204,8 @@ pub enum Tag {
     decorations,
     /// Community profile effects
     effects,
+    /// Soundboard sounds (short audio clips)
+    sounds,
 }
 
 /// Request body for upload
@@ -244,6 +246,7 @@ struct UploadQuery {
 /// | emojis | 500 KB | 40 MP or 10,000px | Image |
 /// | decorations | 2.5 MB | 40 MP or 10,000px | PNG / APNG / GIF / WebP |
 /// | effects | 2 MB | 1024px | Animated, one play, transparent PNG / GIF / WebP |
+/// | sounds | 512 KB, 5.2 s | - | MP3 / OGG / WAV audio |
 ///
 /// `decorations` and `effects` also take a WebM of up to 8 MB. It is turned
 /// into an animated WebP here and checked as one; the WebM is never stored.
@@ -289,10 +292,7 @@ async fn upload_file(
 
     // Get user's file upload limits
     let limits = user.limits().await;
-    let mut size_limit = *limits
-        .file_upload_size_limit
-        .get(tag.clone().into())
-        .expect("size limit");
+    let mut size_limit = size_limit_for(&limits.file_upload_size_limit, &tag);
 
     // A supercharged server lets every member send bigger attachments
     if matches!(tag, Tag::attachments) {
@@ -350,6 +350,28 @@ async fn upload_webhook_file(
         .get("attachments")
         .expect("size limit");
     store_upload(&db, Tag::attachments, file, &webhook.id, size_limit).await
+}
+
+/// Size limit of a tag. A limits table written before soundboard sounds
+/// existed has no `sounds` entry: those get the default instead of a panic.
+fn size_limit_for(limits: &std::collections::HashMap<String, usize>, tag: &Tag) -> usize {
+    let name: &'static str = tag.clone().into();
+    match limits.get(name) {
+        Some(limit) => *limit,
+        None if matches!(tag, Tag::sounds) => SOUND_SIZE_LIMIT,
+        None => panic!("size limit"),
+    }
+}
+
+/// Size limit of a soundboard sound when the config names none
+const SOUND_SIZE_LIMIT: usize = 512_000;
+
+/// Audio a soundboard plays in every browser
+pub(crate) fn is_sound_type(mime_type: &str) -> bool {
+    matches!(
+        mime_type,
+        "audio/mpeg" | "audio/ogg" | "audio/wav" | "audio/x-wav" | "audio/vnd.wave"
+    )
 }
 
 /// Images whose header claims more pixels than the limits are refused before
@@ -464,8 +486,8 @@ async fn store_upload(
         hasher.finalize()
     };
 
-    // Generate an ID for this file
-    let id = if matches!(tag, Tag::emojis) {
+    // Generate an ID for this file (sorted by time for emojis and sounds)
+    let id = if matches!(tag, Tag::emojis | Tag::sounds) {
         ulid::Ulid::new().to_string()
     } else {
         nanoid::nanoid!(42)
@@ -521,8 +543,33 @@ async fn store_upload(
         .map_err(|_| create_error!(InternalError))?
     };
 
+    // Soundboard sounds: audio a browser plays, nothing else, and short. The
+    // length is measured here (ffprobe) and kept with the file, so the API
+    // never has to trust the one a client sends.
+    if matches!(tag, Tag::sounds)
+        && (!matches!(metadata, Metadata::Audio { .. }) || !is_sound_type(mime_type))
+    {
+        return Err(create_error!(FileTypeNotAllowed));
+    }
+    let metadata = if matches!(tag, Tag::sounds) {
+        let bytes = buf.len() as u64;
+        let duration_ms = crate::sound::measure(contents.path(), bytes, mime_type)
+            .await
+            .map_err(|refusal| {
+                revolt_result::failed_validation(vec![revolt_result::ValidationProblem::new(
+                    "file",
+                    refusal.code(),
+                )])
+            })?;
+        Metadata::Audio {
+            duration_ms: Some(duration_ms),
+        }
+    } else {
+        metadata
+    };
+
     // Block non-images for non-attachment uploads
-    if !matches!(tag, Tag::attachments) && !matches!(metadata, Metadata::Image { .. }) {
+    if !matches!(tag, Tag::attachments | Tag::sounds) && !matches!(metadata, Metadata::Image { .. }) {
         return Err(create_error!(FileTypeNotAllowed));
     }
 
@@ -1121,5 +1168,36 @@ mod pixel_limit_tests {
     fn zero_means_no_limit() {
         let none = FilesLimit { max_mega_pixels: 0, max_pixel_side: 0, ..limit() };
         assert!(pixels_allowed(50_000, 50_000, &none));
+    }
+}
+
+#[cfg(test)]
+mod sound_tests {
+    use super::{is_sound_type, size_limit_for, Tag, SOUND_SIZE_LIMIT};
+    use std::collections::HashMap;
+
+    #[test]
+    fn sounds_are_audio_a_browser_plays() {
+        for mime in ["audio/mpeg", "audio/ogg", "audio/wav", "audio/x-wav"] {
+            assert!(is_sound_type(mime), "{mime}");
+        }
+        for mime in ["video/webm", "audio/x-flac", "audio/midi", "image/png", "text/plain"] {
+            assert!(!is_sound_type(mime), "{mime}");
+        }
+    }
+
+    #[test]
+    fn an_old_limits_table_still_takes_sounds() {
+        let old = HashMap::from([("emojis".to_string(), 500_000)]);
+        assert_eq!(size_limit_for(&old, &Tag::sounds), SOUND_SIZE_LIMIT);
+        assert_eq!(size_limit_for(&old, &Tag::emojis), 500_000);
+        let new = HashMap::from([("sounds".to_string(), 300_000)]);
+        assert_eq!(size_limit_for(&new, &Tag::sounds), 300_000);
+    }
+
+    #[test]
+    fn the_shipped_config_limits_sounds_everywhere() {
+        let toml = include_str!("../../../core/config/Revolt.toml");
+        assert_eq!(toml.matches("sounds = 512_000").count(), 3);
     }
 }

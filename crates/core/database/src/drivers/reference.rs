@@ -32,6 +32,7 @@ database_derived!(
         pub interactions: Arc<Mutex<HashMap<String, crate::Interaction>>>,
         pub oauth: Arc<Mutex<crate::ReferenceOAuth>>,
         pub emojis: Arc<Mutex<HashMap<String, Emoji>>>,
+        pub soundboard_sounds: Arc<Mutex<HashMap<String, crate::SoundboardSound>>>,
         pub discover_requests: Arc<Mutex<HashMap<(DiscoverRequestType, String), DiscoverRequest>>>,
         pub discover_bans: Arc<Mutex<HashMap<String, DiscoverBan>>>,
         pub community_items: Arc<Mutex<HashMap<String, CommunityItem>>>,

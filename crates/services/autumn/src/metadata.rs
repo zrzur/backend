@@ -58,7 +58,7 @@ pub fn generate_metadata(f: &NamedTempFile, mime_type: &str) -> Metadata {
             })
             .unwrap_or_default()
     } else if mime_type.starts_with("audio/") {
-        Metadata::Audio
+        Metadata::Audio { duration_ms: None }
     } else if mime_type == "text/plain" || mime_type == "plain/text" {
         Metadata::Text
     } else {
