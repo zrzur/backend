@@ -76,8 +76,10 @@ impl Zone {
         let zone = std::fs::read(format!("{dir}/{name}"))
             .ok()
             .and_then(|bytes| Zone::parse(&bytes));
-        if let Ok(mut map) = cache().lock() {
-            map.insert(name.to_string(), zone.clone());
+        // only zones that exist are kept: names come from requests, and
+        // unknown ones would fill memory
+        if let (Some(found), Ok(mut map)) = (&zone, cache().lock()) {
+            map.insert(name.to_string(), Some(found.clone()));
         }
         zone
     }
@@ -324,6 +326,15 @@ fn parse_posix(text: &str) -> Option<PosixRule> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn unknown_zone_names_are_not_cached() {
+        for n in 0..3 {
+            assert!(super::Zone::load(&format!("No/Such_Zone_{n}")).is_none());
+        }
+        let cache = super::cache().lock().unwrap();
+        assert!(!cache.keys().any(|name| name.starts_with("No/Such_Zone_")));
+    }
+
     use super::*;
 
     fn utc(y: i64, mo: u32, d: u32, h: i64, mi: i64) -> i64 {

@@ -296,7 +296,51 @@ end
 return 0
 ";
 
+/// Takes a seat's `joined_at` (read and deleted in one step, so two leaves
+/// count once) and adds the seconds to the server's pending voice time,
+/// which crond moves into the server's insights. Only while the per-server
+/// key points at this channel, as the delete below.
+const NOTE_VOICE_SECONDS_SCRIPT: &str = r"
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
+local joined = redis.call('GETDEL', KEYS[2])
+if not joined then return 0 end
+local seconds = math.floor((tonumber(ARGV[2]) - tonumber(joined)) / 1000)
+if seconds <= 0 then return 0 end
+redis.call('HINCRBY', KEYS[3], math.floor(tonumber(ARGV[2]) / 3600000), seconds)
+redis.call('SADD', KEYS[4], ARGV[3])
+return seconds
+";
+
+/// Every way out of a server voice seat (leave, kick, move, reconcile,
+/// stale state) goes through `delete_voice_state`, so the time is counted
+/// here. A failure only loses the time, never the delete.
+async fn note_voice_seconds(channel: &UserVoiceChannel, user_id: &str) {
+    let Some(server) = channel.server_id.as_deref() else {
+        return;
+    };
+    let Ok(connection) = get_connection().await else {
+        return;
+    };
+    let unique_key = format!("{user_id}:{server}");
+    let now = Timestamp::now_utc()
+        .duration_since(Timestamp::UNIX_EPOCH)
+        .whole_milliseconds() as i64;
+    let _ = cmd("EVAL")
+        .arg(NOTE_VOICE_SECONDS_SCRIPT)
+        .arg(4)
+        .arg(&unique_key)
+        .arg(format!("joined_at:{unique_key}"))
+        .arg(crate::voice_pending_key(server))
+        .arg(crate::VOICE_PENDING_SERVERS)
+        .arg(&channel.id)
+        .arg(now)
+        .arg(server)
+        .query_async::<_, i64>(&mut connection.into_inner())
+        .await;
+}
+
 pub async fn delete_voice_state(channel: &UserVoiceChannel, user_id: &str) -> Result<()> {
+    note_voice_seconds(channel, user_id).await;
     let unique_key = format!(
         "{}:{}",
         &user_id,

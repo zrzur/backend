@@ -2764,13 +2764,19 @@ pub async fn create_server_event_indexes(db: &crate::mongodb::Database) {
     }
 }
 
-/// Server insights: a server's days for its page, and the days crond closes
-/// and deletes. Only indexes (the collection is made by its first write);
+/// Server insights: a server's days for its page, the days crond deletes,
+/// and the few open days crond closes (a partial index: closed rows are not
+/// in it). Only indexes (the collection is made by its first write);
 /// creating an index that exists does nothing, so this is safe to run twice.
 pub async fn create_server_insight_indexes(db: &crate::mongodb::Database) {
     for index in [
         doc! { "key": { "server": 1_i32, "day": 1_i32 }, "name": "server_day" },
         doc! { "key": { "day": 1_i32 }, "name": "day" },
+        doc! {
+            "key": { "open": 1_i32, "day": 1_i32 },
+            "name": "open_day",
+            "partialFilterExpression": { "open": true },
+        },
     ] {
         db.run_command(doc! { "createIndexes": "server_insights", "indexes": [index] })
             .await
@@ -3602,7 +3608,7 @@ mod server_insight_index_tests {
             .try_collect()
             .await
             .unwrap();
-        for name in ["server_day", "day"] {
+        for name in ["server_day", "day", "open_day"] {
             let count = indexes
                 .iter()
                 .filter(|index| index.options.as_ref().and_then(|o| o.name.as_deref()) == Some(name))

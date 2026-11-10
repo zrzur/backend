@@ -297,26 +297,6 @@ pub async fn ingress(
                 return Ok(EmptyResponse);
             }
 
-            // the minutes spent go to the server's insights, at the hour they
-            // leave (one Redis read and one counter per leave, never per minute)
-            if let Some(server) = server_id.as_deref() {
-                if let Ok(Some(state)) = get_voice_state(&voice_channel, user_id).await {
-                    let minutes = Timestamp::now_utc()
-                        .duration_since(state.joined_at)
-                        .whole_minutes();
-                    if minutes > 0 {
-                        revolt_database::ServerInsightDay::count(
-                            db,
-                            server,
-                            revolt_database::InsightCounter::VoiceMinutes(
-                                minutes.min(u32::MAX as i64) as u32,
-                            ),
-                        )
-                        .await;
-                    }
-                }
-            }
-
             delete_voice_state(&voice_channel, user_id).await?;
 
             // Dont send leave event when a user is moved

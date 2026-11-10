@@ -632,22 +632,14 @@ impl Server {
         }
     }
 
-    /// Keep the cached member count right through a join (+1) or a leave
-    /// (-1): it changes only when a count is cached, so the next read never
-    /// counts twice; it keeps its expiry. Errors are ignored (it is a cache).
-    pub async fn adjust_cached_member_count(server_id: &str, by: i64) {
-        const SCRIPT: &str = "if redis.call('EXISTS', KEYS[1]) == 1 then \
-            return redis.call('INCRBY', KEYS[1], ARGV[1]) end return nil";
-        let Ok(connection) = get_connection().await else {
-            return;
-        };
-        let _ = redis_kiss::redis::cmd("EVAL")
-            .arg(SCRIPT)
-            .arg(1)
-            .arg(format!("member_count:{server_id}"))
-            .arg(by)
-            .query_async::<_, Option<i64>>(&mut connection.into_inner())
-            .await;
+    /// Drop the cached member count after a join or a leave, so the next
+    /// read counts again (one indexed count). Errors are ignored (a cache).
+    pub async fn forget_cached_member_count(server_id: &str) {
+        if let Ok(mut redis) = get_connection().await {
+            let _ = redis
+                .del::<_, ()>(format!("member_count:{server_id}"))
+                .await;
+        }
     }
 
     /// Gets an approximate count of the members online right now, for

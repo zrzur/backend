@@ -1,8 +1,9 @@
 //! Server insights: how a server is doing, as daily counts for its managers.
 //!
-//! Only aggregated numbers leave the server. Per-channel message counts of
-//! 1 to 4 are sent as `null` ("fewer than 5") so one person's activity in a
-//! small channel can not be read off the list.
+//! Only aggregated numbers leave the server. Counts that could point at one
+//! person are sent as `null` ("fewer than 5") when they are 1 to 4: per
+//! channel messages, active members and voice minutes. Messages count only
+//! in channels the viewer can see, daily totals included.
 
 #[cfg(feature = "validator")]
 use validator::Validate;
@@ -36,12 +37,28 @@ auto_derived!(
         /// Members at the end of the day (today's count, less the joins and
         /// plus the leaves of the days after)
         pub members: u32,
-        /// Messages sent (system messages not counted)
+        /// Messages sent in channels the viewer can see (system messages
+        /// not counted)
         pub messages: u32,
-        /// Distinct people who sent a message that day (counted per UTC day)
-        pub active_members: u32,
-        /// Minutes spent in the server's voice channels
-        pub voice_minutes: u32,
+        /// Distinct people who sent a message that day (counted per UTC day,
+        /// bots left out; an estimate); `null` for 1 to 4
+        pub active_members: Option<u32>,
+        /// Minutes spent in the server's voice channels; `null` for 1 to 4
+        pub voice_minutes: Option<u32>,
+    }
+
+    /// The whole range at once
+    pub struct ServerInsightsTotals {
+        /// People who joined
+        pub joins: u32,
+        /// People who left, were kicked or banned
+        pub leaves: u32,
+        /// Messages sent in channels the viewer can see
+        pub messages: u32,
+        /// Minutes in voice; `null` for 1 to 4
+        pub voice_minutes: Option<u32>,
+        /// Active members on an average day, rounded; `null` for 1 to 4
+        pub active_members: Option<u32>,
     }
 
     /// Where the joins of the range came from
@@ -73,9 +90,15 @@ auto_derived!(
         pub time_zone: String,
         /// One row per day, oldest first, the last one is today
         pub rows: Vec<ServerInsightsDay>,
+        /// The whole range
+        pub totals: ServerInsightsTotals,
         /// Where the joins of the range came from
         pub join_sources: ServerInsightsJoinSources,
         /// Up to 10 channels with the most messages that the viewer can see
         pub top_channels: Vec<ServerInsightsChannel>,
+        /// The day counting started on this Zrzur (YYYY-MM-DD, the viewer's
+        /// time), when known: nothing before it was counted
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub counted_since: Option<String>,
     }
 );

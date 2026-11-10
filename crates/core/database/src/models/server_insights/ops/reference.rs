@@ -12,6 +12,15 @@ fn add(map: &mut BTreeMap<String, u32>, key: impl Into<String>, by: u32) {
     *slot = slot.saturating_add(by);
 }
 
+fn new_row(server: &str, day: i64) -> ServerInsightDay {
+    ServerInsightDay {
+        id: ServerInsightDay::key(server, day),
+        server: server.to_string(),
+        day,
+        ..Default::default()
+    }
+}
+
 #[async_trait]
 impl AbstractServerInsights for ReferenceDb {
     async fn add_server_insight(
@@ -25,19 +34,14 @@ impl AbstractServerInsights for ReferenceDb {
         let mut rows = self.server_insights.lock().await;
         let row = rows
             .entry(ServerInsightDay::key(server, day))
-            .or_insert_with(|| ServerInsightDay {
-                id: ServerInsightDay::key(server, day),
-                server: server.to_string(),
-                day,
-                ..Default::default()
-            });
+            .or_insert_with(|| new_row(server, day));
         match counter {
             InsightCounter::Join(source) => {
                 add(&mut row.joins, slot, 1);
                 add(&mut row.sources, source.key(), 1);
             }
             InsightCounter::Leave => add(&mut row.leaves, slot, 1),
-            InsightCounter::VoiceMinutes(minutes) => add(&mut row.voice, slot, *minutes),
+            InsightCounter::VoiceSeconds(seconds) => add(&mut row.voice, slot, *seconds),
         }
         Ok(())
     }
@@ -70,42 +74,54 @@ impl AbstractServerInsights for ReferenceDb {
         counts: &InsightHour,
     ) -> Result<bool> {
         let day = hour.div_euclid(24);
-        let key = ServerInsightDay::key(server, day);
         let mut rows = self.server_insights.lock().await;
-        let row = rows.entry(key.clone()).or_insert_with(|| ServerInsightDay {
-            id: key.clone(),
-            server: server.to_string(),
-            day,
-            ..Default::default()
-        });
+        let row = rows
+            .entry(ServerInsightDay::key(server, day))
+            .or_insert_with(|| new_row(server, day));
         let of_day = hour.rem_euclid(24);
         if row.hours.contains(&of_day) {
             return Ok(false);
         }
         row.hours.push(of_day);
-        add(&mut row.messages, of_day.to_string(), counts.messages);
+        row.open = true;
+        let per_channel = row.messages.entry(of_day.to_string()).or_default();
         for (channel, n) in &counts.channels {
-            add(&mut row.channels, channel.clone(), *n);
+            add(per_channel, channel.clone(), *n);
         }
-        // author ids of open days (in MongoDB an `authors` field of the row
-        // that is never read back)
-        let mut open = self.server_insight_authors.lock().await;
-        let ids = open.entry(key).or_default();
-        for author in &counts.authors {
-            if !ids.contains(author) {
-                ids.push(author.clone());
-            }
+        if let Some(active) = counts.active {
+            row.active = active;
         }
-        row.active = ids.len() as u32;
         Ok(true)
     }
 
-    async fn close_server_insight_days(&self, day: i64) -> Result<u64> {
+    async fn fetch_open_server_insight_days(
+        &self,
+        day: i64,
+        limit: i64,
+    ) -> Result<Vec<(String, i64)>> {
         let rows = self.server_insights.lock().await;
-        let mut open = self.server_insight_authors.lock().await;
-        let before = open.len();
-        open.retain(|key, _| rows.get(key).is_none_or(|row| row.day >= day));
-        Ok((before - open.len()) as u64)
+        Ok(rows
+            .values()
+            .filter(|row| row.open && row.day < day)
+            .take(limit.max(0) as usize)
+            .map(|row| (row.server.clone(), row.day))
+            .collect())
+    }
+
+    async fn close_server_insight_day(
+        &self,
+        server: &str,
+        day: i64,
+        active: Option<u32>,
+    ) -> Result<()> {
+        let mut rows = self.server_insights.lock().await;
+        if let Some(row) = rows.get_mut(&ServerInsightDay::key(server, day)) {
+            row.open = false;
+            if let Some(active) = active {
+                row.active = active;
+            }
+        }
+        Ok(())
     }
 
     async fn delete_server_insights_before(&self, day: i64) -> Result<u64> {
@@ -140,11 +156,17 @@ impl AbstractServerInsights for ReferenceDb {
     }
 
     async fn fetch_server_insight_cursor(&self) -> Result<Option<i64>> {
-        Ok(*self.server_insights_cursor.lock().await)
+        Ok(self.server_insights_cursor.lock().await.map(|(hour, _)| hour))
     }
 
-    async fn set_server_insight_cursor(&self, hour: i64) -> Result<()> {
-        *self.server_insights_cursor.lock().await = Some(hour);
+    async fn set_server_insight_cursor(&self, hour: i64, since: Option<i64>) -> Result<()> {
+        let mut cursor = self.server_insights_cursor.lock().await;
+        let kept = cursor.and_then(|(_, kept)| kept).or(since);
+        *cursor = Some((hour, kept));
         Ok(())
+    }
+
+    async fn fetch_server_insight_since(&self) -> Result<Option<i64>> {
+        Ok(self.server_insights_cursor.lock().await.and_then(|(_, since)| since))
     }
 }
