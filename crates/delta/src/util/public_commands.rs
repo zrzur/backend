@@ -18,7 +18,6 @@
 //! [`TTL`] old (a bot made private on one instance may still list its
 //! commands on another for that long; account deletion by crond relies on it).
 
-use std::num::NonZeroUsize;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
