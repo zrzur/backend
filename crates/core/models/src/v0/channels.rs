@@ -257,6 +257,51 @@ auto_derived!(
         #[cfg_attr(feature = "validator", validate(range(min = 1)))]
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
         pub max_users: Option<usize>,
+        /// Stage channel: speakers talk, everyone else listens and can
+        /// raise a hand
+        #[cfg_attr(
+            feature = "serde",
+            serde(skip_serializing_if = "crate::if_false", default)
+        )]
+        pub stage: bool,
+    }
+
+    /// Live state of a stage channel
+    #[derive(Default)]
+    pub struct StageState {
+        /// Topic of the talk, while the stage is live
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub topic: Option<String>,
+        /// Users who may speak
+        #[cfg_attr(feature = "serde", serde(default))]
+        pub speakers: Vec<String>,
+        /// Audience members with a raised hand, oldest first
+        #[cfg_attr(feature = "serde", serde(default))]
+        pub hands: Vec<String>,
+    }
+
+    /// A still of someone's screen share, taken by their client
+    pub struct StreamPreview {
+        /// The picture, base64 (JPEG or WebP, at most 20 KB)
+        pub image: String,
+        /// `image/jpeg` or `image/webp`
+        pub content_type: String,
+    }
+
+    /// A new still of your screen share
+    #[cfg_attr(feature = "validator", derive(validator::Validate))]
+    pub struct DataStreamPreview {
+        /// The picture, base64 (JPEG or WebP, at most 20 KB)
+        #[cfg_attr(feature = "validator", validate(length(min = 8, max = 26_668)))]
+        pub image: String,
+    }
+
+    /// Change the topic of a stage
+    #[cfg_attr(feature = "validator", derive(validator::Validate))]
+    pub struct DataEditStage {
+        /// New topic (1-120 characters); none clears it
+        #[cfg_attr(feature = "validator", validate(length(min = 1, max = 120)))]
+        pub topic: Option<String>,
     }
 
     /// Partial representation of a channel

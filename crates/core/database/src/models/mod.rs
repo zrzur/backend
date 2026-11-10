@@ -37,6 +37,7 @@ mod server_join_requests;
 mod server_members;
 mod servers;
 mod sessions;
+mod soundboard;
 mod trust_safety;
 mod user_settings;
 mod users;
@@ -80,6 +81,7 @@ pub use server_join_requests::*;
 pub use server_members::*;
 pub use servers::*;
 pub use sessions::*;
+pub use soundboard::*;
 pub use trust_safety::*;
 pub use user_settings::*;
 pub use users::*;
@@ -104,6 +106,7 @@ pub trait AbstractDatabase:
     + channel_unreads::AbstractChannelUnreads
     + channel_webhooks::AbstractWebhooks
     + emojis::AbstractEmojis
+    + soundboard::AbstractSoundboard
     + file_hashes::AbstractAttachmentHashes
     + files::AbstractAttachments
     + messages::AbstractMessages

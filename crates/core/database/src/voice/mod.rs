@@ -18,7 +18,11 @@ use revolt_models::v0::{self, PartialUserVoiceState, UserVoiceState};
 use revolt_permissions::{calculate_channel_permissions, ChannelPermission, PermissionValue};
 use revolt_result::{create_error, Result, ToRevoltError};
 
+mod preview;
+mod stage;
 mod voice_client;
+pub use preview::*;
+pub use stage::*;
 pub use voice_client::VoiceClient;
 
 async fn get_connection() -> Result<Conn> {
@@ -185,6 +189,11 @@ pub fn track_source_ids(sources: &[&str]) -> Vec<i32> {
         .collect()
 }
 
+/// Whether a channel is a stage (speakers and an audience)
+pub fn is_stage_channel(channel: &Channel) -> bool {
+    channel.voice().is_some_and(|voice| voice.stage)
+}
+
 /// Member voice flags. Non-server channels have no server mute/deafen.
 pub async fn member_voice_flags(
     db: &Database,
@@ -290,6 +299,8 @@ const DELETE_VOICE_STATE_SCRIPT: &str = r"
 redis.call('SREM', KEYS[1], ARGV[1])
 redis.call('SREM', KEYS[2], ARGV[2])
 redis.call('DEL', KEYS[3])
+redis.call('SREM', KEYS[10], ARGV[1])
+redis.call('ZREM', KEYS[11], ARGV[1])
 if redis.call('GET', KEYS[4]) == ARGV[3] then
     redis.call('DEL', KEYS[4], KEYS[5], KEYS[6], KEYS[7], KEYS[8], KEYS[9])
 end
@@ -305,7 +316,7 @@ pub async fn delete_voice_state(channel: &UserVoiceChannel, user_id: &str) -> Re
 
     cmd("EVAL")
         .arg(DELETE_VOICE_STATE_SCRIPT)
-        .arg(9)
+        .arg(11)
         .arg(format!("vc_members:{}", &channel.id))
         .arg(format!("vc:{user_id}"))
         .arg(voice_session_key(&channel.id, user_id))
@@ -315,6 +326,9 @@ pub async fn delete_voice_state(channel: &UserVoiceChannel, user_id: &str) -> Re
         .arg(format!("is_receiving:{unique_key}"))
         .arg(format!("screensharing:{unique_key}"))
         .arg(format!("camera:{unique_key}"))
+        // a stage seat (speaker or raised hand) goes with the voice seat
+        .arg(stage::speakers_key(&channel.id))
+        .arg(stage::hands_key(&channel.id))
         .arg(user_id)
         .arg(channel)
         .arg(&channel.id)
@@ -379,6 +393,10 @@ pub async fn delete_channel_voice_state(
     let mut pipeline = Pipeline::new();
     pipeline.del(format!("vc_members:{}", &channel.id));
     pipeline.del(format!("node:{}", &channel.id));
+    // the room is gone: so is its stage
+    pipeline.del(stage::topic_key(&channel.id));
+    pipeline.del(stage::speakers_key(&channel.id));
+    pipeline.del(stage::hands_key(&channel.id));
 
     for user_id in user_ids {
         let unique_key = format!("{user_id}:{parent_id}");
@@ -644,7 +662,13 @@ pub async fn sync_user_voice_permissions(
 
         let server_can_publish = member.as_ref().is_none_or(|member| member.can_publish);
         let server_can_receive = member.as_ref().is_none_or(|member| member.can_receive);
-        let sources = get_allowed_sources(&limits, permissions, server_can_publish);
+        let is_stage = is_stage_channel(channel);
+        let is_speaker = is_stage && is_stage_speaker(channel_id, &user.id).await?;
+        let sources = stage_sources(
+            get_allowed_sources(&limits, permissions, server_can_publish),
+            is_stage,
+            is_speaker,
+        );
         let can_publish = !sources.is_empty();
         let can_listen = server_can_receive
             && permissions.has_channel_permission(ChannelPermission::Listen);

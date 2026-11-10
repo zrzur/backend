@@ -1126,6 +1126,8 @@ impl State {
             | EventV1::VoiceChannelLeave { .. }
             | EventV1::VoiceChannelMove { .. }
             | EventV1::VoiceCallUpdate { .. }
+            | EventV1::StageUpdate { .. }
+            | EventV1::SoundboardPlay { .. }
             | EventV1::UserVoiceStateUpdate { .. } => {
                 return cache.has_intent(GatewayIntents::VOICE_STATES)
             }

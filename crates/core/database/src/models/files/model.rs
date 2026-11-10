@@ -83,6 +83,7 @@ auto_derived!(
         RoleIcon,
         CommunityItem,
         ServerEventCover,
+        SoundboardSound,
     }
 
     /// Information about what the file was used for
@@ -343,6 +344,25 @@ impl File {
             FileUsedFor {
                 id: parent.to_owned(),
                 object_type: FileUsedForType::ServerEventCover,
+            },
+            uploader_id.to_owned(),
+        )
+        .await
+    }
+
+    /// Use a file for a soundboard sound of a server
+    pub async fn use_soundboard_sound(
+        db: &Database,
+        id: &str,
+        server_id: &str,
+        uploader_id: &str,
+    ) -> Result<File> {
+        db.find_and_use_attachment(
+            id,
+            "sounds",
+            FileUsedFor {
+                id: server_id.to_owned(),
+                object_type: FileUsedForType::SoundboardSound,
             },
             uploader_id.to_owned(),
         )

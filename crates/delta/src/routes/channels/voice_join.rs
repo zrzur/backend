@@ -178,7 +178,7 @@ mod test {
                 name: "Voice".to_string(),
                 description: None,
                 nsfw: Some(false),
-                voice: Some(v0::VoiceInformation { max_users: None }),
+                voice: Some(v0::VoiceInformation { max_users: None, stage: false }),
                 announcement: None,
                 category: None,
                 private: None,

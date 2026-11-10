@@ -73,6 +73,13 @@ impl<'a> RatelimitResolver<Request<'a>> for DeltaRatelimits {
                 {
                     ("poll_votes", Some(id))
                 }
+                // soundboard: a small bucket per person, so a sound can't
+                // be spammed into a call (and doesn't slow down messages)
+                ("channels", Some(_), Method::Post) if extra == Some("soundboard") => {
+                    ("soundboard_play", None)
+                }
+                // stage hands and speakers: their own bucket per stage
+                ("channels", Some(id), _) if extra == Some("stage") => ("stage", Some(id)),
                 ("channels", Some(id), _) => {
                     if request.method() == Method::Post {
                         if let Some("messages") = extra {
@@ -164,6 +171,8 @@ impl<'a> RatelimitResolver<Request<'a>> for DeltaRatelimits {
             "poll_votes" => 10,
             "webhook_send" => 100,
             "channels" => 15,
+            "soundboard_play" => 4,
+            "stage" => 20,
             "servers" => 5,
             "member_list" => 15,
             "message_search" => 5,

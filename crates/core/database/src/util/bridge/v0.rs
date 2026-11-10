@@ -1778,6 +1778,7 @@ impl From<crate::VoiceInformation> for VoiceInformation {
     fn from(value: crate::VoiceInformation) -> Self {
         VoiceInformation {
             max_users: value.max_users,
+            stage: value.stage,
         }
     }
 }
@@ -1786,6 +1787,7 @@ impl From<VoiceInformation> for crate::VoiceInformation {
     fn from(value: VoiceInformation) -> Self {
         crate::VoiceInformation {
             max_users: value.max_users,
+            stage: value.stage,
         }
     }
 }
@@ -2363,6 +2365,20 @@ impl From<ForumTag> for crate::ForumTag {
             id: value.id,
             name: value.name,
             emoji: value.emoji,
+        }
+    }
+}
+
+impl From<crate::SoundboardSound> for SoundboardSound {
+    fn from(value: crate::SoundboardSound) -> Self {
+        SoundboardSound {
+            id: value.id,
+            server: value.server,
+            creator_id: value.creator_id,
+            name: value.name,
+            emoji: value.emoji,
+            duration_ms: value.duration_ms,
+            volume: value.volume,
         }
     }
 }

@@ -123,8 +123,14 @@ pub enum ChannelPermission {
     /// Every right in every channel of the server, whatever its overrides say
     Administrator = 1 << 46,
 
+    // * Soundboard
+    /// Play the server's soundboard sounds in a voice call
+    UseSoundboard = 1 << 47,
+    /// Add, change and remove the server's soundboard sounds
+    ManageSoundboard = 1 << 48,
+
     // * Misc. permissions
-    // % Bits 47 to 52: free area
+    // % Bits 49 to 52: free area
     // % Bits 53 to 64: do not use
 
     // * Grant all permissions
@@ -182,6 +188,7 @@ pub static DEFAULT_PERMISSION_SERVER: Lazy<u64> = Lazy::new(|| {
             + ChannelPermission::ChangeNickname
             + ChannelPermission::ChangeAvatar
             + ChannelPermission::UseExternalEmojis
+            + ChannelPermission::UseSoundboard
             + *THREAD_PERMISSIONS,
     )
 });

@@ -71,6 +71,8 @@ impl IntoResponse for Error {
             ErrorType::ForumsDisabled => StatusCode::FORBIDDEN,
             ErrorType::PluginsDisabled => StatusCode::FORBIDDEN,
             ErrorType::TooManyEmoji { .. } => StatusCode::BAD_REQUEST,
+            ErrorType::TooManySounds { .. } => StatusCode::BAD_REQUEST,
+            ErrorType::TooManySpeakers { .. } => StatusCode::BAD_REQUEST,
             ErrorType::TooManyCommunityItems { .. } => StatusCode::BAD_REQUEST,
             ErrorType::MissingPlatformPermission { .. } => StatusCode::FORBIDDEN,
             ErrorType::CommunityItemConflict => StatusCode::CONFLICT,

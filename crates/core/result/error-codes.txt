@@ -129,6 +129,8 @@ TooManyRoles
 TooManyServerEvents
 TooManyServerWebhooks
 TooManyServers
+TooManySounds
+TooManySpeakers
 TooManySupercharges
 TotpAlreadyEnabled
 UnknownApplication

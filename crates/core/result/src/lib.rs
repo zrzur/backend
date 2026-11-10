@@ -324,6 +324,14 @@ pub enum ErrorType {
     TooManyEmoji {
         max: usize,
     },
+    /// This server has as many soundboard sounds as it may have
+    TooManySounds {
+        max: usize,
+    },
+    /// This stage has as many speakers as it may have
+    TooManySpeakers {
+        max: usize,
+    },
     TooManyCommunityItems {
         max: usize,
     },

@@ -85,6 +85,8 @@ impl<'r> Responder<'r, 'static> for Error {
             ErrorType::ForumsDisabled => Status::Forbidden,
             ErrorType::PluginsDisabled => Status::Forbidden,
             ErrorType::TooManyEmoji { .. } => Status::BadRequest,
+            ErrorType::TooManySounds { .. } => Status::BadRequest,
+            ErrorType::TooManySpeakers { .. } => Status::BadRequest,
             ErrorType::TooManyCommunityItems { .. } => Status::BadRequest,
             ErrorType::MissingPlatformPermission { .. } => Status::Forbidden,
             ErrorType::CommunityItemConflict => Status::Conflict,

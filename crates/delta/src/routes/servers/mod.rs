@@ -37,6 +37,9 @@ mod server_create;
 mod server_delete;
 mod server_edit;
 mod server_fetch;
+mod soundboard;
+#[cfg(test)]
+mod soundboard_tests;
 
 #[cfg(test)]
 mod member_timeout_tests;
@@ -132,6 +135,10 @@ pub fn routes() -> (Vec<Route>, OpenApi) {
         category_permissions::set_category_role_permission,
         category_permissions::set_category_default_permission,
         emoji_list::list_emoji,
+        soundboard::list_sounds,
+        soundboard::create_sound,
+        soundboard::edit_sound,
+        soundboard::delete_sound,
         roles_edit_positions::edit_role_ranks,
         audit_log_query::query,
         message_search::search_server,
