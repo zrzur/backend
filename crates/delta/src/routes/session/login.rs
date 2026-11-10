@@ -3,12 +3,20 @@
 use std::time::Duration;
 
 use iso8601_timestamp::Timestamp;
+use revolt_config::config;
 use revolt_database::{
-    util::email::normalise_email,
+    util::{
+        captcha::check_captcha,
+        email::normalise_email,
+        login_limit::{clear_login_failures, count_login_failure, login_gate, LoginGate},
+        mfa_limit::{clear_mfa_failures, count_mfa_failure, mfa_is_paused},
+    },
     Account, Database, EmailVerification, MFATicket,
 };
 use revolt_models::v0;
-use revolt_result::{create_error, Result};
+use revolt_result::{create_error, ErrorType, Result};
+
+use crate::routes::safety::public_report::ClientAddress;
 use rocket::serde::json::Json;
 use rocket::State;
 use tokio::time::sleep;
@@ -20,6 +28,7 @@ use tokio::time::sleep;
 #[post("/login", data = "<data>")]
 pub async fn login(
     db: &State<Database>,
+    client: ClientAddress,
     data: Json<v0::DataLogin>,
 ) -> Result<Json<v0::ResponseLogin>> {
     // Random jitter from 0-1000ms
@@ -33,67 +42,73 @@ pub async fn login(
             email,
             password,
             friendly_name,
+            captcha,
         } => {
-            // Try to find the account we want
             let email_normalised = normalise_email(email);
 
+            // Many wrong passwords for this address: a captcha (when the
+            // server has one), or else a wait for the network they came
+            // from. Counted per address whether or not an account has it, so
+            // the answer tells nothing about accounts.
+            let captcha_enabled = !config().await.api.security.captcha.hcaptcha_key.is_empty();
+            match login_gate(&email_normalised, &client.0, captcha_enabled).await {
+                LoginGate::Open => {}
+                LoginGate::Captcha => check_captcha(captcha.as_deref()).await?,
+                LoginGate::Paused(_) => return Err(create_error!(LockedOut)),
+            }
+
             // Lookup the email in database
-            if let Some(mut account) = db
+            let Some(mut account) = db
                 .fetch_account_by_normalised_email(&email_normalised)
                 .await?
-            {
-                // Check for account lockout. A running lock is not extended
-                // by further attempts, or anyone could keep a known account
-                // locked for ever.
-                if let Some(lockout) = &account.lockout {
-                    if lockout.is_locked_at(Timestamp::now_utc()) {
-                        return Err(create_error!(LockedOut));
-                    }
-                }
-
-                // Verify the password is correct. Nothing else about the
-                // account is told before this passes (enumeration).
-                if let Err(err) = account.verify_password(&password) {
-                    db.bump_lockout_count(&account.id).await?;
-                    return Err(err);
-                }
-
-                // Make sure the account has been verified
-                if let EmailVerification::Pending { .. } = account.verification {
-                    return Err(create_error!(UnverifiedAccount));
-                }
-
-                // Check whether an MFA step is required
-                if account.mfa.is_active() {
-                    // Create a new ticket
-                    let mut ticket = MFATicket::new(account.id, false);
-                    ticket.populate(&account.mfa).await;
-                    ticket.save(db).await?;
-
-                    // Return applicable methods
-                    return Ok(Json(v0::ResponseLogin::MFA {
-                        ticket: ticket.token,
-                        allowed_methods: account
-                            .mfa
-                            .get_methods()
-                            .into_iter()
-                            .map(Into::into)
-                            .collect(),
-                    }));
-                }
-
-                // No MFA, clear lockout information if present
-                if account.lockout.is_some() {
-                    account.lockout = None;
-                    account.save(db).await?;
-                }
-
-                (account, friendly_name)
-            } else {
+            else {
                 // Same work and same answer as a wrong password
                 Account::spend_password_check_time(&password);
+                count_login_failure(&email_normalised, &client.0, captcha_enabled).await;
                 return Err(create_error!(InvalidCredentials));
+            };
+
+            // Verify the password is correct. Nothing else about the
+            // account is told before this passes (enumeration).
+            if let Err(err) = account.verify_password(&password) {
+                count_login_failure(&email_normalised, &client.0, captcha_enabled).await;
+                return Err(err);
             }
+            clear_login_failures(&email_normalised).await;
+
+            // Make sure the account has been verified
+            if let EmailVerification::Pending { .. } = account.verification {
+                return Err(create_error!(UnverifiedAccount));
+            }
+
+            // Check whether an MFA step is required
+            if account.mfa.is_active() {
+                // Create a new ticket
+                let mut ticket = MFATicket::new(account.id, false);
+                ticket.populate(&account.mfa).await;
+                ticket.save(db).await?;
+
+                // Return applicable methods
+                return Ok(Json(v0::ResponseLogin::MFA {
+                    ticket: ticket.token,
+                    allowed_methods: account
+                        .mfa
+                        .get_methods()
+                        .into_iter()
+                        .map(Into::into)
+                        .collect(),
+                }));
+            }
+
+            // The per-account lock of earlier releases is not used any more
+            // (only real accounts got it, so it told who has one): clear
+            // what is left of it
+            if account.lockout.is_some() {
+                account.lockout = None;
+                account.save(db).await?;
+            }
+
+            (account, friendly_name)
         }
         v0::DataLogin::MFA {
             mfa_ticket,
@@ -106,11 +121,11 @@ pub async fn login(
             // Find the corresponding account
             let mut account = db.fetch_account(&ticket.account_id).await?;
 
-            // Check for account lockout (not extended by more attempts)
-            if let Some(lockout) = &account.lockout {
-                if lockout.is_locked_at(Timestamp::now_utc()) {
-                    return Err(create_error!(LockedOut));
-                }
+            // Too many wrong answers for this account, here or at
+            // PUT /auth/mfa/ticket (five in fifteen minutes): pause,
+            // whichever ticket is asking
+            if mfa_is_paused(&account.id).await {
+                return Err(create_error!(LockedOut));
             }
 
             // Verify the MFA response
@@ -119,10 +134,12 @@ pub async fn login(
                     .consume_mfa_response(db, mfa_response, Some(ticket))
                     .await
                 {
-                    // MFA failures count towards lockout
-                    db.bump_lockout_count(&account.id).await?;
+                    if !matches!(err.error_type, ErrorType::DisallowedMFAMethod) {
+                        count_mfa_failure(&account.id).await;
+                    }
                     return Err(err);
                 }
+                clear_mfa_failures(&account.id).await;
             } else if !ticket.authorised {
                 return Err(create_error!(InvalidToken));
             }
@@ -171,8 +188,15 @@ pub async fn login(
 mod tests {
     use crate::{rocket, util::test::TestHarness};
     use iso8601_timestamp::Timestamp;
+    use revolt_config::overwrite_config;
     use revolt_database::{
-        events::client::EventV1, Account, EmailVerification, Lockout, MFATicket, Totp,
+        events::client::EventV1,
+        util::{
+            email::normalise_email,
+            login_limit::{clear_login_failures, LOGIN_STEP_UP_AFTER},
+            mfa_limit::clear_mfa_failures,
+        },
+        Account, EmailVerification, Lockout, MFATicket, Totp,
     };
     use revolt_models::v0;
     use revolt_result::{Error, ErrorType};
@@ -525,227 +549,6 @@ mod tests {
     }
 
     #[rocket::async_test]
-    async fn fail_locked_account() {
-        let harness = TestHarness::new().await;
-
-        let mut account = Account::new(
-            &harness.db,
-            "example@validemail.com".into(),
-            "password_insecure".into(),
-            false,
-        )
-        .await
-        .unwrap();
-
-        account.save(&harness.db).await.unwrap();
-
-        // Attempt 1
-        let res = harness
-            .client
-            .post("/auth/session/login")
-            .header(ContentType::JSON)
-            .body(
-                json!({
-                    "email": "example@validemail.com",
-                    "password": "wrong_password"
-                })
-                .to_string(),
-            )
-            .dispatch()
-            .await;
-
-        assert_eq!(res.status(), Status::Unauthorized);
-        assert!(matches!(
-            res.into_json::<Error>().await.unwrap().error_type,
-            ErrorType::InvalidCredentials,
-        ));
-
-        // Attempt 2
-        let res = harness
-            .client
-            .post("/auth/session/login")
-            .header(ContentType::JSON)
-            .body(
-                json!({
-                    "email": "example@validemail.com",
-                    "password": "wrong_password"
-                })
-                .to_string(),
-            )
-            .dispatch()
-            .await;
-
-        assert_eq!(res.status(), Status::Unauthorized);
-        assert!(matches!(
-            res.into_json::<Error>().await.unwrap().error_type,
-            ErrorType::InvalidCredentials,
-        ));
-
-        // Attempt 3
-        let res = harness
-            .client
-            .post("/auth/session/login")
-            .header(ContentType::JSON)
-            .body(
-                json!({
-                    "email": "example@validemail.com",
-                    "password": "wrong_password"
-                })
-                .to_string(),
-            )
-            .dispatch()
-            .await;
-
-        assert_eq!(res.status(), Status::Unauthorized);
-        assert!(matches!(
-            res.into_json::<Error>().await.unwrap().error_type,
-            ErrorType::InvalidCredentials,
-        ));
-
-        // Attempt 4: Locked Out
-        let res = harness
-            .client
-            .post("/auth/session/login")
-            .header(ContentType::JSON)
-            .body(
-                json!({
-                    "email": "example@validemail.com",
-                    "password": "password_insecure"
-                })
-                .to_string(),
-            )
-            .dispatch()
-            .await;
-
-        assert_eq!(res.status(), Status::Forbidden);
-        assert!(matches!(
-            res.into_json::<Error>().await.unwrap().error_type,
-            ErrorType::LockedOut,
-        ));
-        // Pretend it expired
-        account.lockout = Some(Lockout {
-            attempts: 9001,
-            expiry: Some(Timestamp::now_utc()),
-            last_attempt: None,
-        });
-
-        account.save(&harness.db).await.unwrap();
-
-        // Once it expires, we can log in.
-        let res = harness
-            .client
-            .post("/auth/session/login")
-            .header(ContentType::JSON)
-            .body(
-                json!({
-                    "email": "example@validemail.com",
-                    "password": "password_insecure"
-                })
-                .to_string(),
-            )
-            .dispatch()
-            .await;
-
-        assert_eq!(res.status(), Status::Ok);
-        assert!(serde_json::from_str::<v0::Session>(&res.into_string().await.unwrap()).is_ok());
-    }
-
-    async fn attempt(harness: &TestHarness, email: &str, password: &str) -> (Status, Option<ErrorType>) {
-        let res = harness
-            .client
-            .post("/auth/session/login")
-            .header(ContentType::JSON)
-            .body(json!({ "email": email, "password": password }).to_string())
-            .dispatch()
-            .await;
-        let status = res.status();
-        let error = res.into_json::<Error>().await.map(|e| e.error_type);
-        (status, error)
-    }
-
-    /// The whole ladder through the routes, so the atomic step of the MongoDB
-    /// driver is run too: locked at three, longer at four, cleared by a success.
-    #[rocket::async_test]
-    async fn three_wrong_attempts_lock_and_a_right_password_clears_it() {
-        let harness = TestHarness::new().await;
-        let (account, _, _) = harness.new_user().await;
-        let stored = |harness: &TestHarness| {
-            let (db, id) = (harness.db.clone(), account.id.clone());
-            async move { db.fetch_account(&id).await.unwrap().lockout }
-        };
-        let expire = |harness: &TestHarness| {
-            let (db, id) = (harness.db.clone(), account.id.clone());
-            async move {
-                let mut account = db.fetch_account(&id).await.unwrap();
-                let lockout = account.lockout.as_mut().expect("lockout");
-                lockout.expiry = Some(Timestamp::now_utc() + iso8601_timestamp::Duration::seconds(-1));
-                account.save(&db).await.unwrap();
-            }
-        };
-
-        for attempts in 1..=3 {
-            let (status, error) = attempt(&harness, &account.email, "wrong_password").await;
-            assert_eq!(status, Status::Unauthorized);
-            assert!(matches!(error, Some(ErrorType::InvalidCredentials)));
-            assert_eq!(stored(&harness).await.expect("lockout").attempts, attempts);
-        }
-        let lockout = stored(&harness).await.unwrap();
-        let minute = Timestamp::now_utc() + iso8601_timestamp::Duration::minutes(1);
-        assert!(lockout.is_locked_at(Timestamp::now_utc()));
-        assert!(!lockout.is_locked_at(minute));
-
-        // the right password does not open a running lock
-        let (status, error) = attempt(&harness, &account.email, "password_insecure").await;
-        assert_eq!(status, Status::Forbidden);
-        assert!(matches!(error, Some(ErrorType::LockedOut)));
-
-        // the fourth wrong attempt, once the lock has run out, locks for longer
-        expire(&harness).await;
-        let (status, _) = attempt(&harness, &account.email, "wrong_password").await;
-        assert_eq!(status, Status::Unauthorized);
-        let lockout = stored(&harness).await.unwrap();
-        assert_eq!(lockout.attempts, 4);
-        assert!(lockout.is_locked_at(minute));
-
-        // a success clears everything, on MongoDB too
-        expire(&harness).await;
-        let (status, _) = attempt(&harness, &account.email, "password_insecure").await;
-        assert_eq!(status, Status::Ok);
-        assert!(stored(&harness).await.is_none());
-
-        let (status, _) = attempt(&harness, &account.email, "wrong_password").await;
-        assert_eq!(status, Status::Unauthorized);
-        assert_eq!(stored(&harness).await.unwrap().attempts, 1);
-    }
-
-    #[rocket::async_test]
-    async fn wrong_attempts_do_not_extend_a_running_lock() {
-        let harness = TestHarness::new().await;
-        let (mut account, _, _) = harness.new_user().await;
-
-        let expiry = Timestamp::now_utc() + iso8601_timestamp::Duration::minutes(10);
-        account.lockout = Some(Lockout {
-            attempts: 5,
-            expiry: Some(expiry),
-            last_attempt: None,
-        });
-        account.save(&harness.db).await.unwrap();
-
-        for _ in 0..3 {
-            let (status, error) = attempt(&harness, &account.email, "wrong_password").await;
-            assert_eq!(status, Status::Forbidden);
-            assert!(matches!(error, Some(ErrorType::LockedOut)));
-        }
-
-        let after = harness.db.fetch_account(&account.id).await.unwrap();
-        let lockout = after.lockout.expect("lockout");
-        assert_eq!(lockout.attempts, 5);
-        // to the millisecond: MongoDB stores no finer
-        let unchanged = lockout.expiry.expect("expiry").duration_since(expiry).abs();
-        assert!(unchanged < iso8601_timestamp::Duration::milliseconds(1));
-    }
-
-    #[rocket::async_test]
     async fn login_tells_nothing_before_the_password_is_right() {
         let harness = TestHarness::new().await;
 
@@ -772,5 +575,206 @@ mod tests {
         assert_eq!(known.0, unknown.0);
         assert!(matches!(unknown.1, Some(ErrorType::InvalidCredentials)));
         assert!(matches!(known.1, Some(ErrorType::InvalidCredentials)));
+    }
+
+    async fn attempt(harness: &TestHarness, email: &str, password: &str) -> (Status, Option<ErrorType>) {
+        let res = harness
+            .client
+            .post("/auth/session/login")
+            .header(ContentType::JSON)
+            .body(json!({ "email": email, "password": password }).to_string())
+            .dispatch()
+            .await;
+        let status = res.status();
+        let error = res.into_json::<Error>().await.map(|e| e.error_type);
+        (status, error)
+    }
+
+    fn unknown_address() -> String {
+        format!("nobody_{}@validemail.com", TestHarness::rand_string().to_lowercase())
+    }
+
+    /// Ten wrong passwords pause the address for a minute, and an address
+    /// without an account answers exactly like one with an account.
+    #[rocket::async_test]
+    async fn ten_wrong_passwords_pause_known_and_unknown_addresses_alike() {
+        let harness = TestHarness::new().await;
+        let (account, _, _) = harness.new_user().await;
+        let unknown = unknown_address();
+
+        for _ in 0..LOGIN_STEP_UP_AFTER {
+            for email in [account.email.as_str(), unknown.as_str()] {
+                let (status, error) = attempt(&harness, email, "wrong_password").await;
+                assert_eq!(status, Status::Unauthorized);
+                assert!(matches!(error, Some(ErrorType::InvalidCredentials)));
+            }
+        }
+
+        // the right password waits too: nobody else can tell it was right
+        let known = attempt(&harness, &account.email, "password_insecure").await;
+        let other = attempt(&harness, &unknown, "password_insecure").await;
+        assert_eq!(known.0, Status::Forbidden);
+        assert!(matches!(known.1, Some(ErrorType::LockedOut)));
+        assert_eq!(other.0, known.0);
+        assert!(matches!(other.1, Some(ErrorType::LockedOut)));
+
+        clear_login_failures(&normalise_email(account.email.clone())).await;
+        clear_login_failures(&normalise_email(unknown)).await;
+    }
+
+    #[rocket::async_test]
+    async fn a_right_password_forgets_the_wrong_ones() {
+        let harness = TestHarness::new().await;
+        let (account, _, _) = harness.new_user().await;
+
+        for _ in 0..2 {
+            for _ in 0..LOGIN_STEP_UP_AFTER - 1 {
+                let (status, _) = attempt(&harness, &account.email, "wrong_password").await;
+                assert_eq!(status, Status::Unauthorized);
+            }
+            let (status, _) = attempt(&harness, &account.email, "password_insecure").await;
+            assert_eq!(status, Status::Ok);
+        }
+    }
+
+    /// With a captcha set up, many wrong passwords never lock the owner out:
+    /// the address asks for a captcha instead, for accounts and non-accounts
+    /// alike, and a fresh address needs none.
+    #[rocket::async_test]
+    async fn with_a_captcha_many_wrong_passwords_ask_for_one() {
+        overwrite_config(|config| {
+            config.api.security.captcha.hcaptcha_key =
+                "0x0000000000000000000000000000000000000000".to_string()
+        })
+        .await;
+        let harness = TestHarness::new().await;
+        let (account, _, _) = harness.new_user().await;
+        let (fresh, _, _) = harness.new_user().await;
+        let unknown = unknown_address();
+
+        for _ in 0..LOGIN_STEP_UP_AFTER {
+            for email in [account.email.as_str(), unknown.as_str()] {
+                let (status, error) = attempt(&harness, email, "wrong_password").await;
+                assert_eq!(status, Status::Unauthorized);
+                assert!(matches!(error, Some(ErrorType::InvalidCredentials)));
+            }
+        }
+
+        // from now on the captcha comes first, for wrong and right passwords
+        for password in ["wrong_password", "password_insecure"] {
+            for email in [account.email.as_str(), unknown.as_str()] {
+                let (status, error) = attempt(&harness, email, password).await;
+                assert_eq!(status, Status::BadRequest);
+                assert!(matches!(error, Some(ErrorType::CaptchaFailed)));
+            }
+        }
+
+        let (status, _) = attempt(&harness, &fresh.email, "password_insecure").await;
+        assert_eq!(status, Status::Ok);
+
+        clear_login_failures(&normalise_email(account.email.clone())).await;
+        clear_login_failures(&normalise_email(unknown)).await;
+    }
+
+    /// A lock written by an earlier release (only accounts had one, so it
+    /// told who has an account) no longer stops the right password
+    #[rocket::async_test]
+    async fn an_old_account_lock_is_ignored_and_cleared() {
+        let harness = TestHarness::new().await;
+        let (mut account, _, _) = harness.new_user().await;
+        account.lockout = Some(Lockout {
+            attempts: 5,
+            expiry: Some(Timestamp::now_utc() + iso8601_timestamp::Duration::minutes(10)),
+            last_attempt: None,
+        });
+        account.save(&harness.db).await.unwrap();
+
+        let (status, _) = attempt(&harness, &account.email, "password_insecure").await;
+        assert_eq!(status, Status::Ok);
+        let after = harness.db.fetch_account(&account.id).await.unwrap();
+        assert!(after.lockout.is_none());
+    }
+
+    async fn mfa_ticket(harness: &TestHarness, email: &str) -> String {
+        let res = harness
+            .client
+            .post("/auth/session/login")
+            .json(&json!({ "email": email, "password": "password_insecure" }))
+            .dispatch()
+            .await;
+        assert_eq!(res.status(), Status::Ok);
+        match serde_json::from_str::<v0::ResponseLogin>(&res.into_string().await.unwrap()).unwrap() {
+            v0::ResponseLogin::MFA { ticket, .. } => ticket,
+            _ => panic!("expected `ResponseLogin::MFA`"),
+        }
+    }
+
+    async fn wrong_code(harness: &TestHarness, ticket: &str) -> (Status, Option<ErrorType>) {
+        let res = harness
+            .client
+            .post("/auth/session/login")
+            .json(&json!({ "mfa_ticket": ticket, "mfa_response": { "totp_code": "000000" } }))
+            .dispatch()
+            .await;
+        let status = res.status();
+        (status, res.into_json::<Error>().await.map(|e| e.error_type))
+    }
+
+    /// Wrong two-factor codes at sign-in count with those at
+    /// PUT /auth/mfa/ticket: five in fifteen minutes pause the two-factor
+    /// step of the account, whatever ticket asks
+    #[rocket::async_test]
+    async fn five_wrong_codes_at_sign_in_pause_two_factor() {
+        let harness = TestHarness::new().await;
+        let (mut account, _, _) = harness.new_user().await;
+        account.mfa.totp_token = Totp::Enabled {
+            secret: "secret".to_string(),
+        };
+        account.save(&harness.db).await.unwrap();
+
+        // a ticket takes at most three tries, so two tickets
+        for tries in [3, 2] {
+            let ticket = mfa_ticket(&harness, &account.email).await;
+            for _ in 0..tries {
+                let (status, error) = wrong_code(&harness, &ticket).await;
+                assert_eq!(status, Status::Unauthorized);
+                assert!(matches!(error, Some(ErrorType::InvalidToken)));
+            }
+        }
+
+        let ticket = mfa_ticket(&harness, &account.email).await;
+        let (status, error) = wrong_code(&harness, &ticket).await;
+        assert_eq!(status, Status::Forbidden);
+        assert!(matches!(error, Some(ErrorType::LockedOut)));
+
+        clear_mfa_failures(&account.id).await;
+    }
+
+    /// Without a captcha the wait holds for the network the wrong passwords
+    /// came from (IPv4 /24): someone guessing elsewhere does not lock the
+    /// owner out at home
+    #[rocket::async_test]
+    async fn the_wait_holds_only_for_the_network_the_guesses_came_from() {
+        let harness = TestHarness::new().await;
+        let (account, _, _) = harness.new_user().await;
+        let from = |ip: &str, password: &str| {
+            let remote: std::net::SocketAddr = format!("{ip}:40000").parse().unwrap();
+            harness
+                .client
+                .post("/auth/session/login")
+                .remote(remote)
+                .header(ContentType::JSON)
+                .body(json!({ "email": account.email.clone(), "password": password }).to_string())
+        };
+
+        for _ in 0..LOGIN_STEP_UP_AFTER {
+            assert_eq!(from("203.0.113.7", "wrong_password").dispatch().await.status(), Status::Unauthorized);
+        }
+        // the same /24 waits, even with the right password
+        let res = from("203.0.113.200", "password_insecure").dispatch().await;
+        assert_eq!(res.status(), Status::Forbidden);
+        assert!(matches!(res.into_json::<Error>().await.map(|e| e.error_type), Some(ErrorType::LockedOut)));
+        // another network signs in
+        assert_eq!(from("198.51.100.7", "password_insecure").dispatch().await.status(), Status::Ok);
     }
 }

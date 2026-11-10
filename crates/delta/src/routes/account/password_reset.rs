@@ -3,6 +3,7 @@
 use rocket::serde::json::Json;
 use rocket::State;
 use rocket_empty::EmptyResponse;
+use revolt_database::util::login_limit::clear_login_failures;
 use revolt_database::util::password::{hash_password, assert_safe};
 use revolt_database::{Database};
 use revolt_models::v0;
@@ -39,6 +40,9 @@ pub async fn password_reset(
     // A reset means the old password may be known to someone else: every
     // session ends, whatever `remove_sessions` says
     account.delete_all_sessions(db, None).await?;
+
+    // the owner proved they hold the mailbox: no wait after wrong passwords
+    clear_login_failures(&account.email_normalised).await;
 
     Ok(EmptyResponse)
 }
@@ -164,5 +168,40 @@ mod tests {
             res.into_json::<Error>().await.unwrap().error_type,
             ErrorType::InvalidToken
         ));
+    }
+
+    /// Wrong passwords made the address wait; a reset ends the wait at once
+    #[rocket::async_test]
+    async fn a_reset_ends_the_wait_after_wrong_passwords() {
+        let harness = TestHarness::new().await;
+        let (mut account, _, _) = harness.new_user().await;
+        let email = account.email.clone();
+        let login = |password: &'static str| {
+            harness
+                .client
+                .post("/auth/session/login")
+                .header(ContentType::JSON)
+                .body(json!({ "email": email.clone(), "password": password }).to_string())
+        };
+        for _ in 0..revolt_database::util::login_limit::LOGIN_STEP_UP_AFTER {
+            assert_eq!(login("wrong_password").dispatch().await.status(), Status::Unauthorized);
+        }
+        assert_eq!(login("password_insecure").dispatch().await.status(), Status::Forbidden);
+
+        let token = format!("reset-{}", TestHarness::rand_string());
+        account.password_reset = Some(PasswordReset {
+            token: token.clone(),
+            expiry: Timestamp::now_utc() + Duration::seconds(100),
+        });
+        account.save(&harness.db).await.unwrap();
+        let res = harness.client
+            .patch("/auth/account/reset_password")
+            .header(ContentType::JSON)
+            .body(json!({ "token": token, "password": "a new valid password", "remove_sessions": false }).to_string())
+            .dispatch()
+            .await;
+        assert_eq!(res.status(), Status::NoContent);
+
+        assert_eq!(login("a new valid password").dispatch().await.status(), Status::Ok);
     }
 }
