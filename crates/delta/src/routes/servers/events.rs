@@ -7,7 +7,10 @@
 //! Creating, editing, starting, ending, cancelling and deleting need Manage
 //! Server (being the creator gives no rights) and are refused while the
 //! person is timed out. The whole feature is behind
-//! `features.server_events_enabled`.
+//! `features.server_events_enabled`, and each server starts with events
+//! off: while its `events_enabled` switch is off every route answers
+//! FeatureDisabled (`server_events_server`) and crond leaves its events
+//! alone.
 
 use iso8601_timestamp::{Duration, Timestamp};
 use revolt_config::config;
@@ -40,7 +43,9 @@ async fn require_enabled() -> Result<()> {
     }
 }
 
-/// The server and your membership; NotFound for people outside it
+/// The server and your membership; NotFound for people outside it, and
+/// FeatureDisabled while the server has events off (off until a manager
+/// turns them on: nothing is listed, fetched or created, as in the app)
 async fn membership(db: &Database, user: &User, target: &Reference<'_>) -> Result<(Server, Member)> {
     require_enabled().await?;
     let server = target.as_server(db).await?;
@@ -48,6 +53,11 @@ async fn membership(db: &Database, user: &User, target: &Reference<'_>) -> Resul
         .fetch_member(&server.id, &user.id)
         .await
         .map_err(|_| create_error!(NotFound))?;
+    if !server.events_enabled {
+        return Err(create_error!(FeatureDisabled {
+            feature: "server_events_server".to_string()
+        }));
+    }
     Ok((server, member))
 }
 
@@ -495,21 +505,24 @@ pub async fn cancel(
 
 /// # Delete Server Event
 ///
-/// Remove an event and its interested list for good. A repeating event's
-/// series goes on with the next occurrence. Needs Manage Server.
+/// Remove an event and its interested list for good. For a repeating event
+/// the series goes on with the next occurrence; `series=true` deletes this
+/// occurrence and schedules nothing next, so the series ends. Needs Manage
+/// Server.
 #[openapi(tag = "Server Events")]
-#[delete("/<target>/events/<event>")]
+#[delete("/<target>/events/<event>?<options..>")]
 pub async fn delete(
     db: &State<Database>,
     user: User,
     target: Reference<'_>,
     event: &str,
+    options: v0::OptionsDeleteServerEvent,
     reason: AuditLogReason,
 ) -> Result<EmptyResponse> {
     let (server, member) = membership(db, &user, &target).await?;
     let event = visible_event(db, &user, &server, &member, event).await?;
     require_manager(db, &user, &server, &member).await?;
-    event.delete(db).await?;
+    event.delete(db, options.series == Some(true)).await?;
 
     AuditLogEntryAction::ServerEventDelete {
         event: event.id.clone(),

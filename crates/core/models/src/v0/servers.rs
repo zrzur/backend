@@ -163,6 +163,12 @@ auto_derived_partial!(
             serde(skip_serializing_if = "crate::if_false", default)
         )]
         pub forums_disabled: bool,
+        /// Scheduled events are switched on in this server (missing = off)
+        #[cfg_attr(
+            feature = "serde",
+            serde(skip_serializing_if = "crate::if_false", default)
+        )]
+        pub events_enabled: bool,
 
         /// Notifications for members who never chose a level for this
         /// server. Missing = `Mentions`.
@@ -735,6 +741,9 @@ auto_derived!(
         pub threads_disabled: Option<bool>,
         /// Switch forums off (or back on) on this server
         pub forums_disabled: Option<bool>,
+        /// Switch scheduled events on (or back off) in this server; needs
+        /// Manage Server
+        pub events_enabled: Option<bool>,
         /// Notifications for members who never chose a level for this server
         pub default_notifications: Option<ServerNotificationLevel>,
 

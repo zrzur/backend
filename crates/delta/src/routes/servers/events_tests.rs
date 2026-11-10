@@ -51,7 +51,26 @@ async fn channel(harness: &TestHarness, server: &Server, voice: bool, private: b
     .expect("channel")
 }
 
+/// A server with events switched on by its owner (they start off)
 async fn setup(enabled: bool) -> Setup {
+    let s = setup_off(enabled).await;
+    if enabled {
+        let (status, body) = call(
+            &s.harness,
+            Method::Patch,
+            &format!("/servers/{}", s.server.id),
+            &s.owner_session,
+            Some(json!({ "events_enabled": true })),
+        )
+        .await;
+        assert_eq!(status, Status::Ok, "{body}");
+    }
+    let server = s.harness.db.fetch_server(&s.server.id).await.unwrap();
+    Setup { server, ..s }
+}
+
+/// A new server: events are off until its owner turns them on
+async fn setup_off(enabled: bool) -> Setup {
     overwrite_config(move |config| config.features.server_events_enabled = enabled).await;
     let harness = TestHarness::new().await;
     let (_, owner_session, owner) = harness.new_user().await;
@@ -1053,4 +1072,147 @@ async fn the_crond_pass_cancels_events_whose_channel_is_gone() {
     assert_eq!(stored.status, v0::ServerEventStatus::Cancelled);
     // a place that is gone ends the series
     assert!(db.fetch_upcoming_server_events(&s.server.id).await.unwrap().is_empty());
+}
+
+/// Events start off in every server; only Manage Server turns them on (the
+/// gateway tells members), and while off no event can be created. Events
+/// made before stay stored.
+#[rocket::async_test]
+async fn events_are_off_until_a_manager_turns_them_on() {
+    let s = setup_off(true).await;
+    assert!(!s.server.events_enabled, "a new server has events off");
+    let path = format!("/servers/{}/events", s.server.id);
+    let server_path = format!("/servers/{}", s.server.id);
+
+    let (status, error) = call(&s.harness, Method::Post, &path, &s.owner_session, Some(body(voice_place(&s)))).await;
+    assert_eq!(status, Status::BadRequest, "{error}");
+    assert_eq!(error["type"], "FeatureDisabled", "{error}");
+    assert_eq!(error["feature"], "server_events_server", "{error}");
+
+    // a member without Manage Server can't switch them on
+    let switch = |on: bool| Some(json!({ "events_enabled": on }));
+    let (status, _) = call(&s.harness, Method::Patch, &server_path, &s.member_session, switch(true)).await;
+    assert_eq!(status, Status::Forbidden);
+    assert!(!s.harness.db.fetch_server(&s.server.id).await.unwrap().events_enabled);
+
+    let mut gateway = PubSubTestHelper::new(&s.server.id).await;
+    let (status, server) = call(&s.harness, Method::Patch, &server_path, &s.owner_session, switch(true)).await;
+    assert_eq!(status, Status::Ok, "{server}");
+    assert_eq!(server["events_enabled"], true, "{server}");
+    let id = s.server.id.clone();
+    gateway
+        .wait_for_event(|e| {
+            matches!(e, EventV1::ServerUpdate { id: server, data, .. }
+                if server == &id && data.events_enabled == Some(true))
+        })
+        .await;
+
+    let event = create(&s, voice_place(&s)).await;
+    let event_id = event["_id"].as_str().unwrap().to_string();
+
+    // off again: nothing new, the stored event stays
+    let (status, server) = call(&s.harness, Method::Patch, &server_path, &s.owner_session, switch(false)).await;
+    assert_eq!(status, Status::Ok, "{server}");
+    assert!(server.get("events_enabled").is_none() || server["events_enabled"] == false, "{server}");
+    let (status, error) = call(&s.harness, Method::Post, &path, &s.owner_session, Some(body(voice_place(&s)))).await;
+    assert_eq!(status, Status::BadRequest, "{error}");
+    assert_eq!(error["feature"], "server_events_server", "{error}");
+    assert!(s.harness.db.fetch_server_event(&event_id).await.is_ok());
+
+    // bots and clients see what the app shows: nothing while off
+    let one = format!("{path}/{event_id}");
+    for (who, url) in [(&s.member_session, &path), (&s.owner_session, &path), (&s.member_session, &one)] {
+        let (status, error) = call(&s.harness, Method::Get, url, who, None).await;
+        assert_eq!(status, Status::BadRequest, "{url} {error}");
+        assert_eq!(error["feature"], "server_events_server", "{error}");
+    }
+
+    // on again: the stored event is back
+    let (status, _) = call(&s.harness, Method::Patch, &server_path, &s.owner_session, switch(true)).await;
+    assert_eq!(status, Status::Ok);
+    let (status, list) = call(&s.harness, Method::Get, &path, &s.member_session, None).await;
+    assert_eq!(status, Status::Ok, "{list}");
+    assert_eq!(list["events"][0]["_id"], event_id, "{list}");
+}
+
+/// While a server has events off, crond leaves its events alone: nothing
+/// starts or is announced, and an event whose whole time passed while off is
+/// marked Completed without a word. Turned on again, what is still due starts.
+#[rocket::async_test]
+async fn the_crond_pass_skips_servers_with_events_off() {
+    let s = setup_off(true).await;
+    let db = &s.harness.db;
+    let now = Timestamp::now_utc();
+    let place = || v0::ServerEventPlace::External { location: "Park".into() };
+    // due a minute ago, still running
+    let due = ServerEvent::new(&s.server.id, &s.owner.id, "Due".into(), None, now - Duration::minutes(1), Some(now + Duration::hours(1)), place(), None);
+    // its whole time passed while events were off
+    let missed = ServerEvent::new(&s.server.id, &s.owner.id, "Missed".into(), None, now - Duration::hours(3), Some(now - Duration::hours(1)), place(), None);
+    // started before events went off; its end has passed
+    let running = ServerEvent::new(&s.server.id, &s.owner.id, "Running".into(), None, now - Duration::hours(3), Some(now - Duration::minutes(5)), place(), None);
+    for event in [&due, &missed, &running] {
+        db.insert_server_event(event).await.unwrap();
+    }
+    db.set_server_event_status(&running.id, v0::ServerEventStatus::Scheduled, v0::ServerEventStatus::Active, now - Duration::hours(3))
+        .await
+        .unwrap();
+
+    let report = ServerEvent::run_pass(db, now).await.unwrap();
+    assert_eq!((report.started, report.completed), (0, 0), "{report:?}");
+    assert_eq!(report.missed, 2, "{report:?}");
+    let status = |id: String| async move { db.fetch_server_event(&id).await.unwrap().status };
+    assert_eq!(status(due.id.clone()).await, v0::ServerEventStatus::Scheduled);
+    assert_eq!(status(missed.id.clone()).await, v0::ServerEventStatus::Completed);
+    assert_eq!(status(running.id.clone()).await, v0::ServerEventStatus::Completed);
+
+    // a second pass changes nothing
+    let again = ServerEvent::run_pass(db, now).await.unwrap();
+    assert_eq!(again, Default::default(), "{again:?}");
+
+    // turned on: the event that is still due starts
+    db.update_server(&s.server.id, &PartialServer { events_enabled: Some(true), ..Default::default() }, vec![])
+        .await
+        .unwrap();
+    let report = ServerEvent::run_pass(db, Timestamp::now_utc()).await.unwrap();
+    assert_eq!(report.started, 1, "{report:?}");
+    assert_eq!(status(due.id.clone()).await, v0::ServerEventStatus::Active);
+}
+
+/// Deleting with `series=true` ends a repeating series: this occurrence goes
+/// and nothing next is scheduled. Without it, the next one is still written.
+#[rocket::async_test]
+async fn deleting_the_whole_series_schedules_nothing_next() {
+    let s = setup(true).await;
+    let db = &s.harness.db;
+    let base = format!("/servers/{}/events", s.server.id);
+    let weekly = || {
+        let mut data = body(voice_place(&s));
+        data["repeat"] = json!("Weekly");
+        Some(data)
+    };
+
+    // one occurrence: the series goes on
+    let (_, first) = call(&s.harness, Method::Post, &base, &s.owner_session, weekly()).await;
+    let first = first["_id"].as_str().unwrap().to_string();
+    let (status, _) = call(&s.harness, Method::Delete, &format!("{base}/{first}"), &s.owner_session, None).await;
+    assert_eq!(status, Status::NoContent);
+    let upcoming = db.fetch_upcoming_server_events(&s.server.id).await.unwrap();
+    let next = upcoming
+        .iter()
+        .find(|e| e.previous.as_deref() == Some(first.as_str()))
+        .expect("the series goes on")
+        .clone();
+
+    // the whole series: nothing of it is scheduled any more
+    let (status, _) = call(&s.harness, Method::Delete, &format!("{base}/{}?series=true", next.id), &s.owner_session, None).await;
+    assert_eq!(status, Status::NoContent);
+    let upcoming = db.fetch_upcoming_server_events(&s.server.id).await.unwrap();
+    assert!(upcoming.is_empty(), "{:?}", upcoming.iter().map(|e| (&e.id, &e.previous)).collect::<Vec<_>>());
+    assert!(db.fetch_server_event(&next.id).await.is_err());
+
+    // a member may not
+    let (_, other) = call(&s.harness, Method::Post, &base, &s.owner_session, weekly()).await;
+    let other = other["_id"].as_str().unwrap().to_string();
+    let (status, _) = call(&s.harness, Method::Delete, &format!("{base}/{other}?series=true"), &s.member_session, None).await;
+    assert_eq!(status, Status::Forbidden);
 }

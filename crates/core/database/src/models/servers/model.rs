@@ -114,6 +114,10 @@ auto_derived_partial!(
         /// and posts it has stay readable
         #[serde(skip_serializing_if = "crate::if_false", default)]
         pub forums_disabled: bool,
+        /// Scheduled events are switched on in this server by a manager
+        /// (missing = off; events made before stay stored)
+        #[serde(skip_serializing_if = "crate::if_false", default)]
+        pub events_enabled: bool,
         /// Notifications for members who never chose a level for this
         /// server (missing = mentions only)
         #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -273,6 +277,7 @@ impl Server {
             lobby: None,
             threads_disabled: false,
             forums_disabled: false,
+            events_enabled: false,
             supercharge: None,
             vanity_invite: None,
         };
@@ -502,6 +507,7 @@ impl Server {
                 (FieldsServer::Lobby) lobby,
                 threads_disabled,
                 forums_disabled,
+                events_enabled,
             )
         );
 

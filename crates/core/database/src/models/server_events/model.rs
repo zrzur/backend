@@ -18,6 +18,8 @@
 //! they go to the place's channel topic (only members who can view the
 //! channel are subscribed to it) or to the server topic for external places.
 
+use std::collections::HashMap;
+
 use iso8601_timestamp::{Duration, Timestamp};
 use revolt_config::config;
 use revolt_models::v0::{self, ServerEventPlace, ServerEventRepeat, ServerEventStatus};
@@ -525,9 +527,12 @@ impl ServerEvent {
     }
 
     /// Delete it for good. A repeating event's series goes on with the next
-    /// occurrence. Its cover file is released.
-    pub async fn delete(&self, db: &Database) -> Result<()> {
-        if self.is_upcoming() {
+    /// occurrence, unless `whole_series`: then nothing comes after it and the
+    /// series ends. Its cover file is released.
+    pub async fn delete(&self, db: &Database, whole_series: bool) -> Result<()> {
+        // one occurrence of a series: the next one is written first; the
+        // whole series: nothing comes after this one
+        if self.is_upcoming() && !whole_series {
             self.schedule_next(db, Timestamp::now_utc()).await?;
         }
         db.delete_server_event(&self.id).await?;
@@ -594,20 +599,59 @@ impl ServerEvent {
         Ok(())
     }
 
+    /// Whether a server has events switched on (None: the server is gone),
+    /// read once per pass
+    async fn server_events_on(
+        db: &Database,
+        cache: &mut HashMap<String, Option<bool>>,
+        server: &str,
+    ) -> Result<Option<bool>> {
+        if let Some(on) = cache.get(server) {
+            return Ok(*on);
+        }
+        let on = match db.fetch_server(server).await {
+            Ok(server) => Some(server.events_enabled),
+            Err(error) if matches!(error.error_type, ErrorType::NotFound) => None,
+            Err(error) => return Err(error),
+        };
+        cache.insert(server.to_string(), on);
+        Ok(on)
+    }
+
     /// One crond pass: cancel what lost its channel, start what is due,
     /// complete what has ended, and give every repeating event that lacks
     /// one its next occurrence. One event failing never stops the others.
+    ///
+    /// A server with events off is left alone: nothing starts, is announced
+    /// or gets a next occurrence. Only an event whose whole time passed while
+    /// off (scheduled or still active) is marked Completed, quietly (no
+    /// gateway event, no message, no push); a repeating one gets its next
+    /// occurrence once the server turns events on again, and an event still
+    /// inside its time then starts as usual.
     pub async fn run_pass(db: &Database, now: Timestamp) -> Result<PassReport> {
         let mut report = PassReport::default();
+        let mut servers = HashMap::new();
         for mut event in db.fetch_server_events_to_start(now).await? {
             let outcome = async {
-                match db.fetch_server(&event.server).await {
-                    Err(error) if matches!(error.error_type, ErrorType::NotFound) => {
+                match Self::server_events_on(db, &mut servers, &event.server).await? {
+                    None => {
                         db.delete_server_event(&event.id).await?;
                         return Ok(false);
                     }
-                    Err(error) => return Err(error),
-                    Ok(_) => {}
+                    Some(false) => {
+                        if event.completes_at() <= now {
+                            report.missed += db
+                                .set_server_event_status(
+                                    &event.id,
+                                    ServerEventStatus::Scheduled,
+                                    ServerEventStatus::Completed,
+                                    now,
+                                )
+                                .await? as usize;
+                        }
+                        return Ok(false);
+                    }
+                    Some(true) => {}
                 }
                 if event.place_is_gone(db).await {
                     report.cancelled += event.cancel(db, true).await? as usize;
@@ -626,6 +670,19 @@ impl ServerEvent {
         }
         for mut event in db.fetch_active_server_events().await? {
             let outcome = async {
+                if Self::server_events_on(db, &mut servers, &event.server).await? == Some(false) {
+                    if event.completes_at() <= now {
+                        report.missed += db
+                            .set_server_event_status(
+                                &event.id,
+                                ServerEventStatus::Active,
+                                ServerEventStatus::Completed,
+                                now,
+                            )
+                            .await? as usize;
+                    }
+                    return Ok((false, false));
+                }
                 if event.place_is_gone(db).await {
                     return Ok((false, event.cancel(db, true).await?));
                 }
@@ -647,6 +704,15 @@ impl ServerEvent {
             }
         }
         for event in db.fetch_server_events_missing_next().await? {
+            match Self::server_events_on(db, &mut servers, &event.server).await {
+                Ok(Some(true)) | Ok(None) => {}
+                Ok(Some(false)) => continue,
+                Err(error) => {
+                    report.failed += 1;
+                    log::error!("Server event {} has no next occurrence: {error:?}", event.id);
+                    continue;
+                }
+            }
             match event.schedule_next(db, now).await {
                 Ok(Some(_)) => report.scheduled += 1,
                 Ok(None) => {}
@@ -750,6 +816,8 @@ pub struct PassReport {
     pub completed: usize,
     pub cancelled: usize,
     pub scheduled: usize,
+    /// Ended while the server had events off: marked Completed, not announced
+    pub missed: usize,
     pub failed: usize,
 }
 

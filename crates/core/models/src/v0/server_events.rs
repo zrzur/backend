@@ -117,6 +117,15 @@ auto_derived!(
         pub series: Option<bool>,
     }
 
+    /// Deleting one occurrence or the whole series
+    #[cfg_attr(feature = "rocket", derive(rocket::FromForm))]
+    pub struct OptionsDeleteServerEvent {
+        /// Delete the whole series: this occurrence goes and nothing next is
+        /// scheduled (default: only this occurrence; the next one is
+        /// scheduled)
+        pub series: Option<bool>,
+    }
+
     /// Optional fields of an event that can be cleared
     pub enum FieldsServerEvent {
         Description,
