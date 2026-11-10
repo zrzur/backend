@@ -96,6 +96,10 @@ impl AbstractServerEvents for MongoDb {
             "ended_at",
             "server",
             "creator",
+            "series_start",
+            "occurrence",
+            "next",
+            "time_zone",
         ] {
             set.remove(owned);
         }
@@ -244,6 +248,54 @@ impl AbstractServerEvents for MongoDb {
             );
         }
         Ok(users)
+    }
+
+    async fn set_server_event_next(&self, id: &str, next: &str) -> Result<()> {
+        self.col::<ServerEvent>(COL)
+            .update_one(doc! { "_id": id }, doc! { "$set": { "next": next } })
+            .await
+            .map(|_| ())
+            .map_err(|_| create_database_error!("update_one", COL))
+    }
+
+    async fn fetch_server_events_missing_next(&self) -> Result<Vec<ServerEvent>> {
+        self.find_events(
+            doc! {
+                "status": { "$in": ["Completed", "Cancelled"] },
+                "repeat": { "$exists": true },
+                "next": { "$exists": false }
+            },
+            None,
+        )
+        .await
+    }
+
+    async fn remove_server_event_interests_of(
+        &self,
+        server: &str,
+        user: &str,
+    ) -> Result<Vec<String>> {
+        let mut cursor = self
+            .col::<ServerEventInterest>(INTERESTS)
+            .find(doc! { "server": server, "_id.user": user })
+            .await
+            .map_err(|_| create_database_error!("find", INTERESTS))?;
+        let mut events = vec![];
+        while let Some(interest) = cursor.next().await {
+            events.push(
+                interest
+                    .map_err(|_| create_database_error!("find", INTERESTS))?
+                    .id
+                    .event,
+            );
+        }
+        let mut changed = vec![];
+        for event in events {
+            if self.remove_server_event_interest(&event, user).await?.is_some() {
+                changed.push(event);
+            }
+        }
+        Ok(changed)
     }
 
     async fn fetch_server_event_interests_of(

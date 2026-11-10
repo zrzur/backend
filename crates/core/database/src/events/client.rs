@@ -373,6 +373,9 @@ pub enum EventV1 {
     ServerEventInterest {
         id: String,
         server: String,
+        /// The place's channel, for channel places
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        channel: Option<String>,
         user: String,
         interested: bool,
         count: u32,

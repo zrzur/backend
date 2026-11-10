@@ -23,6 +23,7 @@ pub mod signed_request;
 pub mod test_fixtures;
 pub mod validation;
 pub mod threads;
+pub mod tz;
 pub mod verification;
 
 pub use funcs::*;

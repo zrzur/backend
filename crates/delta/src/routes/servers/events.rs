@@ -2,10 +2,12 @@
 //!
 //! Members see the events of their server whose place they can see (an
 //! external place, or a channel where they have View Channel); everything
-//! else answers NotFound, as if it were not there. Creating, editing,
-//! starting, ending, cancelling and deleting need Manage Server; the creator
-//! of an event may also edit, start, end and cancel it while still a member.
-//! The whole feature is behind `features.server_events_enabled`.
+//! else answers NotFound, as if it were not there; people with Manage
+//! Server also see events whose channel is gone, to clean them up.
+//! Creating, editing, starting, ending, cancelling and deleting need Manage
+//! Server (being the creator gives no rights) and are refused while the
+//! person is timed out. The whole feature is behind
+//! `features.server_events_enabled`.
 
 use iso8601_timestamp::{Duration, Timestamp};
 use revolt_config::config;
@@ -15,7 +17,6 @@ use revolt_database::{
     AuditLogEntryAction, Channel, Database, File, Member, Server, ServerEvent, User,
     MAX_DAYS_AHEAD, MAX_LENGTH_DAYS, MAX_UPCOMING_EVENTS,
 };
-use revolt_database::events::client::EventV1;
 use revolt_models::v0;
 use revolt_permissions::{calculate_server_permissions, ChannelPermission};
 use revolt_result::{create_error, Result};
@@ -59,17 +60,14 @@ async fn has_manage_server(db: &Database, user: &User, server: &Server, member: 
         .has_channel_permission(ChannelPermission::ManageServer)
 }
 
-/// Manage Server, or the event's own creator
+/// Manage Server, and not timed out
 async fn require_manager(
     db: &Database,
     user: &User,
     server: &Server,
     member: &Member,
-    event: Option<&ServerEvent>,
 ) -> Result<()> {
-    if event.is_some_and(|event| event.creator == user.id)
-        || has_manage_server(db, user, server, member).await
-    {
+    if !member.in_timeout() && has_manage_server(db, user, server, member).await {
         Ok(())
     } else {
         Err(create_error!(MissingPermission {
@@ -87,10 +85,16 @@ async fn visible_event(
     id: &str,
 ) -> Result<ServerEvent> {
     let event = db.fetch_server_event(id).await?;
-    if event.server != server.id || !event.visible_to(db, user, server, member).await {
+    if event.server != server.id {
         return Err(create_error!(NotFound));
     }
-    Ok(event)
+    if event.visible_to(db, user, server, member).await
+        || (event.place_is_gone(db).await && has_manage_server(db, user, server, member).await)
+    {
+        Ok(event)
+    } else {
+        Err(create_error!(NotFound))
+    }
 }
 
 /// A place must be a channel of this server you can see (a voice channel
@@ -109,6 +113,11 @@ async fn check_place(
             if length == 0 || length > 100 {
                 return Err(create_error!(FailedValidation {
                     error: "place.location: 1 to 100 characters".to_string()
+                }));
+            }
+            if !location_is_safe(&location) {
+                return Err(create_error!(FailedValidation {
+                    error: "place.location: only http and https links".to_string()
                 }));
             }
             Ok(v0::ServerEventPlace::External { location })
@@ -138,6 +147,33 @@ async fn check_place(
             }
         }
     }
+}
+
+/// A place may be any text, but a link is only http or https: no
+/// `javascript:`, `data:`, `file:` or other scheme (`Room 5: second floor`
+/// is text, not a scheme)
+pub fn location_is_safe(location: &str) -> bool {
+    let lower = location.trim().to_ascii_lowercase();
+    let Some((scheme, rest)) = lower.split_once(':') else {
+        return true;
+    };
+    let looks_like_scheme = !scheme.is_empty()
+        && scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+        && scheme
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+    if !looks_like_scheme {
+        return true;
+    }
+    if matches!(scheme, "http" | "https") {
+        return true;
+    }
+    // text like "Room 5: second floor" goes on after a space
+    let dangerous = matches!(
+        scheme,
+        "javascript" | "data" | "vbscript" | "file" | "blob" | "about" | "intent"
+    );
+    !(dangerous || rest.starts_with("//") || !rest.starts_with(' '))
 }
 
 fn invalid(error: &str) -> revolt_result::Error {
@@ -224,17 +260,25 @@ pub async fn create(
     data.validate()
         .map_err(|error| revolt_database::util::validation::validation_failed(&error))?;
     let (server, member) = membership(db, &user, &target).await?;
-    require_manager(db, &user, &server, &member, None).await?;
+    require_manager(db, &user, &server, &member).await?;
 
     let title = data.title.trim().to_string();
     if title.is_empty() {
         return Err(invalid("title: empty"));
     }
     check_times(data.starts_at, data.ends_at, Timestamp::now_utc(), true)?;
-    if db.fetch_upcoming_server_events(&server.id).await?.len() >= MAX_UPCOMING_EVENTS {
-        return Err(create_error!(TooManyServerEvents {
+    if let Some(zone) = &data.time_zone {
+        if revolt_database::util::tz::Zone::load(zone).is_none() && zone != "UTC" {
+            return Err(invalid("time_zone: not a known time zone"));
+        }
+    }
+    let too_many = || {
+        create_error!(TooManyServerEvents {
             max: MAX_UPCOMING_EVENTS
-        }));
+        })
+    };
+    if db.fetch_upcoming_server_events(&server.id).await?.len() >= MAX_UPCOMING_EVENTS {
+        return Err(too_many());
     }
     let place = check_place(db, &user, &server, &member, data.place).await?;
 
@@ -248,10 +292,16 @@ pub async fn create(
         place,
         data.repeat,
     );
+    event.time_zone = data.time_zone;
     if let Some(cover) = data.cover {
         event.cover = Some(File::use_server_event_cover(db, &cover, &event.id, &user.id).await?);
     }
     db.insert_server_event(&event).await?;
+    // counted again after writing: of two made at once, one is taken back
+    if db.fetch_upcoming_server_events(&server.id).await?.len() > MAX_UPCOMING_EVENTS {
+        db.delete_server_event(&event.id).await?;
+        return Err(too_many());
+    }
     event.publish_create().await;
 
     AuditLogEntryAction::ServerEventCreate {
@@ -290,7 +340,7 @@ pub async fn fetch(
 /// # Edit Server Event
 ///
 /// Change a scheduled or active event. The start time can only change
-/// while it is scheduled. Needs Manage Server, or being its creator.
+/// while it is scheduled. Needs Manage Server.
 #[openapi(tag = "Server Events")]
 #[patch("/<target>/events/<event>", data = "<data>")]
 pub async fn edit(
@@ -306,7 +356,7 @@ pub async fn edit(
         .map_err(|error| revolt_database::util::validation::validation_failed(&error))?;
     let (server, member) = membership(db, &user, &target).await?;
     let mut event = visible_event(db, &user, &server, &member, event).await?;
-    require_manager(db, &user, &server, &member, Some(&event)).await?;
+    require_manager(db, &user, &server, &member).await?;
     if !event.is_upcoming() {
         return Err(create_error!(InvalidOperation));
     }
@@ -372,7 +422,7 @@ pub async fn edit(
 /// # Start Server Event
 ///
 /// Start a scheduled event now (also before its time). Interested members
-/// are notified. Needs Manage Server, or being its creator.
+/// are notified. Needs Manage Server.
 #[openapi(tag = "Server Events")]
 #[post("/<target>/events/<event>/start")]
 pub async fn start(
@@ -383,7 +433,7 @@ pub async fn start(
 ) -> Result<Json<v0::ServerEvent>> {
     let (server, member) = membership(db, &user, &target).await?;
     let mut event = visible_event(db, &user, &server, &member, event).await?;
-    require_manager(db, &user, &server, &member, Some(&event)).await?;
+    require_manager(db, &user, &server, &member).await?;
     if !event.start(db).await? {
         return Err(create_error!(InvalidOperation));
     }
@@ -393,7 +443,7 @@ pub async fn start(
 /// # End Server Event
 ///
 /// End an active event now. A repeating event gets its next occurrence.
-/// Needs Manage Server, or being its creator.
+/// Needs Manage Server.
 #[openapi(tag = "Server Events")]
 #[post("/<target>/events/<event>/end")]
 pub async fn end(
@@ -404,7 +454,7 @@ pub async fn end(
 ) -> Result<Json<v0::ServerEvent>> {
     let (server, member) = membership(db, &user, &target).await?;
     let mut event = visible_event(db, &user, &server, &member, event).await?;
-    require_manager(db, &user, &server, &member, Some(&event)).await?;
+    require_manager(db, &user, &server, &member).await?;
     if !event.complete(db).await? {
         return Err(create_error!(InvalidOperation));
     }
@@ -414,20 +464,22 @@ pub async fn end(
 /// # Cancel Server Event
 ///
 /// Call off a scheduled or active event. It stays readable by its link.
-/// Needs Manage Server, or being its creator.
+/// For a repeating event only this occurrence is off and the next one is
+/// scheduled; `series=true` stops the whole series. Needs Manage Server.
 #[openapi(tag = "Server Events")]
-#[post("/<target>/events/<event>/cancel")]
+#[post("/<target>/events/<event>/cancel?<options..>")]
 pub async fn cancel(
     db: &State<Database>,
     user: User,
     target: Reference<'_>,
     event: &str,
+    options: v0::OptionsCancelServerEvent,
     reason: AuditLogReason,
 ) -> Result<Json<v0::ServerEvent>> {
     let (server, member) = membership(db, &user, &target).await?;
     let mut event = visible_event(db, &user, &server, &member, event).await?;
-    require_manager(db, &user, &server, &member, Some(&event)).await?;
-    if !event.cancel(db).await? {
+    require_manager(db, &user, &server, &member).await?;
+    if !event.cancel(db, options.series == Some(true)).await? {
         return Err(create_error!(InvalidOperation));
     }
 
@@ -443,7 +495,8 @@ pub async fn cancel(
 
 /// # Delete Server Event
 ///
-/// Remove an event and its interested list for good. Needs Manage Server.
+/// Remove an event and its interested list for good. A repeating event's
+/// series goes on with the next occurrence. Needs Manage Server.
 #[openapi(tag = "Server Events")]
 #[delete("/<target>/events/<event>")]
 pub async fn delete(
@@ -455,9 +508,8 @@ pub async fn delete(
 ) -> Result<EmptyResponse> {
     let (server, member) = membership(db, &user, &target).await?;
     let event = visible_event(db, &user, &server, &member, event).await?;
-    require_manager(db, &user, &server, &member, None).await?;
-    db.delete_server_event(&event.id).await?;
-    event.publish_delete().await;
+    require_manager(db, &user, &server, &member).await?;
+    event.delete(db).await?;
 
     AuditLogEntryAction::ServerEventDelete {
         event: event.id.clone(),
@@ -490,15 +542,7 @@ async fn set_interest(
     // a change: tell everyone who sees the event (a repeat changes nothing)
     if let Some(count) = count {
         event.interested_count = count;
-        EventV1::ServerEventInterest {
-            id: event.id.clone(),
-            server: server.id.clone(),
-            user: user.id.clone(),
-            interested,
-            count,
-        }
-        .p(event.topic())
-        .await;
+        event.publish_interest(&user.id, interested).await;
     }
     Ok(Json(v0::ServerEventResponse {
         event: event.into(),

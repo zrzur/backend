@@ -62,6 +62,18 @@ pub trait AbstractServerEvents: Sync + Send {
         limit: i64,
     ) -> Result<Vec<String>>;
 
+    /// Note the occurrence that follows an event
+    async fn set_server_event_next(&self, id: &str, next: &str) -> Result<()>;
+
+    /// Repeating events that are over (completed or cancelled on their own)
+    /// and have no next occurrence yet
+    async fn fetch_server_events_missing_next(&self) -> Result<Vec<ServerEvent>>;
+
+    /// A member left a server: remove their marks there, lower the counts,
+    /// return the events that changed
+    async fn remove_server_event_interests_of(&self, server: &str, user: &str)
+        -> Result<Vec<String>>;
+
     /// Which of these events the user marked
     async fn fetch_server_event_interests_of(
         &self,

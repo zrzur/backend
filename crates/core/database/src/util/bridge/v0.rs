@@ -2279,6 +2279,7 @@ impl From<crate::ServerEvent> for ServerEvent {
             repeat: value.repeat,
             interested_count: value.interested_count,
             previous: value.previous,
+            time_zone: value.time_zone,
         }
     }
 }

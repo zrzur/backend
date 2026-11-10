@@ -47,6 +47,12 @@ impl AbstractServerEvents for ReferenceDb {
             interested_count: stored.interested_count,
             started_at: stored.started_at,
             ended_at: stored.ended_at,
+            series_start: stored.series_start,
+            occurrence: stored.occurrence,
+            next: stored.next.clone(),
+            server: stored.server.clone(),
+            creator: stored.creator.clone(),
+            time_zone: stored.time_zone.clone(),
             ..event.clone()
         };
         Ok(())
@@ -168,6 +174,52 @@ impl AbstractServerEvents for ReferenceDb {
         users.sort();
         users.truncate(limit.max(0) as usize);
         Ok(users)
+    }
+
+    async fn set_server_event_next(&self, id: &str, next: &str) -> Result<()> {
+        if let Some(event) = self.server_events.lock().await.get_mut(id) {
+            event.next = Some(next.to_string());
+        }
+        Ok(())
+    }
+
+    async fn fetch_server_events_missing_next(&self) -> Result<Vec<ServerEvent>> {
+        let events = self.server_events.lock().await;
+        Ok(events
+            .values()
+            .filter(|event| {
+                matches!(
+                    event.status,
+                    ServerEventStatus::Completed | ServerEventStatus::Cancelled
+                ) && event.repeat.is_some()
+                    && event.next.is_none()
+            })
+            .cloned()
+            .collect())
+    }
+
+    async fn remove_server_event_interests_of(
+        &self,
+        server: &str,
+        user: &str,
+    ) -> Result<Vec<String>> {
+        let mut interests = self.server_event_interests.lock().await;
+        let keys: Vec<ServerEventInterestKey> = interests
+            .iter()
+            .filter(|(key, interest)| key.user == user && interest.server == server)
+            .map(|(key, _)| key.clone())
+            .collect();
+        for key in &keys {
+            interests.remove(key);
+        }
+        drop(interests);
+        let mut events = self.server_events.lock().await;
+        for key in &keys {
+            if let Some(event) = events.get_mut(&key.event) {
+                event.interested_count = event.interested_count.saturating_sub(1);
+            }
+        }
+        Ok(keys.into_iter().map(|key| key.event).collect())
     }
 
     async fn fetch_server_event_interests_of(

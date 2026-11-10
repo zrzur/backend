@@ -606,3 +606,451 @@ fn monthly_repeat_keeps_the_day_or_takes_the_last_one() {
         parse("2026-03-15T10:00:00Z")
     );
 }
+
+// ------------------------------------------------- review round (2026-11-10)
+
+const VIEW: i64 = revolt_permissions::ChannelPermission::ViewChannel as i64;
+const MANAGE_SERVER: i64 = revolt_permissions::ChannelPermission::ManageServer as i64;
+
+fn deny_view() -> revolt_permissions::OverrideField {
+    revolt_permissions::OverrideField { a: 0, d: VIEW }
+}
+
+/// The text channel with one of its permission fields changed
+fn text_with(s: &Setup, change: impl FnOnce(&mut Channel)) -> Channel {
+    let mut channel = s.text.clone();
+    change(&mut channel);
+    channel
+}
+
+#[rocket::async_test]
+async fn announce_rule_refuses_a_mature_channel() {
+    let s = setup(true).await;
+    let channel = text_with(&s, |c| {
+        if let Channel::TextChannel { nsfw, .. } = c {
+            *nsfw = true;
+        }
+    });
+    assert!(!ServerEvent::place_open_to_everyone(&s.server, Some(&channel)));
+}
+
+#[rocket::async_test]
+async fn announce_rule_refuses_a_mature_server() {
+    let s = setup(true).await;
+    let mut server = s.server.clone();
+    server.nsfw = true;
+    assert!(!ServerEvent::place_open_to_everyone(&server, Some(&s.text)));
+    assert!(!ServerEvent::place_open_to_everyone(&server, None));
+}
+
+#[rocket::async_test]
+async fn announce_rule_refuses_a_channel_role_deny() {
+    let s = setup(true).await;
+    let channel = text_with(&s, |c| {
+        if let Channel::TextChannel { role_permissions, .. } = c {
+            role_permissions.insert("role".to_string(), deny_view());
+        }
+    });
+    assert!(!ServerEvent::place_open_to_everyone(&s.server, Some(&channel)));
+}
+
+#[rocket::async_test]
+async fn announce_rule_refuses_a_channel_member_deny() {
+    let s = setup(true).await;
+    let channel = text_with(&s, |c| {
+        if let Channel::TextChannel { member_permissions, .. } = c {
+            member_permissions.insert(s.member.id.clone(), deny_view());
+        }
+    });
+    assert!(!ServerEvent::place_open_to_everyone(&s.server, Some(&channel)));
+}
+
+#[rocket::async_test]
+async fn announce_rule_refuses_a_synced_category_default_deny() {
+    let s = setup(true).await;
+    let channel = text_with(&s, |c| {
+        if let Channel::TextChannel { permissions_synced, .. } = c {
+            *permissions_synced = true;
+        }
+    });
+    let mut server = s.server.clone();
+    server.categories = Some(vec![revolt_database::Category {
+        id: "cat".into(),
+        title: "Cat".into(),
+        channels: vec![s.text.id().to_string()],
+        default_permissions: Some(deny_view()),
+        ..Default::default()
+    }]);
+    assert!(!ServerEvent::place_open_to_everyone(&server, Some(&channel)));
+}
+
+#[rocket::async_test]
+async fn announce_rule_refuses_a_synced_category_role_deny() {
+    let s = setup(true).await;
+    let channel = text_with(&s, |c| {
+        if let Channel::TextChannel { permissions_synced, .. } = c {
+            *permissions_synced = true;
+        }
+    });
+    let mut server = s.server.clone();
+    let mut roles = std::collections::HashMap::new();
+    roles.insert("role".to_string(), deny_view());
+    server.categories = Some(vec![revolt_database::Category {
+        id: "cat".into(),
+        title: "Cat".into(),
+        channels: vec![s.text.id().to_string()],
+        role_permissions: roles,
+        ..Default::default()
+    }]);
+    assert!(!ServerEvent::place_open_to_everyone(&server, Some(&channel)));
+}
+
+#[rocket::async_test]
+async fn announce_rule_refuses_a_server_role_that_denies_view() {
+    let s = setup(true).await;
+    s.harness.new_role(&s.server, 5, Some(deny_view())).await;
+    let server = s.harness.db.fetch_server(&s.server.id).await.unwrap();
+    assert!(!ServerEvent::place_open_to_everyone(&server, Some(&s.text)));
+    assert!(!ServerEvent::place_open_to_everyone(&server, None));
+}
+
+#[rocket::async_test]
+async fn announce_rule_refuses_when_the_server_default_lacks_view() {
+    let s = setup(true).await;
+    let mut server = s.server.clone();
+    server.default_permissions &= !VIEW;
+    assert!(!ServerEvent::place_open_to_everyone(&server, Some(&s.text)));
+    let channel = text_with(&s, |c| {
+        if let Channel::TextChannel { default_permissions, .. } = c {
+            *default_permissions = Some(deny_view());
+        }
+    });
+    assert!(!ServerEvent::place_open_to_everyone(&s.server, Some(&channel)));
+    // the plain case still announces
+    assert!(ServerEvent::place_open_to_everyone(&s.server, Some(&s.text)));
+}
+
+/// Make an event active and complete it; the next occurrence
+async fn complete_and_next(s: &Setup, id: &str) -> ServerEvent {
+    let db = &s.harness.db;
+    db.set_server_event_status(
+        id,
+        v0::ServerEventStatus::Scheduled,
+        v0::ServerEventStatus::Active,
+        Timestamp::now_utc(),
+    )
+    .await
+    .unwrap();
+    let mut event = db.fetch_server_event(id).await.unwrap();
+    assert!(event.complete(db).await.unwrap());
+    db.fetch_upcoming_server_events(&s.server.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|next| next.previous.as_deref() == Some(id))
+        .expect("a next occurrence")
+}
+
+async fn insert_series(
+    s: &Setup,
+    start: &str,
+    repeat: v0::ServerEventRepeat,
+    zone: Option<&str>,
+) -> ServerEvent {
+    let mut event = ServerEvent::new(
+        &s.server.id,
+        &s.owner.id,
+        "Series".into(),
+        None,
+        Timestamp::parse(start).unwrap(),
+        None,
+        v0::ServerEventPlace::External {
+            location: "Park".into(),
+        },
+        Some(repeat),
+    );
+    event.time_zone = zone.map(str::to_string);
+    s.harness.db.insert_server_event(&event).await.unwrap();
+    event
+}
+
+#[rocket::async_test]
+async fn monthly_repeats_follow_the_first_day_of_the_series() {
+    let s = setup(true).await;
+    let first = insert_series(&s, "2027-01-31T18:00:00Z", v0::ServerEventRepeat::Monthly, None).await;
+    let feb = complete_and_next(&s, &first.id).await;
+    assert_eq!(feb.starts_at, Timestamp::parse("2027-02-28T18:00:00Z").unwrap());
+    let mar = complete_and_next(&s, &feb.id).await;
+    assert_eq!(mar.starts_at, Timestamp::parse("2027-03-31T18:00:00Z").unwrap());
+    let apr = complete_and_next(&s, &mar.id).await;
+    assert_eq!(apr.starts_at, Timestamp::parse("2027-04-30T18:00:00Z").unwrap());
+
+    // leap year
+    let leap = insert_series(&s, "2028-01-31T09:00:00Z", v0::ServerEventRepeat::Monthly, None).await;
+    let feb = complete_and_next(&s, &leap.id).await;
+    assert_eq!(feb.starts_at, Timestamp::parse("2028-02-29T09:00:00Z").unwrap());
+    let mar = complete_and_next(&s, &feb.id).await;
+    assert_eq!(mar.starts_at, Timestamp::parse("2028-03-31T09:00:00Z").unwrap());
+}
+
+#[rocket::async_test]
+async fn weekly_repeats_keep_the_local_time_across_daylight_saving_changes() {
+    let s = setup(true).await;
+    if revolt_database::util::tz::Zone::load("Europe/Vienna").is_none() {
+        return; // no zone database here (the tz unit tests cover the rules)
+    }
+    // 18:00 in Vienna, the Thursday before summer time starts (28 March 2027)
+    let spring = insert_series(
+        &s,
+        "2027-03-25T17:00:00Z",
+        v0::ServerEventRepeat::Weekly,
+        Some("Europe/Vienna"),
+    )
+    .await;
+    let next = complete_and_next(&s, &spring.id).await;
+    assert_eq!(next.starts_at, Timestamp::parse("2027-04-01T16:00:00Z").unwrap());
+    assert_eq!(next.time_zone.as_deref(), Some("Europe/Vienna"));
+    // and before it ends (31 October 2027)
+    let autumn = insert_series(
+        &s,
+        "2027-10-28T16:00:00Z",
+        v0::ServerEventRepeat::EveryTwoWeeks,
+        Some("Europe/Vienna"),
+    )
+    .await;
+    let next = complete_and_next(&s, &autumn.id).await;
+    assert_eq!(next.starts_at, Timestamp::parse("2027-11-11T17:00:00Z").unwrap());
+}
+
+#[rocket::async_test]
+async fn the_creators_time_zone_is_stored() {
+    let s = setup(true).await;
+    let path = format!("/servers/{}/events", s.server.id);
+    let mut data = body(voice_place(&s));
+    data["time_zone"] = json!("Europe/Vienna");
+    let (status, event) = call(&s.harness, Method::Post, &path, &s.owner_session, Some(data)).await;
+    assert_eq!(status, Status::Ok, "{event}");
+    assert_eq!(event["time_zone"], "Europe/Vienna");
+    let mut data = body(voice_place(&s));
+    data["time_zone"] = json!("../../etc/passwd");
+    let (status, error) = call(&s.harness, Method::Post, &path, &s.owner_session, Some(data)).await;
+    assert_eq!(status, Status::BadRequest, "{error}");
+}
+
+#[rocket::async_test]
+async fn a_creator_without_manage_server_cannot_manage_their_event() {
+    let s = setup(true).await;
+    let db = &s.harness.db;
+    let role = s
+        .harness
+        .new_role(
+            &s.server,
+            1,
+            Some(revolt_permissions::OverrideField { a: MANAGE_SERVER, d: 0 }),
+        )
+        .await;
+    let mut member = db.fetch_member(&s.server.id, &s.member.id).await.unwrap();
+    member
+        .update(
+            db,
+            revolt_database::PartialMember {
+                roles: Some(vec![role.id.clone()]),
+                ..Default::default()
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
+    let (status, event) = call(
+        &s.harness,
+        Method::Post,
+        &format!("/servers/{}/events", s.server.id),
+        &s.member_session,
+        Some(body(voice_place(&s))),
+    )
+    .await;
+    assert_eq!(status, Status::Ok, "{event}");
+    let base = format!("/servers/{}/events/{}", s.server.id, event["_id"].as_str().unwrap());
+
+    // timed out: refused even with the role
+    member
+        .update(
+            db,
+            revolt_database::PartialMember {
+                timeout: Some(Timestamp::now_utc() + Duration::hours(1)),
+                ..Default::default()
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
+    let (status, _) = call(&s.harness, Method::Patch, &base, &s.member_session, Some(json!({ "title": "Mine" }))).await;
+    assert_eq!(status, Status::Forbidden);
+
+    // demoted: the creator keeps no rights over the event
+    member
+        .update(
+            db,
+            revolt_database::PartialMember {
+                roles: Some(vec![]),
+                ..Default::default()
+            },
+            vec![revolt_database::FieldsMember::Timeout],
+        )
+        .await
+        .unwrap();
+    for (method, path, body) in [
+        (Method::Patch, base.clone(), Some(json!({ "title": "Mine" }))),
+        (Method::Post, format!("{base}/start"), None),
+        (Method::Post, format!("{base}/cancel"), None),
+    ] {
+        let (status, _) = call(&s.harness, method, &path, &s.member_session, body).await;
+        assert_eq!(status, Status::Forbidden, "{path}");
+    }
+}
+
+#[rocket::async_test]
+async fn managers_still_see_an_event_whose_channel_is_gone() {
+    let s = setup(true).await;
+    let place = channel(&s.harness, &s.server, false, false).await;
+    let event = create(&s, json!({ "type": "Text", "channel": place.id() })).await;
+    let path = format!("/servers/{}/events/{}", s.server.id, event["_id"].as_str().unwrap());
+    place.delete(&s.harness.db).await.unwrap();
+    let (status, _) = call(&s.harness, Method::Get, &path, &s.member_session, None).await;
+    assert_eq!(status, Status::NotFound);
+    let (status, fetched) = call(&s.harness, Method::Get, &path, &s.owner_session, None).await;
+    assert_eq!(status, Status::Ok, "{fetched}");
+    let (status, _) = call(&s.harness, Method::Delete, &path, &s.owner_session, None).await;
+    assert_eq!(status, Status::NoContent);
+}
+
+#[rocket::async_test]
+async fn cancelling_one_occurrence_keeps_the_series() {
+    let s = setup(true).await;
+    let db = &s.harness.db;
+    let mut data = body(voice_place(&s));
+    data["repeat"] = json!("Weekly");
+    let (_, event) = call(&s.harness, Method::Post, &format!("/servers/{}/events", s.server.id), &s.owner_session, Some(data)).await;
+    let id = event["_id"].as_str().unwrap().to_string();
+    let (status, _) = call(&s.harness, Method::Post, &format!("/servers/{}/events/{id}/cancel", s.server.id), &s.owner_session, None).await;
+    assert_eq!(status, Status::Ok);
+    let upcoming = db.fetch_upcoming_server_events(&s.server.id).await.unwrap();
+    let next = upcoming
+        .iter()
+        .find(|e| e.previous.as_deref() == Some(id.as_str()))
+        .expect("the series goes on")
+        .clone();
+
+    // deleting one occurrence keeps it too
+    let (status, _) = call(&s.harness, Method::Delete, &format!("/servers/{}/events/{}", s.server.id, next.id), &s.owner_session, None).await;
+    assert_eq!(status, Status::NoContent);
+    let upcoming = db.fetch_upcoming_server_events(&s.server.id).await.unwrap();
+    let third = upcoming
+        .iter()
+        .find(|e| e.previous.as_deref() == Some(next.id.as_str()))
+        .expect("still going on")
+        .clone();
+
+    // the whole series stops
+    let (status, cancelled) = call(
+        &s.harness,
+        Method::Post,
+        &format!("/servers/{}/events/{}/cancel?series=true", s.server.id, third.id),
+        &s.owner_session,
+        None,
+    )
+    .await;
+    assert_eq!(status, Status::Ok, "{cancelled}");
+    assert!(db.fetch_upcoming_server_events(&s.server.id).await.unwrap().is_empty());
+}
+
+#[rocket::async_test]
+async fn external_places_take_only_web_links() {
+    let s = setup(true).await;
+    let path = format!("/servers/{}/events", s.server.id);
+    for location in ["javascript:alert(1)", "data:text/html,hi", "file:///etc/passwd", "ftp://example.org/x"] {
+        let data = body(json!({ "type": "External", "location": location }));
+        let (status, error) = call(&s.harness, Method::Post, &path, &s.owner_session, Some(data)).await;
+        assert_eq!(status, Status::BadRequest, "{location}: {error}");
+    }
+    for location in ["https://example.org/meet", "Main square 1", "Room 5: second floor"] {
+        let data = body(json!({ "type": "External", "location": location }));
+        let (status, error) = call(&s.harness, Method::Post, &path, &s.owner_session, Some(data)).await;
+        assert_eq!(status, Status::Ok, "{location}: {error}");
+    }
+}
+
+#[rocket::async_test]
+async fn a_member_who_leaves_is_no_longer_counted() {
+    let s = setup(true).await;
+    let db = &s.harness.db;
+    let event = create(&s, json!({ "type": "External", "location": "Park" })).await;
+    let id = event["_id"].as_str().unwrap().to_string();
+    call(&s.harness, Method::Put, &format!("/servers/{}/events/{id}/interested", s.server.id), &s.member_session, None).await;
+    let member = db.fetch_member(&s.server.id, &s.member.id).await.unwrap();
+    member
+        .remove(db, &s.server, revolt_database::RemovalIntention::Leave, true)
+        .await
+        .unwrap();
+    let stored = db.fetch_server_event(&id).await.unwrap();
+    assert_eq!(stored.interested_count, 0);
+    assert!(db.fetch_server_event_interested(&id, None, 10).await.unwrap().is_empty());
+}
+
+#[rocket::async_test]
+async fn the_crond_pass_gives_a_finished_series_its_next_occurrence_once() {
+    let s = setup(true).await;
+    let db = &s.harness.db;
+    let first = insert_series(&s, "2027-02-04T18:00:00Z", v0::ServerEventRepeat::Weekly, None).await;
+    // completed without its next one (a crash between the two steps)
+    let now = Timestamp::now_utc();
+    db.set_server_event_status(&first.id, v0::ServerEventStatus::Scheduled, v0::ServerEventStatus::Active, now)
+        .await
+        .unwrap();
+    db.set_server_event_status(&first.id, v0::ServerEventStatus::Active, v0::ServerEventStatus::Completed, now)
+        .await
+        .unwrap();
+    let report = ServerEvent::run_pass(db, now).await.unwrap();
+    assert_eq!(report.scheduled, 1, "{report:?}");
+    let again = ServerEvent::run_pass(db, now).await.unwrap();
+    assert_eq!(again.scheduled, 0, "{again:?}");
+    let upcoming = db.fetch_upcoming_server_events(&s.server.id).await.unwrap();
+    assert_eq!(upcoming.len(), 1);
+    assert_eq!(upcoming[0].starts_at, Timestamp::parse("2027-02-11T18:00:00Z").unwrap());
+    assert_eq!(upcoming[0].occurrence, 1);
+}
+
+#[rocket::async_test]
+async fn two_writers_make_one_next_occurrence() {
+    let s = setup(true).await;
+    let db = &s.harness.db;
+    let first = insert_series(&s, "2027-02-04T18:00:00Z", v0::ServerEventRepeat::Weekly, None).await;
+    let now = Timestamp::now_utc();
+    let a = first.schedule_next(db, now).await.unwrap().unwrap();
+    let b = first.clone().schedule_next(db, now).await.unwrap().unwrap();
+    assert_eq!(a.id, b.id);
+    let upcoming = db.fetch_upcoming_server_events(&s.server.id).await.unwrap();
+    assert_eq!(upcoming.len(), 2, "the first and one next");
+}
+
+#[rocket::async_test]
+async fn the_crond_pass_cancels_events_whose_channel_is_gone() {
+    let s = setup(true).await;
+    let db = &s.harness.db;
+    let place = channel(&s.harness, &s.server, false, false).await;
+    let mut event = insert_series(&s, "2027-02-04T18:00:00Z", v0::ServerEventRepeat::Weekly, None).await;
+    event.place = v0::ServerEventPlace::Text {
+        channel: place.id().to_string(),
+    };
+    db.update_server_event(&event).await.unwrap();
+    db.set_server_event_status(&event.id, v0::ServerEventStatus::Scheduled, v0::ServerEventStatus::Active, Timestamp::now_utc())
+        .await
+        .unwrap();
+    place.delete(db).await.unwrap();
+    let report = ServerEvent::run_pass(db, Timestamp::now_utc()).await.unwrap();
+    assert_eq!(report.cancelled, 1, "{report:?}");
+    let stored = db.fetch_server_event(&event.id).await.unwrap();
+    assert_eq!(stored.status, v0::ServerEventStatus::Cancelled);
+    // a place that is gone ends the series
+    assert!(db.fetch_upcoming_server_events(&s.server.id).await.unwrap().is_empty());
+}

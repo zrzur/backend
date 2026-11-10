@@ -73,6 +73,9 @@ auto_derived!(
         /// The event this one follows (repeating events)
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
         pub previous: Option<String>,
+        /// The creator's IANA time zone; repeats keep its wall-clock time
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub time_zone: Option<String>,
     }
 
     /// New event
@@ -99,6 +102,19 @@ auto_derived!(
         /// How it repeats
         #[cfg_attr(feature = "serde", serde(default))]
         pub repeat: Option<ServerEventRepeat>,
+        /// Your IANA time zone (e.g. `Europe/Vienna`): repeats keep the
+        /// same local time across daylight saving changes
+        #[cfg_attr(feature = "validator", validate(length(min = 1, max = 64)))]
+        #[cfg_attr(feature = "serde", serde(default))]
+        pub time_zone: Option<String>,
+    }
+
+    /// Calling off one occurrence or the whole series
+    #[cfg_attr(feature = "rocket", derive(rocket::FromForm))]
+    pub struct OptionsCancelServerEvent {
+        /// Stop the whole series (default: only this occurrence; the next
+        /// one is scheduled)
+        pub series: Option<bool>,
     }
 
     /// Optional fields of an event that can be cleared

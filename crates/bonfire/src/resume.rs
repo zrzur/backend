@@ -428,7 +428,10 @@ pub fn scope(event: &EventV1) -> Scope<'_> {
             Some(channel) => Scope::Channel(channel),
             None => Scope::Server(&event.server),
         },
-        ServerEventInterest { server, .. } => Scope::Server(server),
+        ServerEventInterest { channel, server, .. } => match channel {
+            Some(channel) => Scope::Channel(channel),
+            None => Scope::Server(server),
+        },
         EmojiCreate(emoji) => match &emoji.parent {
             revolt_models::v0::EmojiParent::Server { id } => Scope::Server(id),
             _ => Scope::Always,
@@ -440,6 +443,28 @@ pub fn scope(event: &EventV1) -> Scope<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_interest_in_a_channel_event_is_replayed_only_with_the_channel() {
+        let event = EventV1::ServerEventInterest {
+            id: "e".into(),
+            server: "s".into(),
+            channel: Some("c".into()),
+            user: "u".into(),
+            interested: true,
+            count: 1,
+        };
+        assert!(matches!(scope(&event), Scope::Channel("c")));
+        let external = EventV1::ServerEventInterest {
+            id: "e".into(),
+            server: "s".into(),
+            channel: None,
+            user: "u".into(),
+            interested: true,
+            count: 1,
+        };
+        assert!(matches!(scope(&external), Scope::Server("s")));
+    }
 
     /// A kept event, told apart by `n`
     fn event(n: usize) -> EventV1 {
