@@ -208,8 +208,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "3bb8b63067a29ceae6530359055c67bf9ce390dfa0ad7c943cd0b2bf3e19a8d1",
-      "bytes": 83386,
+      "sha256": "0807941351e3616ff0d4471e59db78fc82322d9be097cd64f25e520c101deef4",
+      "bytes": 83626,
       "category": "public-documentation"
     },
     {
@@ -2056,20 +2056,20 @@
     },
     {
       "path": "crates/core/database/src/models/file_hashes/ops.rs",
-      "sha256": "0f9e91f99f2bea284fb57d2c189531885b1329e727426f6b4bb9473212526165",
-      "bytes": 965,
+      "sha256": "42979c448f1cea0fb8b9b10e2f658d9ed30fdec69501990236bc09fe193f9e97",
+      "bytes": 1173,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/database/src/models/file_hashes/ops/mongodb.rs",
-      "sha256": "4f3718a5c1588a6b853ef5a62d97ffb6e65f5bd57c64976753c74a238f3e8818",
-      "bytes": 2347,
+      "sha256": "408a119ea514618207c045ddc28cdb2d7e44e35c4ac66bcf71d4af7b473f8336",
+      "bytes": 3148,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/database/src/models/file_hashes/ops/reference.rs",
-      "sha256": "477aa47419b3e9064e20df807dfb4a41be2292b314c8cbd04ed371571d7e7418",
-      "bytes": 2380,
+      "sha256": "7f036b42c735f717364d99c79f693d6b17fdd778723426d96f50064d1cab605f",
+      "bytes": 2737,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -3802,20 +3802,20 @@
     },
     {
       "path": "crates/core/result/error-codes.txt",
-      "sha256": "ad242ae71ca3165be3b34081f81de7d425545837201a682b673e988c4b9689b8",
-      "bytes": 2738,
+      "sha256": "935f677b9377467ba0c3609f6b91da6de8ca1fd8b347d7982f49642db7c23175",
+      "bytes": 2762,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/result/src/axum.rs",
-      "sha256": "2bb94260af7bb459b67610f4de9d45cf92f0363fabdd20b3217dc6660660bf4d",
-      "bytes": 11099,
+      "sha256": "da9b1d65d98f6f7421978070cea2c301398eae3724483f0c344faa0780d484bc",
+      "bytes": 11182,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/result/src/lib.rs",
-      "sha256": "e43df3cc2d65fe61a5fc2505416f1f99065b2ba1b06d4a7ec728e5815d989453",
-      "bytes": 21646,
+      "sha256": "ae3928737b6f982d7f1cc797fc31e379dbe5530648343e08e510b3832287819f",
+      "bytes": 21756,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -3826,8 +3826,8 @@
     },
     {
       "path": "crates/core/result/src/rocket.rs",
-      "sha256": "931f7609f7b62ea623d02d73a4e23c08062c7663a1488f8baa19a37fe6575a43",
-      "bytes": 11200,
+      "sha256": "7d13c65e618116565505e5493fc70011b6f40561b47c70fde88e49b3aa4bd3e7",
+      "bytes": 11278,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -5482,14 +5482,14 @@
     },
     {
       "path": "crates/delta/src/routes/servers/soundboard.rs",
-      "sha256": "2fbdcfb50a67f9424a8ae8ef6bd9197d330d314f84c8d253b2d36dec340cc20a",
-      "bytes": 10279,
+      "sha256": "c8884a9570e2c46681eb8810a5547aa7c4a438536edba93fd5efafc07d43b420",
+      "bytes": 10374,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/delta/src/routes/servers/soundboard_library_tests.rs",
-      "sha256": "813e917280c82b23d5553b925ad084557f8a23aa36175866470316631d14276b",
-      "bytes": 9659,
+      "sha256": "02dc1e69d33fce20e21485c60499b3f9d6140e8600d98cb70445e2bfc38d8b44",
+      "bytes": 10347,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6316,14 +6316,14 @@
     },
     {
       "path": "crates/services/autumn/src/library.rs",
-      "sha256": "a439942687b2e388eba8ccb011198159366a66ff61fb989a6e5fa143cfddd5cd",
-      "bytes": 3150,
+      "sha256": "4892e182f85dcc52389ec56992bdadf0acc2c7d00af320362d28d08722be2953",
+      "bytes": 6612,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/services/autumn/src/main.rs",
-      "sha256": "df81212f1af082999ce4394a47ebd8cc519dc7aed0bd9b2f26d93209200e6410",
-      "bytes": 3936,
+      "sha256": "abb0718aba057150378582e5c1c788ba7702d24121f8f654a094e4e7f31ff967",
+      "bytes": 3937,
       "category": "product-source-or-build-manifest"
     },
     {
