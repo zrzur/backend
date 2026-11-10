@@ -125,7 +125,11 @@ pub async fn web() -> Rocket<Build> {
                 .limit("file", 25.megabytes())
                 .limit("data-form", 130.megabytes()),
             address: Ipv4Addr::new(0, 0, 0, 0).into(),
-            port: 14702,
+            // DELTA_PORT: a second API from a branch beside the dev stack's
+            port: std::env::var("DELTA_PORT")
+                .ok()
+                .and_then(|port| port.parse().ok())
+                .unwrap_or(14702),
             ip_header: Some("X-Forwarded-For".into()),
             ..Default::default()
         })

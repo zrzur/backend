@@ -59,9 +59,9 @@ impl<'a> RatelimitResolver<Request<'a>> for DeltaRatelimits {
                 ("bots", Some(id), _) if extra == Some("interactions") => {
                     ("bot_endpoints", Some(id))
                 }
-                // a bot's public page (Discover, profiles): read often, by
-                // anyone, and the commands list is cached
-                ("bots", Some(_), Method::Get) if matches!(extra, Some("invite" | "commands")) => {
+                // a bot's commands (Discover, profiles): read often, by anyone,
+                // and cached; the invite page counts servers and keeps "bots"
+                ("bots", Some(_), Method::Get) if extra == Some("commands") => {
                     ("bot_public", None)
                 }
                 ("bots", _, _) => ("bots", None),
