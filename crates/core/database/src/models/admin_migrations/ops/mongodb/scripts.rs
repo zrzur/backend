@@ -37,6 +37,8 @@ const PENDING_LIST_INDEXES: i32 = 76;
 const NO_OP_REVISION_77: i32 = 77;
 const PENDING_PLATFORM_WORD_SEED: i32 = 78;
 const PENDING_PLATFORM_WORD_SEED_2: i32 = 79;
+// Index of open polls, read by crond to close them after their end
+const PENDING_POLL_INDEX: i32 = -1; // number given by the coordinator at merge
 
 /// The earliest day a session from before expiry can expire. At least 30
 /// days out, also with expiry switched off (0), for the day it is switched on.
@@ -2577,6 +2579,11 @@ pub async fn run_migrations(db: &MongoDb, revision: i32) -> i32 {
         update_platform_word_seed(&db.db()).await;
     }
 
+    if revision <= PENDING_POLL_INDEX {
+        info!("Running migration [revision {PENDING_POLL_INDEX} / 10-11-2026]: Index of open polls");
+        create_poll_index(&db.db()).await;
+    }
+
     // Reminder to update LATEST_REVISION when adding new migrations.
     LATEST_REVISION.max(revision)
 }
@@ -2716,6 +2723,21 @@ pub async fn create_staff_feature_indexes(db: &crate::mongodb::Database) {
 /// index every page of popular designs sorts all of them in memory; without
 /// the others Discover and file deletion read the whole collection. Safe to
 /// run twice (creating an index that exists is a no-op).
+/// Open polls by the time they end, for crond to close them. Only polls not
+/// yet closed are in it. Safe to run twice (an index that exists is a no-op).
+pub async fn create_poll_index(db: &crate::mongodb::Database) {
+    db.run_command(doc! {
+        "createIndexes": "messages",
+        "indexes": [{
+            "key": { "poll.expires_at": 1_i32 },
+            "name": "open_polls",
+            "partialFilterExpression": { "poll.ended": false },
+        }]
+    })
+    .await
+    .expect("Failed to create the poll index");
+}
+
 pub async fn create_list_indexes(db: &crate::mongodb::Database) {
     for (collection, index) in [
         (
@@ -3077,6 +3099,22 @@ mod community_migration_tests {
 #[cfg(test)]
 mod statement_migration_tests {
     use crate::mongodb::bson::{doc, Document};
+
+    /// MongoDB only: the poll index can be made twice
+    #[tokio::test]
+    async fn poll_index_runs_twice_on_mongodb() {
+        let db = crate::DatabaseInfo::Test("poll_index_migration".to_string())
+            .connect()
+            .await
+            .expect("Database connection failed.");
+        let crate::Database::MongoDb(mongo) = &db else {
+            return;
+        };
+        for _ in 0..2 {
+            super::create_poll_index(&mongo.db()).await;
+        }
+        db.drop_database().await;
+    }
 
     /// MongoDB only: running it twice is fine
     #[tokio::test]

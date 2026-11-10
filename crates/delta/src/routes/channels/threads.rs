@@ -171,6 +171,7 @@ pub async fn create_thread(
                 masquerade: None,
                 interactions: None,
                 interaction: None,
+                poll: None,
                 flags: None,
                 components: None,
             }),

@@ -27,6 +27,7 @@ fn message_data(data: &InteractionResponseData) -> DataMessageSend {
         interactions: None,
         components: data.components.clone(),
         interaction: None,
+        poll: None,
         flags: None,
     }
 }

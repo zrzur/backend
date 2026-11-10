@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::time::SystemTime;
+use iso8601_timestamp::Timestamp;
 use revolt_result::Result;
 
 use crate::{AppendMessage, FieldsMessage, Message, MessageQuery, PartialMessage};
@@ -48,6 +49,24 @@ pub trait AbstractMessages: Sync + Send {
 
     /// Remove reaction from a message
     async fn clear_reaction(&self, id: &str, emoji: &str) -> Result<()>;
+
+    /// Make `answers` the user's whole choice on the poll of a message: they
+    /// are added to these answers and taken off every other one of the
+    /// `answer_count`. Does nothing to a poll that has ended.
+    async fn set_poll_choice(
+        &self,
+        id: &str,
+        user: &str,
+        answers: &[u32],
+        answer_count: usize,
+    ) -> Result<()>;
+
+    /// Close the poll of a message; true only for the call that closed it
+    async fn end_poll(&self, id: &str) -> Result<bool>;
+
+    /// Messages whose poll is still open although `expires_at` is at or
+    /// before `before`, oldest end first
+    async fn fetch_expired_open_polls(&self, before: Timestamp, limit: i64) -> Result<Vec<Message>>;
 
     /// Delete a message from the database by its id
     async fn delete_message(&self, id: &str) -> Result<()>;

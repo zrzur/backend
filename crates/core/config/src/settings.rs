@@ -1193,6 +1193,10 @@ pub struct Features {
     /// (`POST /channels/{target}/messages/forward`). Unset means off.
     #[serde(default)]
     pub message_forwarding_enabled: bool,
+    /// Messages can carry polls (votes, voter lists, early end; crond
+    /// closes them). Unset means off.
+    #[serde(default)]
+    pub polls_enabled: bool,
 
     #[serde(default)]
     pub advanced: FeaturesAdvanced,

@@ -139,6 +139,7 @@ pub fn message_from_body(
             interactions: body.interactions,
             components: body.components,
             interaction: None,
+            poll: None,
             flags: silent.then_some(1 << v0::MessageFlags::SuppressNotifications as u32),
         },
         Delivery {

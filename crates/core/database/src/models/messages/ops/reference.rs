@@ -268,6 +268,65 @@ impl AbstractMessages for ReferenceDb {
         }
     }
 
+    /// Set the user's whole choice on a poll
+    async fn set_poll_choice(
+        &self,
+        id: &str,
+        user: &str,
+        answers: &[u32],
+        _answer_count: usize,
+    ) -> Result<()> {
+        let mut messages = self.messages.lock().await;
+        let message = messages.get_mut(id).ok_or_else(|| create_error!(NotFound))?;
+        let poll = message.poll.as_mut().ok_or_else(|| create_error!(NotFound))?;
+        if poll.ended {
+            return Ok(());
+        }
+        for answer in &mut poll.answers {
+            if answers.contains(&answer.id) {
+                answer.voters.insert(user.to_string());
+            } else {
+                answer.voters.shift_remove(user);
+            }
+        }
+        Ok(())
+    }
+
+    /// Close a poll
+    async fn end_poll(&self, id: &str) -> Result<bool> {
+        let mut messages = self.messages.lock().await;
+        let message = messages.get_mut(id).ok_or_else(|| create_error!(NotFound))?;
+        match message.poll.as_mut() {
+            Some(poll) if !poll.ended => {
+                poll.ended = true;
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+
+    /// Open polls past their end
+    async fn fetch_expired_open_polls(
+        &self,
+        before: iso8601_timestamp::Timestamp,
+        limit: i64,
+    ) -> Result<Vec<Message>> {
+        let messages = self.messages.lock().await;
+        let mut expired: Vec<Message> = messages
+            .values()
+            .filter(|message| {
+                message
+                    .poll
+                    .as_ref()
+                    .is_some_and(|poll| !poll.ended && poll.expires_at <= before)
+            })
+            .cloned()
+            .collect();
+        expired.sort_by_key(|message| message.poll.as_ref().map(|poll| poll.expires_at));
+        expired.truncate(limit.max(0) as usize);
+        Ok(expired)
+    }
+
     /// Delete a message from the database by its id
     async fn delete_message(&self, id: &str) -> Result<()> {
         let mut messages = self.messages.lock().await;

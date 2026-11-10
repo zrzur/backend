@@ -378,6 +378,88 @@ impl AbstractMessages for MongoDb {
             .map_err(|_| create_database_error!("update_one", COL))
     }
 
+    /// Set the user's whole choice on a poll, in one update so two votes at
+    /// once can't leave a single-choice poll with two answers
+    async fn set_poll_choice(
+        &self,
+        id: &str,
+        user: &str,
+        answers: &[u32],
+        answer_count: usize,
+    ) -> Result<()> {
+        let mut add = Document::new();
+        let mut pull = Document::new();
+        for index in 0..answer_count {
+            let path = format!("poll.answers.{index}.voters");
+            if answers.contains(&(index as u32 + 1)) {
+                add.insert(path, user);
+            } else {
+                pull.insert(path, user);
+            }
+        }
+        let mut update = Document::new();
+        if !add.is_empty() {
+            update.insert("$addToSet", add);
+        }
+        if !pull.is_empty() {
+            update.insert("$pull", pull);
+        }
+        if update.is_empty() {
+            return Ok(());
+        }
+
+        self.col::<Document>(COL)
+            .update_one(doc! { "_id": id, "poll.ended": false }, update)
+            .await
+            .map(|_| ())
+            .map_err(|_| create_database_error!("update_one", COL))
+    }
+
+    /// Close a poll
+    async fn end_poll(&self, id: &str) -> Result<bool> {
+        self.col::<Document>(COL)
+            .update_one(
+                doc! { "_id": id, "poll.ended": false },
+                doc! { "$set": { "poll.ended": true } },
+            )
+            .await
+            .map(|result| result.modified_count == 1)
+            .map_err(|_| create_database_error!("update_one", COL))
+    }
+
+    /// Open polls past their end (index `open_polls`)
+    async fn fetch_expired_open_polls(
+        &self,
+        before: iso8601_timestamp::Timestamp,
+        limit: i64,
+    ) -> Result<Vec<Message>> {
+        // A message is written by the driver's raw serializer, which is not
+        // "human readable": a Timestamp goes in as milliseconds since 1970
+        // (an int64). `to_bson` would give text, and MongoDB compares only
+        // values of one type, so the bound is given as milliseconds (and as
+        // text, for documents written another way).
+        let as_millis = before
+            .duration_since(iso8601_timestamp::Timestamp::UNIX_EPOCH)
+            .whole_milliseconds() as i64;
+        let as_text = to_bson(&before).map_err(|_| create_database_error!("to_bson", COL))?;
+        self.find_with_options(
+            COL,
+            doc! {
+                "poll.ended": false,
+                "$or": [
+                    { "poll.expires_at": { "$lte": as_millis } },
+                    { "poll.expires_at": { "$lte": as_text } },
+                ],
+            },
+            FindOptions::builder()
+                .sort(doc! { "poll.expires_at": 1_i32 })
+                .limit(limit)
+                .build(),
+        )
+        .await
+        .map_err(|_| create_database_error!("find", COL))
+    }
+
     /// Delete a message from the database by its id
     async fn delete_message(&self, id: &str) -> Result<()> {
         query!(self, delete_one_by_id, COL, id).map(|_| ())

@@ -187,6 +187,7 @@ impl<'r> Responder<'r, 'static> for Error {
             ErrorType::AgeChangeNotAllowed => Status::Forbidden,
             ErrorType::AgeRestricted => Status::Forbidden,
             ErrorType::ForwardMatureContent => Status::Forbidden,
+            ErrorType::PollEnded => Status::Conflict,
             ErrorType::OperationFailed => Status::InternalServerError,
             ErrorType::IncorrectData { .. } => Status::BadRequest,
         };

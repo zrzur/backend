@@ -233,6 +233,7 @@ fn body_from_slack(payload: &Value) -> (v0::DataMessageSend, Option<String>, Opt
             interactions: None,
             components: None,
             interaction: None,
+            poll: None,
             flags: None,
         },
         owned(payload, "username"),
