@@ -26,7 +26,7 @@ struct MigrationInfo {
     revision: i32,
 }
 
-pub const LATEST_REVISION: i32 = 80; // MUST BE +1 to last migration
+pub const LATEST_REVISION: i32 = 83; // MUST BE +1 to last migration
 // Number given only in the release after the one above, once no old delta runs:
 // a session an old delta wrote during the rollout has no date and never expires.
 const PENDING_SESSION_EXPIRY_FILL: i32 = -1;
@@ -38,11 +38,11 @@ const NO_OP_REVISION_77: i32 = 77;
 const PENDING_PLATFORM_WORD_SEED: i32 = 78;
 const PENDING_PLATFORM_WORD_SEED_2: i32 = 79;
 // Number given by the coordinator at merge (stream botsapp)
-const PENDING_COMMAND_PERMISSIONS_INDEX: i32 = -1;
+const PENDING_COMMAND_PERMISSIONS_INDEX: i32 = 80;
 // Index of polls crond still has to close and answer
-const PENDING_POLL_INDEX: i32 = -1; // number given by the coordinator at merge
+const PENDING_POLL_INDEX: i32 = 81;
 // Number given by the coordinator at merge (stream events)
-const PENDING_SERVER_EVENT_INDEXES: i32 = -1;
+const PENDING_SERVER_EVENT_INDEXES: i32 = 82;
 
 /// The earliest day a session from before expiry can expire. At least 30
 /// days out, also with expiry switched off (0), for the day it is switched on.
