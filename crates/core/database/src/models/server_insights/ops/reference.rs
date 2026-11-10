@@ -88,10 +88,22 @@ impl AbstractServerInsights for ReferenceDb {
         for (channel, n) in &counts.channels {
             add(per_channel, channel.clone(), *n);
         }
-        if let Some(active) = counts.active {
-            row.active = active;
+        for (channel, n) in &counts.channels {
+            add(&mut row.channels, channel.clone(), *n);
         }
         Ok(true)
+    }
+
+    async fn set_server_insight_active(&self, server: &str, day: i64, active: u32) -> Result<()> {
+        if let Some(row) = self
+            .server_insights
+            .lock()
+            .await
+            .get_mut(&ServerInsightDay::key(server, day))
+        {
+            row.active = active;
+        }
+        Ok(())
     }
 
     async fn fetch_open_server_insight_days(
@@ -160,6 +172,7 @@ impl AbstractServerInsights for ReferenceDb {
     }
 
     async fn set_server_insight_cursor(&self, hour: i64, since: Option<i64>) -> Result<()> {
+        *self.server_insights_attempts.lock().await = None;
         let mut cursor = self.server_insights_cursor.lock().await;
         let kept = cursor.and_then(|(_, kept)| kept).or(since);
         *cursor = Some((hour, kept));
@@ -168,5 +181,29 @@ impl AbstractServerInsights for ReferenceDb {
 
     async fn fetch_server_insight_since(&self) -> Result<Option<i64>> {
         Ok(self.server_insights_cursor.lock().await.and_then(|(_, since)| since))
+    }
+
+    async fn note_server_insight_attempt(&self, hour: i64) -> Result<u32> {
+        let mut attempts = self.server_insights_attempts.lock().await;
+        let count = match *attempts {
+            Some((failed, count)) if failed == hour => count + 1,
+            _ => 1,
+        };
+        *attempts = Some((hour, count));
+        Ok(count)
+    }
+
+    async fn fetch_server_ids_among(&self, ids: &[String]) -> Result<Vec<String>> {
+        let servers = self.servers.lock().await;
+        Ok(ids.iter().filter(|id| servers.contains_key(*id)).cloned().collect())
+    }
+
+    async fn fetch_bot_ids_among(&self, ids: &[String]) -> Result<Vec<String>> {
+        let users = self.users.lock().await;
+        Ok(ids
+            .iter()
+            .filter(|id| users.get(*id).is_some_and(|user| user.bot.is_some()))
+            .cloned()
+            .collect())
     }
 }

@@ -9,6 +9,7 @@ use iso8601_timestamp::{Duration, Timestamp};
 use revolt_database::voice::{create_voice_state, delete_voice_state, UserVoiceChannel};
 use revolt_database::{
     authors_key, hour_of, last_rollable_hour, Channel, Database, InsightCounter, InsightHour,
+    HOUR_CHANNELS, OTHER_CHANNEL,
     Invite, Member, Message, PartialMember, RemovalIntention, Server, ServerInsightDay, Session,
     SystemMessage, User,
 };
@@ -161,12 +162,18 @@ async fn joins_count_by_where_they_came_from_and_leaves_too() {
     assert_eq!(page["days"], 7);
     assert_eq!(page["rows"].as_array().unwrap().len(), 7);
     let today = last_row(&page);
-    // owner and member (made directly: "other") and the invite join
-    assert_eq!(today["joins"], 3);
-    assert_eq!(today["leaves"], 1);
-    assert_eq!(page["totals"]["joins"], 3);
-    assert_eq!(page["join_sources"]["invite"], 1);
-    assert_eq!(page["join_sources"]["other"], 2);
+    // owner and member (made directly: "other") and the invite join, in
+    // the row; on the page 1 to 4 read "fewer than 5"
+    let row = today_row(&s.harness.db, &s.server.id).await;
+    assert_eq!(total(&row.joins), 3);
+    assert_eq!(total(&row.leaves), 1);
+    assert_eq!(row.sources.get("invite"), Some(&1));
+    assert_eq!(row.sources.get("other"), Some(&2));
+    assert_eq!(today["joins"], Value::Null);
+    assert_eq!(today["leaves"], Value::Null);
+    assert_eq!(page["totals"]["joins"], Value::Null);
+    assert_eq!(page["join_sources"]["invite"], Value::Null);
+    assert_eq!(page["join_sources"]["other"], Value::Null);
     assert_eq!(page["join_sources"]["discover"], 0);
     // the member count is read again after joins and leaves
     assert_eq!(today["members"], 2);
@@ -361,6 +368,16 @@ async fn channels_the_viewer_can_not_see_never_show_up() {
     for i in 0..20 {
         message_at(&s, &secret, &s.owner, start + 100 + i).await;
     }
+    // a thread of the private channel follows its parent
+    let mut thread = secret.clone();
+    if let Channel::TextChannel { id, parent, .. } = &mut thread {
+        *id = Ulid::new().to_string();
+        *parent = Some(secret.id().to_string());
+    }
+    s.harness.db.insert_channel(&thread).await.unwrap();
+    for i in 0..10 {
+        message_at(&s, &thread, &s.owner, start + 200 + i).await;
+    }
     ServerInsightDay::roll_hour(&s.harness.db, hour).await.unwrap();
 
     // the member manages the server but may not see the private channel
@@ -394,28 +411,53 @@ async fn channels_the_viewer_can_not_see_never_show_up() {
     assert_eq!(status, Status::Ok, "{mine}");
     assert_eq!(mine["totals"]["messages"], 6);
     assert!(!mine.to_string().contains(secret.id()));
-    // the owner sees both
+    assert!(!mine.to_string().contains(thread.id()));
+    // the owner sees all three
     let (_, theirs) = get(&s.harness, &path, &s.owner_session).await;
-    assert_eq!(theirs["totals"]["messages"], 26);
+    assert_eq!(theirs["totals"]["messages"], 36);
+}
+
+async fn voice_seat(s: &Setup) -> UserVoiceChannel {
+    let voice = text_channel(&s.harness, &s.server, "talk", false, true).await;
+    UserVoiceChannel {
+        id: voice.id().to_string(),
+        server_id: Some(s.server.id.clone()),
+    }
+}
+
+/// Voice seconds of the server's rows of today and yesterday, and how many
+/// hours they are spread over
+async fn voice_seconds(s: &Setup) -> (u32, usize) {
+    let mut seconds = 0;
+    let mut hours = 0;
+    let day = hour_of(Timestamp::now_utc()).div_euclid(24);
+    for row in s
+        .harness
+        .db
+        .fetch_server_insights(&s.server.id, day - 1, day)
+        .await
+        .unwrap()
+    {
+        seconds += total(&row.voice);
+        hours += row.voice.len();
+    }
+    (seconds, hours)
 }
 
 #[rocket::async_test]
 async fn voice_time_is_counted_once_when_a_seat_is_left() {
     let s = setup().await;
-    let voice = text_channel(&s.harness, &s.server, "talk", false, true).await;
-    let seat = UserVoiceChannel {
-        id: voice.id().to_string(),
-        server_id: Some(s.server.id.clone()),
-    };
+    let seat = voice_seat(&s).await;
     create_voice_state(&seat, &s.member.id, Timestamp::now_utc() - Duration::minutes(10))
         .await
         .unwrap();
     delete_voice_state(&seat, &s.member.id).await.unwrap();
     // a second leave of the same seat (a late webhook) adds nothing
     delete_voice_state(&seat, &s.member.id).await.unwrap();
-    ServerInsightDay::flush_voice(&s.harness.db).await.unwrap();
+    // only this server's pending time (tests run side by side)
+    ServerInsightDay::flush_voice_of(&s.harness.db, &s.server.id).await.unwrap();
 
-    let seconds = total(&today_row(&s.harness.db, &s.server.id).await.voice);
+    let (seconds, _) = voice_seconds(&s).await;
     assert!((599..=601).contains(&seconds), "{seconds}");
     let (_, page) = get(
         &s.harness,
@@ -424,6 +466,107 @@ async fn voice_time_is_counted_once_when_a_seat_is_left() {
     )
     .await;
     assert_eq!(page["totals"]["voice_minutes"], 10);
+}
+
+#[rocket::async_test]
+async fn a_long_seat_is_split_over_its_hours_and_capped() {
+    let s = setup().await;
+    let seat = voice_seat(&s).await;
+    // a seat left open for 20 hours counts 12, spread over the hours
+    create_voice_state(&seat, &s.member.id, Timestamp::now_utc() - Duration::hours(20))
+        .await
+        .unwrap();
+    delete_voice_state(&seat, &s.member.id).await.unwrap();
+    ServerInsightDay::flush_voice_of(&s.harness.db, &s.server.id).await.unwrap();
+    let (seconds, hours) = voice_seconds(&s).await;
+    assert!((43_199..=43_201).contains(&seconds), "{seconds}");
+    assert!(hours >= 12, "{hours} hours");
+}
+
+#[rocket::async_test]
+async fn bots_and_other_channels_seats_add_no_voice_time() {
+    let s = setup().await;
+    let seat = voice_seat(&s).await;
+    let other = voice_seat(&s).await;
+    // a bot's seat: dropped when crond moves the time
+    let (_, bot_user) = s.harness.new_bot(&s.owner).await;
+    Member::create(&s.harness.db, &s.server, &bot_user, None).await.unwrap();
+    create_voice_state(&seat, &bot_user.id, Timestamp::now_utc() - Duration::minutes(30))
+        .await
+        .unwrap();
+    delete_voice_state(&seat, &bot_user.id).await.unwrap();
+    // the member's seat key points at another channel: a late leave of
+    // this one takes nothing
+    create_voice_state(&other, &s.member.id, Timestamp::now_utc() - Duration::minutes(30))
+        .await
+        .unwrap();
+    delete_voice_state(&seat, &s.member.id).await.unwrap();
+    ServerInsightDay::flush_voice_of(&s.harness.db, &s.server.id).await.unwrap();
+    assert_eq!(voice_seconds(&s).await.0, 0);
+}
+
+#[rocket::async_test]
+async fn more_than_five_hundred_channels_all_count() {
+    let s = setup().await;
+    let hour = hour_of(Timestamp::now_utc()) - 230;
+    let mut ids = vec![];
+    for _ in 0..600 {
+        let mut channel = s.text.clone();
+        if let Channel::TextChannel { id, .. } = &mut channel {
+            *id = Ulid::new().to_string();
+        }
+        s.harness.db.insert_channel(&channel).await.unwrap();
+        ids.push(channel.id().to_string());
+    }
+    // six hours of 100 channels, one message each
+    for (n, chunk) in ids.chunks(100).enumerate() {
+        let counts = InsightHour {
+            channels: chunk.iter().map(|id| (id.clone(), 1)).collect(),
+        };
+        s.harness
+            .db
+            .add_server_insight_hour(&s.server.id, hour + n as i64, &counts)
+            .await
+            .unwrap();
+    }
+    let (status, page) = get(
+        &s.harness,
+        &format!("/servers/{}/insights?days=30&time_zone=UTC", s.server.id),
+        &s.owner_session,
+    )
+    .await;
+    assert_eq!(status, Status::Ok, "{page}");
+    assert_eq!(page["totals"]["messages"], 600);
+}
+
+#[rocket::async_test]
+async fn an_hour_with_many_channels_keeps_a_bounded_row() {
+    let s = setup().await;
+    let hour = hour_of(Timestamp::now_utc()) - 240;
+    let start = (hour as u64) * 3_600_000;
+    for n in 0..(HOUR_CHANNELS as u64 + 20) {
+        let mut channel = s.text.clone();
+        if let Channel::TextChannel { id, .. } = &mut channel {
+            *id = Ulid::new().to_string();
+        }
+        s.harness.db.insert_channel(&channel).await.unwrap();
+        message_at(&s, &channel, &s.owner, start + 10 + n).await;
+    }
+    assert_eq!(ServerInsightDay::roll_hour(&s.harness.db, hour).await.unwrap(), (1, 0));
+    let day = hour.div_euclid(24);
+    let row = s
+        .harness
+        .db
+        .fetch_server_insights(&s.server.id, day, day)
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+    let in_hour = &row.messages[&hour.rem_euclid(24).to_string()];
+    assert_eq!(in_hour.len(), HOUR_CHANNELS + 1);
+    assert_eq!(in_hour.values().sum::<u32>(), HOUR_CHANNELS as u32 + 20);
+    assert_eq!(in_hour.get(OTHER_CHANNEL), Some(&20));
+    assert_eq!(row.channels.len(), HOUR_CHANNELS + 1);
 }
 
 /// Retention and closing run when the roll-up fails (part of the pass
@@ -438,13 +581,11 @@ async fn closing_and_retention_run_when_the_roll_up_fails(s: &Setup) {
         .add_server_insight_hour(
             &s.server.id,
             open_day * 24 + 3,
-            &InsightHour {
-                active: Some(9),
-                ..Default::default()
-            },
+            &InsightHour::default(),
         )
         .await
         .unwrap();
+    s.harness.db.set_server_insight_active(&s.server.id, open_day, 9).await.unwrap();
     s.harness
         .db
         .add_server_insight(&s.server.id, current - 24 * 100, &InsightCounter::Leave)
@@ -462,6 +603,23 @@ async fn closing_and_retention_run_when_the_roll_up_fails(s: &Setup) {
     assert!(report.closed >= 1, "{report:?}");
     // the failed hour is tried again next time
     assert_eq!(s.harness.db.fetch_server_insight_cursor().await.unwrap(), Some(current - 5));
+    // ... up to five passes, then it is skipped and the next hours go on
+    let bad = current - 4;
+    let failing = |next: i64| async move {
+        if next == bad {
+            Err(create_error!(InternalError))
+        } else {
+            Ok((0, 0))
+        }
+    };
+    for _ in 0..3 {
+        let report = ServerInsightDay::run_pass_with(&s.harness.db, now, failing).await;
+        assert_eq!((report.hours, report.skipped), (0, 0));
+    }
+    let report = ServerInsightDay::run_pass_with(&s.harness.db, now, failing).await;
+    assert_eq!(report.skipped, 1, "{report:?}");
+    assert_eq!(report.hours, 5);
+    assert_eq!(s.harness.db.fetch_server_insight_cursor().await.unwrap(), Some(current));
     let rows = s
         .harness
         .db
@@ -537,7 +695,6 @@ async fn two_first_writes_of_a_day_both_count() {
         let server = format!("{}-race-{n}", s.server.id);
         let counts = InsightHour {
             channels: [(s.text.id().to_string(), 3)].into_iter().collect(),
-            active: Some(1),
         };
         let (join, rolled) = rocket::tokio::join!(
             db.add_server_insight(&server, hour, &InsightCounter::Join(revolt_database::InsightJoinSource::Invite)),

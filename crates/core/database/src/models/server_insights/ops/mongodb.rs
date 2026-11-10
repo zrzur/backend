@@ -12,8 +12,14 @@ static COL: &str = "server_insights";
 static STATE: &str = "server_insights_state";
 static CURSOR: &str = "rollup";
 
+/// A duplicate key (server code 11000), read from the error itself
 fn is_duplicate(error: &mongodb::error::Error) -> bool {
-    error.to_string().contains("E11000")
+    use mongodb::error::{ErrorKind, WriteFailure};
+    match error.kind.as_ref() {
+        ErrorKind::Write(WriteFailure::WriteError(write)) => write.code == 11000,
+        ErrorKind::Command(command) => command.code == 11000,
+        _ => false,
+    }
 }
 
 fn as_i64(value: Option<&bson::Bson>) -> Option<i64> {
@@ -128,14 +134,11 @@ impl AbstractServerInsights for MongoDb {
         let mut inc = Document::new();
         for (channel, n) in &counts.channels {
             inc.insert(format!("messages.{of_day}.{channel}"), *n as i64);
-        }
-        let mut set = doc! { "open": true };
-        if let Some(active) = counts.active {
-            set.insert("active", active as i64);
+            inc.insert(format!("channels.{channel}"), *n as i64);
         }
         let mut update = doc! {
             "$setOnInsert": { "server": server, "day": day },
-            "$set": set,
+            "$set": { "open": true },
             "$addToSet": { "hours": of_day },
         };
         if !inc.is_empty() {
@@ -165,6 +168,17 @@ impl AbstractServerInsights for MongoDb {
             }
             Err(_) => Err(create_database_error!("update_one", COL)),
         }
+    }
+
+    async fn set_server_insight_active(&self, server: &str, day: i64, active: u32) -> Result<()> {
+        self.col::<Document>(COL)
+            .update_one(
+                doc! { "_id": ServerInsightDay::key(server, day) },
+                doc! { "$set": { "active": active as i64 } },
+            )
+            .await
+            .map_err(|_| create_database_error!("update_one", COL))
+            .map(|_| ())
     }
 
     async fn fetch_open_server_insight_days(
@@ -251,7 +265,10 @@ impl AbstractServerInsights for MongoDb {
     }
 
     async fn set_server_insight_cursor(&self, hour: i64, since: Option<i64>) -> Result<()> {
-        let mut update = doc! { "$set": { "hour": hour } };
+        let mut update = doc! {
+            "$set": { "hour": hour },
+            "$unset": { "failed_hour": "", "attempts": "" },
+        };
         if let Some(since) = since {
             update.insert("$setOnInsert", doc! { "since": since });
         }
@@ -270,5 +287,63 @@ impl AbstractServerInsights for MongoDb {
             .await
             .map_err(|_| create_database_error!("find_one", STATE))?;
         Ok(state.and_then(|state| as_i64(state.get("since"))))
+    }
+
+    async fn note_server_insight_attempt(&self, hour: i64) -> Result<u32> {
+        // one crond runs the roll-up, so read and write need no lock
+        let state = self
+            .col::<Document>(STATE)
+            .find_one(doc! { "_id": CURSOR })
+            .await
+            .map_err(|_| create_database_error!("find_one", STATE))?;
+        let attempts = match state {
+            Some(state) if as_i64(state.get("failed_hour")) == Some(hour) => {
+                as_i64(state.get("attempts")).unwrap_or(0) + 1
+            }
+            _ => 1,
+        };
+        self.col::<Document>(STATE)
+            .update_one(
+                doc! { "_id": CURSOR },
+                doc! { "$set": { "failed_hour": hour, "attempts": attempts } },
+            )
+            .upsert(true)
+            .await
+            .map_err(|_| create_database_error!("update_one", STATE))?;
+        Ok(attempts.clamp(0, u32::MAX as i64) as u32)
+    }
+
+    async fn fetch_server_ids_among(&self, ids: &[String]) -> Result<Vec<String>> {
+        let mut cursor = self
+            .col::<Document>("servers")
+            .find(doc! { "_id": { "$in": ids } })
+            .projection(doc! { "_id": 1_i32 })
+            .await
+            .map_err(|_| create_database_error!("find", "servers"))?;
+        let mut found = vec![];
+        while let Some(server) = cursor.next().await {
+            let server = server.map_err(|_| create_database_error!("find", "servers"))?;
+            if let Ok(id) = server.get_str("_id") {
+                found.push(id.to_string());
+            }
+        }
+        Ok(found)
+    }
+
+    async fn fetch_bot_ids_among(&self, ids: &[String]) -> Result<Vec<String>> {
+        let mut cursor = self
+            .col::<Document>("users")
+            .find(doc! { "_id": { "$in": ids }, "bot": { "$exists": true } })
+            .projection(doc! { "_id": 1_i32, "bot": 1_i32 })
+            .await
+            .map_err(|_| create_database_error!("find", "users"))?;
+        let mut found = vec![];
+        while let Some(user) = cursor.next().await {
+            let user = user.map_err(|_| create_database_error!("find", "users"))?;
+            if let Ok(id) = user.get_str("_id") {
+                found.push(id.to_string());
+            }
+        }
+        Ok(found)
     }
 }

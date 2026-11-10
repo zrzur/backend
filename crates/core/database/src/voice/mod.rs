@@ -297,24 +297,36 @@ return 0
 ";
 
 /// Takes a seat's `joined_at` (read and deleted in one step, so two leaves
-/// count once) and adds the seconds to the server's pending voice time,
-/// which crond moves into the server's insights. Only while the per-server
-/// key points at this channel, as the delete below.
+/// count once) and adds its time to the server's pending voice time, split
+/// over the hours it covered (field "hour:user") and at most `ARGV[4]`
+/// seconds; crond moves it into the server's insights. Only while the
+/// per-server key points at this channel, as the delete below.
+/// ARGV: channel id, now (ms), server id, cap (s), user id
 const NOTE_VOICE_SECONDS_SCRIPT: &str = r"
 if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
 local joined = redis.call('GETDEL', KEYS[2])
 if not joined then return 0 end
-local seconds = math.floor((tonumber(ARGV[2]) - tonumber(joined)) / 1000)
-if seconds <= 0 then return 0 end
-redis.call('HINCRBY', KEYS[3], math.floor(tonumber(ARGV[2]) / 3600000), seconds)
+local now = math.floor(tonumber(ARGV[2]) / 1000)
+local from = math.max(math.floor(tonumber(joined) / 1000), now - tonumber(ARGV[4]))
+if now <= from then return 0 end
+local total = 0
+local at = from
+while at < now do
+    local hour = math.floor(at / 3600)
+    local upto = math.min((hour + 1) * 3600, now)
+    redis.call('HINCRBY', KEYS[3], hour .. ':' .. ARGV[5], upto - at)
+    total = total + upto - at
+    at = upto
+end
 redis.call('SADD', KEYS[4], ARGV[3])
-return seconds
+return total
 ";
 
 /// Every way out of a server voice seat (leave, kick, move, reconcile,
-/// stale state) goes through `delete_voice_state`, so the time is counted
-/// here. A failure only loses the time, never the delete.
-async fn note_voice_seconds(channel: &UserVoiceChannel, user_id: &str) {
+/// stale state) goes through `delete_voice_state`, and a whole room through
+/// `delete_channel_voice_state`; both count here. A failure only loses the
+/// time, never the delete.
+pub async fn note_voice_seconds(channel: &UserVoiceChannel, user_id: &str) {
     let Some(server) = channel.server_id.as_deref() else {
         return;
     };
@@ -335,6 +347,8 @@ async fn note_voice_seconds(channel: &UserVoiceChannel, user_id: &str) {
         .arg(&channel.id)
         .arg(now)
         .arg(server)
+        .arg(crate::VOICE_SEAT_CAP_SECONDS)
+        .arg(user_id)
         .query_async::<_, i64>(&mut connection.into_inner())
         .await;
 }
@@ -419,6 +433,11 @@ pub async fn delete_channel_voice_state(
     user_ids: &[String],
 ) -> Result<()> {
     let parent_id = channel.server_id.as_ref().unwrap_or(&channel.id);
+
+    // the room is gone (finished, channel deleted): its seats' time counts
+    for user_id in user_ids {
+        note_voice_seconds(channel, user_id).await;
+    }
 
     let mut pipeline = Pipeline::new();
     pipeline.del(format!("vc_members:{}", &channel.id));

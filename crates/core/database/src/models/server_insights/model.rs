@@ -4,8 +4,9 @@
 //! each hour of that day, so a viewer's days can be counted in their own
 //! time zone. How the counts get there, by write cost:
 //!
-//! - joins, leaves and voice time are rare next to messages, so delta and
-//!   voice-ingress add each with an `$inc` upsert as it happens;
+//! - joins, leaves and voice time are rare next to messages, so delta adds
+//!   joins and leaves with an `$inc` upsert as they happen, and voice time
+//!   waits in Redis until crond moves it;
 //! - messages are never counted on the send path. crond rolls each finished
 //!   hour up once: one aggregation over that hour's slice of the message id
 //!   index (ids are ULIDs, so an hour is an id range), grouped by channel and
@@ -14,9 +15,15 @@
 //!   run never count it twice. An hour is rolled up only `GRACE_SECONDS`
 //!   after its end: a message id carries the clock of the delta that made
 //!   it, so a delta up to that much ahead or behind still lands in its hour.
+//!   An hour that keeps failing is skipped after `MAX_HOUR_ATTEMPTS` passes.
 //! - active members: the authors (bots left out) of an open day go into a
 //!   Redis HyperLogLog (`insight_authors:<server>:<day>`, 48 h expiry); the
 //!   row keeps only the estimate. No user id is ever written to MongoDB.
+//!
+//! Size: an hour keeps its `HOUR_CHANNELS` busiest channels and adds the rest
+//! to `OTHER_CHANNEL`, so a row holds at most 24 × (`HOUR_CHANNELS` + 1)
+//! entries per map (well under MongoDB's 16 MB). Bulk reads go in batches of
+//! `BATCH`.
 //!
 //! Reading a page is one indexed find on (server, day). Rows older than
 //! `RETENTION_DAYS` (plus one day for time zones) are deleted by crond.
@@ -31,7 +38,7 @@ use std::future::Future;
 use iso8601_timestamp::Timestamp;
 use redis_kiss::{get_connection, redis};
 use revolt_models::v0;
-use revolt_result::Result;
+use revolt_result::{ErrorType, Result};
 use ulid::Ulid;
 
 use crate::util::tz::{civil_from_days, Zone};
@@ -57,6 +64,21 @@ pub const GRACE_SECONDS: i64 = 5 * 60;
 pub const AUTHORS_TTL_SECONDS: i64 = 48 * 3600;
 /// Open days closed in one pass at most
 pub const CLOSE_PER_PASS: i64 = 1000;
+/// Channels an hour keeps by name; the rest go to `OTHER_CHANNEL`
+pub const HOUR_CHANNELS: usize = 100;
+/// The key of the messages of the channels past `HOUR_CHANNELS` (counted
+/// for nobody: it can hold channels a viewer does not see)
+pub const OTHER_CHANNEL: &str = "_other";
+/// Passes an hour may fail before crond skips it
+pub const MAX_HOUR_ATTEMPTS: u32 = 5;
+/// crond warns when it is this many hours behind
+pub const BEHIND_WARN_HOURS: i64 = 6;
+/// The most voice time one seat counts (a seat left open by a crash)
+pub const VOICE_SEAT_CAP_SECONDS: i64 = 12 * 3600;
+/// Ids per bulk read
+pub const BATCH: usize = 1000;
+/// How long the note that a deleted account's leaves were counted stays
+const LEFT_MARK_SECONDS: i64 = 7 * 86_400;
 
 auto_derived!(
     /// One server's counts for one UTC day. Hour maps are keyed by the hour
@@ -73,13 +95,16 @@ auto_derived!(
         /// Messages per hour and channel id
         #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
         pub messages: BTreeMap<String, BTreeMap<String, u32>>,
+        /// Messages per channel id over the whole day
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        pub channels: BTreeMap<String, u32>,
         /// Joins per hour
         #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
         pub joins: BTreeMap<String, u32>,
         /// Leaves (also kicks, bans and deleted accounts) per hour
         #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
         pub leaves: BTreeMap<String, u32>,
-        /// Seconds in voice per hour (counted at the hour someone leaves)
+        /// Seconds in voice per hour (each seat's time in the hours it covered)
         #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
         pub voice: BTreeMap<String, u32>,
         /// Joins by where they came from (`invite`, `discover`, ...)
@@ -123,10 +148,8 @@ auto_derived!(
     /// What one hour adds to one server
     #[derive(Default)]
     pub struct InsightHour {
-        /// Messages per channel id
+        /// Messages per channel id (at most `HOUR_CHANNELS` + the other bucket)
         pub channels: BTreeMap<String, u32>,
-        /// Distinct authors of the day so far, when Redis answered
-        pub active: Option<u32>,
     }
 
     /// What a crond pass did
@@ -136,6 +159,8 @@ auto_derived!(
         pub servers: u32,
         pub closed: u64,
         pub deleted: u64,
+        /// Hours given up after `MAX_HOUR_ATTEMPTS` failed passes
+        pub skipped: u32,
         /// Steps or server updates that failed (logged; the pass went on)
         pub failures: u32,
     }
@@ -177,8 +202,8 @@ pub fn day_label(day: i64) -> String {
     format!("{year:04}-{month:02}-{date:02}")
 }
 
-/// A count as shown where one person could be picked out: 1 to 4 become
-/// `None` ("fewer than 5")
+/// A count as shown: 1 to 4 become `None` ("fewer than 5"), so one person
+/// can not be picked out
 pub fn shown_count(count: u32) -> Option<u32> {
     if count > 0 && count < SMALL_COUNT {
         None
@@ -192,10 +217,25 @@ pub fn voice_minutes(seconds: u64) -> u32 {
     ((seconds + 30) / 60).min(u32::MAX as u64) as u32
 }
 
+/// An hour's channels: the `keep` busiest by name, the rest summed into
+/// `OTHER_CHANNEL`
+pub fn cap_channels(channels: BTreeMap<String, u32>, keep: usize) -> BTreeMap<String, u32> {
+    if channels.len() <= keep {
+        return channels;
+    }
+    let mut sorted: Vec<(String, u32)> = channels.into_iter().collect();
+    sorted.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    let rest: u32 = sorted[keep..].iter().fold(0, |sum, (_, n)| sum.saturating_add(*n));
+    let mut kept: BTreeMap<String, u32> = sorted.into_iter().take(keep).collect();
+    *kept.entry(OTHER_CHANNEL.to_string()).or_default() += rest;
+    kept
+}
+
 /// Servers with voice time waiting for crond (a Redis set)
 pub const VOICE_PENDING_SERVERS: &str = "insight_voice_servers";
 
-/// A server's voice seconds waiting for crond (a Redis hash: hour → seconds)
+/// A server's voice seconds waiting for crond (a Redis hash: "hour:user" →
+/// seconds; the user only so crond can leave bots out)
 pub fn voice_pending_key(server: &str) -> String {
     format!("insight_voice:{server}")
 }
@@ -208,6 +248,14 @@ redis.call('SREM', KEYS[2], ARGV[1])
 return pending
 ";
 
+/// Adds authors to a day's HyperLogLog, keeps it 48 h and counts it, in one
+/// step
+const ADD_AUTHORS_SCRIPT: &str = r"
+if #ARGV > 1 then redis.call('PFADD', KEYS[1], unpack(ARGV, 2)) end
+redis.call('EXPIRE', KEYS[1], ARGV[1])
+return redis.call('PFCOUNT', KEYS[1])
+";
+
 /// The Redis key of a day's authors
 pub fn authors_key(server: &str, day: i64) -> String {
     format!("insight_authors:{server}:{day}")
@@ -216,24 +264,17 @@ pub fn authors_key(server: &str, day: i64) -> String {
 /// Add authors to a day's HyperLogLog and return the estimate; None when
 /// Redis did not answer (the row then keeps its last number)
 pub async fn add_day_authors(server: &str, day: i64, authors: &[String]) -> Option<u32> {
-    let key = authors_key(server, day);
     let mut connection = get_connection().await.ok()?.into_inner();
-    let mut pipe = redis::pipe();
-    pipe.cmd("PFADD").arg(&key);
+    let mut script = redis::cmd("EVAL");
+    script
+        .arg(ADD_AUTHORS_SCRIPT)
+        .arg(1)
+        .arg(authors_key(server, day))
+        .arg(AUTHORS_TTL_SECONDS);
     for author in authors {
-        pipe.arg(author);
+        script.arg(author);
     }
-    pipe.ignore()
-        .cmd("EXPIRE")
-        .arg(&key)
-        .arg(AUTHORS_TTL_SECONDS)
-        .ignore()
-        .cmd("PFCOUNT")
-        .arg(&key);
-    pipe.query_async::<_, (u32,)>(&mut connection)
-        .await
-        .ok()
-        .map(|(count,)| count)
+    script.query_async::<_, u32>(&mut connection).await.ok()
 }
 
 /// The estimate of a day's authors, and the key dropped (the day is over)
@@ -253,6 +294,57 @@ async fn take_day_authors(server: &str, day: i64) -> Option<u32> {
         .query_async::<_, ()>(&mut connection)
         .await;
     exists.then_some(count)
+}
+
+fn is_not_found<T>(result: &Result<T>) -> bool {
+    matches!(result, Err(error) if matches!(error.error_type, ErrorType::NotFound))
+}
+
+/// Bulk reads in batches of `BATCH`. A driver that answers NotFound for a
+/// whole batch when one id is missing (the reference one) is asked one by
+/// one; there only NotFound means "gone", any other error stops.
+macro_rules! existing {
+    ($db:expr, $ids:expr, $many:ident, $one:ident) => {{
+        let mut found = vec![];
+        for chunk in $ids.chunks(BATCH) {
+            let result = $db.$many(chunk).await;
+            if is_not_found(&result) {
+                for id in chunk {
+                    let one = $db.$one(id).await;
+                    if is_not_found(&one) {
+                        continue;
+                    }
+                    found.push(one?);
+                }
+            } else {
+                found.extend(result?);
+            }
+        }
+        Ok(found)
+    }};
+}
+
+/// The channels of these ids that still exist
+pub async fn existing_channels(db: &Database, ids: &[String]) -> Result<Vec<crate::Channel>> {
+    existing!(db, ids, fetch_channels, fetch_channel)
+}
+
+/// The ids among these that are servers that still exist
+async fn existing_server_ids(db: &Database, ids: &[String]) -> Result<HashSet<String>> {
+    let mut live = HashSet::new();
+    for chunk in ids.chunks(BATCH) {
+        live.extend(db.fetch_server_ids_among(chunk).await?);
+    }
+    Ok(live)
+}
+
+/// The ids among these that are bots
+async fn bot_ids(db: &Database, ids: &[String]) -> Result<HashSet<String>> {
+    let mut bots = HashSet::new();
+    for chunk in ids.chunks(BATCH) {
+        bots.extend(db.fetch_bot_ids_among(chunk).await?);
+    }
+    Ok(bots)
 }
 
 /// The time zone a page counts in
@@ -302,17 +394,35 @@ impl ServerInsightDay {
     }
 
     /// Add to a counter of a server, now. A failure is logged and never
-    /// stops what counted it (a join, a leave). Voice time of a server that
-    /// is gone is not counted (a call can outlast its server).
+    /// stops what counted it (a join, a leave).
     pub async fn count(db: &Database, server: &str, counter: InsightCounter) {
-        if matches!(counter, InsightCounter::VoiceSeconds(_)) && db.fetch_server(server).await.is_err() {
-            return;
-        }
         if let Err(error) = db
             .add_server_insight(server, hour_of(Timestamp::now_utc()), &counter)
             .await
         {
             log::warn!("Server insights: could not count {counter:?} for {server}: {error:?}");
+        }
+    }
+
+    /// A deleted account's leave of a server, once even if the deletion is
+    /// tried again (a Redis note per user and server, kept a week)
+    pub async fn count_account_leave(db: &Database, server: &str, user: &str) {
+        let first = match get_connection().await {
+            Ok(connection) => redis::cmd("SET")
+                .arg(format!("insight_left:{user}:{server}"))
+                .arg(1)
+                .arg("NX")
+                .arg("EX")
+                .arg(LEFT_MARK_SECONDS)
+                .query_async::<_, Option<String>>(&mut connection.into_inner())
+                .await
+                .map(|set| set.is_some())
+                // Redis down: count it (a rare double beats a lost leave)
+                .unwrap_or(true),
+            Err(_) => true,
+        };
+        if first {
+            Self::count(db, server, InsightCounter::Leave).await;
         }
     }
 
@@ -328,7 +438,7 @@ impl ServerInsightDay {
             return Ok((0, 0));
         }
 
-        // which server each channel belongs to (one read for all of them)
+        // which server each channel belongs to
         let mut channel_ids: Vec<String> = tallies.iter().map(|t| t.channel.clone()).collect();
         channel_ids.sort();
         channel_ids.dedup();
@@ -342,30 +452,17 @@ impl ServerInsightDay {
             })
             .collect();
 
-        // servers that still exist (one read)
+        // servers that still exist
         let mut server_ids: Vec<String> = channel_servers.values().cloned().collect();
         server_ids.sort();
         server_ids.dedup();
-        let live: HashSet<String> = existing_servers(db, &server_ids)
-            .await?
-            .into_iter()
-            .map(|server| server.id)
-            .collect();
+        let live = existing_server_ids(db, &server_ids).await?;
 
-        // bots do not count as active members (one read)
+        // bots do not count as active members
         let mut author_ids: Vec<String> = tallies.iter().filter_map(|t| t.author.clone()).collect();
         author_ids.sort();
         author_ids.dedup();
-        let people: HashSet<String> = if author_ids.is_empty() {
-            HashSet::new()
-        } else {
-            existing_users(db, &author_ids)
-                .await?
-                .into_iter()
-                .filter(|user| user.bot.is_none())
-                .map(|user| user.id)
-                .collect()
-        };
+        let bots = bot_ids(db, &author_ids).await?;
 
         let mut by_server: HashMap<String, (BTreeMap<String, u32>, HashSet<String>)> =
             HashMap::new();
@@ -377,8 +474,9 @@ impl ServerInsightDay {
                 continue;
             }
             let (channels, authors) = by_server.entry(server.clone()).or_default();
-            *channels.entry(tally.channel).or_default() += tally.count;
-            if let Some(author) = tally.author.filter(|author| people.contains(author)) {
+            let slot = channels.entry(tally.channel).or_default();
+            *slot = slot.saturating_add(tally.count);
+            if let Some(author) = tally.author.filter(|author| !bots.contains(author)) {
                 authors.insert(author);
             }
         }
@@ -386,14 +484,21 @@ impl ServerInsightDay {
         let day = hour.div_euclid(24);
         let (mut counted, mut failed) = (0, 0);
         for (server, (channels, authors)) in by_server {
-            let mut authors: Vec<String> = authors.into_iter().collect();
-            authors.sort();
-            let active = add_day_authors(&server, day, &authors).await;
-            match db
-                .add_server_insight_hour(&server, hour, &InsightHour { channels, active })
-                .await
-            {
-                Ok(true) => counted += 1,
+            let counts = InsightHour {
+                channels: cap_channels(channels, HOUR_CHANNELS),
+            };
+            match db.add_server_insight_hour(&server, hour, &counts).await {
+                Ok(true) => {
+                    counted += 1;
+                    // the authors only once the hour is in the row
+                    let mut authors: Vec<String> = authors.into_iter().collect();
+                    authors.sort();
+                    if let Some(active) = add_day_authors(&server, day, &authors).await {
+                        if let Err(error) = db.set_server_insight_active(&server, day, active).await {
+                            log::warn!("Server insights: active count of {server} not saved: {error:?}");
+                        }
+                    }
+                }
                 Ok(false) => {}
                 Err(error) => {
                     failed += 1;
@@ -405,43 +510,118 @@ impl ServerInsightDay {
     }
 
     /// Move the voice time that left seats noted in Redis into the rows of
-    /// their servers (servers that are gone are dropped). Returns the
-    /// servers counted.
+    /// their servers. Returns the servers counted.
     pub async fn flush_voice(db: &Database) -> Result<u32> {
         let Ok(connection) = get_connection().await else {
             return Err(create_error!(InternalError));
         };
-        let mut connection = connection.into_inner();
         let servers: Vec<String> = redis::cmd("SMEMBERS")
             .arg(VOICE_PENDING_SERVERS)
-            .query_async(&mut connection)
+            .query_async(&mut connection.into_inner())
             .await
             .map_err(|_| create_error!(InternalError))?;
         let mut counted = 0;
         for server in servers {
-            let pending: Vec<String> = redis::cmd("EVAL")
-                .arg(TAKE_VOICE_SCRIPT)
-                .arg(2)
-                .arg(voice_pending_key(&server))
-                .arg(VOICE_PENDING_SERVERS)
-                .arg(&server)
-                .query_async(&mut connection)
-                .await
-                .map_err(|_| create_error!(InternalError))?;
-            if pending.is_empty() || db.fetch_server(&server).await.is_err() {
-                continue;
+            match Self::flush_voice_of(db, &server).await {
+                Ok(true) => counted += 1,
+                Ok(false) => {}
+                Err(error) => log::warn!("Server insights: voice of {server} kept for later: {error:?}"),
             }
-            for pair in pending.chunks(2) {
-                let [hour, seconds] = pair else { continue };
-                let (Ok(hour), Ok(seconds)) = (hour.parse::<i64>(), seconds.parse::<u32>()) else {
-                    continue;
-                };
-                db.add_server_insight(&server, hour, &InsightCounter::VoiceSeconds(seconds))
-                    .await?;
-            }
-            counted += 1;
         }
         Ok(counted)
+    }
+
+    /// One server's pending voice time. Bots' seconds and servers that are
+    /// gone (NotFound) are dropped; when a write fails, what was not written
+    /// goes back to Redis for the next pass.
+    pub async fn flush_voice_of(db: &Database, server: &str) -> Result<bool> {
+        let Ok(connection) = get_connection().await else {
+            return Err(create_error!(InternalError));
+        };
+        let mut connection = connection.into_inner();
+        let pending: Vec<String> = redis::cmd("EVAL")
+            .arg(TAKE_VOICE_SCRIPT)
+            .arg(2)
+            .arg(voice_pending_key(server))
+            .arg(VOICE_PENDING_SERVERS)
+            .arg(server)
+            .query_async(&mut connection)
+            .await
+            .map_err(|_| create_error!(InternalError))?;
+        if pending.is_empty() {
+            return Ok(false);
+        }
+        let server_check = db.fetch_server(server).await;
+        if is_not_found(&server_check) {
+            return Ok(false);
+        }
+
+        // "hour:user" → seconds
+        let mut seats: Vec<(i64, String, u32)> = vec![];
+        for pair in pending.chunks(2) {
+            let [field, seconds] = pair else { continue };
+            let Some((hour, user)) = field.split_once(':') else { continue };
+            if let (Ok(hour), Ok(seconds)) = (hour.parse::<i64>(), seconds.parse::<u32>()) {
+                seats.push((hour, user.to_string(), seconds));
+            }
+        }
+        let mut users: Vec<String> = seats.iter().map(|(_, user, _)| user.clone()).collect();
+        users.sort();
+        users.dedup();
+        let checked = match server_check {
+            Ok(_) => bot_ids(db, &users).await,
+            Err(error) => Err(error),
+        };
+        let bots = match checked {
+            Ok(bots) => bots,
+            Err(error) => {
+                Self::put_back_voice(&mut connection, server, &seats).await;
+                return Err(error);
+            }
+        };
+
+        let mut by_hour: BTreeMap<i64, u32> = BTreeMap::new();
+        for (hour, user, seconds) in &seats {
+            if !bots.contains(user) {
+                let slot = by_hour.entry(*hour).or_default();
+                *slot = slot.saturating_add(*seconds);
+            }
+        }
+        let hours: Vec<(i64, u32)> = by_hour.into_iter().collect();
+        for (index, (hour, seconds)) in hours.iter().enumerate() {
+            if let Err(error) = db
+                .add_server_insight(server, *hour, &InsightCounter::VoiceSeconds(*seconds))
+                .await
+            {
+                // this hour and the ones after it wait for the next pass
+                let rest: Vec<(i64, String, u32)> = hours[index..]
+                    .iter()
+                    .map(|(hour, seconds)| (*hour, String::new(), *seconds))
+                    .collect();
+                Self::put_back_voice(&mut connection, server, &rest).await;
+                return Err(error);
+            }
+        }
+        Ok(true)
+    }
+
+    async fn put_back_voice<C: redis::aio::ConnectionLike + Send>(
+        connection: &mut C,
+        server: &str,
+        seats: &[(i64, String, u32)],
+    ) {
+        let mut pipe = redis::pipe();
+        for (hour, user, seconds) in seats {
+            pipe.cmd("HINCRBY")
+                .arg(voice_pending_key(server))
+                .arg(format!("{hour}:{user}"))
+                .arg(*seconds)
+                .ignore();
+        }
+        pipe.cmd("SADD").arg(VOICE_PENDING_SERVERS).arg(server).ignore();
+        if let Err(error) = pipe.query_async::<_, ()>(connection).await {
+            log::error!("Server insights: voice time of {server} lost: {error:?}");
+        }
     }
 
     /// Close the open days before `day`: their author estimate is final
@@ -456,9 +636,9 @@ impl ServerInsightDay {
         Ok(closed)
     }
 
-    /// One crond pass. Retention and closing days run first and each on
-    /// its own, so a failing roll-up never holds them up; then the finished
-    /// hours not rolled yet (at most `HOURS_PER_PASS`).
+    /// One crond pass. Retention, voice time and closing days run first and
+    /// each on its own, so a failing roll-up never holds them up; then the
+    /// finished hours not rolled yet (at most `HOURS_PER_PASS`).
     pub async fn run_pass(db: &Database, now: Timestamp) -> InsightPassReport {
         Self::run_pass_with(db, now, |hour| Self::roll_hour(db, hour)).await
     }
@@ -471,6 +651,7 @@ impl ServerInsightDay {
     {
         let mut report = InsightPassReport::default();
         let today = hour_of(now).div_euclid(24);
+        let last_hour = last_rollable_hour(now);
 
         // keep the longest range in any time zone (a local day can be a
         // UTC day either side)
@@ -492,17 +673,24 @@ impl ServerInsightDay {
             Err(error) => {
                 report.failures += 1;
                 log::error!("Server insights: cursor not read: {error:?}");
-                return report;
+                None
             }
         };
         let first_run = cursor.is_none();
         let mut next = match cursor {
             Some(done) => done + 1,
-            None => last_rollable_hour(now) + 1 - FIRST_RUN_HOURS,
+            None => last_hour + 1 - FIRST_RUN_HOURS,
         };
+        if last_hour - next + 1 > BEHIND_WARN_HOURS {
+            log::warn!(
+                "Server insights: {} hours behind (next hour {next})",
+                last_hour - next + 1
+            );
+        }
 
-        // every hour of the days before `next` is in
-        match Self::close_days(db, next.div_euclid(24)).await {
+        // every hour of the days before `next` is in; days older than two
+        // days are closed anyway (their authors leave Redis after 48 h)
+        match Self::close_days(db, next.div_euclid(24).max(today - 2)).await {
             Ok(closed) => report.closed = closed,
             Err(error) => {
                 report.failures += 1;
@@ -511,7 +699,7 @@ impl ServerInsightDay {
         }
 
         let since = next;
-        let last = (next + HOURS_PER_PASS - 1).min(last_rollable_hour(now));
+        let last = (next + HOURS_PER_PASS - 1).min(last_hour);
         while next <= last {
             match roll(next).await {
                 Ok((servers, failed)) => {
@@ -519,10 +707,17 @@ impl ServerInsightDay {
                     report.failures += failed;
                 }
                 Err(error) => {
-                    // the hour is not noted: the next pass tries it again
                     report.failures += 1;
-                    log::error!("Server insights: hour {next} not rolled up: {error:?}");
-                    break;
+                    let attempts = db.note_server_insight_attempt(next).await.unwrap_or(1);
+                    if attempts < MAX_HOUR_ATTEMPTS {
+                        // the hour is not noted: the next pass tries it again
+                        log::warn!("Server insights: hour {next} not rolled up (try {attempts}): {error:?}");
+                        break;
+                    }
+                    log::error!(
+                        "Server insights: hour {next} failed {attempts} times, skipped (its messages are not counted): {error:?}"
+                    );
+                    report.skipped += 1;
                 }
             }
             if let Err(error) = db
@@ -555,58 +750,17 @@ impl ServerInsightDay {
     }
 }
 
-/// The channels of these ids that still exist. One read; a driver that
-/// answers NotFound for a missing id (the reference one) is asked one by one.
-pub async fn existing_channels(db: &Database, ids: &[String]) -> Result<Vec<crate::Channel>> {
-    match db.fetch_channels(ids).await {
-        Err(error) if matches!(error.error_type, revolt_result::ErrorType::NotFound) => {
-            let mut found = vec![];
-            for id in ids {
-                if let Ok(channel) = db.fetch_channel(id).await {
-                    found.push(channel);
-                }
-            }
-            Ok(found)
-        }
-        other => other,
-    }
-}
-
-async fn existing_servers(db: &Database, ids: &[String]) -> Result<Vec<crate::Server>> {
-    match db.fetch_servers(ids).await {
-        Err(error) if matches!(error.error_type, revolt_result::ErrorType::NotFound) => {
-            let mut found = vec![];
-            for id in ids {
-                if let Ok(server) = db.fetch_server(id).await {
-                    found.push(server);
-                }
-            }
-            Ok(found)
-        }
-        other => other,
-    }
-}
-
-async fn existing_users(db: &Database, ids: &[String]) -> Result<Vec<crate::User>> {
-    match db.fetch_users(ids).await {
-        Err(error) if matches!(error.error_type, revolt_result::ErrorType::NotFound) => {
-            let mut found = vec![];
-            for id in ids {
-                if let Ok(user) = db.fetch_user(id).await {
-                    found.push(user);
-                }
-            }
-            Ok(found)
-        }
-        other => other,
-    }
-}
-
-/// The channel ids that have messages in these rows
+/// The channel ids that have messages in these rows (not the other bucket)
 pub fn insight_channels(stored: &[ServerInsightDay]) -> Vec<String> {
     let mut ids: Vec<String> = stored
         .iter()
-        .flat_map(|row| row.messages.values().flat_map(|hour| hour.keys().cloned()))
+        .flat_map(|row| {
+            row.channels
+                .keys()
+                .cloned()
+                .chain(row.messages.values().flat_map(|hour| hour.keys().cloned()))
+        })
+        .filter(|id| id != OTHER_CHANNEL)
         .collect();
     ids.sort();
     ids.dedup();
@@ -626,7 +780,9 @@ pub struct InsightSummary {
 /// Count stored rows into the viewer's days. `members_now` is the server's
 /// member count now; the counts of earlier days are worked back from it.
 /// Messages count only in channels `visible` accepts, so a channel the
-/// viewer can not see never shows up, not even in a daily total.
+/// viewer can not see never shows up, not even in a daily total. Range
+/// totals and the channel list come from the rows' day maps (UTC days in
+/// the range); daily messages from the hour maps (the viewer's days).
 pub fn summarise_insights(
     stored: &[ServerInsightDay],
     days: u32,
@@ -642,13 +798,14 @@ pub fn summarise_insights(
     let index = |day: i64| -> Option<usize> {
         (day >= first && day <= today).then(|| (day - first) as usize)
     };
+    let counts = |channel: &str| channel != OTHER_CHANNEL && visible(channel);
 
     let mut messages = vec![0u32; len];
     let mut joins = vec![0u32; len];
     let mut leaves = vec![0u32; len];
     let mut voice = vec![0u64; len];
     let mut active = vec![0u32; len];
-    let mut sources = v0::ServerInsightsJoinSources::default();
+    let mut sources = [0u32; 4];
     let mut channels: HashMap<&str, u32> = HashMap::new();
 
     for doc in stored {
@@ -659,10 +816,8 @@ pub fn summarise_insights(
         for (hour, per_channel) in &doc.messages {
             let Some(i) = slot(hour) else { continue };
             for (channel, n) in per_channel {
-                if visible(channel) {
+                if counts(channel) {
                     messages[i] = messages[i].saturating_add(*n);
-                    let total = channels.entry(channel.as_str()).or_default();
-                    *total = total.saturating_add(*n);
                 }
             }
         }
@@ -687,12 +842,18 @@ pub fn summarise_insights(
             active[i] = doc.active;
             for (source, n) in &doc.sources {
                 let slot = match source.as_str() {
-                    "invite" => &mut sources.invite,
-                    "discover" => &mut sources.discover,
-                    "vanity" => &mut sources.vanity,
-                    _ => &mut sources.other,
+                    "invite" => 0,
+                    "discover" => 1,
+                    "vanity" => 2,
+                    _ => 3,
                 };
-                *slot = slot.saturating_add(*n);
+                sources[slot] = sources[slot].saturating_add(*n);
+            }
+            for (channel, n) in &doc.channels {
+                if counts(channel) {
+                    let total = channels.entry(channel.as_str()).or_default();
+                    *total = total.saturating_add(*n);
+                }
             }
         }
     }
@@ -708,22 +869,30 @@ pub fn summarise_insights(
     let rows = (0..len)
         .map(|i| v0::ServerInsightsDay {
             day: day_label(first + i as i64),
-            joins: joins[i],
-            leaves: leaves[i],
+            joins: shown_count(joins[i]),
+            leaves: shown_count(leaves[i]),
             members: members[i],
-            messages: messages[i],
+            messages: shown_count(messages[i]),
             active_members: shown_count(active[i]),
             voice_minutes: shown_count(voice_minutes(voice[i])),
         })
         .collect();
 
+    let sum = |values: &[u32]| values.iter().fold(0u32, |a, n| a.saturating_add(*n));
+    let message_total = channels.values().fold(0u32, |a, n| a.saturating_add(*n));
     let active_total: u64 = active.iter().map(|n| *n as u64).sum();
     let totals = v0::ServerInsightsTotals {
-        joins: joins.iter().fold(0u32, |a, n| a.saturating_add(*n)),
-        leaves: leaves.iter().fold(0u32, |a, n| a.saturating_add(*n)),
-        messages: messages.iter().fold(0u32, |a, n| a.saturating_add(*n)),
+        joins: shown_count(sum(&joins)),
+        leaves: shown_count(sum(&leaves)),
+        messages: shown_count(message_total),
         voice_minutes: shown_count(voice_minutes(voice.iter().sum())),
         active_members: shown_count(((active_total as f64) / (len.max(1) as f64)).round() as u32),
+    };
+    let join_sources = v0::ServerInsightsJoinSources {
+        invite: shown_count(sources[0]),
+        discover: shown_count(sources[1]),
+        vanity: shown_count(sources[2]),
+        other: shown_count(sources[3]),
     };
 
     let mut channels: Vec<(String, u32)> = channels
@@ -736,7 +905,7 @@ pub fn summarise_insights(
     InsightSummary {
         rows,
         totals,
-        join_sources: sources,
+        join_sources,
         channels,
     }
 }
@@ -758,11 +927,13 @@ mod tests {
         }
     }
 
+    /// Messages in an hour, also in the day map (as the drivers store them)
     fn messages(doc: &mut ServerInsightDay, hour: &str, channel: &str, n: u32) {
         doc.messages
             .entry(hour.to_string())
             .or_default()
             .insert(channel.to_string(), n);
+        *doc.channels.entry(channel.to_string()).or_default() += n;
     }
 
     const ALL: &dyn Fn(&str) -> bool = &|_| true;
@@ -804,23 +975,49 @@ mod tests {
     }
 
     #[test]
+    fn an_hour_keeps_its_busiest_channels_and_sums_the_rest() {
+        let channels: BTreeMap<String, u32> =
+            (0..250u32).map(|n| (format!("c{n:03}"), n + 1)).collect();
+        let kept = cap_channels(channels, HOUR_CHANNELS);
+        assert_eq!(kept.len(), HOUR_CHANNELS + 1);
+        // the busiest are kept by name
+        assert_eq!(kept.get("c249"), Some(&250));
+        assert!(!kept.contains_key("c000"));
+        // nothing is lost: 1 + ... + 150 is in the other bucket
+        assert_eq!(kept.get(OTHER_CHANNEL), Some(&(150 * 151 / 2)));
+        let few: BTreeMap<String, u32> = [("a".to_string(), 3)].into_iter().collect();
+        assert_eq!(cap_channels(few.clone(), HOUR_CHANNELS), few);
+    }
+
+    #[test]
+    fn the_other_bucket_counts_for_nobody() {
+        let mut doc = row("s", 50);
+        messages(&mut doc, "3", "open", 6);
+        messages(&mut doc, "3", OTHER_CHANNEL, 50);
+        let summary = summarise_insights(&[doc], 7, &InsightZone::Fixed(0), at(50, 20), 1, ALL);
+        assert_eq!(summary.rows[6].messages, Some(6));
+        assert_eq!(summary.totals.messages, Some(6));
+        assert_eq!(summary.channels, vec![("open".to_string(), 6)]);
+    }
+
+    #[test]
     fn days_follow_the_viewers_offset() {
         // 23:00 UTC on day 100 is 01:00 of day 101 at UTC+2
         let mut doc = row("s", 100);
         messages(&mut doc, "23", "c", 7);
-        messages(&mut doc, "10", "c", 3);
-        doc.joins.insert("23".into(), 2);
+        messages(&mut doc, "10", "c", 6);
+        doc.joins.insert("23".into(), 5);
         let now = at(101, 12);
 
         let utc = summarise_insights(&[doc.clone()], 7, &InsightZone::Fixed(0), now, 10, ALL);
         assert_eq!(utc.rows.len(), 7);
-        assert_eq!(utc.rows[5].messages, 10);
-        assert_eq!(utc.rows[6].messages, 0);
+        assert_eq!(utc.rows[5].messages, Some(13));
+        assert_eq!(utc.rows[6].messages, Some(0));
 
         let plus_two = summarise_insights(&[doc], 7, &InsightZone::Fixed(2), now, 10, ALL);
-        assert_eq!(plus_two.rows[5].messages, 3);
-        assert_eq!(plus_two.rows[6].messages, 7);
-        assert_eq!(plus_two.rows[6].joins, 2);
+        assert_eq!(plus_two.rows[5].messages, Some(6));
+        assert_eq!(plus_two.rows[6].messages, Some(7));
+        assert_eq!(plus_two.rows[6].joins, Some(5));
         assert_eq!(plus_two.rows[6].day, day_label(101));
     }
 
@@ -858,8 +1055,10 @@ mod tests {
         );
         let members: Vec<u32> = summary.rows.iter().map(|r| r.members).collect();
         assert_eq!(members, vec![15, 15, 15, 15, 15, 17, 20]);
-        assert_eq!(summary.totals.joins, 6);
-        assert_eq!(summary.totals.leaves, 1);
+        assert_eq!(summary.totals.joins, Some(6));
+        // one leave: fewer than 5
+        assert_eq!(summary.totals.leaves, None);
+        assert_eq!(summary.rows[6].joins, None);
     }
 
     #[test]
@@ -875,29 +1074,42 @@ mod tests {
             1,
             &|channel| channel != "secret",
         );
-        assert_eq!(summary.rows[6].messages, 6);
-        assert_eq!(summary.totals.messages, 6);
+        assert_eq!(summary.rows[6].messages, Some(6));
+        assert_eq!(summary.totals.messages, Some(6));
         assert_eq!(summary.channels, vec![("open".to_string(), 6)]);
     }
 
     #[test]
-    fn active_members_and_voice_hide_small_numbers() {
+    fn every_small_number_is_hidden() {
         let mut few = row("s", 50);
         few.active = 3;
         few.voice.insert("2".into(), 4 * 60);
+        messages(&mut few, "2", "c", 2);
+        few.joins.insert("2".into(), 1);
+        few.leaves.insert("2".into(), 4);
+        few.sources.insert("discover".into(), 1);
         let mut many = row("s", 49);
         many.active = 12;
         many.voice.insert("2".into(), 10 * 60);
+        many.sources.insert("invite".into(), 7);
         let summary =
             summarise_insights(&[few, many], 7, &InsightZone::Fixed(0), at(50, 20), 1, ALL);
-        assert_eq!(summary.rows[6].active_members, None);
-        assert_eq!(summary.rows[6].voice_minutes, None);
+        let today = &summary.rows[6];
+        assert_eq!(today.active_members, None);
+        assert_eq!(today.voice_minutes, None);
+        assert_eq!(today.messages, None);
+        assert_eq!(today.joins, None);
+        assert_eq!(today.leaves, None);
         assert_eq!(summary.rows[5].active_members, Some(12));
         assert_eq!(summary.rows[5].voice_minutes, Some(10));
         assert_eq!(summary.rows[4].active_members, Some(0));
         assert_eq!(summary.totals.voice_minutes, Some(14));
         // (3 + 12) / 7 days rounds to 2: hidden too
         assert_eq!(summary.totals.active_members, None);
+        assert_eq!(summary.totals.messages, None);
+        assert_eq!(summary.join_sources.discover, None);
+        assert_eq!(summary.join_sources.invite, Some(7));
+        assert_eq!(summary.join_sources.vanity, Some(0));
     }
 
     #[test]
@@ -905,10 +1117,10 @@ mod tests {
         let mut inside = row("s", 50);
         messages(&mut inside, "1", "a", 3);
         messages(&mut inside, "1", "b", 9);
-        inside.sources.insert("discover".into(), 2);
+        inside.sources.insert("discover".into(), 6);
         let mut also = row("s", 49);
         messages(&mut also, "5", "a", 8);
-        also.sources.insert("invite".into(), 1);
+        also.sources.insert("invite".into(), 5);
         let mut outside = row("s", 40);
         messages(&mut outside, "1", "c", 100);
         outside.sources.insert("vanity".into(), 5);
@@ -921,9 +1133,9 @@ mod tests {
             ALL,
         );
         assert_eq!(summary.channels, vec![("a".to_string(), 11), ("b".to_string(), 9)]);
-        assert_eq!(summary.join_sources.discover, 2);
-        assert_eq!(summary.join_sources.invite, 1);
-        assert_eq!(summary.join_sources.vanity, 0);
+        assert_eq!(summary.join_sources.discover, Some(6));
+        assert_eq!(summary.join_sources.invite, Some(5));
+        assert_eq!(summary.join_sources.vanity, Some(0));
     }
 
     #[test]

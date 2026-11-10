@@ -16,14 +16,18 @@ pub trait AbstractServerInsights: Sync + Send {
     /// (system messages left out)
     async fn tally_messages_between(&self, from: &str, to: &str) -> Result<Vec<MessageTally>>;
 
-    /// Fold one hour's messages into a server's day row, once, and mark the
-    /// day open. Returns false when that hour was in already.
+    /// Fold one hour's messages into a server's day row (hour and day maps),
+    /// once, and mark the day open. Returns false when that hour was in
+    /// already.
     async fn add_server_insight_hour(
         &self,
         server: &str,
         hour: i64,
         counts: &InsightHour,
     ) -> Result<bool>;
+
+    /// The live count of a day's authors
+    async fn set_server_insight_active(&self, server: &str, day: i64, active: u32) -> Result<()>;
 
     /// Open days before `day` (server, day), at most `limit`
     async fn fetch_open_server_insight_days(&self, day: i64, limit: i64)
@@ -56,4 +60,14 @@ pub trait AbstractServerInsights: Sync + Send {
 
     /// The first hour crond ever rolled up, if known
     async fn fetch_server_insight_since(&self) -> Result<Option<i64>>;
+
+    /// Note a failed roll-up of `hour`; returns how many passes failed it
+    /// (counting starts again for another hour; a saved cursor clears it)
+    async fn note_server_insight_attempt(&self, hour: i64) -> Result<u32>;
+
+    /// The ids among these that are servers (only `_id` is read)
+    async fn fetch_server_ids_among(&self, ids: &[String]) -> Result<Vec<String>>;
+
+    /// The ids among these that are bots (only `_id` and `bot` are read)
+    async fn fetch_bot_ids_among(&self, ids: &[String]) -> Result<Vec<String>>;
 }

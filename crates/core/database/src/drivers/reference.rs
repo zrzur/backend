@@ -72,6 +72,7 @@ database_derived!(
             Arc<Mutex<HashMap<ServerEventInterestKey, ServerEventInterest>>>,
         pub server_insights: Arc<Mutex<HashMap<String, ServerInsightDay>>>,
         pub server_insights_cursor: Arc<Mutex<Option<(i64, Option<i64>)>>>,
+        pub server_insights_attempts: Arc<Mutex<Option<(i64, u32)>>>,
         pub server_members: Arc<Mutex<HashMap<MemberCompositeKey, Member>>>,
         pub servers: Arc<Mutex<HashMap<String, Server>>>,
         pub safety_reports: Arc<Mutex<HashMap<String, Report>>>,

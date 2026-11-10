@@ -5,17 +5,18 @@
 //! MissingPermission; people outside the server NotFound.
 //!
 //! Privacy: messages count only in channels the viewer can see, daily
-//! totals included, so a hidden channel never shows up; per-channel counts,
-//! active members and voice minutes of 1 to 4 are `null`.
+//! totals included, so a hidden channel never shows up; every count but the
+//! member total is `null` when it is 1 to 4.
 //!
 //! Cost: one indexed find on `server_insights` (server, day) for at most 92
-//! rows, the member count from its cache, one read of the channels that have
-//! messages in those rows (to check what the viewer can see), and the start
-//! of counting from a ten-minute memory cache. Nothing reads messages or
+//! rows, the member count from its cache, reads (1,000 ids each) of the
+//! channels that have messages in those rows (to check what the viewer can
+//! see; a thread follows its parent), and the start of counting from a
+//! ten-minute memory cache. Nothing reads messages or
 //! members here; crond and the join and leave paths keep the counts (see
 //! `ServerInsightDay`).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -23,8 +24,8 @@ use iso8601_timestamp::Timestamp;
 use revolt_database::util::permissions::DatabasePermissionQuery;
 use revolt_database::util::reference::Reference;
 use revolt_database::{
-    day_label, insight_channels, shown_count, summarise_insights, Database, InsightZone,
-    ServerEvent, ServerInsightDay, User, INSIGHT_RANGES, TOP_CHANNELS,
+    day_label, existing_channels, insight_channels, shown_count, summarise_insights, Channel,
+    Database, InsightZone, ServerEvent, ServerInsightDay, User, INSIGHT_RANGES, TOP_CHANNELS,
 };
 use revolt_models::v0;
 use revolt_permissions::{calculate_server_permissions, ChannelPermission};
@@ -33,9 +34,67 @@ use rocket::serde::json::Json;
 use rocket::State;
 use validator::Validate;
 
-/// Channels checked for what the viewer can see at most (a server with more
-/// channels with messages in the range counts only the first ones)
-const CHANNELS_CHECKED: usize = 500;
+/// Of these channel ids, the ones the viewer can see. Read in batches;
+/// a thread takes its parent's result, worked out once per parent.
+async fn visible_channels(
+    db: &Database,
+    user: &User,
+    server: &revolt_database::Server,
+    member: &revolt_database::Member,
+    ids: &[String],
+) -> Result<HashSet<String>> {
+    let channels = existing_channels(db, ids).await?;
+    // the channels whose permissions decide: a thread's parent, or itself
+    let mut deciders: HashMap<String, Option<Channel>> = HashMap::new();
+    for channel in &channels {
+        if channel.server() != Some(server.id.as_str()) {
+            continue;
+        }
+        let decider = thread_parent(channel).unwrap_or_else(|| channel.id().to_string());
+        deciders.entry(decider).or_insert(None);
+    }
+    for channel in &channels {
+        if let Some(slot) = deciders.get_mut(channel.id()) {
+            *slot = Some(channel.clone());
+        }
+    }
+    let missing: Vec<String> = deciders
+        .iter()
+        .filter(|(_, channel)| channel.is_none())
+        .map(|(id, _)| id.clone())
+        .collect();
+    for parent in existing_channels(db, &missing).await? {
+        deciders.insert(parent.id().to_string(), Some(parent));
+    }
+
+    let mut allowed: HashSet<String> = HashSet::new();
+    for (id, channel) in &deciders {
+        if let Some(channel) = channel {
+            if ServerEvent::channel_visible(db, user, server, member, channel).await {
+                allowed.insert(id.clone());
+            }
+        }
+    }
+    Ok(channels
+        .iter()
+        .filter(|channel| channel.server() == Some(server.id.as_str()))
+        .filter(|channel| {
+            let decider = thread_parent(channel).unwrap_or_else(|| channel.id().to_string());
+            allowed.contains(&decider)
+        })
+        .map(|channel| channel.id().to_string())
+        .collect())
+}
+
+fn thread_parent(channel: &Channel) -> Option<String> {
+    match channel {
+        Channel::TextChannel {
+            parent: Some(parent),
+            ..
+        } => Some(parent.clone()),
+        _ => None,
+    }
+}
 
 /// The first hour crond rolled up, read at most every ten minutes
 async fn counted_since(db: &Database) -> Option<i64> {
@@ -95,18 +154,8 @@ pub async fn fetch(
     let stored = ServerInsightDay::fetch_page(db, &server.id, days, &zone, now).await?;
 
     // the channels with messages that the viewer can see (threads too)
-    let mut ids = insight_channels(&stored);
-    ids.truncate(CHANNELS_CHECKED);
-    let mut visible: HashSet<String> = HashSet::new();
-    if !ids.is_empty() {
-        for channel in revolt_database::existing_channels(db, &ids).await? {
-            if channel.server() == Some(server.id.as_str())
-                && ServerEvent::channel_visible(db, &user, &server, &member, &channel).await
-            {
-                visible.insert(channel.id().to_string());
-            }
-        }
-    }
+    let ids = insight_channels(&stored);
+    let visible = visible_channels(db, &user, &server, &member, &ids).await?;
 
     let members_now = server.get_approximate_member_count(db).await as u32;
     let summary = summarise_insights(&stored, days, &zone, now, members_now, &|channel| {

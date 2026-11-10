@@ -1,9 +1,10 @@
 //! Server insights: how a server is doing, as daily counts for its managers.
 //!
-//! Only aggregated numbers leave the server. Counts that could point at one
-//! person are sent as `null` ("fewer than 5") when they are 1 to 4: per
-//! channel messages, active members and voice minutes. Messages count only
-//! in channels the viewer can see, daily totals included.
+//! Only aggregated numbers leave the server. Every count but the member
+//! total is sent as `null` ("fewer than 5") when it is 1 to 4, so one
+//! person's activity can not be read off a day, a channel or a source.
+//! Messages count only in channels the viewer can see, daily totals
+//! included.
 
 #[cfg(feature = "validator")]
 use validator::Validate;
@@ -30,16 +31,16 @@ auto_derived!(
     pub struct ServerInsightsDay {
         /// The day in the viewer's time (YYYY-MM-DD)
         pub day: String,
-        /// People who joined
-        pub joins: u32,
-        /// People who left, were kicked or banned
-        pub leaves: u32,
+        /// People who joined; `null` for 1 to 4
+        pub joins: Option<u32>,
+        /// People who left, were kicked or banned; `null` for 1 to 4
+        pub leaves: Option<u32>,
         /// Members at the end of the day (today's count, less the joins and
         /// plus the leaves of the days after)
         pub members: u32,
         /// Messages sent in channels the viewer can see (system messages
-        /// not counted)
-        pub messages: u32,
+        /// not counted); `null` for 1 to 4
+        pub messages: Option<u32>,
         /// Distinct people who sent a message that day (counted per UTC day,
         /// bots left out; an estimate); `null` for 1 to 4
         pub active_members: Option<u32>,
@@ -49,29 +50,29 @@ auto_derived!(
 
     /// The whole range at once
     pub struct ServerInsightsTotals {
-        /// People who joined
-        pub joins: u32,
-        /// People who left, were kicked or banned
-        pub leaves: u32,
-        /// Messages sent in channels the viewer can see
-        pub messages: u32,
+        /// People who joined; `null` for 1 to 4
+        pub joins: Option<u32>,
+        /// People who left, were kicked or banned; `null` for 1 to 4
+        pub leaves: Option<u32>,
+        /// Messages sent in channels the viewer can see; `null` for 1 to 4
+        pub messages: Option<u32>,
         /// Minutes in voice; `null` for 1 to 4
         pub voice_minutes: Option<u32>,
         /// Active members on an average day, rounded; `null` for 1 to 4
         pub active_members: Option<u32>,
     }
 
-    /// Where the joins of the range came from
+    /// Where the joins of the range came from (each `null` for 1 to 4)
     #[derive(Default)]
     pub struct ServerInsightsJoinSources {
         /// An invite link
-        pub invite: u32,
+        pub invite: Option<u32>,
         /// Discover
-        pub discover: u32,
+        pub discover: Option<u32>,
         /// The server's custom link
-        pub vanity: u32,
+        pub vanity: Option<u32>,
         /// Anything else: approved requests, bots added, creating the server
-        pub other: u32,
+        pub other: Option<u32>,
     }
 
     /// One of the most active channels of the range

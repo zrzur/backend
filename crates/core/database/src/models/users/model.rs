@@ -1130,8 +1130,8 @@ impl User {
         // member count is read again
         for member in db.fetch_all_memberships(&self.id).await? {
             crate::Server::forget_cached_member_count(&member.id.server).await;
-            crate::ServerInsightDay::count(db, &member.id.server, crate::InsightCounter::Leave)
-                .await;
+            // once per server even when the deletion is tried again
+            crate::ServerInsightDay::count_account_leave(db, &member.id.server, &self.id).await;
         }
         db.clear_memberships(&self.id).await?;
         self.clear_relationships(db).await?;
