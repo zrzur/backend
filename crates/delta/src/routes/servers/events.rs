@@ -7,7 +7,8 @@
 //! Creating, editing, starting, ending, cancelling and deleting need Manage
 //! Server (being the creator gives no rights) and are refused while the
 //! person is timed out. The whole feature is behind
-//! `features.server_events_enabled`.
+//! `features.server_events_enabled`, and each server starts with events
+//! off: creating one needs the server's `events_enabled` switch.
 
 use iso8601_timestamp::{Duration, Timestamp};
 use revolt_config::config;
@@ -261,6 +262,12 @@ pub async fn create(
         .map_err(|error| revolt_database::util::validation::validation_failed(&error))?;
     let (server, member) = membership(db, &user, &target).await?;
     require_manager(db, &user, &server, &member).await?;
+    // off until a manager turns events on for this server
+    if !server.events_enabled {
+        return Err(create_error!(FeatureDisabled {
+            feature: "server_events_server".to_string()
+        }));
+    }
 
     let title = data.title.trim().to_string();
     if title.is_empty() {

@@ -943,6 +943,7 @@ impl crate::Server {
             lobby: self.lobby,
             threads_disabled: self.threads_disabled,
             forums_disabled: self.forums_disabled,
+            events_enabled: self.events_enabled,
             approximate_member_count,
         }
     }
@@ -986,6 +987,7 @@ impl From<Server> for crate::Server {
             lobby: value.lobby,
             threads_disabled: value.threads_disabled,
             forums_disabled: value.forums_disabled,
+            events_enabled: value.events_enabled,
         }
     }
 }
@@ -1025,6 +1027,7 @@ impl From<crate::PartialServer> for PartialServer {
             lobby: value.lobby,
             threads_disabled: value.threads_disabled,
             forums_disabled: value.forums_disabled,
+            events_enabled: value.events_enabled,
             approximate_member_count: None,
         }
     }
@@ -1066,6 +1069,7 @@ impl From<PartialServer> for crate::PartialServer {
             lobby: value.lobby,
             threads_disabled: value.threads_disabled,
             forums_disabled: value.forums_disabled,
+            events_enabled: value.events_enabled,
         }
     }
 }

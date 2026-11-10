@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Events off by default per server
+
+- Servers have `events_enabled` (missing = off, so no migration). A manager turns it on with `PATCH /servers/{id}` `{ "events_enabled": true }` (Manage Server); `ServerUpdate` carries it. While a server has events off, `POST /servers/{id}/events` answers `FeatureDisabled { feature: "server_events_server" }`; events made before stay stored and readable through the API.
+
 ### Server insights
 
 - `GET /servers/{target}/insights?days=7|30|90&time_zone=&utc_offset=` (Manage Server; own rate-limit bucket `server_insights`, 10): daily joins, leaves, members, messages, active members and voice minutes in the viewer's time zone (IANA zone with daylight saving, else the offset rounded to whole hours; half-hour zones put the hour around local midnight on one day), range totals, join sources (invite, Discover, custom link, other), the 10 busiest channels the viewer can see and the day counting started (`counted_since`). Privacy: messages count only in channels the viewer can see, daily totals included; per-channel counts, active members and voice minutes of 1 to 4 are `null`. One indexed find on `server_insights` (server, day) per view plus one read of the channels with messages; nothing reads messages or members then.

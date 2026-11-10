@@ -52,6 +52,7 @@ pub async fn edit(
         && data.lobby.is_none()
         && data.threads_disabled.is_none()
         && data.forums_disabled.is_none()
+        && data.events_enabled.is_none()
         && data.default_notifications.is_none()
         && data.remove.is_empty()
     {
@@ -72,6 +73,7 @@ pub async fn edit(
         || data.lobby.is_some()
         || data.threads_disabled.is_some()
         || data.forums_disabled.is_some()
+        || data.events_enabled.is_some()
         || data.default_notifications.is_some()
         || data.access.is_some()
         || data.verification_level.is_some()
@@ -128,6 +130,7 @@ pub async fn edit(
         lobby,
         threads_disabled,
         forums_disabled,
+        events_enabled,
         default_notifications,
         access: new_access,
         verification_level,
@@ -159,6 +162,7 @@ pub async fn edit(
         lobby,
         threads_disabled,
         forums_disabled,
+        events_enabled,
         default_notifications,
         ..Default::default()
     };

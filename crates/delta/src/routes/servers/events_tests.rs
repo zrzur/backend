@@ -51,7 +51,26 @@ async fn channel(harness: &TestHarness, server: &Server, voice: bool, private: b
     .expect("channel")
 }
 
+/// A server with events switched on by its owner (they start off)
 async fn setup(enabled: bool) -> Setup {
+    let s = setup_off(enabled).await;
+    if enabled {
+        let (status, body) = call(
+            &s.harness,
+            Method::Patch,
+            &format!("/servers/{}", s.server.id),
+            &s.owner_session,
+            Some(json!({ "events_enabled": true })),
+        )
+        .await;
+        assert_eq!(status, Status::Ok, "{body}");
+    }
+    let server = s.harness.db.fetch_server(&s.server.id).await.unwrap();
+    Setup { server, ..s }
+}
+
+/// A new server: events are off until its owner turns them on
+async fn setup_off(enabled: bool) -> Setup {
     overwrite_config(move |config| config.features.server_events_enabled = enabled).await;
     let harness = TestHarness::new().await;
     let (_, owner_session, owner) = harness.new_user().await;
@@ -1053,4 +1072,50 @@ async fn the_crond_pass_cancels_events_whose_channel_is_gone() {
     assert_eq!(stored.status, v0::ServerEventStatus::Cancelled);
     // a place that is gone ends the series
     assert!(db.fetch_upcoming_server_events(&s.server.id).await.unwrap().is_empty());
+}
+
+/// Events start off in every server; only Manage Server turns them on (the
+/// gateway tells members), and while off no event can be created. Events
+/// made before stay stored.
+#[rocket::async_test]
+async fn events_are_off_until_a_manager_turns_them_on() {
+    let s = setup_off(true).await;
+    assert!(!s.server.events_enabled, "a new server has events off");
+    let path = format!("/servers/{}/events", s.server.id);
+    let server_path = format!("/servers/{}", s.server.id);
+
+    let (status, error) = call(&s.harness, Method::Post, &path, &s.owner_session, Some(body(voice_place(&s)))).await;
+    assert_eq!(status, Status::BadRequest, "{error}");
+    assert_eq!(error["type"], "FeatureDisabled", "{error}");
+    assert_eq!(error["feature"], "server_events_server", "{error}");
+
+    // a member without Manage Server can't switch them on
+    let switch = |on: bool| Some(json!({ "events_enabled": on }));
+    let (status, _) = call(&s.harness, Method::Patch, &server_path, &s.member_session, switch(true)).await;
+    assert_eq!(status, Status::Forbidden);
+    assert!(!s.harness.db.fetch_server(&s.server.id).await.unwrap().events_enabled);
+
+    let mut gateway = PubSubTestHelper::new(&s.server.id).await;
+    let (status, server) = call(&s.harness, Method::Patch, &server_path, &s.owner_session, switch(true)).await;
+    assert_eq!(status, Status::Ok, "{server}");
+    assert_eq!(server["events_enabled"], true, "{server}");
+    let id = s.server.id.clone();
+    gateway
+        .wait_for_event(|e| {
+            matches!(e, EventV1::ServerUpdate { id: server, data, .. }
+                if server == &id && data.events_enabled == Some(true))
+        })
+        .await;
+
+    let event = create(&s, voice_place(&s)).await;
+    let event_id = event["_id"].as_str().unwrap().to_string();
+
+    // off again: nothing new, the stored event stays
+    let (status, server) = call(&s.harness, Method::Patch, &server_path, &s.owner_session, switch(false)).await;
+    assert_eq!(status, Status::Ok, "{server}");
+    assert!(server.get("events_enabled").is_none() || server["events_enabled"] == false, "{server}");
+    let (status, error) = call(&s.harness, Method::Post, &path, &s.owner_session, Some(body(voice_place(&s)))).await;
+    assert_eq!(status, Status::BadRequest, "{error}");
+    assert_eq!(error["feature"], "server_events_server", "{error}");
+    assert!(s.harness.db.fetch_server_event(&event_id).await.is_ok());
 }
