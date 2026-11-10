@@ -19,6 +19,8 @@ mod privacy;
 mod profile_fields;
 #[cfg(test)]
 mod profile_tests;
+#[cfg(test)]
+mod status_mutual_tests;
 mod remove_friend;
 mod send_friend_request;
 mod unblock_user;

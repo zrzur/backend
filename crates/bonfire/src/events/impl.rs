@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+use revolt_database::util::status_emoji;
 use futures::future::join_all;
 use redis_kiss::AsyncCommands;
 use revolt_database::{
@@ -404,10 +405,21 @@ impl State {
             .map(|x| (x.id().to_string(), x))
             .collect();
 
-        // Make all users appear from our perspective.
+        // Make all users appear from our perspective. A custom status emoji
+        // shows only from a server we share: our side is the servers list.
+        let our_servers: HashSet<String> = servers.iter().map(|server| server.id.clone()).collect();
         let mut users: Vec<v0::User> = join_all(users.into_iter().map(|other_user| async {
             let is_online = online_ids.contains(&other_user.id);
-            other_user.into_known(&user, is_online).await
+            let mut known = other_user.into_known(&user, is_online).await;
+            status_emoji::hide_for_member_of(
+                db,
+                &mut known.status,
+                &known.id,
+                &user.id,
+                &|server| our_servers.contains(server),
+            )
+            .await;
+            known
         }))
         .await;
 
@@ -677,6 +689,24 @@ impl State {
 
         if self.cache.is_bot && !self.allowed_by_intents(db, event).await {
             return false;
+        }
+
+        // a custom status emoji never tells this viewer about a server they
+        // are not in (see revolt_database::util::status_emoji)
+        // (this connection's servers are the viewer's side; only the
+        // owner's membership is looked up, cached)
+        if let EventV1::UserUpdate { id, data, .. } = event {
+            if id != &self.cache.user_id {
+                let servers = &self.cache.servers;
+                status_emoji::hide_for_member_of(
+                    db,
+                    &mut data.status,
+                    id,
+                    &self.cache.user_id,
+                    &|server| servers.contains_key(server),
+                )
+                .await;
+            }
         }
 
         // Webhooks are for those who manage them, not all who read the channel

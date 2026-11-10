@@ -107,6 +107,11 @@ impl Emoji {
         emoji.trim_end_matches('\r').replace('\u{FE0F}', "")
     }
 
+    /// Whether this is exactly one unicode emoji from the supported list
+    pub fn is_permissible_unicode(emoji: &str) -> bool {
+        !emoji.is_empty() && PERMISSIBLE_EMOJIS.contains(&Self::sanitize_unicode_emoji(emoji))
+    }
+
     /// Check whether we can use a given emoji
     pub async fn can_use(db: &Database, emoji: &str) -> Result<bool> {
         if Ulid::from_str(emoji).is_ok() {

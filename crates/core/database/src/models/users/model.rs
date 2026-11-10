@@ -155,6 +155,12 @@ auto_derived!(
         /// Custom status text
         #[serde(skip_serializing_if = "Option::is_none")]
         pub text: Option<String>,
+        /// Emoji before the text: unicode or a custom emoji id
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        pub emoji: Option<String>,
+        /// When the text and emoji run out
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        pub expires_at: Option<Timestamp>,
         /// Current presence option
         #[serde(skip_serializing_if = "Option::is_none")]
         pub presence: Option<Presence>,
@@ -576,13 +582,36 @@ impl User {
     ) -> Result<Vec<v0::User>> {
         let online_ids = filter_online(ids).await;
 
-        Ok(
-            join_all(db.fetch_users(ids).await?.into_iter().map(|user| async {
-                let is_online = online_ids.contains(&user.id);
-                user.into_known(perspective, is_online).await
-            }))
-            .await,
-        )
+        let mut users = join_all(db.fetch_users(ids).await?.into_iter().map(|user| async {
+            let is_online = online_ids.contains(&user.id);
+            user.into_known(perspective, is_online).await
+        }))
+        .await;
+
+        // a custom status emoji shows only from a server the viewer shares:
+        // the viewer's servers are looked up once, and only when needed
+        use crate::util::status_emoji;
+        if status_emoji::any_custom(users.iter().map(|user| user.status.as_ref())) {
+            let ours: HashSet<String> = db
+                .fetch_all_memberships(&perspective.id)
+                .await?
+                .into_iter()
+                .map(|member| member.id.server)
+                .collect();
+            for user in &mut users {
+                let owner = user.id.clone();
+                status_emoji::hide_for_member_of(
+                    db,
+                    &mut user.status,
+                    &owner,
+                    &perspective.id,
+                    &|server| ours.contains(server),
+                )
+                .await;
+            }
+        }
+
+        Ok(users)
     }
 
     /// Find a free discriminator for a given username
@@ -898,13 +927,43 @@ impl User {
         Ok(())
     }
 
+    /// Clear custom statuses whose expiry has passed, at most 1000 a pass
+    /// (crond runs it every minute), and tell the gateway about each one
+    /// this pass really cleared, so other clients drop it too. Reads already
+    /// hide an expired status, so this only tidies storage and clients that
+    /// hold the old value. Safe to run twice.
+    pub async fn clear_expired_statuses(db: &Database) -> Result<usize> {
+        let now = Timestamp::now_utc();
+        let mut cleared = 0;
+        for id in db.fetch_expired_status_ids(now, 1000).await? {
+            // only a status this pass really cleared is announced: one set
+            // between the look and the write stays, and so does its event
+            if !db.clear_expired_status(&id, now).await? {
+                continue;
+            }
+            cleared += 1;
+            EventV1::UserUpdate {
+                id: id.clone(),
+                data: v0::PartialUser::default(),
+                clear: vec![v0::FieldsUser::StatusText],
+                event_id: Some(Ulid::new().to_string()),
+            }
+            .p(id)
+            .await;
+        }
+        Ok(cleared)
+    }
+
     /// Remove a field from User object
     pub fn remove_field(&mut self, field: &FieldsUser) {
         match field {
             FieldsUser::Avatar => self.avatar = None,
+            // the emoji and expiry belong to the text and go with it
             FieldsUser::StatusText => {
                 if let Some(x) = self.status.as_mut() {
                     x.text = None;
+                    x.emoji = None;
+                    x.expires_at = None;
                 }
             }
             FieldsUser::StatusPresence => {

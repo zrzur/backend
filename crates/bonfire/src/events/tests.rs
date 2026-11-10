@@ -1374,3 +1374,77 @@ async fn private_channel_leaves_and_returns_with_the_role() {
     assert!(state.handle_incoming_event_v1(&db, &mut event, SERVER).await);
     assert!(created_in(&event), "no ChannelCreate in {event:?}");
 }
+
+// A custom status emoji in UserUpdate (status_emoji privacy)
+
+/// An owner in SERVER whose status carries a custom emoji of SERVER
+async fn status_with_server_emoji(db: &Database) -> (String, EventV1) {
+    let owner = ulid::Ulid::new().to_string();
+    db.insert_or_merge_member(&Member {
+        id: MemberCompositeKey {
+            server: SERVER.to_string(),
+            user: owner.clone(),
+        },
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    let emoji = revolt_database::Emoji {
+        id: ulid::Ulid::new().to_string(),
+        parent: revolt_database::EmojiParent::Server {
+            id: SERVER.to_string(),
+        },
+        creator_id: owner.clone(),
+        name: "secret".to_string(),
+        animated: false,
+        nsfw: false,
+    };
+    db.insert_emoji(&emoji).await.unwrap();
+    let event = EventV1::UserUpdate {
+        id: owner.clone(),
+        data: v0::PartialUser {
+            status: Some(v0::UserStatus {
+                text: Some("Hi".to_string()),
+                emoji: Some(emoji.id.clone()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        clear: vec![],
+        event_id: None,
+    };
+    (emoji.id, event)
+}
+
+fn emoji_of(event: &EventV1) -> Option<String> {
+    match event {
+        EventV1::UserUpdate { data, .. } => data.status.as_ref().and_then(|s| s.emoji.clone()),
+        _ => panic!("not a UserUpdate"),
+    }
+}
+
+#[tokio::test]
+async fn a_member_of_the_emoji_server_gets_the_status_emoji() {
+    let db = db().await;
+    let (emoji, mut event) = status_with_server_emoji(&db).await;
+    let mut state = state("insider", &server(false), &[]).await;
+    assert!(state.handle_incoming_event_v1(&db, &mut event, SERVER).await);
+    assert_eq!(emoji_of(&event), Some(emoji));
+}
+
+#[tokio::test]
+async fn someone_outside_the_emoji_server_gets_the_status_without_it() {
+    let db = db().await;
+    let (_, mut event) = status_with_server_emoji(&db).await;
+    let mut state = state("outsider", &server(false), &[]).await;
+    // a friend of the owner, in none of the owner's servers
+    state.cache.servers.clear();
+    state.handle_incoming_event_v1(&db, &mut event, "owner-topic").await;
+    assert_eq!(emoji_of(&event), None);
+    match &event {
+        EventV1::UserUpdate { data, .. } => {
+            assert_eq!(data.status.as_ref().and_then(|s| s.text.as_deref()), Some("Hi"))
+        }
+        _ => unreachable!(),
+    }
+}

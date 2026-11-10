@@ -1,5 +1,6 @@
 use ::mongodb::options::{Collation, CollationStrength, FindOneOptions, FindOptions};
 use futures::StreamExt;
+use iso8601_timestamp::Timestamp;
 use revolt_result::Result;
 
 use crate::DocumentId;
@@ -228,6 +229,14 @@ impl AbstractUsers for MongoDb {
         partial: &PartialUser,
         remove: Vec<FieldsUser>,
     ) -> Result<()> {
+        // the status emoji and expiry go with the status text
+        let mut paths: Vec<&dyn IntoDocumentPath> =
+            remove.iter().map(|x| x as &dyn IntoDocumentPath).collect();
+        if remove.contains(&FieldsUser::StatusText) {
+            paths.push(&STATUS_EMOJI);
+            paths.push(&STATUS_EXPIRES_AT);
+        }
+
         if remove.contains(&FieldsUser::StatusText) && partial.status.is_some() {
             // workaround to fix mongo conflicting the same item
             let _: Result<()> = query!(
@@ -238,24 +247,55 @@ impl AbstractUsers for MongoDb {
                 PartialUser {
                     ..Default::default()
                 },
-                remove.iter().map(|x| x as &dyn IntoDocumentPath).collect(),
+                paths,
                 None
             )
             .map(|_| ());
 
             query!(self, update_one_by_id, COL, id, partial, vec![], None).map(|_| ())
         } else {
-            query!(
-                self,
-                update_one_by_id,
-                COL,
-                id,
-                partial,
-                remove.iter().map(|x| x as &dyn IntoDocumentPath).collect(),
-                None
-            )
-            .map(|_| ())
+            query!(self, update_one_by_id, COL, id, partial, paths, None).map(|_| ())
         }
+    }
+
+    /// Users whose status text expired, at most `limit` (index
+    /// `status_expires_at`)
+    async fn fetch_expired_status_ids(&self, now: Timestamp, limit: i64) -> Result<Vec<String>> {
+        Ok(self
+            .col::<DocumentId>(COL)
+            .find(expired_status(now)?)
+            .with_options(
+                FindOptions::builder()
+                    .projection(doc! { "_id": 1 })
+                    .limit(limit)
+                    .build(),
+            )
+            .await
+            .map_err(|_| create_database_error!("find", COL))?
+            .filter_map(|s| async { s.ok() })
+            .map(|user| user.id)
+            .collect()
+            .await)
+    }
+
+    /// Clear one status if it is still expired: the filter is applied again
+    /// in the write, so a status set after the look stays
+    async fn clear_expired_status(&self, id: &str, now: Timestamp) -> Result<bool> {
+        let mut filter = expired_status(now)?;
+        filter.insert("_id", id);
+        let result = self
+            .col::<User>(COL)
+            .update_one(
+                filter,
+                doc! { "$unset": {
+                    "status.text": 1_i32,
+                    "status.emoji": 1_i32,
+                    "status.expires_at": 1_i32,
+                } },
+            )
+            .await
+            .map_err(|_| create_database_error!("update_one", COL))?;
+        Ok(result.modified_count == 1)
     }
 
     /// Set relationship with another user
@@ -353,6 +393,31 @@ impl AbstractUsers for MongoDb {
             .await
             .map(|_| ())
             .map_err(|_| create_database_error!("bulk_write", COL))
+    }
+}
+
+/// Users whose status expired at or before `now`. The expiry is stored as
+/// int64 millis or as text depending on how it was written, so both forms
+/// are matched (as the poll queries do).
+fn expired_status(now: Timestamp) -> Result<bson::Document> {
+    let millis = now.duration_since(Timestamp::UNIX_EPOCH).whole_milliseconds() as i64;
+    let text = bson::to_bson(&now).map_err(|_| create_database_error!("to_bson", COL))?;
+    Ok(doc! {
+        "$or": [
+            { "status.expires_at": { "$lte": millis } },
+            { "status.expires_at": { "$lte": text } },
+        ]
+    })
+}
+
+/// A status path that has no `FieldsUser` of its own
+struct StatusPath(&'static str);
+static STATUS_EMOJI: StatusPath = StatusPath("status.emoji");
+static STATUS_EXPIRES_AT: StatusPath = StatusPath("status.expires_at");
+
+impl IntoDocumentPath for StatusPath {
+    fn as_path(&self) -> Option<&'static str> {
+        Some(self.0)
     }
 }
 

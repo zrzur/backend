@@ -1262,8 +1262,9 @@ impl crate::User {
         };
 
         let badges = self.get_badges().await;
+        let viewer = perspective.map(|perspective| perspective.id.clone());
 
-        User {
+        let mut user = User {
             username: self.username,
             discriminator: self.discriminator,
             display_name: self.display_name,
@@ -1306,12 +1307,33 @@ impl crate::User {
             style: self.style,
             relationship,
             id: self.id,
-        }
+        };
+        // a custom status emoji only for those who share its server
+        crate::util::status_emoji::hide_for(db, &mut user.status, &user.id, viewer.as_deref())
+            .await;
+        user
+    }
+
+    /// Convert user object into user model assuming mutual connection, and
+    /// keep a custom status emoji only where the viewer may see it (see
+    /// `util::status_emoji`). Use this one wherever a single user is shown
+    /// to a viewer; lists use `User::fetch_many_ids_as_mutuals`.
+    pub async fn into_known_for(self, db: &Database, viewer: &crate::User, is_online: bool) -> User {
+        let viewer_id = viewer.id.clone();
+        let mut user = self.into_known(viewer, is_online).await;
+        crate::util::status_emoji::hide_for(db, &mut user.status, &user.id.clone(), Some(&viewer_id))
+            .await;
+        user
     }
 
     /// Convert user object into user model assuming mutual connection
     ///
     /// Relations will never be included, i.e. when we process ourselves
+    ///
+    /// **Warning:** the status is returned as stored, custom emoji included.
+    /// A custom status emoji can name a server the viewer is not in: pass
+    /// the result through `util::status_emoji` (as Ready and
+    /// `fetch_many_ids_as_mutuals` do) or use `into_known_for`.
     pub async fn into_known<'a, P>(self, perspective: P, is_online: bool) -> User
     where
         P: Into<Option<&'a crate::User>>,
@@ -1396,7 +1418,13 @@ impl crate::User {
                         ..
                     })
                 ),
-            status: self.status.and_then(|status| status.into(true)),
+            // sent to everyone in a channel: no custom status emoji, which
+            // could name a server some of them are not in
+            status: {
+                let mut status = self.status.and_then(|status| status.into(true));
+                crate::util::status_emoji::drop_custom_emoji(&mut status);
+                status
+            },
             flags: self.flags.unwrap_or_default() as u32,
             privileged: self.privileged,
             official: self.official,
@@ -1600,8 +1628,20 @@ impl From<Presence> for crate::Presence {
 
 impl crate::UserStatus {
     fn into(self, discard_invisible: bool) -> Option<UserStatus> {
+        // a status past its expiry is never shown, even before crond clears it
+        let expired = self
+            .expires_at
+            .is_some_and(|at| at <= Timestamp::now_utc());
+        let (text, emoji, expires_at) = if expired {
+            (None, None, None)
+        } else {
+            (self.text, self.emoji, self.expires_at)
+        };
+
         let status = UserStatus {
-            text: self.text,
+            text,
+            emoji,
+            expires_at,
             presence: self.presence.and_then(|presence| {
                 if discard_invisible && presence == crate::Presence::Invisible {
                     None
@@ -1611,7 +1651,7 @@ impl crate::UserStatus {
             }),
         };
 
-        if status.text.is_none() && status.presence.is_none() {
+        if status.text.is_none() && status.emoji.is_none() && status.presence.is_none() {
             None
         } else {
             Some(status)
@@ -1623,6 +1663,8 @@ impl From<UserStatus> for crate::UserStatus {
     fn from(value: UserStatus) -> crate::UserStatus {
         crate::UserStatus {
             text: value.text,
+            emoji: value.emoji,
+            expires_at: value.expires_at,
             presence: value.presence.map(|presence| presence.into()),
         }
     }

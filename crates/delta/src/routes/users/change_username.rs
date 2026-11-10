@@ -43,5 +43,6 @@ pub async fn change_username(
         .map_err(|_| create_error!(InvalidCredentials))?;
 
     user.update_username(db, data.username).await?;
-    Ok(Json(user.into(db, None).await))
+    // your own user: everything, your own status emoji included
+    Ok(Json(user.into_self(false).await))
 }
