@@ -21,6 +21,7 @@ pub mod raid;
 pub mod reference;
 pub mod shield;
 pub mod signed_request;
+pub mod status_emoji;
 pub mod test_fixtures;
 pub mod validation;
 pub mod threads;

@@ -1262,8 +1262,9 @@ impl crate::User {
         };
 
         let badges = self.get_badges().await;
+        let viewer = perspective.map(|perspective| perspective.id.clone());
 
-        User {
+        let mut user = User {
             username: self.username,
             discriminator: self.discriminator,
             display_name: self.display_name,
@@ -1306,7 +1307,11 @@ impl crate::User {
             style: self.style,
             relationship,
             id: self.id,
-        }
+        };
+        // a custom status emoji only for those who share its server
+        crate::util::status_emoji::hide_for(db, &mut user.status, &user.id, viewer.as_deref())
+            .await;
+        user
     }
 
     /// Convert user object into user model assuming mutual connection
@@ -1396,7 +1401,18 @@ impl crate::User {
                         ..
                     })
                 ),
-            status: self.status.and_then(|status| status.into(true)),
+            // sent to everyone in a channel: no custom status emoji, which
+            // could name a server some of them are not in
+            status: self.status.and_then(|status| status.into(true)).map(|mut status| {
+                if status
+                    .emoji
+                    .as_deref()
+                    .is_some_and(crate::util::status_emoji::is_custom)
+                {
+                    status.emoji = None;
+                }
+                status
+            }),
             flags: self.flags.unwrap_or_default() as u32,
             privileged: self.privileged,
             official: self.official,

@@ -130,6 +130,8 @@ impl Member {
             },
             ..Default::default()
         };
+        // a cached "not a member" must not hide their status emoji
+        crate::util::status_emoji::forget_membership(&server.id, &user.id);
 
         // Plus members joining the official server get its Plus role
         let billing = revolt_config::config().await.features.billing;
@@ -319,6 +321,8 @@ impl Member {
         silent: bool,
     ) -> Result<()> {
         db.soft_delete_member(&self.id).await?;
+        // nor may a cached "member" keep showing it
+        crate::util::status_emoji::forget_membership(&self.id.server, &self.id.user);
         // their "Interested" marks go too, so counts are members only
         if let Err(error) = crate::ServerEvent::forget_member(db, &server.id, &self.id.user).await {
             log::warn!("Could not remove the event marks of a member who left: {error:?}");
