@@ -72,7 +72,9 @@ pub async fn edit_bot(
         }));
     }
 
-    // a web address only: no javascript:, data: or other schemes reach a client
+    // a web address only: no javascript:, data: or other schemes reach a
+    // client. An empty string is refused too: to clear the address, send
+    // `"remove": ["InteractionsURL"]`.
     if let Some(url) = &interactions_url {
         let valid = url::Url::parse(url).is_ok_and(|parsed| {
             matches!(parsed.scheme(), "https" | "http")

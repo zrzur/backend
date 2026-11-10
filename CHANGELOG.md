@@ -4,9 +4,9 @@
 
 ### Security
 
-- Sign-in: wrong passwords are counted per e-mail address (normalised, hashed in Redis), whether or not an account has it. From the tenth within fifteen minutes the address needs a captcha (`DataLogin` gains optional `captcha`; answer `CaptchaFailed`) when one is configured, else it waits one minute, doubling up to an hour (`LockedOut`). Unknown and known addresses answer alike, so the lock no longer tells who has an account; the old per-account lock (three tries) is no longer used and is cleared on the next sign-in.
+- Sign-in: wrong passwords are counted per e-mail address (normalised, hashed in Redis), whether or not an account has it. From the tenth within fifteen minutes the address needs a captcha (`DataLogin` gains optional `captcha`; answer `CaptchaFailed`) when one is configured, else it waits one minute, doubling up to an hour (`LockedOut`), on the network the wrong passwords came from only (IPv4 /24, IPv6 /64). A password reset ends the wait. Keys are an HMAC-SHA256 of the address under `files.encryption_key`; counting is one MULTI step. Unknown and known addresses answer alike, so the lock no longer tells who has an account; the old per-account lock (three tries) is no longer used and is cleared on the next sign-in.
 - Two-factor at sign-in counts wrong codes with `PUT /auth/mfa/ticket`: five in fifteen minutes pause the account's two-factor step (`LockedOut`).
-- `PATCH /bots/{id}` refuses an `interactions_url` that is not a plain http(s) address (no `javascript:`, `data:`, credentials).
+- `PATCH /bots/{id}` refuses an `interactions_url` that is not a plain http(s) address (no `javascript:`, `data:`, credentials, and no empty string: clear it with `"remove": ["InteractionsURL"]`).
 
 ### Features
 
