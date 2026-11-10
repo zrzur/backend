@@ -164,6 +164,14 @@ auto_derived_partial!(
         )]
         pub forums_disabled: bool,
 
+        /// Notifications for members who never chose a level for this
+        /// server. Missing = `Mentions`.
+        #[cfg_attr(
+            feature = "serde",
+            serde(skip_serializing_if = "Option::is_none", default)
+        )]
+        pub default_notifications: Option<ServerNotificationLevel>,
+
         /// Approximate amount of members in the server
         pub approximate_member_count: usize,
     },
@@ -579,6 +587,16 @@ auto_derived!(
         High,
     }
 
+    /// What a member who never chose a level for a server is notified about
+    #[derive(Default, Copy)]
+    pub enum ServerNotificationLevel {
+        /// Every message
+        All,
+        /// Only messages that mention them
+        #[default]
+        Mentions,
+    }
+
     /// Where a join request stands
     pub enum JoinRequestStatus {
         Pending,
@@ -717,6 +735,8 @@ auto_derived!(
         pub threads_disabled: Option<bool>,
         /// Switch forums off (or back on) on this server
         pub forums_disabled: Option<bool>,
+        /// Notifications for members who never chose a level for this server
+        pub default_notifications: Option<ServerNotificationLevel>,
 
         /// Fields to remove from server object
         #[cfg_attr(feature = "serde", serde(default))]

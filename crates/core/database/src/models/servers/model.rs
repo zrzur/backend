@@ -114,6 +114,10 @@ auto_derived_partial!(
         /// and posts it has stay readable
         #[serde(skip_serializing_if = "crate::if_false", default)]
         pub forums_disabled: bool,
+        /// Notifications for members who never chose a level for this
+        /// server (missing = mentions only)
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        pub default_notifications: Option<v0::ServerNotificationLevel>,
     },
     "PartialServer"
 );
@@ -255,6 +259,7 @@ impl Server {
             discoverable: false,
             access: data.access,
             verification_level: None,
+            default_notifications: None,
             invites_paused_until: None,
             dms_paused_until: None,
             automod: None,
@@ -504,6 +509,9 @@ impl Server {
         }
         if partial.verification_level.is_some() {
             before.verification_level = self.verification_level;
+        }
+        if partial.default_notifications.is_some() {
+            before.default_notifications = self.default_notifications;
         }
         if partial.invites_paused_until.is_some() {
             before.invites_paused_until = self.invites_paused_until;
