@@ -59,6 +59,11 @@ impl<'a> RatelimitResolver<Request<'a>> for DeltaRatelimits {
                 ("bots", Some(id), _) if extra == Some("interactions") => {
                     ("bot_endpoints", Some(id))
                 }
+                // a bot's public page (Discover, profiles): read often, by
+                // anyone, and the commands list is cached
+                ("bots", Some(_), Method::Get) if matches!(extra, Some("invite" | "commands")) => {
+                    ("bot_public", None)
+                }
                 ("bots", _, _) => ("bots", None),
                 // Interactions: users creating them share one bucket, autocomplete
                 // (one request per pause in typing) has its own, and a bot's
@@ -155,6 +160,7 @@ impl<'a> RatelimitResolver<Request<'a>> for DeltaRatelimits {
             "user_edit" => 2,
             "users" => 20,
             "bots" => 10,
+            "bot_public" => 40,
             "bot_endpoints" => 3,
             "interactions" => 15,
             "interactions_autocomplete" => 30,

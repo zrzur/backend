@@ -108,6 +108,8 @@ pub async fn edit_bot(
             .collect(),
     )
     .await?;
+    // who may read its commands follows the public flag
+    crate::util::public_commands::forget(&bot.id);
 
     Ok(Json(v0::BotWithUserResponse {
         bot: bot.into(),

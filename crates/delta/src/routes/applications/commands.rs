@@ -25,6 +25,10 @@ async fn scope(
 
 /// Tell the servers where these commands show up to refetch them
 async fn notify(db: &Database, application_id: &str, server_id: Option<&str>) {
+    if server_id.is_none() {
+        // the bot's page and profile list its global commands from a cache
+        crate::util::public_commands::forget(application_id);
+    }
     let servers = match server_id {
         Some(server_id) => vec![server_id.to_string()],
         None => db

@@ -35,6 +35,7 @@ pub async fn delete_bot(
     }
 
     bot.delete(db).await?;
+    crate::util::public_commands::forget(&bot.id);
 
     remove_user_from_voice_channels(voice_client, &bot.id).await?;
 
