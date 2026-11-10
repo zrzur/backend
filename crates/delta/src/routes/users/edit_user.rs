@@ -25,6 +25,8 @@ async fn refuse_listed_words(db: &Database, text: &str) -> Result<()> {
 
 /// Longest a status may stay up before the server clears it
 const STATUS_EXPIRY_MAX_DAYS: i64 = 7;
+/// A client clock a little behind still gets "7 days" through
+const STATUS_EXPIRY_GRACE_MINUTES: i64 = 2;
 
 /// A status emoji is one unicode emoji, or a custom emoji from a server the
 /// user is in (the same rule as using it in a message there)
@@ -52,7 +54,9 @@ async fn check_status_emoji(db: &Database, user: &User, emoji: &str) -> Result<(
 /// An expiry lies in the future and at most a week away
 fn check_status_expiry(at: Timestamp) -> Result<()> {
     let now = Timestamp::now_utc();
-    let latest = now + Duration::days(STATUS_EXPIRY_MAX_DAYS);
+    let latest = now
+        + Duration::days(STATUS_EXPIRY_MAX_DAYS)
+        + Duration::minutes(STATUS_EXPIRY_GRACE_MINUTES);
     if at <= now || at > latest {
         return Err(create_error!(FailedValidation {
             error: "status.expires_at must be within the next 7 days".to_string(),
@@ -269,7 +273,15 @@ pub async fn edit(
             check_status_expiry(at)?;
         }
 
-        if let Some(text) = status.text {
+        // the same text again with nothing else (an older client, or an
+        // approved change request) keeps the emoji and expiry it has
+        let same_text_only = status.emoji.is_none()
+            && status.expires_at.is_none()
+            && status.text.is_some()
+            && status.text == new_status.text;
+        if same_text_only {
+            // nothing to change in text, emoji or expiry
+        } else if let Some(text) = status.text {
             // a new text brings its own emoji and expiry; an older client
             // that only sends text never keeps a timer it cannot see
             new_status.text = Some(text);

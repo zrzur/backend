@@ -409,3 +409,178 @@ async fn expired_statuses_are_cleared_from_storage() {
     // safe to run again
     User::clear_expired_statuses(&harness.db).await.unwrap();
 }
+
+#[rocket::async_test]
+async fn sending_the_same_text_again_keeps_its_emoji_and_expiry() {
+    let harness = TestHarness::new().await;
+    let (_, session, _) = harness.new_user().await;
+
+    set_status(
+        &harness,
+        &session,
+        serde_json::json!({ "status": { "text": "Lunch", "emoji": "🍕", "expires_at": in_minutes(30) } }),
+    )
+    .await;
+    // an older client (or an approved change request) sends the same text
+    let (status, body) =
+        set_status(&harness, &session, serde_json::json!({ "status": { "text": "Lunch" } })).await;
+    assert_eq!(status, Status::Ok, "{body}");
+    let kept = me(&harness, &session).await.status.unwrap();
+    assert_eq!(kept.emoji.as_deref(), Some("🍕"));
+    assert!(kept.expires_at.is_some());
+
+    // a different text still starts afresh
+    set_status(&harness, &session, serde_json::json!({ "status": { "text": "Back" } })).await;
+    let fresh = me(&harness, &session).await.status.unwrap();
+    assert_eq!((fresh.emoji, fresh.expires_at), (None, None));
+}
+
+#[rocket::async_test]
+async fn an_emoji_only_status_replaces_the_old_text() {
+    let harness = TestHarness::new().await;
+    let (_, session, _) = harness.new_user().await;
+
+    set_status(
+        &harness,
+        &session,
+        serde_json::json!({ "status": { "text": "Old", "emoji": "🌙", "presence": "Idle" } }),
+    )
+    .await;
+    // what the app sends for an emoji with no text
+    let (status, body) = set_status(
+        &harness,
+        &session,
+        serde_json::json!({ "status": { "emoji": "🎧", "expires_at": in_minutes(60) }, "remove": ["StatusText"] }),
+    )
+    .await;
+    assert_eq!(status, Status::Ok, "{body}");
+
+    let shown = me(&harness, &session).await.status.unwrap();
+    assert_eq!(shown.text, None);
+    assert_eq!(shown.emoji.as_deref(), Some("🎧"));
+    assert!(shown.expires_at.is_some());
+    assert_eq!(shown.presence, Some(v0::Presence::Idle));
+
+    let stored = harness.db.fetch_user(&session.user_id).await.unwrap().status.unwrap();
+    assert_eq!((stored.text, stored.emoji.as_deref()), (None, Some("🎧")));
+}
+
+#[rocket::async_test]
+async fn a_slow_clock_gets_two_minutes_of_grace_past_a_week() {
+    let harness = TestHarness::new().await;
+    let (_, session, _) = harness.new_user().await;
+
+    let (status, body) = set_status(
+        &harness,
+        &session,
+        serde_json::json!({ "status": { "text": "x", "expires_at": in_minutes(60 * 24 * 7 + 1) } }),
+    )
+    .await;
+    assert_eq!(status, Status::Ok, "{body}");
+
+    let (status, body) = set_status(
+        &harness,
+        &session,
+        serde_json::json!({ "status": { "text": "x", "expires_at": in_minutes(60 * 24 * 7 + 5) } }),
+    )
+    .await;
+    assert_eq!(status, Status::BadRequest, "{body}");
+}
+
+#[rocket::async_test]
+async fn the_sweep_never_clears_a_status_set_after_it_looked() {
+    let harness = TestHarness::new().await;
+    let (_, session, mut racer) = harness.new_user().await;
+    let (_, _, mut stale) = harness.new_user().await;
+    store_expired(&harness, &mut racer).await;
+    store_expired(&harness, &mut stale).await;
+
+    let now = Timestamp::now_utc();
+    let seen = harness.db.fetch_expired_status_ids(now, 1000).await.unwrap();
+    assert!(seen.contains(&racer.id) && seen.contains(&stale.id));
+
+    // between the sweep's look and its write, the person sets a new status
+    set_status(
+        &harness,
+        &session,
+        serde_json::json!({ "status": { "text": "Fresh", "expires_at": in_minutes(30) } }),
+    )
+    .await;
+
+    assert!(!harness.db.clear_expired_status(&racer.id, now).await.unwrap());
+    assert!(harness.db.clear_expired_status(&stale.id, now).await.unwrap());
+    // a second time there is nothing left to clear
+    assert!(!harness.db.clear_expired_status(&stale.id, now).await.unwrap());
+
+    let kept = harness.db.fetch_user(&racer.id).await.unwrap().status.unwrap();
+    assert_eq!(kept.text.as_deref(), Some("Fresh"));
+}
+
+#[rocket::async_test]
+async fn a_custom_status_emoji_never_reveals_a_server_the_viewer_is_not_in() {
+    let harness = TestHarness::new().await;
+    let (_, owner_session, mut owner) = harness.new_user().await;
+    let (_, outsider_session, mut outsider) = harness.new_user().await;
+    let (_, insider_session, insider) = harness.new_user().await;
+
+    let server = server_of(&harness, &owner).await;
+    Member::create(&harness.db, &server, &insider, None).await.unwrap();
+    // a second shared server keeps the profile visible after the owner
+    // leaves the emoji's server
+    let other = server_of(&harness, &owner).await;
+    Member::create(&harness.db, &other, &insider, None).await.unwrap();
+    // the outsider sees the owner's profile as a friend, but is not in the server
+    befriend(&harness, &mut owner, &mut outsider).await;
+
+    let emoji = Emoji {
+        id: Ulid::new().to_string(),
+        parent: EmojiParent::Server { id: server.id.clone() },
+        creator_id: owner.id.clone(),
+        name: "secret".to_string(),
+        animated: false,
+        nsfw: false,
+    };
+    emoji.create(&harness.db).await.unwrap();
+    let (status, body) = set_status(
+        &harness,
+        &owner_session,
+        serde_json::json!({ "status": { "text": "Hi", "emoji": emoji.id } }),
+    )
+    .await;
+    assert_eq!(status, Status::Ok, "{body}");
+
+    let seen_by = |session: Session| {
+        let harness = &harness;
+        let id = owner.id.clone();
+        async move {
+            let (status, body) =
+                call(harness, Method::Get, &session, &format!("/users/{id}"), None).await;
+            assert_eq!(status, Status::Ok, "{body}");
+            serde_json::from_str::<v0::User>(&body).unwrap().status.unwrap()
+        }
+    };
+
+    // the owner always sees their own emoji
+    assert_eq!(me(&harness, &owner_session).await.status.unwrap().emoji, Some(emoji.id.clone()));
+    // someone in the server sees it
+    assert_eq!(seen_by(insider_session.clone()).await.emoji, Some(emoji.id.clone()));
+    // someone outside the server sees the text, and no emoji
+    let outside = seen_by(outsider_session.clone()).await;
+    assert_eq!(outside.text.as_deref(), Some("Hi"));
+    assert_eq!(outside.emoji, None);
+    assert!(!body_mentions(&harness, &outsider_session, &owner.id, &emoji.id).await);
+
+    // once the owner leaves the server, nobody else sees it
+    let member = harness.db.fetch_member(&server.id, &owner.id).await.unwrap();
+    member
+        .remove(&harness.db, &server, revolt_database::RemovalIntention::Leave, true)
+        .await
+        .unwrap();
+    assert_eq!(seen_by(insider_session).await.emoji, None);
+}
+
+/// Whether the raw user object the viewer gets names this id anywhere
+async fn body_mentions(harness: &TestHarness, session: &Session, user: &str, needle: &str) -> bool {
+    let (_, body) = call(harness, Method::Get, session, &format!("/users/{user}"), None).await;
+    body.contains(needle)
+}
