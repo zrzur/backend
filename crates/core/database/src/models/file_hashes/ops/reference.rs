@@ -27,6 +27,16 @@ impl AbstractAttachmentHashes for ReferenceDb {
             .ok_or(create_error!(NotFound))
     }
 
+    /// Which of these hashes are stored
+    async fn fetch_stored_attachment_hash_ids(&self, ids: &[String]) -> Result<Vec<String>> {
+        let hashes = self.file_hashes.lock().await;
+        Ok(ids
+            .iter()
+            .filter(|id| hashes.get(*id).is_some_and(|hash| !hash.iv.is_empty()))
+            .cloned()
+            .collect())
+    }
+
     /// Update an attachment hash nonce value.
     async fn set_attachment_hash_nonce(&self, hash: &str, nonce: &str) -> Result<()> {
         let mut hashes = self.file_hashes.lock().await;

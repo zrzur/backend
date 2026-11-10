@@ -265,6 +265,19 @@ async fn the_library_counts_towards_the_server_limit() {
 }
 
 #[rocket::async_test]
+async fn a_library_sound_not_stored_yet_asks_to_try_again() {
+    let s = setup().await;
+    let go = library_sound("voice-go").unwrap();
+    s.harness.db.delete_attachment_hash(&go.sha256).await.unwrap();
+    let (status, body) = add(&s, &s.owner_session, "voice-go", json!({})).await;
+    assert_eq!(status, Status::ServiceUnavailable, "{body}");
+    assert!(matches!(error_type(&body), ErrorType::SoundLibraryUnavailable));
+    // nothing was left behind: no sound, no file of that hash
+    assert_eq!(s.harness.db.count_soundboard_sounds(&s.server.id).await.unwrap(), 0);
+    assert_eq!(s.harness.db.count_file_hash_references(&go.sha256).await.unwrap(), 0);
+}
+
+#[rocket::async_test]
 async fn a_name_that_is_too_long_is_refused() {
     let s = setup().await;
     let (status, _) = add(&s, &s.owner_session, "voice-go", json!({ "name": "x".repeat(33) })).await;

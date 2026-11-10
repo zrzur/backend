@@ -30,6 +30,27 @@ impl AbstractAttachmentHashes for MongoDb {
         .ok_or_else(|| create_error!(NotFound))
     }
 
+    /// Which of these hashes are stored: one `$in` on `_id`, ids only
+    async fn fetch_stored_attachment_hash_ids(&self, ids: &[String]) -> Result<Vec<String>> {
+        #[derive(serde::Deserialize)]
+        struct Id {
+            #[serde(rename = "_id")]
+            id: String,
+        }
+        let found: Vec<Id> = self
+            .find_with_options(
+                COL,
+                doc! { "_id": { "$in": ids }, "iv": { "$ne": "" } },
+                mongodb::options::FindOptions::builder()
+                    .projection(doc! { "_id": 1_i32 })
+                    .limit(ids.len() as i64)
+                    .build(),
+            )
+            .await
+            .map_err(|_| create_database_error!("find", COL))?;
+        Ok(found.into_iter().map(|hash| hash.id).collect())
+    }
+
     /// Update an attachment hash nonce value.
     async fn set_attachment_hash_nonce(&self, hash: &str, nonce: &str) -> Result<()> {
         self.col::<FileHash>(COL)

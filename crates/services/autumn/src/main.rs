@@ -94,11 +94,9 @@ async fn main() -> Result<(), std::io::Error> {
     let db = DatabaseInfo::Auto.connect().await.unwrap();
     let ratelimits = ratelimiter::RatelimitStorage::new(ratelimits::AutumnRatelimits);
 
-    // library sounds go to S3 once, away from the requests
+    // library sounds go to S3 (and are checked every 10 minutes), away from the requests
     let library_db = db.clone();
-    tokio::spawn(async move {
-        library::store_library(&library_db).await;
-    });
+    tokio::spawn(library::keep_library_stored(library_db));
 
     let state = AppState {
         database: db,

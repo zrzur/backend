@@ -87,6 +87,7 @@ impl<'r> Responder<'r, 'static> for Error {
             ErrorType::TooManyEmoji { .. } => Status::BadRequest,
             ErrorType::TooManySounds { .. } => Status::BadRequest,
             ErrorType::SoundAlreadyAdded => Status::Conflict,
+            ErrorType::SoundLibraryUnavailable => Status::ServiceUnavailable,
             ErrorType::TooManySpeakers { .. } => Status::BadRequest,
             ErrorType::TooManyCommunityItems { .. } => Status::BadRequest,
             ErrorType::MissingPlatformPermission { .. } => Status::Forbidden,

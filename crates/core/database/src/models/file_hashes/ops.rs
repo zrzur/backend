@@ -14,6 +14,10 @@ pub trait AbstractAttachmentHashes: Sync + Send {
     /// Fetch an attachment hash entry by sha256 hash.
     async fn fetch_attachment_hash(&self, hash: &str) -> Result<FileHash>;
 
+    /// Which of these hashes are stored (uploaded, with a nonce); one query,
+    /// at most `ids.len()` results
+    async fn fetch_stored_attachment_hash_ids(&self, ids: &[String]) -> Result<Vec<String>>;
+
     /// Update an attachment hash nonce value.
     async fn set_attachment_hash_nonce(&self, hash: &str, nonce: &str) -> Result<()>;
 

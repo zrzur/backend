@@ -208,15 +208,16 @@ pub async fn add_library_sound(
         return Err(create_error!(TooManySounds { max }));
     }
 
-    // autumn stores every library sound at start
+    // autumn stores every library sound at start and checks again every 10
+    // minutes; until then the person is asked to try again
     let hash = db
         .fetch_attachment_hash(&library.sha256)
         .await
         .ok()
         .filter(|hash| !hash.iv.is_empty())
         .ok_or_else(|| {
-            log::error!("library sound {} is not stored yet: is autumn running?", library.id);
-            create_error!(InternalError)
+            log::warn!("library sound {} is not stored yet: is autumn running?", library.id);
+            create_error!(SoundLibraryUnavailable)
         })?;
     let file = library.new_file(&hash, &user.id);
     db.insert_attachment(&file).await?;
