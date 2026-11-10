@@ -15,6 +15,8 @@ use revolt_database::{
 };
 use revolt_models::v0;
 use revolt_result::{create_error, ErrorType, Result};
+
+use crate::routes::safety::public_report::ClientAddress;
 use rocket::serde::json::Json;
 use rocket::State;
 use tokio::time::sleep;
@@ -26,6 +28,7 @@ use tokio::time::sleep;
 #[post("/login", data = "<data>")]
 pub async fn login(
     db: &State<Database>,
+    client: ClientAddress,
     data: Json<v0::DataLogin>,
 ) -> Result<Json<v0::ResponseLogin>> {
     // Random jitter from 0-1000ms
@@ -44,10 +47,11 @@ pub async fn login(
             let email_normalised = normalise_email(email);
 
             // Many wrong passwords for this address: a captcha (when the
-            // server has one) or a wait. Counted per address whether or not
-            // an account has it, so the answer tells nothing about accounts.
+            // server has one), or else a wait for the network they came
+            // from. Counted per address whether or not an account has it, so
+            // the answer tells nothing about accounts.
             let captcha_enabled = !config().await.api.security.captcha.hcaptcha_key.is_empty();
-            match login_gate(&email_normalised, captcha_enabled).await {
+            match login_gate(&email_normalised, &client.0, captcha_enabled).await {
                 LoginGate::Open => {}
                 LoginGate::Captcha => check_captcha(captcha.as_deref()).await?,
                 LoginGate::Paused(_) => return Err(create_error!(LockedOut)),
@@ -60,14 +64,14 @@ pub async fn login(
             else {
                 // Same work and same answer as a wrong password
                 Account::spend_password_check_time(&password);
-                count_login_failure(&email_normalised, captcha_enabled).await;
+                count_login_failure(&email_normalised, &client.0, captcha_enabled).await;
                 return Err(create_error!(InvalidCredentials));
             };
 
             // Verify the password is correct. Nothing else about the
             // account is told before this passes (enumeration).
             if let Err(err) = account.verify_password(&password) {
-                count_login_failure(&email_normalised, captcha_enabled).await;
+                count_login_failure(&email_normalised, &client.0, captcha_enabled).await;
                 return Err(err);
             }
             clear_login_failures(&email_normalised).await;
@@ -744,5 +748,33 @@ mod tests {
         assert!(matches!(error, Some(ErrorType::LockedOut)));
 
         clear_mfa_failures(&account.id).await;
+    }
+
+    /// Without a captcha the wait holds for the network the wrong passwords
+    /// came from (IPv4 /24): someone guessing elsewhere does not lock the
+    /// owner out at home
+    #[rocket::async_test]
+    async fn the_wait_holds_only_for_the_network_the_guesses_came_from() {
+        let harness = TestHarness::new().await;
+        let (account, _, _) = harness.new_user().await;
+        let from = |ip: &str, password: &str| {
+            let remote: std::net::SocketAddr = format!("{ip}:40000").parse().unwrap();
+            harness
+                .client
+                .post("/auth/session/login")
+                .remote(remote)
+                .header(ContentType::JSON)
+                .body(json!({ "email": account.email.clone(), "password": password }).to_string())
+        };
+
+        for _ in 0..LOGIN_STEP_UP_AFTER {
+            assert_eq!(from("203.0.113.7", "wrong_password").dispatch().await.status(), Status::Unauthorized);
+        }
+        // the same /24 waits, even with the right password
+        let res = from("203.0.113.200", "password_insecure").dispatch().await;
+        assert_eq!(res.status(), Status::Forbidden);
+        assert!(matches!(res.into_json::<Error>().await.map(|e| e.error_type), Some(ErrorType::LockedOut)));
+        // another network signs in
+        assert_eq!(from("198.51.100.7", "password_insecure").dispatch().await.status(), Status::Ok);
     }
 }

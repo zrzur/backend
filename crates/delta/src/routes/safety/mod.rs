@@ -19,7 +19,7 @@ use ulid::Ulid;
 
 pub(crate) mod actions;
 pub(crate) mod appeals;
-mod public_report;
+pub(crate) mod public_report;
 mod report_content;
 pub(crate) mod reports;
 pub use public_report::PublicReportGuard;
