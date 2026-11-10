@@ -2896,8 +2896,8 @@
     },
     {
       "path": "crates/core/result/error-codes.txt",
-      "sha256": "22004f5a22753d5bb89cbb226eb20f5a542d76743681a71244eee7d541c98b80",
-      "bytes": 2660,
+      "sha256": "0c917218d45f5cfde9bd32b63f9759aa4aad4a5cf96440b29c00e51fe0709dfd",
+      "bytes": 2670,
       "category": "product-source-or-build-manifest"
     },
     {
