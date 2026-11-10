@@ -125,7 +125,13 @@ pub async fn web() -> Rocket<Build> {
                 .limit("file", 25.megabytes())
                 .limit("data-form", 130.megabytes()),
             address: Ipv4Addr::new(0, 0, 0, 0).into(),
-            port: 14702,
+            // a second delta beside the dev stack (a stream's own e2e) takes
+            // another port; ZRZUR_DELTA_PORT as in the activities stack
+            port: std::env::var("ZRZUR_DELTA_PORT")
+                .or_else(|_| std::env::var("ROCKET_PORT"))
+                .ok()
+                .and_then(|port| port.parse().ok())
+                .unwrap_or(14702),
             ip_header: Some("X-Forwarded-For".into()),
             ..Default::default()
         })
