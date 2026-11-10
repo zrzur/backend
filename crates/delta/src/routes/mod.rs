@@ -22,6 +22,7 @@ mod push;
 mod root;
 pub(crate) mod safety;
 mod servers;
+mod soundboard_library;
 mod staff;
 mod support;
 mod sync;
@@ -52,6 +53,7 @@ pub fn mount(config: Settings, mut rocket: Rocket<Build>) -> Rocket<Build> {
             "/oauth2" => oauth::routes(),
             "/channels" => channels::routes(),
             "/servers" => servers::routes(),
+            "/soundboard" => soundboard_library::routes(),
             "/invites" => invites::routes(),
             "/discover" => discover::routes(),
             "/community" => community::routes(),
@@ -85,6 +87,7 @@ pub fn mount(config: Settings, mut rocket: Rocket<Build>) -> Rocket<Build> {
             "/oauth2" => oauth::routes(),
             "/channels" => channels::routes(),
             "/servers" => servers::routes(),
+            "/soundboard" => soundboard_library::routes(),
             "/invites" => invites::routes(),
             "/discover" => discover::routes(),
             "/community" => community::routes(),

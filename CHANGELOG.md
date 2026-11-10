@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Sound library
+
+- 115 ready-made soundboard sounds from Kenney's CC0 packs, built into the binaries (`crates/core/database/assets/sound-library`, 1.16 MB of Ogg Vorbis, each at most 5.0 s measured by ffprobe, brought to one loudness with a peak limit at -1 dBFS; names in en, ar, de, fr, es, ru, zh-Hans; `LIBRARY.md` lists the source pack of each, the pack licences are in `licenses/`).
+- `GET /soundboard/library` (signed in; written once, `Cache-Control: private, max-age=3600`) lists categories and sounds; `GET /soundboard/library/{id}/audio?v=<version>` serves a file with `public, max-age=31536000, immutable`.
+- `PUT /servers/{target}/soundboard/library/{library_id}` (Manage Soundboard, `servers` rate-limit bucket like uploads) adds one to a server: autumn stores every library sound once as a file hash at start, so delta only makes a new `sounds` file of that hash and the sound goes through the same path as an upload (measured length, per-server limit checked before and after saving, `SoundboardSoundCreate` event, audit log). The name defaults to the library name in the adder's language (`User.locale`). A library sound is on a server at most once (`SoundboardSound.library_id`; new error `SoundAlreadyAdded`, 409). crond keeps library file hashes when the last server sound using one is removed.
+
 ### Server insights
 
 - `GET /servers/{target}/insights?days=7|30|90&time_zone=&utc_offset=` (Manage Server; own rate-limit bucket `server_insights`, 10): daily joins, leaves, members, messages, active members and voice minutes in the viewer's time zone (IANA zone with daylight saving, else the offset rounded to whole hours; half-hour zones put the hour around local midnight on one day), range totals, join sources (invite, Discover, custom link, other), the 10 busiest channels the viewer can see and the day counting started (`counted_since`). Privacy: messages count only in channels the viewer can see, daily totals included; per-channel counts, active members and voice minutes of 1 to 4 are `null`. One indexed find on `server_insights` (server, day) per view plus one read of the channels with messages; nothing reads messages or members then.

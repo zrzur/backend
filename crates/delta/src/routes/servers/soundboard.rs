@@ -3,7 +3,7 @@
 //! Files come through autumn (tag `sounds`, audio only, size-limited there),
 //! like emojis. Playing one is `channels/soundboard_play.rs`.
 use revolt_database::{
-    server_supercharge_level, soundboard_limit,
+    server_supercharge_level, sound_library::library_sound, soundboard_limit,
     util::{permissions::DatabasePermissionQuery, reference::Reference},
     AuditLogEntryAction, Database, File, Metadata, PartialSoundboardSound, SoundboardSound, User,
     SOUNDBOARD_MAX_DURATION_MS,
@@ -72,6 +72,45 @@ pub async fn create_sound(
         return Err(create_error!(TooManySounds { max }));
     }
 
+    add_to_soundboard(
+        db,
+        user,
+        reason,
+        &server,
+        max,
+        sound_id,
+        NewSound {
+            name: data.name.trim().to_string(),
+            emoji: data.emoji,
+            volume: data.volume,
+            library_id: None,
+        },
+    )
+    .await
+    .map(Json)
+}
+
+/// What a new sound is called and how it plays
+struct NewSound {
+    name: String,
+    emoji: Option<String>,
+    volume: Option<u8>,
+    library_id: Option<String>,
+}
+
+/// Make a file (tag `sounds`, not used yet) a sound of the server: the
+/// measured length is checked, the limit is checked again after saving, and
+/// the server and the audit log hear of it. Uploads and the library both
+/// come through here.
+async fn add_to_soundboard(
+    db: &Database,
+    user: User,
+    reason: AuditLogReason,
+    server: &revolt_database::Server,
+    max: usize,
+    sound_id: String,
+    new: NewSound,
+) -> Result<v0::SoundboardSound> {
     let file = File::use_soundboard_sound(db, &sound_id, &server.id, &user.id).await?;
 
     // the length autumn measured wins over the one the client sends
@@ -99,22 +138,110 @@ pub async fn create_sound(
         id: sound_id,
         server: server.id.clone(),
         creator_id: user.id.clone(),
-        name: data.name.trim().to_string(),
-        emoji: data.emoji,
+        name: new.name,
+        emoji: new.emoji,
         duration_ms: measured,
-        volume: data.volume.unwrap_or(100),
+        volume: new.volume.unwrap_or(100),
+        library_id: new.library_id,
     };
     if !sound.create(db, max).await? {
         db.mark_attachment_as_deleted(&sound.id).await?;
         return Err(create_error!(TooManySounds { max }));
     }
+
+    // two people adding the same library sound at once: the first one stays
+    if let Some(library_id) = &sound.library_id {
+        let first = db
+            .fetch_soundboard_sounds(&server.id)
+            .await?
+            .into_iter()
+            .find(|other| other.library_id.as_ref() == Some(library_id))
+            .map(|other| other.id);
+        if first.as_ref() != Some(&sound.id) {
+            sound.delete(db).await?;
+            return Err(create_error!(SoundAlreadyAdded));
+        }
+    }
+
     AuditLogEntryAction::SoundboardSoundCreate {
         sound: sound.id.clone(),
         name: sound.name.clone(),
     }
     .insert(db, server.id.clone(), reason, user.id, None)
     .await;
-    Ok(Json(sound.into()))
+    Ok(sound.into())
+}
+
+/// # Add Sound from the Library
+///
+/// Add a ready-made sound of the sound library (`GET /soundboard/library`).
+/// Needs Manage Soundboard and counts like an upload; each library sound is
+/// on a server at most once. The name is the library name in your language
+/// unless you give one.
+#[openapi(tag = "Server Customisation")]
+#[put("/<target>/soundboard/library/<library_id>", data = "<data>")]
+pub async fn add_library_sound(
+    db: &State<Database>,
+    user: User,
+    reason: AuditLogReason,
+    target: Reference<'_>,
+    library_id: String,
+    data: Json<v0::DataAddLibrarySound>,
+) -> Result<Json<v0::SoundboardSound>> {
+    let data = data.into_inner();
+    data.validate()
+        .map_err(|error| revolt_database::util::validation::validation_failed(&error))?;
+    let server = target.as_server(db).await?;
+    assert_can_manage(db, &user, &server).await?;
+    let library = library_sound(&library_id).ok_or_else(|| create_error!(NotFound))?;
+
+    // checked before a file is made, so a refusal leaves nothing behind
+    let max = soundboard_limit(server_supercharge_level(&server).await);
+    let sounds = db.fetch_soundboard_sounds(&server.id).await?;
+    if sounds
+        .iter()
+        .any(|sound| sound.library_id.as_deref() == Some(library.id.as_str()))
+    {
+        return Err(create_error!(SoundAlreadyAdded));
+    }
+    if sounds.len() >= max {
+        return Err(create_error!(TooManySounds { max }));
+    }
+
+    // autumn stores every library sound at start
+    let hash = db
+        .fetch_attachment_hash(&library.sha256)
+        .await
+        .ok()
+        .filter(|hash| !hash.iv.is_empty())
+        .ok_or_else(|| {
+            log::error!("library sound {} is not stored yet: is autumn running?", library.id);
+            create_error!(InternalError)
+        })?;
+    let file = library.new_file(&hash, &user.id);
+    db.insert_attachment(&file).await?;
+
+    let name = data
+        .name
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| library.name_in(user.locale.as_deref()).to_string());
+    add_to_soundboard(
+        db,
+        user,
+        reason,
+        &server,
+        max,
+        file.id,
+        NewSound {
+            name,
+            emoji: data.emoji.or_else(|| Some(library.emoji.clone())),
+            volume: data.volume,
+            library_id: Some(library.id.clone()),
+        },
+    )
+    .await
+    .map(Json)
 }
 
 /// # Edit Sound

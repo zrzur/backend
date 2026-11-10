@@ -29,8 +29,10 @@ pub async fn task(db: Database, _: revolt_database::AMQP) -> Result<()> {
             if let Some(hash) = &file.hash {
                 let count = db.count_file_hash_references(hash).await?;
 
-                // No other files reference this file on disk anymore
-                if count <= 1 {
+                // No other files reference this file on disk anymore. A
+                // sound of the built-in library stays: the next server that
+                // adds it gets a new file of the same hash.
+                if count <= 1 && !revolt_database::sound_library::is_library_hash(hash) {
                     let file_hash = db.fetch_attachment_hash(hash).await?;
 
                     // Delete from S3

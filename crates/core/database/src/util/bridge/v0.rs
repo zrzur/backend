@@ -2430,6 +2430,7 @@ impl From<crate::SoundboardSound> for SoundboardSound {
             emoji: value.emoji,
             duration_ms: value.duration_ms,
             volume: value.volume,
+            library_id: value.library_id,
         }
     }
 }
