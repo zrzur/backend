@@ -156,6 +156,8 @@ impl Member {
             member = updated;
         }
 
+        // before the count below is read: a cached count follows the join
+        Server::adjust_cached_member_count(&server.id, 1).await;
         crate::ServerInsightDay::count(db, &server.id, crate::InsightCounter::Join(source)).await;
 
         // a failure here never stops someone joining
@@ -333,6 +335,7 @@ impl Member {
         silent: bool,
     ) -> Result<()> {
         db.soft_delete_member(&self.id).await?;
+        Server::adjust_cached_member_count(&server.id, -1).await;
         crate::ServerInsightDay::count(db, &server.id, crate::InsightCounter::Leave).await;
         // their "Interested" marks go too, so counts are members only
         if let Err(error) = crate::ServerEvent::forget_member(db, &server.id, &self.id.user).await {

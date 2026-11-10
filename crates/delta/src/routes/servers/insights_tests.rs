@@ -137,6 +137,8 @@ async fn joins_count_by_where_they_came_from_and_leaves_too() {
     // owner and member (made directly: "other") and the invite join
     assert_eq!(today["joins"], 3);
     assert_eq!(today["leaves"], 1);
+    // the cached member count follows joins and leaves (owner and member)
+    assert_eq!(today["members"], 2);
     assert_eq!(page["join_sources"]["invite"], 1);
     assert_eq!(page["join_sources"]["other"], 2);
     assert_eq!(page["join_sources"]["discover"], 0);
