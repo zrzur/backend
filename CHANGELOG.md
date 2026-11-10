@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Features
+
+- Scheduled server events (behind `features.server_events_enabled`, off by default): `/servers/{id}/events` to create, edit, start, end, cancel and delete events (Manage Server, or the event's creator for everything but delete), place = voice channel, text channel or an external place, optional cover (`banners` tag), weekly / every two weeks / monthly repeat (the next one is made when one completes). Members see only events whose place they can view. "Interested" marks with a public count and a paged list. crond starts and completes events on time; at the start interested members get a push and the join message channel gets an `event_started` system message when everyone can see the place. Gateway: `ServerEventCreate`, `ServerEventUpdate`, `ServerEventDelete`, `ServerEventInterest`. Audit log: create, edit, cancel, delete. New error `TooManyServerEvents` (100 upcoming per server). Indexes in migration `PENDING_SERVER_EVENT_INDEXES`.
+
 ### Fixes
 
 - voice-ingress: a join is announced as soon as the voice state is stored. Before, a failed LiveKit permission sync stopped the `VoiceChannelJoin` event, so people already in the room never saw the newcomer (they saw them only after a reload). The sync now retries once; if it still fails, the user is taken out of the room instead of keeping LiveKit's default permissions.

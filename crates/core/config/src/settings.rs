@@ -1193,6 +1193,9 @@ pub struct Features {
     /// (`POST /channels/{target}/messages/forward`). Unset means off.
     #[serde(default)]
     pub message_forwarding_enabled: bool,
+    /// Scheduled server events (`/servers/{target}/events`). Unset means off.
+    #[serde(default)]
+    pub server_events_enabled: bool,
 
     #[serde(default)]
     pub advanced: FeaturesAdvanced,

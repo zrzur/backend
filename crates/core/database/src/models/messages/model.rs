@@ -137,6 +137,9 @@ auto_derived!(
             channel: String,
             content: String,
         },
+        /// A scheduled server event started (posted in the join message channel)
+        #[serde(rename = "event_started")]
+        EventStarted { id: String, title: String },
     }
 
     /// Name and / or avatar override information
@@ -1116,6 +1119,7 @@ impl Message {
                             }
                             v0::SystemMessage::CallStarted { by, .. } => users.push(by.clone()),
                             v0::SystemMessage::RaidAlert { .. } => {}
+                            v0::SystemMessage::EventStarted { .. } => {}
                             v0::SystemMessage::AutoModAlert { user, .. } => users.push(user.clone()),
                         }
                     }

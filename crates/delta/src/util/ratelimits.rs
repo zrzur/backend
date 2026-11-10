@@ -91,6 +91,15 @@ impl<'a> RatelimitResolver<Request<'a>> for DeltaRatelimits {
                 ("servers", Some(_), Method::Post) if extra == Some("messages") => {
                     ("message_search", None)
                 }
+                // scheduled events: reading the list (and the interested
+                // list) is common, marking "Interested" a little less;
+                // neither should hold up server actions
+                ("servers", Some(_), Method::Get) if extra == Some("events") => {
+                    ("server_events_read", None)
+                }
+                ("servers", Some(id), _) if extra == Some("events") => {
+                    ("server_events", Some(id))
+                }
                 ("servers", Some(id), _) => ("servers", Some(id)),
                 ("auth", _, _) => {
                     if request.method() == Method::Delete {
@@ -150,6 +159,8 @@ impl<'a> RatelimitResolver<Request<'a>> for DeltaRatelimits {
             "servers" => 5,
             "member_list" => 15,
             "message_search" => 5,
+            "server_events_read" => 20,
+            "server_events" => 10,
             "auth" => self.auth_limit,
             "auth_delete" => 255,
             "default_avatar" => 255,

@@ -51,5 +51,6 @@ async fn main() {
         cron_task_wrapper(safety_retention::task, db.clone(), amqp.clone()),
         cron_task_wrapper(data_exports::task, db.clone(), amqp.clone()),
         cron_task_wrapper(expire_sessions::task, db.clone(), amqp.clone()),
+        cron_task_wrapper(server_events::task, db.clone(), amqp.clone()),
     );
 }

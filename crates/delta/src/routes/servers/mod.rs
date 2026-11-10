@@ -10,6 +10,7 @@ mod ban_remove;
 mod channel_create;
 mod discover;
 mod emoji_list;
+mod events;
 mod invites_fetch;
 mod join_requests;
 mod lobby_answer;
@@ -64,6 +65,9 @@ mod kick_reason_tests;
 #[cfg(test)]
 mod message_search_tests;
 
+#[cfg(test)]
+mod events_tests;
+
 pub fn routes() -> (Vec<Route>, OpenApi) {
     openapi_get_routes_spec![
         webhook_fetch_all::fetch_server_webhooks,
@@ -96,6 +100,17 @@ pub fn routes() -> (Vec<Route>, OpenApi) {
         ban_create::ban,
         ban_remove::unban,
         ban_list::list,
+        events::list,
+        events::create,
+        events::fetch,
+        events::edit,
+        events::start,
+        events::end,
+        events::cancel,
+        events::delete,
+        events::mark_interested,
+        events::unmark_interested,
+        events::interested,
         join_requests::list,
         join_requests::approve,
         join_requests::reject,

@@ -158,6 +158,9 @@ auto_derived!(
             channel: String,
             content: String,
         },
+        /// A scheduled server event started (posted in the join message channel)
+        #[serde(rename = "event_started")]
+        EventStarted { id: String, title: String },
     }
 
     /// Name and / or avatar override information
@@ -752,6 +755,7 @@ impl From<SystemMessage> for String {
             SystemMessage::RaidAlert { .. } => {
                 "Many people joined in a short time.".to_string()
             }
+            SystemMessage::EventStarted { title, .. } => format!("Event started: {title}"),
         }
     }
 }

@@ -423,6 +423,12 @@ pub fn scope(event: &EventV1) -> Scope<'_> {
         | ServerRoleRanksUpdate { id, .. } => Scope::Server(id),
         ServerMemberUpdate { id, .. } => Scope::Server(&id.server),
         ApplicationCommandsUpdate { server_id, .. } => Scope::Server(server_id),
+        // an event in a channel only for those who still see the channel
+        ServerEventCreate(event) | ServerEventUpdate { event } => match event.place.channel() {
+            Some(channel) => Scope::Channel(channel),
+            None => Scope::Server(&event.server),
+        },
+        ServerEventInterest { server, .. } => Scope::Server(server),
         EmojiCreate(emoji) => match &emoji.parent {
             revolt_models::v0::EmojiParent::Server { id } => Scope::Server(id),
             _ => Scope::Always,

@@ -301,6 +301,11 @@ plugins_enabled = false
 # "Forwarded" frame (ForwardedFrame): before that, readers on stable see a
 # forwarded copy as if the forwarder wrote it, without the note.
 message_forwarding_enabled = false
+# Scheduled server events (/servers/{id}/events, crond starts and ends them).
+# Off, every event route answers FeatureDisabled, crond leaves events alone
+# and the app hides the Events entry. The stable app shows an unknown system
+# message for "event started" until it ships the events screens.
+server_events_enabled = false
 # Enable push notifications for mass pings (everyone, online, roles)
 # When false this will still ping in-client but will not send notifications from pushd
 mass_mentions_send_notifications = true

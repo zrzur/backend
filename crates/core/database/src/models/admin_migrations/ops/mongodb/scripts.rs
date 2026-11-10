@@ -39,6 +39,8 @@ const PENDING_PLATFORM_WORD_SEED: i32 = 78;
 const PENDING_PLATFORM_WORD_SEED_2: i32 = 79;
 // Number given by the coordinator at merge (stream botsapp)
 const PENDING_COMMAND_PERMISSIONS_INDEX: i32 = -1;
+// Number given by the coordinator at merge (stream events)
+const PENDING_SERVER_EVENT_INDEXES: i32 = -1;
 
 /// The earliest day a session from before expiry can expire. At least 30
 /// days out, also with expiry switched off (0), for the day it is switched on.
@@ -2584,6 +2586,11 @@ pub async fn run_migrations(db: &MongoDb, revision: i32) -> i32 {
         create_command_permission_indexes(&db.db()).await;
     }
 
+    if revision <= PENDING_SERVER_EVENT_INDEXES {
+        info!("Running migration [revision {PENDING_SERVER_EVENT_INDEXES} / 10-11-2026]: Indexes for scheduled server events");
+        create_server_event_indexes(&db.db()).await;
+    }
+
     // Reminder to update LATEST_REVISION when adding new migrations.
     LATEST_REVISION.max(revision)
 }
@@ -2712,6 +2719,35 @@ pub async fn create_command_permission_indexes(db: &crate::mongodb::Database) {
     })
     .await
     .expect("Failed to create the command permissions index.");
+}
+
+/// Scheduled server events: a server's upcoming list, crond's due and
+/// active queries, and the interested marks by event (paged by user) and by
+/// user. Only indexes, no data moves; creating an index that exists does
+/// nothing, so this is safe to run twice.
+pub async fn create_server_event_indexes(db: &crate::mongodb::Database) {
+    for (collection, index) in [
+        (
+            "server_events",
+            doc! { "key": { "server": 1_i32, "status": 1_i32, "starts_at": 1_i32 }, "name": "server_status_start" },
+        ),
+        (
+            "server_events",
+            doc! { "key": { "status": 1_i32, "starts_at": 1_i32 }, "name": "status_start" },
+        ),
+        (
+            "server_event_interests",
+            doc! { "key": { "_id.event": 1_i32, "_id.user": 1_i32 }, "name": "event_user" },
+        ),
+        (
+            "server_event_interests",
+            doc! { "key": { "_id.user": 1_i32 }, "name": "user" },
+        ),
+    ] {
+        db.run_command(doc! { "createIndexes": collection, "indexes": [index] })
+            .await
+            .unwrap_or_else(|error| panic!("Failed to create an index on {collection}: {error}"));
+    }
 }
 
 /// Indexes of the bot verification queue, account change requests, notices
@@ -3437,6 +3473,47 @@ mod platform_word_seed_tests {
             database.collection::<Document>("migrations").count_documents(doc! { "_id": "platform_words" }).await.expect("count"),
             0
         );
+    }
+}
+
+#[cfg(test)]
+mod server_event_index_tests {
+    use crate::mongodb::bson::Document;
+    use crate::{Database, DatabaseInfo};
+    use futures::TryStreamExt;
+
+    #[tokio::test]
+    async fn event_indexes_are_made_once_however_often_it_runs() {
+        let db = DatabaseInfo::Test("server_event_indexes".to_string())
+            .connect()
+            .await
+            .expect("Database connection failed.");
+        let Database::MongoDb(mongo) = &db else { return };
+        db.drop_database().await;
+        let handle = mongo.db();
+        super::create_server_event_indexes(&handle).await;
+        super::create_server_event_indexes(&handle).await;
+        for (collection, names) in [
+            ("server_events", vec!["server_status_start", "status_start"]),
+            ("server_event_interests", vec!["event_user", "user"]),
+        ] {
+            let indexes: Vec<_> = handle
+                .collection::<Document>(collection)
+                .list_indexes()
+                .await
+                .unwrap()
+                .try_collect()
+                .await
+                .unwrap();
+            for name in names {
+                let count = indexes
+                    .iter()
+                    .filter(|index| index.options.as_ref().and_then(|o| o.name.as_deref()) == Some(name))
+                    .count();
+                assert_eq!(count, 1, "{collection}.{name}");
+            }
+        }
+        db.drop_database().await;
     }
 }
 

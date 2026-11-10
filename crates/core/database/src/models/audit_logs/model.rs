@@ -184,6 +184,26 @@ auto_derived!(
             channel: String,
             actions: Vec<String>,
         },
+        /// A scheduled event was created
+        ServerEventCreate {
+            event: String,
+            title: String,
+        },
+        /// A scheduled event was changed
+        ServerEventEdit {
+            event: String,
+            title: String,
+        },
+        /// A scheduled event was called off
+        ServerEventCancel {
+            event: String,
+            title: String,
+        },
+        /// A scheduled event was deleted
+        ServerEventDelete {
+            event: String,
+            title: String,
+        },
     }
 
     /// Audit Log Query
@@ -315,6 +335,10 @@ impl AuditLogEntry {
                 AuditLogEntryAction::AutoModAction { user, .. } => {
                     user_ids.insert(user.clone());
                 }
+                AuditLogEntryAction::ServerEventCreate { .. }
+                | AuditLogEntryAction::ServerEventEdit { .. }
+                | AuditLogEntryAction::ServerEventCancel { .. }
+                | AuditLogEntryAction::ServerEventDelete { .. } => {}
             };
         }
 

@@ -82,6 +82,7 @@ auto_derived!(
         ServerIcon,
         RoleIcon,
         CommunityItem,
+        ServerEventCover,
     }
 
     /// Information about what the file was used for
@@ -322,6 +323,26 @@ impl File {
             FileUsedFor {
                 id: parent.to_owned(),
                 object_type: FileUsedForType::ServerBanner,
+            },
+            uploader_id.to_owned(),
+        )
+        .await
+    }
+
+    /// Use a file for the cover of a scheduled server event (same rules as
+    /// a server banner)
+    pub async fn use_server_event_cover(
+        db: &Database,
+        id: &str,
+        parent: &str,
+        uploader_id: &str,
+    ) -> Result<File> {
+        db.find_and_use_attachment(
+            id,
+            "banners",
+            FileUsedFor {
+                id: parent.to_owned(),
+                object_type: FileUsedForType::ServerEventCover,
             },
             uploader_id.to_owned(),
         )

@@ -665,6 +665,7 @@ impl From<crate::SystemMessage> for SystemMessage {
                 Self::CallStarted { by, finished_at }
             }
             crate::SystemMessage::RaidAlert { joins, minutes } => Self::RaidAlert { joins, minutes },
+            crate::SystemMessage::EventStarted { id, title } => Self::EventStarted { id, title },
             crate::SystemMessage::AutoModAlert {
                 user,
                 rule,
@@ -1940,6 +1941,18 @@ impl From<crate::AuditLogEntryAction> for AuditLogEntryAction {
                 channel,
                 actions,
             },
+            crate::AuditLogEntryAction::ServerEventCreate { event, title } => {
+                AuditLogEntryAction::ServerEventCreate { event, title }
+            }
+            crate::AuditLogEntryAction::ServerEventEdit { event, title } => {
+                AuditLogEntryAction::ServerEventEdit { event, title }
+            }
+            crate::AuditLogEntryAction::ServerEventCancel { event, title } => {
+                AuditLogEntryAction::ServerEventCancel { event, title }
+            }
+            crate::AuditLogEntryAction::ServerEventDelete { event, title } => {
+                AuditLogEntryAction::ServerEventDelete { event, title }
+            }
             crate::AuditLogEntryAction::MessagePin {
                 message,
                 author,
@@ -2246,6 +2259,26 @@ impl From<crate::ServerJoinRequest> for ServerJoinRequest {
             created_at: value.created_at,
             reviewed_by: value.reviewed_by,
             reviewed_at: value.reviewed_at,
+        }
+    }
+}
+
+impl From<crate::ServerEvent> for ServerEvent {
+    fn from(value: crate::ServerEvent) -> Self {
+        ServerEvent {
+            id: value.id,
+            server: value.server,
+            creator: value.creator,
+            title: value.title,
+            description: value.description,
+            starts_at: value.starts_at,
+            ends_at: value.ends_at,
+            place: value.place,
+            cover: value.cover.map(Into::into),
+            status: value.status,
+            repeat: value.repeat,
+            interested_count: value.interested_count,
+            previous: value.previous,
         }
     }
 }

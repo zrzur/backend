@@ -93,6 +93,7 @@ impl IntoResponse for Error {
             ErrorType::PromotionSlotsFull => StatusCode::CONFLICT,
             ErrorType::NotOnDiscover => StatusCode::BAD_REQUEST,
             ErrorType::TooManyChannels { .. } => StatusCode::BAD_REQUEST,
+            ErrorType::TooManyServerEvents { .. } => StatusCode::BAD_REQUEST,
             ErrorType::TooManyRoles { .. } => StatusCode::BAD_REQUEST,
 
             ErrorType::ReachedMaximumBots => StatusCode::BAD_REQUEST,
