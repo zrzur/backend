@@ -72,6 +72,21 @@ pub async fn edit_bot(
         }));
     }
 
+    // a web address only: no javascript:, data: or other schemes reach a client
+    if let Some(url) = &interactions_url {
+        let valid = url::Url::parse(url).is_ok_and(|parsed| {
+            matches!(parsed.scheme(), "https" | "http")
+                && parsed.host_str().is_some_and(|host| !host.is_empty())
+                && parsed.username().is_empty()
+                && parsed.password().is_none()
+        });
+        if !valid || url.chars().any(|c| c.is_whitespace() || c.is_control()) {
+            return Err(create_error!(FailedValidation {
+                error: "interactions_url must be an http or https address".to_string()
+            }));
+        }
+    }
+
     let partial = PartialBot {
         public,
         analytics,
@@ -170,5 +185,39 @@ mod test {
         assert_eq!(response.status(), Status::BadRequest);
         let response = patch(-1).dispatch().await;
         assert_eq!(response.status(), Status::BadRequest);
+    }
+
+    #[rocket::async_test]
+    async fn interactions_url_takes_web_addresses_only() {
+        let harness = TestHarness::new().await;
+        let (_, session, user) = harness.new_user().await;
+        let (bot, _) = Bot::create(&harness.db, TestHarness::rand_string(), &user, None)
+            .await
+            .expect("`Bot`");
+
+        let patch = |url: &str| {
+            harness
+                .client
+                .patch(format!("/bots/{}", bot.id))
+                .header(ContentType::JSON)
+                .header(Header::new("x-session-token", session.token.to_string()))
+                .body(json!({ "interactions_url": url }).to_string())
+        };
+        for bad in [
+            "javascript:alert(1)",
+            "data:text/html,<script>alert(1)</script>",
+            "file:///etc/passwd",
+            "https://user:pass@example.com/",
+            "https:// example.com",
+            "//example.com/x",
+        ] {
+            let response = patch(bad).dispatch().await;
+            assert_eq!(response.status(), Status::BadRequest, "{bad}");
+        }
+        let stored = harness.db.fetch_bot(&bot.id).await.unwrap();
+        assert!(stored.interactions_url.is_empty());
+
+        let response = patch("https://example.com/interactions").dispatch().await;
+        assert_eq!(response.status(), Status::Ok);
     }
 }
