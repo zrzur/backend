@@ -37,6 +37,9 @@ auto_derived_partial!(
         /// Volume it plays at, 1-100
         #[serde(default = "default_volume")]
         pub volume: u8,
+        /// The library sound it was added from, if any
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        pub library_id: Option<String>,
     },
     "PartialSoundboardSound"
 );

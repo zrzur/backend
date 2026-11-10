@@ -216,6 +216,7 @@ pub mod util;
 pub use models::*;
 
 pub mod events;
+pub mod sound_library;
 #[cfg(feature = "tasks")]
 pub mod tasks;
 

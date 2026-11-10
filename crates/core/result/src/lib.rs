@@ -328,6 +328,10 @@ pub enum ErrorType {
     TooManySounds {
         max: usize,
     },
+    /// This library sound is on the server's soundboard already
+    SoundAlreadyAdded,
+    /// The sound library is not ready on this server yet; try again in a minute
+    SoundLibraryUnavailable,
     /// This stage has as many speakers as it may have
     TooManySpeakers {
         max: usize,

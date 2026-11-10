@@ -41,6 +41,8 @@ mod server_fetch;
 mod soundboard;
 #[cfg(test)]
 mod soundboard_tests;
+#[cfg(test)]
+mod soundboard_library_tests;
 
 #[cfg(test)]
 mod member_timeout_tests;
@@ -142,6 +144,7 @@ pub fn routes() -> (Vec<Route>, OpenApi) {
         emoji_list::list_emoji,
         soundboard::list_sounds,
         soundboard::create_sound,
+        soundboard::add_library_sound,
         soundboard::edit_sound,
         soundboard::delete_sound,
         roles_edit_positions::edit_role_ranks,

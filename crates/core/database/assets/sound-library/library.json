@@ -1,0 +1,2953 @@
+{
+ "categories": [
+  {
+   "id": "reactions",
+   "names": {
+    "en": "Reactions",
+    "ar": "ردود فعل",
+    "de": "Reaktionen",
+    "fr": "Réactions",
+    "es": "Reacciones",
+    "ru": "Реакции",
+    "zh-Hans": "反应"
+   }
+  },
+  {
+   "id": "voice",
+   "names": {
+    "en": "Voice lines (English)",
+    "ar": "عبارات صوتية (بالإنجليزية)",
+    "de": "Sprachzeilen (Englisch)",
+    "fr": "Répliques (anglais)",
+    "es": "Frases (inglés)",
+    "ru": "Фразы (англ.)",
+    "zh-Hans": "语音（英语）"
+   }
+  },
+  {
+   "id": "games",
+   "names": {
+    "en": "Games",
+    "ar": "ألعاب",
+    "de": "Spiele",
+    "fr": "Jeux",
+    "es": "Juegos",
+    "ru": "Игры",
+    "zh-Hans": "游戏"
+   }
+  },
+  {
+   "id": "coins",
+   "names": {
+    "en": "Coins and chips",
+    "ar": "عملات ورقائق",
+    "de": "Münzen und Chips",
+    "fr": "Pièces et jetons",
+    "es": "Monedas y fichas",
+    "ru": "Монеты и фишки",
+    "zh-Hans": "硬币与筹码"
+   }
+  },
+  {
+   "id": "alerts",
+   "names": {
+    "en": "Alerts",
+    "ar": "تنبيهات",
+    "de": "Hinweise",
+    "fr": "Alertes",
+    "es": "Avisos",
+    "ru": "Оповещения",
+    "zh-Hans": "提示音"
+   }
+  },
+  {
+   "id": "interface",
+   "names": {
+    "en": "Clicks",
+    "ar": "نقرات",
+    "de": "Klicks",
+    "fr": "Clics",
+    "es": "Clics",
+    "ru": "Щелчки",
+    "zh-Hans": "点击声"
+   }
+  }
+ ],
+ "sounds": [
+  {
+   "id": "voice-go",
+   "category": "voice",
+   "emoji": "🏁",
+   "names": {
+    "en": "“Go”",
+    "ar": "«Go»: انطلق",
+    "de": "„Go“: Los",
+    "fr": "« Go » : Partez",
+    "es": "«Go»: ¡Ya!",
+    "ru": "«Go»: Вперёд",
+    "zh-Hans": "“Go”：出发"
+   },
+   "duration_ms": 654,
+   "size": 9740,
+   "sha256": "baf6a1671d276fe71323398df4ebe9134f3b0d93de8d4ff68949f5e8e2f149c3",
+   "source": {
+    "pack": "voiceover-pack",
+    "file": "go.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -6.3
+   }
+  },
+  {
+   "id": "voice-ready",
+   "category": "voice",
+   "emoji": "✋",
+   "names": {
+    "en": "“Ready”",
+    "ar": "«Ready»: استعد",
+    "de": "„Ready“: Bereit",
+    "fr": "« Ready » : Prêts",
+    "es": "«Ready»: Listos",
+    "ru": "«Ready»: Готовы",
+    "zh-Hans": "“Ready”：准备"
+   },
+   "duration_ms": 691,
+   "size": 9867,
+   "sha256": "2029d218a4b1c95f1d75d43e5b1e2fbefd068c33d391da53e991dc6c71142399",
+   "source": {
+    "pack": "voiceover-pack",
+    "file": "ready.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.1,
+    "peak_db": -5.8
+   }
+  },
+  {
+   "id": "voice-set",
+   "category": "voice",
+   "emoji": "⏱️",
+   "names": {
+    "en": "“Set”",
+    "ar": "«Set»: تأهب",
+    "de": "„Set“: Achtung",
+    "fr": "« Set » : Feu",
+    "es": "«Set»: Atentos",
+    "ru": "«Set»: Внимание",
+    "zh-Hans": "“Set”：预备"
+   },
+   "duration_ms": 545,
+   "size": 9060,
+   "sha256": "cbec654f7cb1a1b2933dcfdedcea11752d8047e64ac1e92e76d6d6ca1b9a4e9c",
+   "source": {
+    "pack": "voiceover-pack",
+    "file": "set.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -5.0
+   }
+  },
+  {
+   "id": "voice-one",
+   "category": "voice",
+   "emoji": "1️⃣",
+   "names": {
+    "en": "“One”",
+    "ar": "«One»: واحد",
+    "de": "„One“: Eins",
+    "fr": "« One » : Un",
+    "es": "«One»: Uno",
+    "ru": "«One»: Один",
+    "zh-Hans": "“One”：一"
+   },
+   "duration_ms": 655,
+   "size": 9388,
+   "sha256": "f6c27c066f7876444f2a2dc90378477b720d4dcf12013a62b122d130672a4e53",
+   "source": {
+    "pack": "voiceover-pack",
+    "file": "1.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -6.7
+   }
+  },
+  {
+   "id": "voice-two",
+   "category": "voice",
+   "emoji": "2️⃣",
+   "names": {
+    "en": "“Two”",
+    "ar": "«Two»: اثنان",
+    "de": "„Two“: Zwei",
+    "fr": "« Two » : Deux",
+    "es": "«Two»: Dos",
+    "ru": "«Two»: Два",
+    "zh-Hans": "“Two”：二"
+   },
+   "duration_ms": 633,
+   "size": 9442,
+   "sha256": "7be0037bee1591146d3dbe81a1d16e4f586d7ad0afee683dbf4c2cef31f0d99e",
+   "source": {
+    "pack": "voiceover-pack",
+    "file": "2.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -5.1
+   }
+  },
+  {
+   "id": "voice-three",
+   "category": "voice",
+   "emoji": "3️⃣",
+   "names": {
+    "en": "“Three”",
+    "ar": "«Three»: ثلاثة",
+    "de": "„Three“: Drei",
+    "fr": "« Three » : Trois",
+    "es": "«Three»: Tres",
+    "ru": "«Three»: Три",
+    "zh-Hans": "“Three”：三"
+   },
+   "duration_ms": 771,
+   "size": 10931,
+   "sha256": "3c481773e036e4e72949e5df6893259e6f63bd7d9020d221c562f4a8f0c18986",
+   "source": {
+    "pack": "voiceover-pack",
+    "file": "3.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -6.1
+   }
+  },
+  {
+   "id": "voice-you-win",
+   "category": "voice",
+   "emoji": "🏆",
+   "names": {
+    "en": "“You win”",
+    "ar": "«You win»: فزت",
+    "de": "„You win“: Gewonnen",
+    "fr": "« You win » : Gagné",
+    "es": "«You win»: Ganaste",
+    "ru": "«You win»: Победа",
+    "zh-Hans": "“You win”：你赢了"
+   },
+   "duration_ms": 1008,
+   "size": 12974,
+   "sha256": "886fe789c25b22cc51147f985300c3bc89be9c3136da79703ca845a6794166bd",
+   "source": {
+    "pack": "voiceover-pack",
+    "file": "you_win.ogg"
+   },
+   "loudness": {
+    "mean_db": -19.9,
+    "peak_db": -6.4
+   }
+  },
+  {
+   "id": "voice-you-lose",
+   "category": "voice",
+   "emoji": "💀",
+   "names": {
+    "en": "“You lose”",
+    "ar": "«You lose»: خسرت",
+    "de": "„You lose“: Verloren",
+    "fr": "« You lose » : Perdu",
+    "es": "«You lose»: Perdiste",
+    "ru": "«You lose»: Поражение",
+    "zh-Hans": "“You lose”：你输了"
+   },
+   "duration_ms": 1369,
+   "size": 16356,
+   "sha256": "3717ce380e45ab2e23e41348595493883fefc0ddc628ac5addacf72690e3262e",
+   "source": {
+    "pack": "voiceover-pack",
+    "file": "you_lose.ogg"
+   },
+   "loudness": {
+    "mean_db": -19.9,
+    "peak_db": -7.3
+   }
+  },
+  {
+   "id": "voice-congratulations",
+   "category": "voice",
+   "emoji": "🎉",
+   "names": {
+    "en": "“Congratulations”",
+    "ar": "«Congratulations»: مبارك",
+    "de": "„Congratulations“: Glückwunsch",
+    "fr": "« Congratulations » : Bravo",
+    "es": "«Congratulations»: Enhorabuena",
+    "ru": "«Congratulations»: Поздравляем",
+    "zh-Hans": "“Congratulations”：恭喜"
+   },
+   "duration_ms": 1534,
+   "size": 18283,
+   "sha256": "3b31f3ba7503b4398e0055875de0854cae469f93652d0b192416ec54f1d385cf",
+   "source": {
+    "pack": "voiceover-pack",
+    "file": "congratulations.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -3.1
+   }
+  },
+  {
+   "id": "voice-correct",
+   "category": "voice",
+   "emoji": "✅",
+   "names": {
+    "en": "“Correct”",
+    "ar": "«Correct»: صحيح",
+    "de": "„Correct“: Richtig",
+    "fr": "« Correct » : Correct",
+    "es": "«Correct»: Correcto",
+    "ru": "«Correct»: Верно",
+    "zh-Hans": "“Correct”：正确"
+   },
+   "duration_ms": 660,
+   "size": 9949,
+   "sha256": "02a389438f454e21b53a1c401fa2384b7730b19cfe3d19a23b9d33d1bae680cb",
+   "source": {
+    "pack": "voiceover-pack",
+    "file": "correct.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -4.4
+   }
+  },
+  {
+   "id": "voice-wrong",
+   "category": "voice",
+   "emoji": "❌",
+   "names": {
+    "en": "“Wrong”",
+    "ar": "«Wrong»: خطأ",
+    "de": "„Wrong“: Falsch",
+    "fr": "« Wrong » : Faux",
+    "es": "«Wrong»: Incorrecto",
+    "ru": "«Wrong»: Неверно",
+    "zh-Hans": "“Wrong”：错误"
+   },
+   "duration_ms": 710,
+   "size": 9784,
+   "sha256": "f49bfcf5b4e54fafb27a16e488b665c8d593b23c5a56907eb9de643a1b26ade4",
+   "source": {
+    "pack": "voiceover-pack",
+    "file": "wrong.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -6.8
+   }
+  },
+  {
+   "id": "voice-game-over",
+   "category": "voice",
+   "emoji": "🎮",
+   "names": {
+    "en": "“Game over”",
+    "ar": "«Game over»: انتهت اللعبة",
+    "de": "„Game over“: Spielende",
+    "fr": "« Game over » : Fin",
+    "es": "«Game over»: Fin",
+    "ru": "«Game over»: Конец игры",
+    "zh-Hans": "“Game over”：游戏结束"
+   },
+   "duration_ms": 1378,
+   "size": 16312,
+   "sha256": "27e706e4d09edd56a3f5378431c9eaf05d3765a116d12f2fcdfa773775c5b8e3",
+   "source": {
+    "pack": "voiceover-pack",
+    "file": "game_over.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -6.0
+   }
+  },
+  {
+   "id": "voice-final-round",
+   "category": "voice",
+   "emoji": "🔔",
+   "names": {
+    "en": "“Final round”",
+    "ar": "«Final round»: الجولة الأخيرة",
+    "de": "„Final round“: Letzte Runde",
+    "fr": "« Final round » : Dernier tour",
+    "es": "«Final round»: Última ronda",
+    "ru": "«Final round»: Финал",
+    "zh-Hans": "“Final round”：最后一轮"
+   },
+   "duration_ms": 1079,
+   "size": 13775,
+   "sha256": "afc23dc6f3be3058ee1bdd0c591f5034822e19aa163aea518c439a768a428b82",
+   "source": {
+    "pack": "voiceover-pack",
+    "file": "final_round.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.1,
+    "peak_db": -3.2
+   }
+  },
+  {
+   "id": "voice-round",
+   "category": "voice",
+   "emoji": "🥊",
+   "names": {
+    "en": "“Round”",
+    "ar": "«Round»: جولة",
+    "de": "„Round“: Runde",
+    "fr": "« Round » : Manche",
+    "es": "«Round»: Ronda",
+    "ru": "«Round»: Раунд",
+    "zh-Hans": "“Round”：回合"
+   },
+   "duration_ms": 740,
+   "size": 10311,
+   "sha256": "6c5889c8c01d917158784cf120e174971b6ea69782f72ee8e2497bf90da4d747",
+   "source": {
+    "pack": "voiceover-pack",
+    "file": "round.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -4.0
+   }
+  },
+  {
+   "id": "voice-hurry-up",
+   "category": "voice",
+   "emoji": "⏰",
+   "names": {
+    "en": "“Hurry up”",
+    "ar": "«Hurry up»: أسرع",
+    "de": "„Hurry up“: Beeil dich",
+    "fr": "« Hurry up » : Vite",
+    "es": "«Hurry up»: Rápido",
+    "ru": "«Hurry up»: Быстрее",
+    "zh-Hans": "“Hurry up”：快点"
+   },
+   "duration_ms": 679,
+   "size": 10181,
+   "sha256": "b1b7b080171b257ccd73ebfa72438b5719527d99ea35d663991210cd75763cab",
+   "source": {
+    "pack": "voiceover-pack",
+    "file": "hurry_up.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -5.9
+   }
+  },
+  {
+   "id": "voice-its-a-tie",
+   "category": "voice",
+   "emoji": "🤝",
+   "names": {
+    "en": "“It's a tie”",
+    "ar": "«It's a tie»: تعادل",
+    "de": "„It's a tie“: Unentschieden",
+    "fr": "« It's a tie » : Égalité",
+    "es": "«It's a tie»: Empate",
+    "ru": "«It's a tie»: Ничья",
+    "zh-Hans": "“It's a tie”：平局"
+   },
+   "duration_ms": 1050,
+   "size": 13690,
+   "sha256": "5afbcff553fc336f407902bb129ea82ec1b3a09300fb0db837bddd6c527d276d",
+   "source": {
+    "pack": "voiceover-pack",
+    "file": "its_a_tie.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.1,
+    "peak_db": -6.0
+   }
+  },
+  {
+   "id": "voice-level-up",
+   "category": "voice",
+   "emoji": "⬆️",
+   "names": {
+    "en": "“Level up”",
+    "ar": "«Level up»: مستوى أعلى",
+    "de": "„Level up“: Aufgestiegen",
+    "fr": "« Level up » : Niveau +",
+    "es": "«Level up»: Subes nivel",
+    "ru": "«Level up»: Новый уровень",
+    "zh-Hans": "“Level up”：升级"
+   },
+   "duration_ms": 811,
+   "size": 11382,
+   "sha256": "5c437d6f60ef7aee2fdaf231ac766ea43c451d0fc8247e34e1aa6ba170f6e0db",
+   "source": {
+    "pack": "voiceover-pack",
+    "file": "level_up.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -6.8
+   }
+  },
+  {
+   "id": "voice-mission-completed",
+   "category": "voice",
+   "emoji": "🎯",
+   "names": {
+    "en": "“Mission completed”",
+    "ar": "«Mission completed»: تمت المهمة",
+    "de": "„Mission completed“: Geschafft",
+    "fr": "« Mission completed » : Réussi",
+    "es": "«Mission completed»: Hecho",
+    "ru": "«Mission completed»: Готово",
+    "zh-Hans": "“Mission completed”：任务完成"
+   },
+   "duration_ms": 1263,
+   "size": 16029,
+   "sha256": "67fa60361b1031ab3d7767e027b7948f15f9e469b21da9cf9a12fb5d72b3402d",
+   "source": {
+    "pack": "voiceover-pack",
+    "file": "mission_completed.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.1,
+    "peak_db": -6.2
+   }
+  },
+  {
+   "id": "voice-mission-failed",
+   "category": "voice",
+   "emoji": "🫠",
+   "names": {
+    "en": "“Mission failed”",
+    "ar": "«Mission failed»: فشلت المهمة",
+    "de": "„Mission failed“: Gescheitert",
+    "fr": "« Mission failed » : Raté",
+    "es": "«Mission failed»: Fallo",
+    "ru": "«Mission failed»: Провал",
+    "zh-Hans": "“Mission failed”：任务失败"
+   },
+   "duration_ms": 1107,
+   "size": 14005,
+   "sha256": "3de37d813ea552fdc726bc9403a053baa3524eaf8d48972fc7012d11ace31d87",
+   "source": {
+    "pack": "voiceover-pack",
+    "file": "mission_failed.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -4.4
+   }
+  },
+  {
+   "id": "voice-new-highscore",
+   "category": "voice",
+   "emoji": "🥇",
+   "names": {
+    "en": "“New highscore”",
+    "ar": "«New highscore»: رقم قياسي",
+    "de": "„New highscore“: Rekord",
+    "fr": "« New highscore » : Record",
+    "es": "«New highscore»: Récord",
+    "ru": "«New highscore»: Рекорд",
+    "zh-Hans": "“New highscore”：新纪录"
+   },
+   "duration_ms": 1232,
+   "size": 14932,
+   "sha256": "0e475538ebe4da1489bfd5fe12c108e359f2db34a3b88e229634ade9d3e5d054",
+   "source": {
+    "pack": "voiceover-pack",
+    "file": "new_highscore.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -7.3
+   }
+  },
+  {
+   "id": "voice-objective-achieved",
+   "category": "voice",
+   "emoji": "🏅",
+   "names": {
+    "en": "“Objective achieved”",
+    "ar": "«Objective achieved»: تحقق الهدف",
+    "de": "„Objective achieved“: Ziel",
+    "fr": "« Objective achieved » : But",
+    "es": "«Objective achieved»: Logrado",
+    "ru": "«Objective achieved»: Цель",
+    "zh-Hans": "“Objective achieved”：达成目标"
+   },
+   "duration_ms": 1425,
+   "size": 17813,
+   "sha256": "ad2f600a7a26718aa2e577bde383c12ec4e7035a3aafeeb6e3728e8787ac761b",
+   "source": {
+    "pack": "voiceover-pack",
+    "file": "objective_achieved.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.1,
+    "peak_db": -1.8
+   }
+  },
+  {
+   "id": "voice-power-up",
+   "category": "voice",
+   "emoji": "⚡",
+   "names": {
+    "en": "“Power up”",
+    "ar": "«Power up»: طاقة",
+    "de": "„Power up“: Power-up",
+    "fr": "« Power up » : Bonus",
+    "es": "«Power up»: Poder",
+    "ru": "«Power up»: Бонус",
+    "zh-Hans": "“Power up”：能量提升"
+   },
+   "duration_ms": 797,
+   "size": 11106,
+   "sha256": "66df0e32951c7ba4df44b1edaf8b4e70ee7d4c3ad0e3ba233b23e7ce0ef63d60",
+   "source": {
+    "pack": "voiceover-pack",
+    "file": "power_up.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -7.5
+   }
+  },
+  {
+   "id": "voice-time-over",
+   "category": "voice",
+   "emoji": "⌛",
+   "names": {
+    "en": "“Time over”",
+    "ar": "«Time over»: انتهى الوقت",
+    "de": "„Time over“: Zeit um",
+    "fr": "« Time over » : Temps écoulé",
+    "es": "«Time over»: Se acabó",
+    "ru": "«Time over»: Время вышло",
+    "zh-Hans": "“Time over”：时间到"
+   },
+   "duration_ms": 952,
+   "size": 12494,
+   "sha256": "04cf69f19142029119e9d9ebbb53fab2f6805878ae19860a14a04d86b2a3a8fe",
+   "source": {
+    "pack": "voiceover-pack",
+    "file": "time_over.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -7.8
+   }
+  },
+  {
+   "id": "voice-go-go-go",
+   "category": "voice",
+   "emoji": "🏃",
+   "names": {
+    "en": "“Go go go”",
+    "ar": "«Go go go»: هيا هيا",
+    "de": "„Go go go“: Los los",
+    "fr": "« Go go go » : Allez",
+    "es": "«Go go go»: Vamos",
+    "ru": "«Go go go»: Вперёд",
+    "zh-Hans": "“Go go go”：冲冲冲"
+   },
+   "duration_ms": 985,
+   "size": 13568,
+   "sha256": "b3ba1f035898c20a518ce12f0bf1f46f972559ef364278d83157a44723ac021f",
+   "source": {
+    "pack": "voiceover-pack",
+    "file": "war_go_go_go.ogg"
+   },
+   "loudness": {
+    "mean_db": -19.9,
+    "peak_db": -7.7
+   }
+  },
+  {
+   "id": "voice-cover-me",
+   "category": "voice",
+   "emoji": "🛡️",
+   "names": {
+    "en": "“Cover me”",
+    "ar": "«Cover me»: غطّني",
+    "de": "„Cover me“: Deck mich",
+    "fr": "« Cover me » : Couvre-moi",
+    "es": "«Cover me»: Cúbreme",
+    "ru": "«Cover me»: Прикрой",
+    "zh-Hans": "“Cover me”：掩护我"
+   },
+   "duration_ms": 605,
+   "size": 9204,
+   "sha256": "8e0405dd751e33753f7dd12fbe39bf8d52cec82edd0b1903927a76b2c4edb1bf",
+   "source": {
+    "pack": "voiceover-pack",
+    "file": "war_cover_me.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -4.3
+   }
+  },
+  {
+   "id": "voice-look-out",
+   "category": "voice",
+   "emoji": "👀",
+   "names": {
+    "en": "“Look out”",
+    "ar": "«Look out»: انتبه",
+    "de": "„Look out“: Vorsicht",
+    "fr": "« Look out » : Attention",
+    "es": "«Look out»: Cuidado",
+    "ru": "«Look out»: Осторожно",
+    "zh-Hans": "“Look out”：小心"
+   },
+   "duration_ms": 610,
+   "size": 9587,
+   "sha256": "30e467b22ca32d95fce79c4389efe3da02d85094265d1bd94d19e6d61c94650f",
+   "source": {
+    "pack": "voiceover-pack",
+    "file": "war_look_out.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -5.4
+   }
+  },
+  {
+   "id": "voice-medic",
+   "category": "voice",
+   "emoji": "🩹",
+   "names": {
+    "en": "“Medic”",
+    "ar": "«Medic»: مسعف",
+    "de": "„Medic“: Sanitäter",
+    "fr": "« Medic » : Médecin",
+    "es": "«Medic»: Médico",
+    "ru": "«Medic»: Медик",
+    "zh-Hans": "“Medic”：医疗兵"
+   },
+   "duration_ms": 670,
+   "size": 9943,
+   "sha256": "e0de7177955268a4b55a54ab859cb95960802bbe7db866c5bdec5033f34109e2",
+   "source": {
+    "pack": "voiceover-pack",
+    "file": "war_medic.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -5.4
+   }
+  },
+  {
+   "id": "voice-fire-in-the-hole",
+   "category": "voice",
+   "emoji": "💣",
+   "names": {
+    "en": "“Fire in the hole”",
+    "ar": "«Fire in the hole»: انفجار",
+    "de": "„Fire in the hole“: Deckung",
+    "fr": "« Fire in the hole » : Gare",
+    "es": "«Fire in the hole»: Bomba",
+    "ru": "«Fire in the hole»: Взрыв",
+    "zh-Hans": "“Fire in the hole”：注意爆炸"
+   },
+   "duration_ms": 1381,
+   "size": 16089,
+   "sha256": "39c2b23c72bb1d18605ec77a30cfd3cfe190d94a1d7bc3d93ffc17986c58d72d",
+   "source": {
+    "pack": "voiceover-pack",
+    "file": "war_fire_in_the_hole.ogg"
+   },
+   "loudness": {
+    "mean_db": -19.9,
+    "peak_db": -9.4
+   }
+  },
+  {
+   "id": "voice-watch-my-back",
+   "category": "voice",
+   "emoji": "🔙",
+   "names": {
+    "en": "“Watch my back”",
+    "ar": "«Watch my back»: احمِ ظهري",
+    "de": "„Watch my back“: Rücken frei",
+    "fr": "« Watch my back » : Mes arrières",
+    "es": "«Watch my back»: Mi espalda",
+    "ru": "«Watch my back»: Тыл",
+    "zh-Hans": "“Watch my back”：看我身后"
+   },
+   "duration_ms": 959,
+   "size": 12175,
+   "sha256": "0cac543ad046f58beb877d74fdae28fac91ce04c9884b3df30a0a7e9e789e127",
+   "source": {
+    "pack": "voiceover-pack",
+    "file": "war_watch_my_back.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -6.1
+   }
+  },
+  {
+   "id": "voice-backup",
+   "category": "voice",
+   "emoji": "📣",
+   "names": {
+    "en": "“Call for backup”",
+    "ar": "«Call for backup»: دعم",
+    "de": "„Call for backup“: Verstärkung",
+    "fr": "« Call for backup » : Renforts",
+    "es": "«Call for backup»: Refuerzos",
+    "ru": "«Call for backup»: Подмога",
+    "zh-Hans": "“Call for backup”：呼叫支援"
+   },
+   "duration_ms": 1032,
+   "size": 13522,
+   "sha256": "bf71f59a49cefed02a87a08caf95bf725706db50ba8367f967f708381e924716",
+   "source": {
+    "pack": "voiceover-pack",
+    "file": "war_call_for_backup.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -6.6
+   }
+  },
+  {
+   "id": "voice-reloading",
+   "category": "voice",
+   "emoji": "🔄",
+   "names": {
+    "en": "“Reloading”",
+    "ar": "«Reloading»: إعادة تعبئة",
+    "de": "„Reloading“: Nachladen",
+    "fr": "« Reloading » : Recharge",
+    "es": "«Reloading»: Recargando",
+    "ru": "«Reloading»: Перезарядка",
+    "zh-Hans": "“Reloading”：装弹"
+   },
+   "duration_ms": 922,
+   "size": 12237,
+   "sha256": "93f4a07d373cbc743c884d0204f4c85584cf543ab85d4e4856c6462a43535813",
+   "source": {
+    "pack": "voiceover-pack",
+    "file": "war_reloading.ogg"
+   },
+   "loudness": {
+    "mean_db": -19.9,
+    "peak_db": -6.4
+   }
+  },
+  {
+   "id": "voice-target-destroyed",
+   "category": "voice",
+   "emoji": "💥",
+   "names": {
+    "en": "“Target destroyed”",
+    "ar": "«Target destroyed»: دُمّر الهدف",
+    "de": "„Target destroyed“: Zerstört",
+    "fr": "« Target destroyed » : Détruit",
+    "es": "«Target destroyed»: Destruido",
+    "ru": "«Target destroyed»: Уничтожено",
+    "zh-Hans": "“Target destroyed”：目标摧毁"
+   },
+   "duration_ms": 1341,
+   "size": 16502,
+   "sha256": "3c8cb5e548185305d825210f7972bb975055c9977db60062cabc379402c0e9a8",
+   "source": {
+    "pack": "voiceover-pack",
+    "file": "war_target_destroyed.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -5.3
+   }
+  },
+  {
+   "id": "reaction-heavy-punch",
+   "category": "reactions",
+   "emoji": "👊",
+   "names": {
+    "en": "Heavy punch",
+    "ar": "لكمة قوية",
+    "de": "Harter Schlag",
+    "fr": "Gros coup de poing",
+    "es": "Puñetazo fuerte",
+    "ru": "Сильный удар",
+    "zh-Hans": "重拳"
+   },
+   "duration_ms": 649,
+   "size": 10335,
+   "sha256": "eb71e8007078892218874817f725fb1d5032b67ea264b977993920c67c9261db",
+   "source": {
+    "pack": "impact-sounds",
+    "file": "impactPunch_heavy_000.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -2.9
+   }
+  },
+  {
+   "id": "reaction-punch",
+   "category": "reactions",
+   "emoji": "🤛",
+   "names": {
+    "en": "Punch",
+    "ar": "لكمة",
+    "de": "Schlag",
+    "fr": "Coup de poing",
+    "es": "Puñetazo",
+    "ru": "Удар",
+    "zh-Hans": "出拳"
+   },
+   "duration_ms": 431,
+   "size": 7843,
+   "sha256": "8181941e0d5100e25acffcaef6eeb72934c6a6a9b0551690490f5bd7fd5337b7",
+   "source": {
+    "pack": "impact-sounds",
+    "file": "impactPunch_medium_000.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.2,
+    "peak_db": -3.9
+   }
+  },
+  {
+   "id": "reaction-knockout",
+   "category": "reactions",
+   "emoji": "😵",
+   "names": {
+    "en": "Knockout",
+    "ar": "ضربة قاضية",
+    "de": "K. o.",
+    "fr": "K.-O.",
+    "es": "Nocaut",
+    "ru": "Нокаут",
+    "zh-Hans": "击倒"
+   },
+   "duration_ms": 457,
+   "size": 7745,
+   "sha256": "490811f9f847c420f96d65677962d085caf454140610bbac8554466bbc109c36",
+   "source": {
+    "pack": "impact-sounds",
+    "file": "impactPunch_heavy_002.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -4.4
+   }
+  },
+  {
+   "id": "reaction-bell",
+   "category": "reactions",
+   "emoji": "🔔",
+   "names": {
+    "en": "Big bell",
+    "ar": "جرس كبير",
+    "de": "Große Glocke",
+    "fr": "Grosse cloche",
+    "es": "Campana grande",
+    "ru": "Большой колокол",
+    "zh-Hans": "大钟"
+   },
+   "duration_ms": 1480,
+   "size": 12825,
+   "sha256": "a3847b540ae7f78e186bf3e1491a46f2bc4b13321c423d88fe45d33704570dfe",
+   "source": {
+    "pack": "impact-sounds",
+    "file": "impactBell_heavy_000.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.9,
+    "peak_db": -0.6
+   }
+  },
+  {
+   "id": "reaction-bell-short",
+   "category": "reactions",
+   "emoji": "🛎️",
+   "names": {
+    "en": "Short bell",
+    "ar": "جرس قصير",
+    "de": "Kurze Glocke",
+    "fr": "Cloche brève",
+    "es": "Campana corta",
+    "ru": "Короткий звон",
+    "zh-Hans": "短钟声"
+   },
+   "duration_ms": 697,
+   "size": 8579,
+   "sha256": "15d36260d21c22a5ef7dfaa8624aa081aa7a4cc398131f8d978ef31fda8f07a4",
+   "source": {
+    "pack": "impact-sounds",
+    "file": "impactBell_heavy_002.ogg"
+   },
+   "loudness": {
+    "mean_db": -21.2,
+    "peak_db": -0.9
+   }
+  },
+  {
+   "id": "reaction-glass-smash",
+   "category": "reactions",
+   "emoji": "🍾",
+   "names": {
+    "en": "Glass smash",
+    "ar": "تحطّم زجاج",
+    "de": "Glas zerbricht",
+    "fr": "Verre brisé",
+    "es": "Cristal roto",
+    "ru": "Разбитое стекло",
+    "zh-Hans": "玻璃碎裂"
+   },
+   "duration_ms": 429,
+   "size": 8012,
+   "sha256": "b3ce58f0b630a5c72e7c8fbfe964857da5c629a5fe07a898157dc6c9f505a9d6",
+   "source": {
+    "pack": "impact-sounds",
+    "file": "impactGlass_heavy_001.ogg"
+   },
+   "loudness": {
+    "mean_db": -23.2,
+    "peak_db": -1.0
+   }
+  },
+  {
+   "id": "reaction-glass-clink",
+   "category": "reactions",
+   "emoji": "🥂",
+   "names": {
+    "en": "Glass clink",
+    "ar": "رنّة كأس",
+    "de": "Gläserklirren",
+    "fr": "Tintement",
+    "es": "Brindis",
+    "ru": "Звон бокала",
+    "zh-Hans": "碰杯"
+   },
+   "duration_ms": 234,
+   "size": 6146,
+   "sha256": "681739b985f3bccecfd97ad266114b77022837044b7b67c79ec83516b1f09b4f",
+   "source": {
+    "pack": "impact-sounds",
+    "file": "impactGlass_light_000.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.7,
+    "peak_db": -1.6
+   }
+  },
+  {
+   "id": "reaction-metal-clang",
+   "category": "reactions",
+   "emoji": "🔩",
+   "names": {
+    "en": "Metal clang",
+    "ar": "قرعة معدن",
+    "de": "Metallknall",
+    "fr": "Choc métallique",
+    "es": "Golpe metálico",
+    "ru": "Лязг металла",
+    "zh-Hans": "金属撞击"
+   },
+   "duration_ms": 359,
+   "size": 6540,
+   "sha256": "8922cf44e877c66dbafa9abff1aca2c5f7c35d1e0c60ee2f37d0c974f28a63bf",
+   "source": {
+    "pack": "impact-sounds",
+    "file": "impactMetal_heavy_001.ogg"
+   },
+   "loudness": {
+    "mean_db": -22.3,
+    "peak_db": -1.0
+   }
+  },
+  {
+   "id": "reaction-pan",
+   "category": "reactions",
+   "emoji": "🍳",
+   "names": {
+    "en": "Frying pan",
+    "ar": "مقلاة",
+    "de": "Bratpfanne",
+    "fr": "Poêle",
+    "es": "Sartén",
+    "ru": "Сковорода",
+    "zh-Hans": "平底锅"
+   },
+   "duration_ms": 489,
+   "size": 9092,
+   "sha256": "e85285eff3704b97a6a838a9a01715514278e9e2f6e1821b12d32cbb6bcdd79e",
+   "source": {
+    "pack": "impact-sounds",
+    "file": "impactPlate_heavy_000.ogg"
+   },
+   "loudness": {
+    "mean_db": -21.0,
+    "peak_db": -1.0
+   }
+  },
+  {
+   "id": "reaction-pickaxe",
+   "category": "reactions",
+   "emoji": "⛏️",
+   "names": {
+    "en": "Pickaxe",
+    "ar": "معول",
+    "de": "Spitzhacke",
+    "fr": "Pioche",
+    "es": "Pico",
+    "ru": "Кирка",
+    "zh-Hans": "镐"
+   },
+   "duration_ms": 937,
+   "size": 10651,
+   "sha256": "7510aaf0bd428a944888c634c790e16f9ac31ef0b26f7fd42ecb65fb853595f4",
+   "source": {
+    "pack": "impact-sounds",
+    "file": "impactMining_000.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.1,
+    "peak_db": -1.2
+   }
+  },
+  {
+   "id": "reaction-plank",
+   "category": "reactions",
+   "emoji": "🪵",
+   "names": {
+    "en": "Wooden plank",
+    "ar": "لوح خشب",
+    "de": "Holzbrett",
+    "fr": "Planche",
+    "es": "Tablón",
+    "ru": "Доска",
+    "zh-Hans": "木板"
+   },
+   "duration_ms": 779,
+   "size": 10940,
+   "sha256": "2b09477132b66b5b461a05ff9f59c2546e730f579c680e17591cbbfcf606d9ba",
+   "source": {
+    "pack": "impact-sounds",
+    "file": "impactPlank_medium_000.ogg"
+   },
+   "loudness": {
+    "mean_db": -21.9,
+    "peak_db": -0.9
+   }
+  },
+  {
+   "id": "reaction-thud",
+   "category": "reactions",
+   "emoji": "🫳",
+   "names": {
+    "en": "Thud",
+    "ar": "ارتطام",
+    "de": "Dumpf",
+    "fr": "Bruit sourd",
+    "es": "Golpe sordo",
+    "ru": "Глухой удар",
+    "zh-Hans": "闷响"
+   },
+   "duration_ms": 530,
+   "size": 6000,
+   "sha256": "de2e54685630215a8adc0a3181ca21bf8d3b12f28b84285d0d9d96a02469347b",
+   "source": {
+    "pack": "impact-sounds",
+    "file": "impactSoft_heavy_000.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -3.5
+   }
+  },
+  {
+   "id": "reaction-pillow",
+   "category": "reactions",
+   "emoji": "🛏️",
+   "names": {
+    "en": "Pillow hit",
+    "ar": "ضربة وسادة",
+    "de": "Kissenschlag",
+    "fr": "Coup d'oreiller",
+    "es": "Almohadazo",
+    "ru": "Подушкой",
+    "zh-Hans": "枕头拍"
+   },
+   "duration_ms": 118,
+   "size": 5062,
+   "sha256": "ad3467d5d8bdf5f3328b87fe261dad0731eef0f10c9fa7fd844eedcbf0799513",
+   "source": {
+    "pack": "impact-sounds",
+    "file": "impactSoft_medium_000.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -6.7
+   }
+  },
+  {
+   "id": "reaction-tin-can",
+   "category": "reactions",
+   "emoji": "🥫",
+   "names": {
+    "en": "Tin can",
+    "ar": "علبة صفيح",
+    "de": "Blechdose",
+    "fr": "Boîte de conserve",
+    "es": "Lata",
+    "ru": "Жестянка",
+    "zh-Hans": "铁罐"
+   },
+   "duration_ms": 159,
+   "size": 5904,
+   "sha256": "205d563f1cd1065327e125aa50c1607596d9e73745c22aa2c16a85faeb0d42d5",
+   "source": {
+    "pack": "impact-sounds",
+    "file": "impactTin_medium_000.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.6,
+    "peak_db": -1.3
+   }
+  },
+  {
+   "id": "reaction-knock",
+   "category": "reactions",
+   "emoji": "🚪",
+   "names": {
+    "en": "Knock knock",
+    "ar": "طرق",
+    "de": "Klopf klopf",
+    "fr": "Toc toc",
+    "es": "Toc toc",
+    "ru": "Тук-тук",
+    "zh-Hans": "敲门"
+   },
+   "duration_ms": 313,
+   "size": 5606,
+   "sha256": "58e089406653a75210eeed779afa2dcc5f29f46905ec9e9e92323e02e29721e4",
+   "source": {
+    "pack": "impact-sounds",
+    "file": "impactWood_heavy_000.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -1.4
+   }
+  },
+  {
+   "id": "reaction-wood-tap",
+   "category": "reactions",
+   "emoji": "🪘",
+   "names": {
+    "en": "Wood tap",
+    "ar": "نقرة خشب",
+    "de": "Holzklopfen",
+    "fr": "Tape sur bois",
+    "es": "Toque de madera",
+    "ru": "Стук по дереву",
+    "zh-Hans": "敲木头"
+   },
+   "duration_ms": 266,
+   "size": 6001,
+   "sha256": "dd3b05c950337c146c7488bff00c27bc348bd6bcc10063c5638c12eb48d8746e",
+   "source": {
+    "pack": "impact-sounds",
+    "file": "impactWood_light_000.ogg"
+   },
+   "loudness": {
+    "mean_db": -21.5,
+    "peak_db": -1.2
+   }
+  },
+  {
+   "id": "reaction-footstep",
+   "category": "reactions",
+   "emoji": "👣",
+   "names": {
+    "en": "Footstep",
+    "ar": "خطوة",
+    "de": "Schritt",
+    "fr": "Pas",
+    "es": "Paso",
+    "ru": "Шаг",
+    "zh-Hans": "脚步"
+   },
+   "duration_ms": 274,
+   "size": 5507,
+   "sha256": "6e0653984b3d1d969585db2872cea0f247bff4dbdcf9541bee47bc7a801ad953",
+   "source": {
+    "pack": "impact-sounds",
+    "file": "footstep_wood_000.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.8,
+    "peak_db": -0.9
+   }
+  },
+  {
+   "id": "reaction-snow-step",
+   "category": "reactions",
+   "emoji": "❄️",
+   "names": {
+    "en": "Snow step",
+    "ar": "خطوة على الثلج",
+    "de": "Schritt im Schnee",
+    "fr": "Pas dans la neige",
+    "es": "Paso en la nieve",
+    "ru": "Шаг по снегу",
+    "zh-Hans": "踩雪"
+   },
+   "duration_ms": 374,
+   "size": 7372,
+   "sha256": "cb4f9a7149e58f52c4758cefe1c76d5bfce6f490576710220e6dbcdccccbf1a9",
+   "source": {
+    "pack": "impact-sounds",
+    "file": "footstep_snow_000.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.8,
+    "peak_db": -0.7
+   }
+  },
+  {
+   "id": "game-power-up",
+   "category": "games",
+   "emoji": "🍄",
+   "names": {
+    "en": "Power-up",
+    "ar": "تعزيز",
+    "de": "Power-up",
+    "fr": "Bonus",
+    "es": "Potenciador",
+    "ru": "Усиление",
+    "zh-Hans": "道具"
+   },
+   "duration_ms": 1202,
+   "size": 11726,
+   "sha256": "5ae99d83838af722f0471fa5c539ae999c0d3961106a5be9e59b28cf5dc71b46",
+   "source": {
+    "pack": "digital-audio",
+    "file": "powerUp1.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -6.2
+   }
+  },
+  {
+   "id": "game-level-up",
+   "category": "games",
+   "emoji": "📈",
+   "names": {
+    "en": "Level up",
+    "ar": "ترقية",
+    "de": "Levelaufstieg",
+    "fr": "Niveau supérieur",
+    "es": "Subir de nivel",
+    "ru": "Повышение",
+    "zh-Hans": "升级音"
+   },
+   "duration_ms": 1149,
+   "size": 11537,
+   "sha256": "7651a3bc53882146cdd4a4ebeb971c8d3dd319eccb510a6689ef3b6d42de4764",
+   "source": {
+    "pack": "digital-audio",
+    "file": "powerUp3.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -5.3
+   }
+  },
+  {
+   "id": "game-bonus",
+   "category": "games",
+   "emoji": "🎁",
+   "names": {
+    "en": "Bonus",
+    "ar": "مكافأة",
+    "de": "Bonus",
+    "fr": "Bonus",
+    "es": "Bonificación",
+    "ru": "Бонус",
+    "zh-Hans": "奖励"
+   },
+   "duration_ms": 862,
+   "size": 9295,
+   "sha256": "749f33e44b15f7f01a4dab94913c1939e8e171dcca8041187b6173096c7a52f0",
+   "source": {
+    "pack": "digital-audio",
+    "file": "powerUp12.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -6.9
+   }
+  },
+  {
+   "id": "game-extra-life",
+   "category": "games",
+   "emoji": "❤️",
+   "names": {
+    "en": "Extra life",
+    "ar": "حياة إضافية",
+    "de": "Extraleben",
+    "fr": "Vie bonus",
+    "es": "Vida extra",
+    "ru": "Доп. жизнь",
+    "zh-Hans": "额外生命"
+   },
+   "duration_ms": 522,
+   "size": 7365,
+   "sha256": "ceb19c57ad221c2747b2ebb790cbb30afc7af83ce108a463d36529370be18ecc",
+   "source": {
+    "pack": "digital-audio",
+    "file": "powerUp7.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -5.6
+   }
+  },
+  {
+   "id": "game-laser",
+   "category": "games",
+   "emoji": "🔫",
+   "names": {
+    "en": "Laser",
+    "ar": "ليزر",
+    "de": "Laser",
+    "fr": "Laser",
+    "es": "Láser",
+    "ru": "Лазер",
+    "zh-Hans": "激光"
+   },
+   "duration_ms": 1100,
+   "size": 11505,
+   "sha256": "8ef1d44b8b7b1f4f1a87bae4a58eee517f9f73d64acd4e5452b47ba8c4f8eca0",
+   "source": {
+    "pack": "digital-audio",
+    "file": "laser1.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -5.7
+   }
+  },
+  {
+   "id": "game-blaster",
+   "category": "games",
+   "emoji": "🚀",
+   "names": {
+    "en": "Blaster",
+    "ar": "مسدس فضائي",
+    "de": "Blaster",
+    "fr": "Blaster",
+    "es": "Bláster",
+    "ru": "Бластер",
+    "zh-Hans": "爆能枪"
+   },
+   "duration_ms": 1132,
+   "size": 11561,
+   "sha256": "a3427e593f4ff8a2b47a5ffd99937d0f4e99eae59341a8c6fa263698fbfd0fe7",
+   "source": {
+    "pack": "digital-audio",
+    "file": "laser4.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -4.5
+   }
+  },
+  {
+   "id": "game-zap",
+   "category": "games",
+   "emoji": "⚡",
+   "names": {
+    "en": "Zap",
+    "ar": "صعقة",
+    "de": "Zap",
+    "fr": "Zap",
+    "es": "Descarga",
+    "ru": "Разряд",
+    "zh-Hans": "电击"
+   },
+   "duration_ms": 1019,
+   "size": 10918,
+   "sha256": "bb7f30dab51ebd78fc70bbe6f3eb6ce8db74ce00a272ef48cde30da1e66a4b03",
+   "source": {
+    "pack": "digital-audio",
+    "file": "zap1.ogg"
+   },
+   "loudness": {
+    "mean_db": -19.9,
+    "peak_db": -7.6
+   }
+  },
+  {
+   "id": "game-big-zap",
+   "category": "games",
+   "emoji": "🌩️",
+   "names": {
+    "en": "Big zap",
+    "ar": "صعقة كبيرة",
+    "de": "Großer Zap",
+    "fr": "Grosse décharge",
+    "es": "Gran descarga",
+    "ru": "Мощный разряд",
+    "zh-Hans": "强电击"
+   },
+   "duration_ms": 1228,
+   "size": 13259,
+   "sha256": "e1a53471684ff24c33d7f4674ed580a616f4bb2bb11a2f400aa53d705518213b",
+   "source": {
+    "pack": "digital-audio",
+    "file": "zap2.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -9.5
+   }
+  },
+  {
+   "id": "game-rise",
+   "category": "games",
+   "emoji": "🔼",
+   "names": {
+    "en": "Rising tones",
+    "ar": "نغمات صاعدة",
+    "de": "Steigende Töne",
+    "fr": "Notes montantes",
+    "es": "Tonos ascendentes",
+    "ru": "Восходящие тоны",
+    "zh-Hans": "上升音"
+   },
+   "duration_ms": 1202,
+   "size": 12943,
+   "sha256": "aca961b632e95fee3dcc4eab727f5e437cc69c8eaf4f0b6f605eb97bd0a21bfe",
+   "source": {
+    "pack": "digital-audio",
+    "file": "zapThreeToneUp.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -9.8
+   }
+  },
+  {
+   "id": "game-fall",
+   "category": "games",
+   "emoji": "🔽",
+   "names": {
+    "en": "Falling tones",
+    "ar": "نغمات هابطة",
+    "de": "Fallende Töne",
+    "fr": "Notes descendantes",
+    "es": "Tonos descendentes",
+    "ru": "Нисходящие тоны",
+    "zh-Hans": "下降音"
+   },
+   "duration_ms": 1332,
+   "size": 13910,
+   "sha256": "b00ac17d0b9c2da2d7f73f3e1cd5f891cd599b642f7837482d9d436b233d1e08",
+   "source": {
+    "pack": "digital-audio",
+    "file": "zapThreeToneDown.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -11.2
+   }
+  },
+  {
+   "id": "game-jump",
+   "category": "games",
+   "emoji": "🦘",
+   "names": {
+    "en": "Jump",
+    "ar": "قفزة",
+    "de": "Sprung",
+    "fr": "Saut",
+    "es": "Salto",
+    "ru": "Прыжок",
+    "zh-Hans": "跳跃"
+   },
+   "duration_ms": 470,
+   "size": 9871,
+   "sha256": "3601d1022458d31c67330b26093036e068d2bc47ed788d309aa2eb08f00fcb76",
+   "source": {
+    "pack": "digital-audio",
+    "file": "phaseJump1.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -5.4
+   }
+  },
+  {
+   "id": "game-phaser-up",
+   "category": "games",
+   "emoji": "🛸",
+   "names": {
+    "en": "Phaser up",
+    "ar": "موجة صاعدة",
+    "de": "Phaser hoch",
+    "fr": "Phaser montant",
+    "es": "Fáser arriba",
+    "ru": "Фазер вверх",
+    "zh-Hans": "相位上升"
+   },
+   "duration_ms": 521,
+   "size": 10825,
+   "sha256": "61e16a61db52e1d6e559d7757b2d1d7da674798d31a8b33d9533143a40a086f6",
+   "source": {
+    "pack": "digital-audio",
+    "file": "phaserUp1.ogg"
+   },
+   "loudness": {
+    "mean_db": -19.9,
+    "peak_db": -3.7
+   }
+  },
+  {
+   "id": "game-phaser-down",
+   "category": "games",
+   "emoji": "🛬",
+   "names": {
+    "en": "Phaser down",
+    "ar": "موجة هابطة",
+    "de": "Phaser runter",
+    "fr": "Phaser descendant",
+    "es": "Fáser abajo",
+    "ru": "Фазер вниз",
+    "zh-Hans": "相位下降"
+   },
+   "duration_ms": 470,
+   "size": 10560,
+   "sha256": "2e1685438284a209c9d994ab0d62632f3531684a63c25cf9e89dd4c6148f2ac9",
+   "source": {
+    "pack": "digital-audio",
+    "file": "phaserDown1.ogg"
+   },
+   "loudness": {
+    "mean_db": -19.9,
+    "peak_db": -6.0
+   }
+  },
+  {
+   "id": "game-coin-blip",
+   "category": "games",
+   "emoji": "🪙",
+   "names": {
+    "en": "Blip up",
+    "ar": "نغمة قصيرة صاعدة",
+    "de": "Blip hoch",
+    "fr": "Bip montant",
+    "es": "Bip arriba",
+    "ru": "Блип вверх",
+    "zh-Hans": "短促上扬"
+   },
+   "duration_ms": 549,
+   "size": 7679,
+   "sha256": "26c527cee43bfd552c5e922142bd349dccb29b6855c60b995abbb9f1cf421fdb",
+   "source": {
+    "pack": "digital-audio",
+    "file": "highUp.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.1,
+    "peak_db": -8.4
+   }
+  },
+  {
+   "id": "game-miss",
+   "category": "games",
+   "emoji": "📉",
+   "names": {
+    "en": "Miss",
+    "ar": "إخفاق",
+    "de": "Daneben",
+    "fr": "Raté",
+    "es": "Fallo",
+    "ru": "Мимо",
+    "zh-Hans": "失手"
+   },
+   "duration_ms": 784,
+   "size": 7092,
+   "sha256": "1efff02f495b1585cc8371d66bfbe7b86783a047fcae28f8e2424ac599607170",
+   "source": {
+    "pack": "digital-audio",
+    "file": "lowDown.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -10.6
+   }
+  },
+  {
+   "id": "game-retro-tune",
+   "category": "games",
+   "emoji": "👾",
+   "names": {
+    "en": "Retro tune",
+    "ar": "لحن قديم",
+    "de": "Retro-Melodie",
+    "fr": "Air rétro",
+    "es": "Melodía retro",
+    "ru": "Ретро-мотив",
+    "zh-Hans": "复古旋律"
+   },
+   "duration_ms": 1043,
+   "size": 8617,
+   "sha256": "6996bb41ea5132b11112876c0756a6a92c188bf01c872d82e844a75363990625",
+   "source": {
+    "pack": "digital-audio",
+    "file": "lowThreeTone.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -9.6
+   }
+  },
+  {
+   "id": "game-pep",
+   "category": "games",
+   "emoji": "🎈",
+   "names": {
+    "en": "Pep",
+    "ar": "حماس",
+    "de": "Schwung",
+    "fr": "Entrain",
+    "es": "Ánimo",
+    "ru": "Бодрость",
+    "zh-Hans": "活力"
+   },
+   "duration_ms": 522,
+   "size": 7317,
+   "sha256": "51b20d64538f74a3bafd176c9dfca8a9a357945f0f712b4e7b574e55b9fe8147",
+   "source": {
+    "pack": "digital-audio",
+    "file": "pepSound1.ogg"
+   },
+   "loudness": {
+    "mean_db": -19.9,
+    "peak_db": -8.2
+   }
+  },
+  {
+   "id": "game-space-junk",
+   "category": "games",
+   "emoji": "🛰️",
+   "names": {
+    "en": "Space junk",
+    "ar": "حطام فضائي",
+    "de": "Weltraumschrott",
+    "fr": "Débris spatiaux",
+    "es": "Basura espacial",
+    "ru": "Космический мусор",
+    "zh-Hans": "太空垃圾"
+   },
+   "duration_ms": 1451,
+   "size": 18465,
+   "sha256": "1e4a24e59477445acf5a30133190310393e26b10bedcc9e39130b77471bc1dd7",
+   "source": {
+    "pack": "digital-audio",
+    "file": "spaceTrash1.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.1,
+    "peak_db": -0.8
+   }
+  },
+  {
+   "id": "game-three-tone",
+   "category": "games",
+   "emoji": "🎶",
+   "names": {
+    "en": "Three tones",
+    "ar": "ثلاث نغمات",
+    "de": "Drei Töne",
+    "fr": "Trois notes",
+    "es": "Tres tonos",
+    "ru": "Три тона",
+    "zh-Hans": "三连音"
+   },
+   "duration_ms": 852,
+   "size": 9673,
+   "sha256": "29358b2a7f49db8fc5a6b5bc2856d6b2fa2bd2becf8cdcd705fb75aa07dddf33",
+   "source": {
+    "pack": "digital-audio",
+    "file": "threeTone1.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -8.9
+   }
+  },
+  {
+   "id": "game-two-tone",
+   "category": "games",
+   "emoji": "🎵",
+   "names": {
+    "en": "Two tones",
+    "ar": "نغمتان",
+    "de": "Zwei Töne",
+    "fr": "Deux notes",
+    "es": "Dos tonos",
+    "ru": "Два тона",
+    "zh-Hans": "双音"
+   },
+   "duration_ms": 724,
+   "size": 9301,
+   "sha256": "39f8c2ba0b529b507a5eb61ddfab372ade869be7cf39510a9140f09ad420f371",
+   "source": {
+    "pack": "digital-audio",
+    "file": "twoTone1.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -6.5
+   }
+  },
+  {
+   "id": "game-dice-roll",
+   "category": "games",
+   "emoji": "🎲",
+   "names": {
+    "en": "Dice roll",
+    "ar": "رمي النرد",
+    "de": "Würfelwurf",
+    "fr": "Lancer de dés",
+    "es": "Tirada de dados",
+    "ru": "Бросок костей",
+    "zh-Hans": "掷骰子"
+   },
+   "duration_ms": 632,
+   "size": 13025,
+   "sha256": "55a7d94a30b90676e8042bde8611485f94ec64cd12ec85f3f38a0653f84f1785",
+   "source": {
+    "pack": "casino-audio",
+    "file": "dice-throw-1.ogg"
+   },
+   "loudness": {
+    "mean_db": -24.2,
+    "peak_db": -0.9
+   }
+  },
+  {
+   "id": "game-dice-shake",
+   "category": "games",
+   "emoji": "🫨",
+   "names": {
+    "en": "Dice shake",
+    "ar": "خضّ النرد",
+    "de": "Würfel schütteln",
+    "fr": "Secouer les dés",
+    "es": "Agitar dados",
+    "ru": "Встряхнуть кости",
+    "zh-Hans": "摇骰子"
+   },
+   "duration_ms": 1481,
+   "size": 29276,
+   "sha256": "7aced6e8cec08d08a47ff4e893dae163f2b79f6e429ad9336f655387529a0c34",
+   "source": {
+    "pack": "casino-audio",
+    "file": "dice-shake-1.ogg"
+   },
+   "loudness": {
+    "mean_db": -27.1,
+    "peak_db": -0.6
+   }
+  },
+  {
+   "id": "game-single-die",
+   "category": "games",
+   "emoji": "⚀",
+   "names": {
+    "en": "Single die",
+    "ar": "حجر نرد",
+    "de": "Ein Würfel",
+    "fr": "Un dé",
+    "es": "Un dado",
+    "ru": "Один кубик",
+    "zh-Hans": "单颗骰子"
+   },
+   "duration_ms": 532,
+   "size": 11923,
+   "sha256": "c3052c1a49431282cf4d65662823a51055fbf9c411d0a31908a467f715a04923",
+   "source": {
+    "pack": "casino-audio",
+    "file": "die-throw-1.ogg"
+   },
+   "loudness": {
+    "mean_db": -28.7,
+    "peak_db": -1.0
+   }
+  },
+  {
+   "id": "game-card-shuffle",
+   "category": "games",
+   "emoji": "🃏",
+   "names": {
+    "en": "Card shuffle",
+    "ar": "خلط الورق",
+    "de": "Karten mischen",
+    "fr": "Mélange de cartes",
+    "es": "Barajar",
+    "ru": "Тасование карт",
+    "zh-Hans": "洗牌"
+   },
+   "duration_ms": 3063,
+   "size": 45841,
+   "sha256": "401ff2d2fadb9029cfd65874cda114829f02549b7e4401ef6c960169283fd277",
+   "source": {
+    "pack": "casino-audio",
+    "file": "card-shuffle.ogg"
+   },
+   "loudness": {
+    "mean_db": -21.5,
+    "peak_db": -0.4
+   }
+  },
+  {
+   "id": "game-card-fan",
+   "category": "games",
+   "emoji": "🎴",
+   "names": {
+    "en": "Card fan",
+    "ar": "فرد الورق",
+    "de": "Kartenfächer",
+    "fr": "Éventail de cartes",
+    "es": "Abanico de cartas",
+    "ru": "Веер карт",
+    "zh-Hans": "展开纸牌"
+   },
+   "duration_ms": 721,
+   "size": 18138,
+   "sha256": "8477d6fa96ebcef5668f98ed006c2232ba059f13739ee56af80e3b89b490283a",
+   "source": {
+    "pack": "casino-audio",
+    "file": "card-fan-1.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.2,
+    "peak_db": -1.0
+   }
+  },
+  {
+   "id": "game-card-place",
+   "category": "games",
+   "emoji": "🂠",
+   "names": {
+    "en": "Card down",
+    "ar": "وضع ورقة",
+    "de": "Karte ablegen",
+    "fr": "Poser une carte",
+    "es": "Dejar carta",
+    "ru": "Карта на стол",
+    "zh-Hans": "出牌"
+   },
+   "duration_ms": 689,
+   "size": 12939,
+   "sha256": "c6131f817555b701e6e97d1238bc6058cf2416e49302115c7a913f42900b9cc4",
+   "source": {
+    "pack": "casino-audio",
+    "file": "card-place-1.ogg"
+   },
+   "loudness": {
+    "mean_db": -25.5,
+    "peak_db": -1.0
+   }
+  },
+  {
+   "id": "game-card-pack",
+   "category": "games",
+   "emoji": "📦",
+   "names": {
+    "en": "Open a pack",
+    "ar": "فتح رزمة",
+    "de": "Packung öffnen",
+    "fr": "Ouvrir un paquet",
+    "es": "Abrir sobre",
+    "ru": "Открыть колоду",
+    "zh-Hans": "拆牌包"
+   },
+   "duration_ms": 937,
+   "size": 17188,
+   "sha256": "ee27b6c41eca43a03218f4c3e4a2943d26721c69b5c4c07f294aee9531e5d7ff",
+   "source": {
+    "pack": "casino-audio",
+    "file": "cards-pack-open-1.ogg"
+   },
+   "loudness": {
+    "mean_db": -25.5,
+    "peak_db": -0.4
+   }
+  },
+  {
+   "id": "coins-chip-stack",
+   "category": "coins",
+   "emoji": "🪙",
+   "names": {
+    "en": "Chip stack",
+    "ar": "رصّ الرقائق",
+    "de": "Chipstapel",
+    "fr": "Pile de jetons",
+    "es": "Pila de fichas",
+    "ru": "Стопка фишек",
+    "zh-Hans": "筹码叠放"
+   },
+   "duration_ms": 287,
+   "size": 8403,
+   "sha256": "3a701dddac4660a86b4fdf62a95a284b799064b839b439f032b00a217ab8792c",
+   "source": {
+    "pack": "casino-audio",
+    "file": "chips-stack-1.ogg"
+   },
+   "loudness": {
+    "mean_db": -27.1,
+    "peak_db": -1.2
+   }
+  },
+  {
+   "id": "coins-chip-stack-2",
+   "category": "coins",
+   "emoji": "💰",
+   "names": {
+    "en": "Stacking up",
+    "ar": "تكديس",
+    "de": "Aufstapeln",
+    "fr": "Empiler",
+    "es": "Apilar",
+    "ru": "Складывать",
+    "zh-Hans": "堆起来"
+   },
+   "duration_ms": 230,
+   "size": 7840,
+   "sha256": "fda8e5cf3c6a08818b0ab7b90e147470715661c7d205e5534e4e64fbf8c9c367",
+   "source": {
+    "pack": "casino-audio",
+    "file": "chips-stack-4.ogg"
+   },
+   "loudness": {
+    "mean_db": -25.3,
+    "peak_db": -1.5
+   }
+  },
+  {
+   "id": "coins-chips-collide",
+   "category": "coins",
+   "emoji": "💸",
+   "names": {
+    "en": "Chips clash",
+    "ar": "تصادم الرقائق",
+    "de": "Chips klirren",
+    "fr": "Jetons qui claquent",
+    "es": "Choque de fichas",
+    "ru": "Звон фишек",
+    "zh-Hans": "筹码碰撞"
+   },
+   "duration_ms": 259,
+   "size": 8259,
+   "sha256": "68552ca9494a947567a88345b9d3f220bec51c5c45e2153bc0738ce876a293c5",
+   "source": {
+    "pack": "casino-audio",
+    "file": "chips-collide-1.ogg"
+   },
+   "loudness": {
+    "mean_db": -26.7,
+    "peak_db": -1.0
+   }
+  },
+  {
+   "id": "coins-chips-handle",
+   "category": "coins",
+   "emoji": "🤑",
+   "names": {
+    "en": "Counting chips",
+    "ar": "عدّ الرقائق",
+    "de": "Chips zählen",
+    "fr": "Compter les jetons",
+    "es": "Contar fichas",
+    "ru": "Счёт фишек",
+    "zh-Hans": "数筹码"
+   },
+   "duration_ms": 616,
+   "size": 12964,
+   "sha256": "fddb8af2b9f486d6d2aba16467d3673cadc52f04d5f1636abdfe7efdbb6e9d96",
+   "source": {
+    "pack": "casino-audio",
+    "file": "chips-handle-1.ogg"
+   },
+   "loudness": {
+    "mean_db": -25.8,
+    "peak_db": -1.7
+   }
+  },
+  {
+   "id": "coins-chips-handle-2",
+   "category": "coins",
+   "emoji": "💵",
+   "names": {
+    "en": "Jackpot handful",
+    "ar": "حفنة ربح",
+    "de": "Handvoll Gewinn",
+    "fr": "Poignée de gains",
+    "es": "Puñado de premio",
+    "ru": "Горсть выигрыша",
+    "zh-Hans": "一把奖金"
+   },
+   "duration_ms": 834,
+   "size": 16596,
+   "sha256": "d70cc4c5b22fa3f2916ce17fff9e27f6e589f5ab186b36011254f98decdc2535",
+   "source": {
+    "pack": "casino-audio",
+    "file": "chips-handle-5.ogg"
+   },
+   "loudness": {
+    "mean_db": -21.2,
+    "peak_db": -1.1
+   }
+  },
+  {
+   "id": "coins-chip-lay",
+   "category": "coins",
+   "emoji": "🔴",
+   "names": {
+    "en": "Place a bet",
+    "ar": "ضع رهانك",
+    "de": "Einsatz setzen",
+    "fr": "Miser",
+    "es": "Apostar",
+    "ru": "Ставка",
+    "zh-Hans": "下注"
+   },
+   "duration_ms": 172,
+   "size": 7136,
+   "sha256": "d34f5ee80b2dd7f2e6af49b1e53292b22b54be5c1c3603d798e2cf2197381967",
+   "source": {
+    "pack": "casino-audio",
+    "file": "chip-lay-1.ogg"
+   },
+   "loudness": {
+    "mean_db": -23.6,
+    "peak_db": -1.1
+   }
+  },
+  {
+   "id": "coins-chips-collide-2",
+   "category": "coins",
+   "emoji": "🎰",
+   "names": {
+    "en": "Payout",
+    "ar": "صرف الأرباح",
+    "de": "Auszahlung",
+    "fr": "Gains",
+    "es": "Pago",
+    "ru": "Выплата",
+    "zh-Hans": "派彩"
+   },
+   "duration_ms": 259,
+   "size": 8376,
+   "sha256": "6be1286a7423e5b4ea04a022408f3d7c8b223e61351c5e141fbf634286f62907",
+   "source": {
+    "pack": "casino-audio",
+    "file": "chips-collide-3.ogg"
+   },
+   "loudness": {
+    "mean_db": -29.3,
+    "peak_db": -1.5
+   }
+  },
+  {
+   "id": "alert-success",
+   "category": "alerts",
+   "emoji": "✔️",
+   "names": {
+    "en": "Success",
+    "ar": "نجاح",
+    "de": "Erfolg",
+    "fr": "Succès",
+    "es": "Éxito",
+    "ru": "Успех",
+    "zh-Hans": "成功"
+   },
+   "duration_ms": 290,
+   "size": 4802,
+   "sha256": "25f39448e2ff58dbc0dd026d6c9088bb31cd03bb4b05fc18df3748470c9e40c1",
+   "source": {
+    "pack": "interface-sounds",
+    "file": "confirmation_001.ogg"
+   },
+   "loudness": {
+    "mean_db": -19.9,
+    "peak_db": -9.4
+   }
+  },
+  {
+   "id": "alert-success-bright",
+   "category": "alerts",
+   "emoji": "🌟",
+   "names": {
+    "en": "Bright success",
+    "ar": "نجاح لامع",
+    "de": "Heller Erfolg",
+    "fr": "Succès éclatant",
+    "es": "Éxito brillante",
+    "ru": "Яркий успех",
+    "zh-Hans": "明快成功"
+   },
+   "duration_ms": 539,
+   "size": 6845,
+   "sha256": "f593d934aaec625254124b882b5d266ec824f7b6125c9815be64f973603249b2",
+   "source": {
+    "pack": "interface-sounds",
+    "file": "confirmation_002.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -6.1
+   }
+  },
+  {
+   "id": "alert-done",
+   "category": "alerts",
+   "emoji": "👍",
+   "names": {
+    "en": "Done",
+    "ar": "تم",
+    "de": "Erledigt",
+    "fr": "Terminé",
+    "es": "Hecho",
+    "ru": "Готово",
+    "zh-Hans": "完成"
+   },
+   "duration_ms": 322,
+   "size": 5615,
+   "sha256": "ed71b9a499164928a69f3a41679df825b29e2943dc21177eec0d70a4657aa1ab",
+   "source": {
+    "pack": "interface-sounds",
+    "file": "confirmation_003.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -5.7
+   }
+  },
+  {
+   "id": "alert-win-chime",
+   "category": "alerts",
+   "emoji": "🎊",
+   "names": {
+    "en": "Win chime",
+    "ar": "رنّة فوز",
+    "de": "Gewinnklang",
+    "fr": "Carillon de victoire",
+    "es": "Campanilla de victoria",
+    "ru": "Звон победы",
+    "zh-Hans": "胜利铃声"
+   },
+   "duration_ms": 490,
+   "size": 5789,
+   "sha256": "53bb4021e620d58f7f2e7edd1255775fabbc013b6abb16740c592ead58dd733c",
+   "source": {
+    "pack": "interface-sounds",
+    "file": "confirmation_004.ogg"
+   },
+   "loudness": {
+    "mean_db": -19.9,
+    "peak_db": -9.2
+   }
+  },
+  {
+   "id": "alert-error",
+   "category": "alerts",
+   "emoji": "⛔",
+   "names": {
+    "en": "Error",
+    "ar": "خطأ",
+    "de": "Fehler",
+    "fr": "Erreur",
+    "es": "Error",
+    "ru": "Ошибка",
+    "zh-Hans": "错误"
+   },
+   "duration_ms": 165,
+   "size": 6869,
+   "sha256": "c4ccb79f1136b9f0d00ca5515600f7f04ff982385e0bc57d8999f72bd0e10ab5",
+   "source": {
+    "pack": "interface-sounds",
+    "file": "error_001.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.3,
+    "peak_db": -2.3
+   }
+  },
+  {
+   "id": "alert-buzzer",
+   "category": "alerts",
+   "emoji": "🚫",
+   "names": {
+    "en": "Buzzer",
+    "ar": "صفّارة خطأ",
+    "de": "Summer",
+    "fr": "Buzzer",
+    "es": "Zumbador",
+    "ru": "Зуммер",
+    "zh-Hans": "蜂鸣器"
+   },
+   "duration_ms": 107,
+   "size": 6138,
+   "sha256": "648bbe2b3efad8ac6da5bb6f34a105f1c388fa9bb1238b0ba26b1ebd57f8bf67",
+   "source": {
+    "pack": "interface-sounds",
+    "file": "error_004.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -5.0
+   }
+  },
+  {
+   "id": "alert-nope",
+   "category": "alerts",
+   "emoji": "🙅",
+   "names": {
+    "en": "Nope",
+    "ar": "لا",
+    "de": "Nö",
+    "fr": "Non",
+    "es": "Nop",
+    "ru": "Не-а",
+    "zh-Hans": "不行"
+   },
+   "duration_ms": 500,
+   "size": 7470,
+   "sha256": "f5fb156a18a5669492b63783e84b62802e7a2da22bb4b0f1ebd9adf67719c9ec",
+   "source": {
+    "pack": "interface-sounds",
+    "file": "error_006.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.2,
+    "peak_db": -3.0
+   }
+  },
+  {
+   "id": "alert-oops",
+   "category": "alerts",
+   "emoji": "😬",
+   "names": {
+    "en": "Oops",
+    "ar": "عفوًا",
+    "de": "Hoppla",
+    "fr": "Oups",
+    "es": "Ups",
+    "ru": "Упс",
+    "zh-Hans": "哎呀"
+   },
+   "duration_ms": 139,
+   "size": 5701,
+   "sha256": "99bf4011fa1f1ff095c1bebbb614e1900ca3f193e4eb3c142c83d890c14f8d77",
+   "source": {
+    "pack": "interface-sounds",
+    "file": "error_008.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.2,
+    "peak_db": -1.2
+   }
+  },
+  {
+   "id": "alert-question",
+   "category": "alerts",
+   "emoji": "❓",
+   "names": {
+    "en": "Question",
+    "ar": "سؤال",
+    "de": "Frage",
+    "fr": "Question",
+    "es": "Pregunta",
+    "ru": "Вопрос",
+    "zh-Hans": "疑问"
+   },
+   "duration_ms": 491,
+   "size": 5585,
+   "sha256": "5e6fdccdd28fb3da46bcf3a40fb3b752b9dd55992f0f3085ce0ae653d38e87da",
+   "source": {
+    "pack": "interface-sounds",
+    "file": "question_001.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -9.1
+   }
+  },
+  {
+   "id": "alert-hmm",
+   "category": "alerts",
+   "emoji": "🤔",
+   "names": {
+    "en": "Hmm?",
+    "ar": "همم؟",
+    "de": "Hm?",
+    "fr": "Hum ?",
+    "es": "¿Mmm?",
+    "ru": "Хм?",
+    "zh-Hans": "嗯？"
+   },
+   "duration_ms": 332,
+   "size": 4903,
+   "sha256": "f259795246d927d9a772eb2834934eff8022ad98abca508bf8a4e2358ba28d49",
+   "source": {
+    "pack": "interface-sounds",
+    "file": "question_003.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -11.0
+   }
+  },
+  {
+   "id": "alert-bong",
+   "category": "alerts",
+   "emoji": "📢",
+   "names": {
+    "en": "Bong",
+    "ar": "دقّة",
+    "de": "Gong",
+    "fr": "Gong",
+    "es": "Gong",
+    "ru": "Гонг",
+    "zh-Hans": "咚"
+   },
+   "duration_ms": 123,
+   "size": 4182,
+   "sha256": "0399c247060e9d145d03004eb55eb154e7188ef89b03334d6a6b917243d1eb26",
+   "source": {
+    "pack": "interface-sounds",
+    "file": "bong_001.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.0,
+    "peak_db": -4.7
+   }
+  },
+  {
+   "id": "alert-notify",
+   "category": "alerts",
+   "emoji": "🔔",
+   "names": {
+    "en": "Notification",
+    "ar": "إشعار",
+    "de": "Benachrichtigung",
+    "fr": "Notification",
+    "es": "Notificación",
+    "ru": "Уведомление",
+    "zh-Hans": "通知"
+   },
+   "duration_ms": 278,
+   "size": 5348,
+   "sha256": "c7f7636d9bf24c7a1a0107241b51d5a21ad041abecde9c31cba849522b9f0eb0",
+   "source": {
+    "pack": "interface-sounds",
+    "file": "glass_001.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.1,
+    "peak_db": -1.5
+   }
+  },
+  {
+   "id": "alert-ping",
+   "category": "alerts",
+   "emoji": "📍",
+   "names": {
+    "en": "Ping",
+    "ar": "تنبيه",
+    "de": "Ping",
+    "fr": "Ping",
+    "es": "Ping",
+    "ru": "Пинг",
+    "zh-Hans": "叮"
+   },
+   "duration_ms": 692,
+   "size": 7154,
+   "sha256": "ff155a4aa1b5ee4291cc99d7acad2ff00dd6ec30be7ad57cd7588ebebf0e8a6e",
+   "source": {
+    "pack": "interface-sounds",
+    "file": "glass_004.ogg"
+   },
+   "loudness": {
+    "mean_db": -19.9,
+    "peak_db": -3.0
+   }
+  },
+  {
+   "id": "alert-drop",
+   "category": "alerts",
+   "emoji": "💧",
+   "names": {
+    "en": "Drop",
+    "ar": "قطرة",
+    "de": "Tropfen",
+    "fr": "Goutte",
+    "es": "Gota",
+    "ru": "Капля",
+    "zh-Hans": "水滴"
+   },
+   "duration_ms": 135,
+   "size": 5741,
+   "sha256": "46e381a6ea1b1da0341a95f36a0bca50c7ab03933e8432e6e1bda02234cb4a82",
+   "source": {
+    "pack": "interface-sounds",
+    "file": "drop_001.ogg"
+   },
+   "loudness": {
+    "mean_db": -21.3,
+    "peak_db": -1.4
+   }
+  },
+  {
+   "id": "alert-pluck",
+   "category": "alerts",
+   "emoji": "🪕",
+   "names": {
+    "en": "Pluck",
+    "ar": "نقرة وتر",
+    "de": "Zupfen",
+    "fr": "Pincement",
+    "es": "Punteo",
+    "ru": "Щипок",
+    "zh-Hans": "拨弦"
+   },
+   "duration_ms": 102,
+   "size": 5873,
+   "sha256": "427b2b933a5b5cd292bbcd86161a8e6935f56d176f891ed3b0dc5bc37bc76175",
+   "source": {
+    "pack": "interface-sounds",
+    "file": "pluck_001.ogg"
+   },
+   "loudness": {
+    "mean_db": -21.3,
+    "peak_db": -2.3
+   }
+  },
+  {
+   "id": "click-click",
+   "category": "interface",
+   "emoji": "🖱️",
+   "names": {
+    "en": "Click",
+    "ar": "نقرة",
+    "de": "Klick",
+    "fr": "Clic",
+    "es": "Clic",
+    "ru": "Щелчок",
+    "zh-Hans": "点击"
+   },
+   "duration_ms": 100,
+   "size": 4461,
+   "sha256": "66e179e6c3d5dfd4df712458f212b746d1b5253af1d83d9c94f219d2e23cb1e3",
+   "source": {
+    "pack": "interface-sounds",
+    "file": "click_001.ogg"
+   },
+   "loudness": {
+    "mean_db": -25.6,
+    "peak_db": -1.8
+   }
+  },
+  {
+   "id": "click-soft",
+   "category": "interface",
+   "emoji": "👆",
+   "names": {
+    "en": "Soft click",
+    "ar": "نقرة خفيفة",
+    "de": "Leiser Klick",
+    "fr": "Clic doux",
+    "es": "Clic suave",
+    "ru": "Мягкий щелчок",
+    "zh-Hans": "轻点"
+   },
+   "duration_ms": 86,
+   "size": 5926,
+   "sha256": "16dff08aacf8239b84f37e928cfa46be6639fbdda888fff9c85fc99473511d59",
+   "source": {
+    "pack": "ui-audio",
+    "file": "click3.ogg"
+   },
+   "loudness": {
+    "mean_db": -24.7,
+    "peak_db": -1.3
+   }
+  },
+  {
+   "id": "click-mouse",
+   "category": "interface",
+   "emoji": "🐭",
+   "names": {
+    "en": "Mouse click",
+    "ar": "نقرة فأرة",
+    "de": "Mausklick",
+    "fr": "Clic de souris",
+    "es": "Clic de ratón",
+    "ru": "Клик мыши",
+    "zh-Hans": "鼠标点击"
+   },
+   "duration_ms": 59,
+   "size": 5644,
+   "sha256": "c788cc4404b279335776c3ba9026034dbc6567417d7e34533ac50352be0e9911",
+   "source": {
+    "pack": "ui-audio",
+    "file": "mouseclick1.ogg"
+   },
+   "loudness": {
+    "mean_db": -23.3,
+    "peak_db": -0.6
+   }
+  },
+  {
+   "id": "click-select",
+   "category": "interface",
+   "emoji": "☑️",
+   "names": {
+    "en": "Select",
+    "ar": "تحديد",
+    "de": "Auswahl",
+    "fr": "Sélection",
+    "es": "Seleccionar",
+    "ru": "Выбор",
+    "zh-Hans": "选择"
+   },
+   "duration_ms": 43,
+   "size": 4992,
+   "sha256": "eef46597010717c1be65d3f0ebc076cbfefdb9c665d88a616812a34104a7aea2",
+   "source": {
+    "pack": "interface-sounds",
+    "file": "select_001.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.4,
+    "peak_db": -4.2
+   }
+  },
+  {
+   "id": "click-toggle",
+   "category": "interface",
+   "emoji": "🔘",
+   "names": {
+    "en": "Toggle",
+    "ar": "تبديل",
+    "de": "Umschalten",
+    "fr": "Bascule",
+    "es": "Alternar",
+    "ru": "Переключить",
+    "zh-Hans": "切换"
+   },
+   "duration_ms": 139,
+   "size": 4902,
+   "sha256": "4d986fbad3779d555e8ad7c5f8333f820f79c67cb2bd494e69f8b7854b4cbd01",
+   "source": {
+    "pack": "interface-sounds",
+    "file": "toggle_001.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.2,
+    "peak_db": -6.7
+   }
+  },
+  {
+   "id": "click-switch",
+   "category": "interface",
+   "emoji": "🎚️",
+   "names": {
+    "en": "Switch",
+    "ar": "مفتاح",
+    "de": "Schalter",
+    "fr": "Interrupteur",
+    "es": "Interruptor",
+    "ru": "Тумблер",
+    "zh-Hans": "开关"
+   },
+   "duration_ms": 216,
+   "size": 7512,
+   "sha256": "403e9792036e6733b1171db114cadc882bfb85acd6a62975dbf8429d69939fcb",
+   "source": {
+    "pack": "ui-audio",
+    "file": "switch7.ogg"
+   },
+   "loudness": {
+    "mean_db": -24.5,
+    "peak_db": -1.7
+   }
+  },
+  {
+   "id": "click-tick",
+   "category": "interface",
+   "emoji": "⏲️",
+   "names": {
+    "en": "Tick",
+    "ar": "تكّة",
+    "de": "Tick",
+    "fr": "Tic",
+    "es": "Tic",
+    "ru": "Тик",
+    "zh-Hans": "滴答"
+   },
+   "duration_ms": 48,
+   "size": 4172,
+   "sha256": "0b856a86f3c06aaffe62935b32ceeef6c345747525587d9e439a7f00bdc1c804",
+   "source": {
+    "pack": "interface-sounds",
+    "file": "tick_001.ogg"
+   },
+   "loudness": {
+    "mean_db": -22.8,
+    "peak_db": -1.0
+   }
+  },
+  {
+   "id": "click-open",
+   "category": "interface",
+   "emoji": "📂",
+   "names": {
+    "en": "Open",
+    "ar": "فتح",
+    "de": "Öffnen",
+    "fr": "Ouvrir",
+    "es": "Abrir",
+    "ru": "Открыть",
+    "zh-Hans": "打开"
+   },
+   "duration_ms": 148,
+   "size": 5341,
+   "sha256": "bdb4525d2ddea65c99adb8bb2d0e8f28737c2abe60a24f78b6f63f5d5a94d9f2",
+   "source": {
+    "pack": "interface-sounds",
+    "file": "open_001.ogg"
+   },
+   "loudness": {
+    "mean_db": -21.0,
+    "peak_db": -7.5
+   }
+  },
+  {
+   "id": "click-close",
+   "category": "interface",
+   "emoji": "📁",
+   "names": {
+    "en": "Close",
+    "ar": "إغلاق",
+    "de": "Schließen",
+    "fr": "Fermer",
+    "es": "Cerrar",
+    "ru": "Закрыть",
+    "zh-Hans": "关闭"
+   },
+   "duration_ms": 148,
+   "size": 5472,
+   "sha256": "c2cf09af745bfebfe182d77c5dc044497785abb5e33d82e0c7e0540f5c19b20b",
+   "source": {
+    "pack": "interface-sounds",
+    "file": "close_001.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.7,
+    "peak_db": -6.0
+   }
+  },
+  {
+   "id": "click-pop-up",
+   "category": "interface",
+   "emoji": "🫧",
+   "names": {
+    "en": "Pop up",
+    "ar": "ظهور",
+    "de": "Aufpoppen",
+    "fr": "Apparition",
+    "es": "Aparecer",
+    "ru": "Появление",
+    "zh-Hans": "弹出"
+   },
+   "duration_ms": 418,
+   "size": 8259,
+   "sha256": "2edf27a5ba31964b5185fc4c754b06598077ee8b5a8c799c8c223c4e96e27c1e",
+   "source": {
+    "pack": "interface-sounds",
+    "file": "maximize_004.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.1,
+    "peak_db": -5.9
+   }
+  },
+  {
+   "id": "click-pop-down",
+   "category": "interface",
+   "emoji": "🔻",
+   "names": {
+    "en": "Pop down",
+    "ar": "اختفاء",
+    "de": "Wegpoppen",
+    "fr": "Disparition",
+    "es": "Desaparecer",
+    "ru": "Исчезновение",
+    "zh-Hans": "收起"
+   },
+   "duration_ms": 418,
+   "size": 8643,
+   "sha256": "c60ed456591b5c9bc5d986249960bef88e3397061f0e6552819576bdf3ba0d0d",
+   "source": {
+    "pack": "interface-sounds",
+    "file": "minimize_004.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.1,
+    "peak_db": -6.0
+   }
+  },
+  {
+   "id": "click-back",
+   "category": "interface",
+   "emoji": "↩️",
+   "names": {
+    "en": "Back",
+    "ar": "رجوع",
+    "de": "Zurück",
+    "fr": "Retour",
+    "es": "Atrás",
+    "ru": "Назад",
+    "zh-Hans": "返回"
+   },
+   "duration_ms": 64,
+   "size": 4711,
+   "sha256": "e2002d027720e6f20a9fe4df30ace0e2b44e1e08508f479767909165e69ce40d",
+   "source": {
+    "pack": "interface-sounds",
+    "file": "back_001.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.7,
+    "peak_db": -1.2
+   }
+  },
+  {
+   "id": "click-scratch",
+   "category": "interface",
+   "emoji": "💿",
+   "names": {
+    "en": "Record scratch",
+    "ar": "خدش أسطوانة",
+    "de": "Plattenkratzer",
+    "fr": "Scratch",
+    "es": "Scratch de disco",
+    "ru": "Скретч",
+    "zh-Hans": "唱片刮擦"
+   },
+   "duration_ms": 139,
+   "size": 5226,
+   "sha256": "f45c489c376c514950558a17be91fb3f3ec98ee29426e47355ee5c46e3e42545",
+   "source": {
+    "pack": "interface-sounds",
+    "file": "scratch_001.ogg"
+   },
+   "loudness": {
+    "mean_db": -21.1,
+    "peak_db": -8.2
+   }
+  },
+  {
+   "id": "click-glitch",
+   "category": "interface",
+   "emoji": "📺",
+   "names": {
+    "en": "Glitch",
+    "ar": "خلل",
+    "de": "Störung",
+    "fr": "Bug",
+    "es": "Fallo técnico",
+    "ru": "Сбой",
+    "zh-Hans": "故障"
+   },
+   "duration_ms": 20,
+   "size": 4822,
+   "sha256": "bafcbee2efdb0cf4c44c040fac7c94ef0a85fb65f5ddf06a5f62d5018f4b523b",
+   "source": {
+    "pack": "interface-sounds",
+    "file": "glitch_001.ogg"
+   },
+   "loudness": {
+    "mean_db": -20.2,
+    "peak_db": -11.0
+   }
+  },
+  {
+   "id": "click-rollover",
+   "category": "interface",
+   "emoji": "✨",
+   "names": {
+    "en": "Hover",
+    "ar": "مرور",
+    "de": "Darüberfahren",
+    "fr": "Survol",
+    "es": "Pasar por encima",
+    "ru": "Наведение",
+    "zh-Hans": "悬停"
+   },
+   "duration_ms": 57,
+   "size": 5392,
+   "sha256": "8d9af801f0110da29233b9c4427f482ff42790c3586d913b1c33827922a147ff",
+   "source": {
+    "pack": "ui-audio",
+    "file": "rollover2.ogg"
+   },
+   "loudness": {
+    "mean_db": -22.9,
+    "peak_db": -1.0
+   }
+  },
+  {
+   "id": "click-scroll",
+   "category": "interface",
+   "emoji": "📜",
+   "names": {
+    "en": "Scroll",
+    "ar": "تمرير",
+    "de": "Scrollen",
+    "fr": "Défilement",
+    "es": "Desplazar",
+    "ru": "Прокрутка",
+    "zh-Hans": "滚动"
+   },
+   "duration_ms": 1000,
+   "size": 13024,
+   "sha256": "cc032e4a634e2d04a9e7cdf8c8b53656c40178a8c7ff7ce0f84dd5c3221a4227",
+   "source": {
+    "pack": "interface-sounds",
+    "file": "scroll_001.ogg"
+   },
+   "loudness": {
+    "mean_db": -22.1,
+    "peak_db": -0.0
+   }
+  }
+ ]
+}

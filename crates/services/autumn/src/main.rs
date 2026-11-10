@@ -24,6 +24,7 @@ mod api;
 mod byte_range;
 mod cache;
 mod effects;
+mod library;
 pub mod clamav;
 pub mod exif;
 pub mod metadata;
@@ -92,6 +93,10 @@ async fn main() -> Result<(), std::io::Error> {
 
     let db = DatabaseInfo::Auto.connect().await.unwrap();
     let ratelimits = ratelimiter::RatelimitStorage::new(ratelimits::AutumnRatelimits);
+
+    // library sounds go to S3 (and are checked every 10 minutes), away from the requests
+    let library_db = db.clone();
+    tokio::spawn(library::keep_library_stored(library_db));
 
     let state = AppState {
         database: db,
