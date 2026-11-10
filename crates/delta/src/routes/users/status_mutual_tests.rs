@@ -584,3 +584,108 @@ async fn body_mentions(harness: &TestHarness, session: &Session, user: &str, nee
     let (_, body) = call(harness, Method::Get, session, &format!("/users/{user}"), None).await;
     body.contains(needle)
 }
+
+#[rocket::async_test]
+async fn the_dialogs_explicit_replacement_clears_emoji_and_expiry_with_the_same_text() {
+    let harness = TestHarness::new().await;
+    let (_, session, _) = harness.new_user().await;
+
+    set_status(
+        &harness,
+        &session,
+        serde_json::json!({ "status": { "text": "Lunch", "emoji": "🍕", "expires_at": in_minutes(30) } }),
+    )
+    .await;
+    // "remove the emoji" and "Never", same text: what the dialog sends
+    let (status, body) = set_status(
+        &harness,
+        &session,
+        serde_json::json!({ "status": { "text": "Lunch" }, "remove": ["StatusText"] }),
+    )
+    .await;
+    assert_eq!(status, Status::Ok, "{body}");
+    let shown = me(&harness, &session).await.status.unwrap();
+    assert_eq!(shown.text.as_deref(), Some("Lunch"));
+    assert_eq!((shown.emoji, shown.expires_at), (None, None));
+}
+
+#[rocket::async_test]
+async fn changing_your_username_keeps_your_own_custom_status_emoji() {
+    let harness = TestHarness::new().await;
+    let (_, session, user) = harness.new_user().await;
+    let server = server_of(&harness, &user).await;
+    let emoji = Emoji {
+        id: Ulid::new().to_string(),
+        parent: EmojiParent::Server { id: server.id.clone() },
+        creator_id: user.id.clone(),
+        name: "mine".to_string(),
+        animated: false,
+        nsfw: false,
+    };
+    emoji.create(&harness.db).await.unwrap();
+    set_status(&harness, &session, serde_json::json!({ "status": { "text": "Hi", "emoji": emoji.id } })).await;
+
+    let (status, body) = call(
+        &harness,
+        Method::Patch,
+        &session,
+        "/users/@me/username",
+        Some(serde_json::json!({ "username": "renamed", "password": "password_insecure" })),
+    )
+    .await;
+    assert_eq!(status, Status::Ok, "{body}");
+    let renamed: v0::User = serde_json::from_str(&body).unwrap();
+    assert_eq!(renamed.status.unwrap().emoji, Some(emoji.id));
+}
+
+#[rocket::async_test]
+async fn a_member_list_never_shows_a_status_emoji_from_a_server_the_viewer_is_not_in() {
+    let harness = TestHarness::new().await;
+    let (_, owner_session, owner) = harness.new_user().await;
+    let (_, outsider_session, outsider) = harness.new_user().await;
+    let (_, insider_session, insider) = harness.new_user().await;
+
+    // everyone is in the listed server; the emoji comes from another one
+    let listed = server_of(&harness, &owner).await;
+    Member::create(&harness.db, &listed, &outsider, None).await.unwrap();
+    Member::create(&harness.db, &listed, &insider, None).await.unwrap();
+    let private = server_of(&harness, &owner).await;
+    Member::create(&harness.db, &private, &insider, None).await.unwrap();
+
+    let emoji = Emoji {
+        id: Ulid::new().to_string(),
+        parent: EmojiParent::Server { id: private.id.clone() },
+        creator_id: owner.id.clone(),
+        name: "secret".to_string(),
+        animated: false,
+        nsfw: false,
+    };
+    emoji.create(&harness.db).await.unwrap();
+    set_status(&harness, &owner_session, serde_json::json!({ "status": { "text": "Hi", "emoji": emoji.id } })).await;
+
+    let owner_status = |session: Session| {
+        let harness = &harness;
+        let (server, owner) = (listed.id.clone(), owner.id.clone());
+        async move {
+            let (status, body) =
+                call(harness, Method::Get, &session, &format!("/servers/{server}/members"), None).await;
+            assert_eq!(status, Status::Ok, "{body}");
+            let list: serde_json::Value = serde_json::from_str(&body).unwrap();
+            let user = list["users"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|user| user["_id"] == owner.as_str())
+                .cloned()
+                .unwrap();
+            (user["status"]["text"].clone(), user["status"]["emoji"].clone(), body)
+        }
+    };
+
+    let (text, emoji_seen, _) = owner_status(insider_session).await;
+    assert_eq!((text.as_str(), emoji_seen.as_str()), (Some("Hi"), Some(emoji.id.as_str())));
+    let (text, emoji_seen, body) = owner_status(outsider_session).await;
+    assert_eq!(text.as_str(), Some("Hi"));
+    assert!(emoji_seen.is_null(), "{body}");
+    assert!(!body.contains(&emoji.id), "{body}");
+}
