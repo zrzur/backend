@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Security
+
+- Sign-in: wrong passwords are counted per e-mail address (normalised, hashed in Redis), whether or not an account has it. From the tenth within fifteen minutes the address needs a captcha (`DataLogin` gains optional `captcha`; answer `CaptchaFailed`) when one is configured, else it waits one minute, doubling up to an hour (`LockedOut`). Unknown and known addresses answer alike, so the lock no longer tells who has an account; the old per-account lock (three tries) is no longer used and is cleared on the next sign-in.
+- Two-factor at sign-in counts wrong codes with `PUT /auth/mfa/ticket`: five in fifteen minutes pause the account's two-factor step (`LockedOut`).
+- `PATCH /bots/{id}` refuses an `interactions_url` that is not a plain http(s) address (no `javascript:`, `data:`, credentials).
+
 ### Features
 
 - Polls in messages (behind `features.polls_enabled`, off by default): `DataMessageSend.poll` takes a question (1–300 characters), 2–10 answers (1–55 characters, optional emoji the author may use) and a duration of 1, 4, 8 or 24 hours, 3 days, 1 or 2 weeks, single or multiple choice. Posting one needs Send Messages and Send Embeds (no new permission bit). `PUT`/`DELETE /channels/{c}/messages/{m}/polls/answers/{a}/votes/@me` vote and take back a vote (React, the channel's write rules and the age rules apply; people only, own rate-limit bucket `poll_votes`, 10 per channel); `GET …/answers/{a}/voters` pages through who chose an answer for anyone who can read the message; `POST …/polls/end` ends it early (author, or Manage Messages). Readers get counts and their own choice (`poll.me`), never voter lists; gateway events `MessagePollVoteAdd`/`MessagePollVoteRemove` (counts), `MessagePollChoice` (to the voter only) and `MessagePollEnd`. crond closes polls past their end within a minute and a `poll_ended` system reply names the winner; a vote on an expired poll is refused (`PollEnded`, 409) and closes it at once. Poll messages can't be edited; deleting one deletes its votes; forwarding sends the question and answers as text. Votes are one conditional write each (a vote racing the close loses with `PollEnded`; on multiple choice only the chosen answer changes); events carry `version` and `total`. AutoMod reads the question and answers. A closed poll always gets its reply (crond retries; the reply id is fixed per poll). Push previews use the poll text. Data export: own polls with counts, not voters, and `poll_votes.json`. Migration `PENDING_POLL_INDEX` (index `polls_to_close`).
