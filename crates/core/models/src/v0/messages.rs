@@ -707,6 +707,19 @@ impl MessageAuthor<'_> {
     }
 }
 
+impl Message {
+    /// Text that stands for this message where only text fits (push
+    /// notifications, previews): its content, or the poll's summary when it
+    /// has no text
+    pub fn preview_text(&self) -> Option<String> {
+        match (&self.content, &self.poll) {
+            (Some(content), _) if !content.trim().is_empty() => Some(content.clone()),
+            (_, Some(poll)) => Some(poll.summary()),
+            (content, None) => content.clone(),
+        }
+    }
+}
+
 /// What a bot without the Message Content intent sees of a message: who
 /// sent it and where, but no text, embeds, files or components.
 impl Message {
@@ -814,8 +827,8 @@ impl PushNotification {
 
         let body = if let Some(ref sys) = msg.system {
             sys.clone().into()
-        } else if let Some(ref text) = msg.content {
-            text.clone()
+        } else if let Some(text) = msg.preview_text() {
+            text
         } else if let Some(text) = msg.embeds.as_ref().and_then(|embeds| match embeds.first() {
             Some(Embed::Image(_)) => Some("Sent an image".to_string()),
             Some(Embed::Video(_)) => Some("Sent a video".to_string()),

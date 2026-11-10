@@ -3,9 +3,14 @@
 //! Votes are stored in the message (each answer keeps its voters), so
 //! deleting the message deletes its votes. Everyone in the channel is told
 //! only the counts; who chose what is read on request.
+//!
+//! Every vote is one conditional write on the database: it only applies
+//! while the poll is open, so a vote and the poll closing can't both win.
+//! Each change raises `version`; events carry it so clients drop older ones.
 use iso8601_timestamp::{Duration, Timestamp};
 use revolt_models::v0;
 use revolt_result::Result;
+use ulid::Ulid;
 
 use crate::{events::client::EventV1, Channel, Database, Message, Poll, PollAnswer, SystemMessage};
 
@@ -27,6 +32,7 @@ impl From<Poll> for v0::Poll {
             expires_at: poll.expires_at,
             ended: poll.ended,
             me: None,
+            version: poll.version,
         }
     }
 }
@@ -50,6 +56,9 @@ impl Poll {
             allow_multiselect: data.allow_multiselect,
             expires_at: now + Duration::hours(data.duration as i64),
             ended: false,
+            ended_at: None,
+            replied: false,
+            version: 0,
         }
     }
 
@@ -83,32 +92,25 @@ impl Poll {
             .collect()
     }
 
-    /// The user's whole choice after choosing `answer`: only it on a
-    /// single-choice poll, added to the others on a multiple-choice one
-    pub fn choice_with(&self, user: &str, answer: u32) -> Vec<u32> {
-        if self.allow_multiselect {
-            let mut choice = self.choices_of(user);
-            if !choice.contains(&answer) {
-                choice.push(answer);
-            }
-            choice
-        } else {
-            vec![answer]
-        }
+    /// Votes of every answer together
+    pub fn total(&self) -> u32 {
+        self.answers.iter().map(|a| a.voters.len() as u32).sum()
     }
 
-    /// The user's whole choice after taking back `answer`
-    pub fn choice_without(&self, user: &str, answer: u32) -> Vec<u32> {
-        self.choices_of(user)
-            .into_iter()
-            .filter(|id| *id != answer)
-            .collect()
+    /// Whether choosing `answer` would change nothing for the user
+    pub fn vote_changes_nothing(&self, user: &str, answer: u32) -> bool {
+        let mine = self.choices_of(user);
+        if self.allow_multiselect {
+            mine.contains(&answer)
+        } else {
+            mine == [answer]
+        }
     }
 
     /// What the "poll ended" reply says: the answers with the most votes
     /// (none when nobody voted), their votes and the votes of all answers
     pub fn outcome(&self) -> (Vec<String>, u32, u32) {
-        let total: u32 = self.answers.iter().map(|a| a.voters.len() as u32).sum();
+        let total = self.total();
         let best = self
             .answers
             .iter()
@@ -153,42 +155,61 @@ impl Message {
         })
     }
 
-    /// Make `choice` the user's whole choice on this message's poll and tell
-    /// the channel the new counts (and the user's other sessions their
-    /// choice). `answer` is the answer the request was about; `added` says
-    /// whether it was chosen or taken back. Returns the message as stored
-    /// after the change.
-    pub async fn set_poll_choice(
-        &self,
-        db: &Database,
-        user: &str,
-        choice: Vec<u32>,
-        answer: u32,
-        added: bool,
-    ) -> Result<Message> {
+    /// Choose `answer` for `user`: on a single-choice poll it replaces their
+    /// earlier choice, on a multiple-choice poll only this answer is added
+    /// (whatever this copy of the message says about their other answers).
+    /// `PollEnded` when the poll closed meanwhile. Returns the message after
+    /// the vote.
+    pub async fn vote_poll(&self, db: &Database, user: &str, answer: u32) -> Result<Message> {
         let poll = self.poll.as_ref().ok_or_else(|| create_error!(NotFound))?;
-        db.set_poll_choice(&self.id, user, &choice, poll.answers.len())
-            .await?;
-        let message = db.fetch_message(&self.id).await?;
-        let counts = message
-            .poll
-            .as_ref()
-            .map(Poll::counts)
-            .unwrap_or_default();
+        let updated = db
+            .add_poll_vote(
+                &self.id,
+                user,
+                answer,
+                !poll.allow_multiselect,
+                poll.answers.len(),
+                Timestamp::now_utc(),
+            )
+            .await?
+            .ok_or_else(|| create_error!(PollEnded))?;
+        self.announce_vote(&updated, user, answer, true).await;
+        Ok(updated)
+    }
 
+    /// Take back `user`'s choice of `answer`; `PollEnded` when it closed
+    pub async fn unvote_poll(&self, db: &Database, user: &str, answer: u32) -> Result<Message> {
+        let updated = db
+            .remove_poll_vote(&self.id, user, answer, Timestamp::now_utc())
+            .await?
+            .ok_or_else(|| create_error!(PollEnded))?;
+        self.announce_vote(&updated, user, answer, false).await;
+        Ok(updated)
+    }
+
+    /// Counts to the channel, the user's own choice to their sessions
+    async fn announce_vote(&self, updated: &Message, user: &str, answer: u32, added: bool) {
+        let Some(poll) = updated.poll.as_ref() else {
+            return;
+        };
+        let (answers, total, version) = (poll.counts(), poll.total(), poll.version);
         if added {
             EventV1::MessagePollVoteAdd {
                 id: self.id.clone(),
                 channel_id: self.channel.clone(),
                 answer_id: answer,
-                answers: counts,
+                answers,
+                total,
+                version,
             }
         } else {
             EventV1::MessagePollVoteRemove {
                 id: self.id.clone(),
                 channel_id: self.channel.clone(),
                 answer_id: answer,
-                answers: counts,
+                answers,
+                total,
+                version,
             }
         }
         .p(self.channel.clone())
@@ -197,72 +218,115 @@ impl Message {
         EventV1::MessagePollChoice {
             id: self.id.clone(),
             channel_id: self.channel.clone(),
-            answers: message
-                .poll
-                .as_ref()
-                .map(|poll| poll.choices_of(user))
-                .unwrap_or_default(),
+            answers: poll.choices_of(user),
+            version,
         }
         .p(user.to_string())
         .await;
-
-        Ok(message)
     }
 
-    /// Close this message's poll for good, tell the channel the final counts
-    /// and reply to it with the result. Only the first call does anything
-    /// (crond and an early end may meet); returns whether this one did.
+    /// Close this message's poll for good. Only the first call closes it
+    /// (crond and an early end may meet); returns whether this one did. The
+    /// result reply follows at once; if posting it fails, crond posts it on
+    /// its next pass, so a closed poll never stays without its reply.
     pub async fn end_poll(&self, db: &Database) -> Result<bool> {
-        if self.poll.is_none() || !db.end_poll(&self.id).await? {
+        if self.poll.is_none() || !db.end_poll(&self.id, Timestamp::now_utc()).await? {
             return Ok(false);
         }
-
-        // the votes as they stand now, not as this copy last saw them
-        let current = db.fetch_message(&self.id).await?;
-        let Some(poll) = current.poll else {
-            return Ok(true);
-        };
-
-        EventV1::MessagePollEnd {
-            id: self.id.clone(),
-            channel_id: self.channel.clone(),
-            answers: poll.counts(),
+        if let Err(error) = Message::finish_poll(db, &self.id).await {
+            revolt_config::capture_error(&error);
         }
-        .p(self.channel.clone())
-        .await;
-
-        let (winners, votes, total) = poll.outcome();
-        let mut reply = SystemMessage::PollEnded {
-            id: self.id.clone(),
-            question: poll.question.clone(),
-            winners,
-            votes,
-            total,
-        }
-        .into_message(self.channel.clone());
-        reply.replies = Some(vec![self.id.clone()]);
-
-        let is_dm = matches!(
-            db.fetch_channel(&self.channel).await,
-            Ok(Channel::DirectMessage { .. })
-        );
-        reply
-            .send_without_notifications(db, None, None, is_dm, false, true)
-            .await?;
-
         Ok(true)
     }
 
-    /// Close every poll past its end (crond, and a vote that finds one).
-    /// Returns how many were closed.
-    pub async fn end_expired_polls(db: &Database, now: Timestamp, limit: i64) -> Result<usize> {
-        let mut closed = 0;
-        for message in db.fetch_expired_open_polls(now, limit).await? {
-            if message.end_poll(db).await? {
-                closed += 1;
+    /// Id of a poll's "poll ended" reply: the time it closed, with the random
+    /// part of the poll's own id. The same poll always gets the same id, so
+    /// posting the reply twice stores it once.
+    pub fn poll_reply_id(poll_message: &str, ended_at: Timestamp) -> String {
+        let random = Ulid::from_string(poll_message)
+            .map(|ulid| ulid.random())
+            .unwrap_or_default();
+        let millis = ended_at
+            .duration_since(Timestamp::UNIX_EPOCH)
+            .whole_milliseconds()
+            .max(0) as u64;
+        Ulid::from_parts(millis, random).to_string()
+    }
+
+    /// For a closed poll: tell the channel the final counts, post the reply
+    /// once (a second try finds it stored) and note that it is posted
+    pub async fn finish_poll(db: &Database, id: &str) -> Result<()> {
+        let message = db.fetch_message(id).await?;
+        let Some(poll) = message.poll.as_ref() else {
+            return Ok(());
+        };
+        if !poll.ended || poll.replied {
+            return Ok(());
+        }
+        let ended_at = poll.ended_at.unwrap_or(poll.expires_at);
+        let reply_id = Message::poll_reply_id(&message.id, ended_at);
+
+        if db.fetch_message(&reply_id).await.is_err() {
+            EventV1::MessagePollEnd {
+                id: message.id.clone(),
+                channel_id: message.channel.clone(),
+                answers: poll.counts(),
+                total: poll.total(),
+                version: poll.version,
+            }
+            .p(message.channel.clone())
+            .await;
+
+            let (winners, votes, total) = poll.outcome();
+            let mut reply = SystemMessage::PollEnded {
+                id: message.id.clone(),
+                question: poll.question.clone(),
+                winners,
+                votes,
+                total,
+            }
+            .into_message(message.channel.clone());
+            reply.id = reply_id.clone();
+            reply.replies = Some(vec![message.id.clone()]);
+
+            let is_dm = matches!(
+                db.fetch_channel(&message.channel).await,
+                Ok(Channel::DirectMessage { .. })
+            );
+            if let Err(error) = reply
+                .send_without_notifications(db, None, None, is_dm, false, true)
+                .await
+            {
+                // stored by another try in the meantime: that one counts
+                if db.fetch_message(&reply_id).await.is_err() {
+                    return Err(error);
+                }
             }
         }
-        Ok(closed)
+
+        db.mark_poll_replied(&message.id).await
+    }
+
+    /// crond's pass: close every poll past its end and finish every closed
+    /// poll whose reply is missing. One message failing is logged and the
+    /// pass goes on. Returns how many were finished.
+    pub async fn close_due_polls(db: &Database, now: Timestamp, limit: i64) -> Result<usize> {
+        let mut finished = 0;
+        for message in db.fetch_polls_to_close(now, limit).await? {
+            let result = async {
+                db.end_poll(&message.id, now).await?;
+                Message::finish_poll(db, &message.id).await
+            }
+            .await;
+            match result {
+                Ok(()) => finished += 1,
+                Err(error) => {
+                    log::error!("poll {} not finished: {error:?}", message.id);
+                    revolt_config::capture_error(&error);
+                }
+            }
+        }
+        Ok(finished)
     }
 }
 
@@ -306,16 +370,17 @@ mod tests {
     }
 
     #[test]
-    fn single_choice_replaces_multiple_choice_adds() {
+    fn a_vote_that_changes_nothing_is_seen() {
         let mut single = poll(false);
         single.answers[0].voters.insert("u".to_string());
-        assert_eq!(single.choice_with("u", 2), vec![2]);
+        assert!(single.vote_changes_nothing("u", 1));
+        assert!(!single.vote_changes_nothing("u", 2));
 
         let mut multi = poll(true);
         multi.answers[0].voters.insert("u".to_string());
-        assert_eq!(multi.choice_with("u", 2), vec![1, 2]);
-        assert_eq!(multi.choice_with("u", 1), vec![1]);
-        assert_eq!(multi.choice_without("u", 1), Vec::<u32>::new());
+        multi.answers[1].voters.insert("u".to_string());
+        assert!(multi.vote_changes_nothing("u", 2));
+        assert!(!multi.vote_changes_nothing("u", 3));
     }
 
     #[test]
@@ -336,56 +401,134 @@ mod tests {
         );
     }
 
-    /// Both drivers: open polls past their end are found, and only once
-    /// closed; a choice replaces the user's earlier one
+    #[test]
+    fn the_reply_id_is_the_same_for_the_same_poll() {
+        let at = Timestamp::UNIX_EPOCH + Duration::hours(1);
+        let a = Message::poll_reply_id("01HZZZZZZZZZZZZZZZZZZZZZZZ", at);
+        assert_eq!(a, Message::poll_reply_id("01HZZZZZZZZZZZZZZZZZZZZZZZ", at));
+        assert_ne!(a, Message::poll_reply_id("01HZZZZZZZZZZZZZZZZZZZZZZY", at));
+        assert!(Ulid::from_string(&a).is_ok());
+    }
+
+    fn stored(id: &str, ends: Timestamp, multi: bool) -> Message {
+        Message {
+            id: id.to_string(),
+            channel: "C".to_string(),
+            author: "A".to_string(),
+            poll: Some(Poll {
+                expires_at: ends,
+                ..poll(multi)
+            }),
+            ..Default::default()
+        }
+    }
+
+    /// Both drivers: polls to close are found; a single-choice vote replaces
+    /// the earlier one; every change raises the version
     #[tokio::test]
     async fn stored_polls_are_found_voted_and_closed() {
         use lapin::{options::ExchangeDeclareOptions, types::FieldTable, ExchangeKind};
 
         database_test!(|db| async move {
             let now = Timestamp::now_utc();
-            let message = |id: &str, ends: Timestamp| Message {
-                id: id.to_string(),
-                channel: "C".to_string(),
-                author: "A".to_string(),
-                poll: Some(Poll {
-                    expires_at: ends,
-                    ..poll(false)
-                }),
-                ..Default::default()
-            };
-            db.insert_message(&message("01HPOLLPAST000000000000000", now - Duration::hours(1)))
+            const PAST: &str = "01HPOLLPAST000000000000000";
+            const FUTURE: &str = "01HPOLLFUTURE0000000000000";
+            db.insert_message(&stored(PAST, now - Duration::hours(1), false))
                 .await
                 .unwrap();
-            db.insert_message(&message("01HPOLLFUTURE0000000000000", now + Duration::hours(1)))
+            db.insert_message(&stored(FUTURE, now + Duration::hours(1), false))
                 .await
                 .unwrap();
 
-            let found = db.fetch_expired_open_polls(now, 10).await.unwrap();
-            assert_eq!(
-                found.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
-                ["01HPOLLPAST000000000000000"]
+            let found = db.fetch_polls_to_close(now, 10).await.unwrap();
+            assert_eq!(found.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), [PAST]);
+
+            // an expired poll takes no vote even before it is closed
+            assert!(db
+                .add_poll_vote(PAST, "u", 1, true, 3, now)
+                .await
+                .unwrap()
+                .is_none());
+
+            let first = db.add_poll_vote(FUTURE, "u", 1, true, 3, now).await.unwrap().unwrap();
+            let second = db.add_poll_vote(FUTURE, "u", 2, true, 3, now).await.unwrap().unwrap();
+            assert_eq!(second.poll.as_ref().unwrap().choices_of("u"), vec![2]);
+            assert!(second.poll.as_ref().unwrap().version > first.poll.as_ref().unwrap().version);
+
+            assert!(db.end_poll(PAST, now).await.unwrap());
+            assert!(!db.end_poll(PAST, now).await.unwrap());
+            // closed but not answered: still to finish
+            assert_eq!(db.fetch_polls_to_close(now, 10).await.unwrap().len(), 1);
+            db.mark_poll_replied(PAST).await.unwrap();
+            assert!(db.fetch_polls_to_close(now, 10).await.unwrap().is_empty());
+        });
+    }
+
+    /// Both drivers: on a multiple-choice poll two votes made from the same
+    /// (stale) copy of the message both count
+    #[tokio::test]
+    async fn multiple_choice_adds_only_the_one_answer() {
+        use lapin::{options::ExchangeDeclareOptions, types::FieldTable, ExchangeKind};
+
+        database_test!(|db| async move {
+            const ID: &str = "01HPOLLMULTI00000000000000";
+            let message = stored(ID, Timestamp::now_utc() + Duration::hours(1), true);
+            db.insert_message(&message).await.unwrap();
+
+            message.vote_poll(&db, "u", 1).await.unwrap();
+            let after = message.vote_poll(&db, "u", 3).await.unwrap();
+            assert_eq!(after.poll.as_ref().unwrap().choices_of("u"), vec![1, 3]);
+
+            let after = message.unvote_poll(&db, "u", 1).await.unwrap();
+            assert_eq!(after.poll.as_ref().unwrap().choices_of("u"), vec![3]);
+        });
+    }
+
+    /// Both drivers: a vote that loses the race with the poll closing is
+    /// refused with PollEnded and changes nothing
+    #[tokio::test]
+    async fn a_vote_after_the_close_is_refused() {
+        use lapin::{options::ExchangeDeclareOptions, types::FieldTable, ExchangeKind};
+
+        database_test!(|db| async move {
+            const ID: &str = "01HPOLLRACE000000000000000";
+            let stale = stored(ID, Timestamp::now_utc() + Duration::hours(1), false);
+            db.insert_message(&stale).await.unwrap();
+
+            assert!(db.end_poll(ID, Timestamp::now_utc()).await.unwrap());
+            let error = stale.vote_poll(&db, "u", 1).await.unwrap_err();
+            assert!(
+                matches!(error.error_type, revolt_result::ErrorType::PollEnded),
+                "{error:?}"
             );
+            let error = stale.unvote_poll(&db, "u", 1).await.unwrap_err();
+            assert!(matches!(error.error_type, revolt_result::ErrorType::PollEnded));
+            let stored = db.fetch_message(ID).await.unwrap();
+            assert!(stored.poll.unwrap().choices_of("u").is_empty());
+        });
+    }
 
-            db.set_poll_choice("01HPOLLPAST000000000000000", "u", &[1], 3)
+    /// Both drivers: the user's own votes are found for their data export
+    #[tokio::test]
+    async fn the_polls_a_user_voted_on_are_found() {
+        use lapin::{options::ExchangeDeclareOptions, types::FieldTable, ExchangeKind};
+
+        database_test!(|db| async move {
+            let later = Timestamp::now_utc() + Duration::hours(1);
+            db.insert_message(&stored("01HPOLLVOTEDA0000000000000", later, false))
                 .await
                 .unwrap();
-            db.set_poll_choice("01HPOLLPAST000000000000000", "u", &[2], 3)
+            db.insert_message(&stored("01HPOLLVOTEDB0000000000000", later, false))
                 .await
                 .unwrap();
-            let stored = db.fetch_message("01HPOLLPAST000000000000000").await.unwrap();
-            assert_eq!(stored.poll.as_ref().unwrap().choices_of("u"), vec![2]);
-
-            assert!(db.end_poll("01HPOLLPAST000000000000000").await.unwrap());
-            assert!(!db.end_poll("01HPOLLPAST000000000000000").await.unwrap());
-            assert!(db.fetch_expired_open_polls(now, 10).await.unwrap().is_empty());
-
-            // votes stop once it is closed
-            db.set_poll_choice("01HPOLLPAST000000000000000", "v", &[1], 3)
+            db.add_poll_vote("01HPOLLVOTEDA0000000000000", "u", 2, true, 3, Timestamp::now_utc())
                 .await
                 .unwrap();
-            let stored = db.fetch_message("01HPOLLPAST000000000000000").await.unwrap();
-            assert!(stored.poll.unwrap().choices_of("v").is_empty());
+            let voted = db.fetch_messages_voted_by("u", 10).await.unwrap();
+            assert_eq!(
+                voted.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+                ["01HPOLLVOTEDA0000000000000"]
+            );
         });
     }
 

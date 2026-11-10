@@ -268,63 +268,122 @@ impl AbstractMessages for ReferenceDb {
         }
     }
 
-    /// Set the user's whole choice on a poll
-    async fn set_poll_choice(
+    /// Add a vote to an open poll
+    async fn add_poll_vote(
         &self,
         id: &str,
         user: &str,
-        answers: &[u32],
+        answer: u32,
+        single: bool,
         _answer_count: usize,
-    ) -> Result<()> {
+        now: iso8601_timestamp::Timestamp,
+    ) -> Result<Option<Message>> {
         let mut messages = self.messages.lock().await;
-        let message = messages.get_mut(id).ok_or_else(|| create_error!(NotFound))?;
-        let poll = message.poll.as_mut().ok_or_else(|| create_error!(NotFound))?;
-        if poll.ended {
-            return Ok(());
+        let Some(message) = messages.get_mut(id) else {
+            return Ok(None);
+        };
+        let Some(poll) = message.poll.as_mut() else {
+            return Ok(None);
+        };
+        if poll.ended || poll.expires_at <= now {
+            return Ok(None);
         }
-        for answer in &mut poll.answers {
-            if answers.contains(&answer.id) {
-                answer.voters.insert(user.to_string());
-            } else {
-                answer.voters.shift_remove(user);
+        for item in &mut poll.answers {
+            if item.id == answer {
+                item.voters.insert(user.to_string());
+            } else if single {
+                item.voters.shift_remove(user);
             }
         }
-        Ok(())
+        poll.version += 1;
+        Ok(Some(message.clone()))
+    }
+
+    /// Take a vote off an open poll
+    async fn remove_poll_vote(
+        &self,
+        id: &str,
+        user: &str,
+        answer: u32,
+        now: iso8601_timestamp::Timestamp,
+    ) -> Result<Option<Message>> {
+        let mut messages = self.messages.lock().await;
+        let Some(message) = messages.get_mut(id) else {
+            return Ok(None);
+        };
+        let Some(poll) = message.poll.as_mut() else {
+            return Ok(None);
+        };
+        if poll.ended || poll.expires_at <= now {
+            return Ok(None);
+        }
+        if let Some(item) = poll.answers.iter_mut().find(|item| item.id == answer) {
+            item.voters.shift_remove(user);
+        }
+        poll.version += 1;
+        Ok(Some(message.clone()))
     }
 
     /// Close a poll
-    async fn end_poll(&self, id: &str) -> Result<bool> {
+    async fn end_poll(&self, id: &str, now: iso8601_timestamp::Timestamp) -> Result<bool> {
         let mut messages = self.messages.lock().await;
         let message = messages.get_mut(id).ok_or_else(|| create_error!(NotFound))?;
         match message.poll.as_mut() {
             Some(poll) if !poll.ended => {
                 poll.ended = true;
+                poll.ended_at = Some(now);
+                poll.version += 1;
                 Ok(true)
             }
             _ => Ok(false),
         }
     }
 
-    /// Open polls past their end
-    async fn fetch_expired_open_polls(
+    /// The poll's reply is posted
+    async fn mark_poll_replied(&self, id: &str) -> Result<()> {
+        let mut messages = self.messages.lock().await;
+        if let Some(poll) = messages.get_mut(id).and_then(|m| m.poll.as_mut()) {
+            poll.replied = true;
+        }
+        Ok(())
+    }
+
+    /// Polls crond still has to finish
+    async fn fetch_polls_to_close(
         &self,
         before: iso8601_timestamp::Timestamp,
         limit: i64,
     ) -> Result<Vec<Message>> {
         let messages = self.messages.lock().await;
-        let mut expired: Vec<Message> = messages
+        let mut due: Vec<Message> = messages
             .values()
             .filter(|message| {
-                message
-                    .poll
-                    .as_ref()
-                    .is_some_and(|poll| !poll.ended && poll.expires_at <= before)
+                message.poll.as_ref().is_some_and(|poll| {
+                    !poll.replied && (poll.ended || poll.expires_at <= before)
+                })
             })
             .cloned()
             .collect();
-        expired.sort_by_key(|message| message.poll.as_ref().map(|poll| poll.expires_at));
-        expired.truncate(limit.max(0) as usize);
-        Ok(expired)
+        due.sort_by_key(|message| message.poll.as_ref().map(|poll| poll.expires_at));
+        due.truncate(limit.max(0) as usize);
+        Ok(due)
+    }
+
+    /// Polls the user voted on
+    async fn fetch_messages_voted_by(&self, user: &str, limit: i64) -> Result<Vec<Message>> {
+        let messages = self.messages.lock().await;
+        let mut voted: Vec<Message> = messages
+            .values()
+            .filter(|message| {
+                message.poll.as_ref().is_some_and(|poll| {
+                    poll.answers.iter().any(|answer| answer.voters.contains(user))
+                })
+            })
+            .cloned()
+            .collect();
+        voted.sort_by(|a, b| b.id.cmp(&a.id));
+        voted.truncate(limit.max(0) as usize);
+        Ok(voted)
     }
 
     /// Delete a message from the database by its id

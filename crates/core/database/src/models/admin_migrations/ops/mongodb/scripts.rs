@@ -37,7 +37,7 @@ const PENDING_LIST_INDEXES: i32 = 76;
 const NO_OP_REVISION_77: i32 = 77;
 const PENDING_PLATFORM_WORD_SEED: i32 = 78;
 const PENDING_PLATFORM_WORD_SEED_2: i32 = 79;
-// Index of open polls, read by crond to close them after their end
+// Index of polls crond still has to close and answer
 const PENDING_POLL_INDEX: i32 = -1; // number given by the coordinator at merge
 
 /// The earliest day a session from before expiry can expire. At least 30
@@ -2719,25 +2719,26 @@ pub async fn create_staff_feature_indexes(db: &crate::mongodb::Database) {
     }
 }
 
-/// What the public lists and crond read most. Without `_id` in the popular
-/// index every page of popular designs sorts all of them in memory; without
-/// the others Discover and file deletion read the whole collection. Safe to
-/// run twice (creating an index that exists is a no-op).
-/// Open polls by the time they end, for crond to close them. Only polls not
-/// yet closed are in it. Safe to run twice (an index that exists is a no-op).
+/// Polls by the time they end, for crond to close them and post their
+/// result. Only polls whose reply is not posted yet are in it (open ones,
+/// and closed ones crond still has to finish). Safe to run twice.
 pub async fn create_poll_index(db: &crate::mongodb::Database) {
     db.run_command(doc! {
         "createIndexes": "messages",
         "indexes": [{
             "key": { "poll.expires_at": 1_i32 },
-            "name": "open_polls",
-            "partialFilterExpression": { "poll.ended": false },
+            "name": "polls_to_close",
+            "partialFilterExpression": { "poll.replied": false },
         }]
     })
     .await
     .expect("Failed to create the poll index");
 }
 
+/// What the public lists and crond read most. Without `_id` in the popular
+/// index every page of popular designs sorts all of them in memory; without
+/// the others Discover and file deletion read the whole collection. Safe to
+/// run twice (creating an index that exists is a no-op).
 pub async fn create_list_indexes(db: &crate::mongodb::Database) {
     for (collection, index) in [
         (

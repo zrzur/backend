@@ -29,6 +29,10 @@ auto_derived!(
         /// made for that user: message fetches, queries and votes)
         #[serde(skip_serializing_if = "Option::is_none", default)]
         pub me: Option<Vec<u32>>,
+        /// Goes up with every vote and with closing; poll events carry the
+        /// same number, so an event older than this can be dropped
+        #[serde(skip_serializing_if = "crate::if_zero_u64", default)]
+        pub version: u64,
     }
 
     /// One answer of a poll
@@ -286,6 +290,7 @@ mod tests {
             expires_at: Timestamp::UNIX_EPOCH,
             ended: false,
             me: None,
+            version: 0,
         };
         assert_eq!(
             p.summary(),

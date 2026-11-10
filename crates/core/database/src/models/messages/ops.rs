@@ -50,23 +50,43 @@ pub trait AbstractMessages: Sync + Send {
     /// Remove reaction from a message
     async fn clear_reaction(&self, id: &str, emoji: &str) -> Result<()>;
 
-    /// Make `answers` the user's whole choice on the poll of a message: they
-    /// are added to these answers and taken off every other one of the
-    /// `answer_count`. Does nothing to a poll that has ended.
-    async fn set_poll_choice(
+    /// Add the user to one answer of a message's poll; with `single`, also
+    /// take them off every other of the `answer_count` answers. Only while
+    /// the poll is open (not ended, `expires_at` after `now`), in one write.
+    /// Returns the message after the change, or None when nothing matched
+    /// (the poll closed meanwhile).
+    async fn add_poll_vote(
         &self,
         id: &str,
         user: &str,
-        answers: &[u32],
+        answer: u32,
+        single: bool,
         answer_count: usize,
-    ) -> Result<()>;
+        now: Timestamp,
+    ) -> Result<Option<Message>>;
 
-    /// Close the poll of a message; true only for the call that closed it
-    async fn end_poll(&self, id: &str) -> Result<bool>;
+    /// Take the user off one answer of an open poll; None when it closed
+    async fn remove_poll_vote(
+        &self,
+        id: &str,
+        user: &str,
+        answer: u32,
+        now: Timestamp,
+    ) -> Result<Option<Message>>;
 
-    /// Messages whose poll is still open although `expires_at` is at or
-    /// before `before`, oldest end first
-    async fn fetch_expired_open_polls(&self, before: Timestamp, limit: i64) -> Result<Vec<Message>>;
+    /// Close the poll of a message at `now`; true only for the call that
+    /// closed it
+    async fn end_poll(&self, id: &str, now: Timestamp) -> Result<bool>;
+
+    /// Note that the "poll ended" reply of a message's poll is posted
+    async fn mark_poll_replied(&self, id: &str) -> Result<()>;
+
+    /// Polls crond still has to finish: no reply posted yet, and either
+    /// closed or past `expires_at` at `before`; oldest end first
+    async fn fetch_polls_to_close(&self, before: Timestamp, limit: i64) -> Result<Vec<Message>>;
+
+    /// Messages with a poll the user voted on (data export), newest first
+    async fn fetch_messages_voted_by(&self, user: &str, limit: i64) -> Result<Vec<Message>>;
 
     /// Delete a message from the database by its id
     async fn delete_message(&self, id: &str) -> Result<()>;

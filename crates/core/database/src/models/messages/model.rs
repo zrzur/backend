@@ -110,6 +110,17 @@ auto_derived!(
         /// `false`).
         #[serde(default)]
         pub ended: bool,
+        /// When it was closed
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        pub ended_at: Option<Timestamp>,
+        /// Whether the "poll ended" reply is posted. Always stored (the
+        /// index of polls crond still has to finish filters on `false`).
+        #[serde(default)]
+        pub replied: bool,
+        /// Goes up by one with every change (votes, closing), so clients
+        /// can drop events older than what they have
+        #[serde(default)]
+        pub version: u64,
     }
 
     /// Stored answer of a poll

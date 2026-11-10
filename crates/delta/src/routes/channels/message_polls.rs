@@ -87,14 +87,11 @@ pub async fn vote(
     check_vote(db, &user, &channel, &permissions, &message, answer).await?;
 
     let poll = message.poll.as_ref().expect("checked above");
-    let choice = poll.choice_with(&user.id, answer);
-    if choice == poll.choices_of(&user.id) {
+    if poll.vote_changes_nothing(&user.id, answer) {
         return Ok(Json(message.poll_for(&user.id).expect("checked above")));
     }
 
-    let updated = message
-        .set_poll_choice(db, &user.id, choice, answer, true)
-        .await?;
+    let updated = message.vote_poll(db, &user.id, answer).await?;
     updated
         .poll_for(&user.id)
         .map(Json)
@@ -118,15 +115,11 @@ pub async fn unvote(
     check_vote(db, &user, &channel, &permissions, &message, answer).await?;
 
     let poll = message.poll.as_ref().expect("checked above");
-    let before = poll.choices_of(&user.id);
-    if !before.contains(&answer) {
+    if !poll.choices_of(&user.id).contains(&answer) {
         return Ok(Json(message.poll_for(&user.id).expect("checked above")));
     }
 
-    let choice = poll.choice_without(&user.id, answer);
-    let updated = message
-        .set_poll_choice(db, &user.id, choice, answer, false)
-        .await?;
+    let updated = message.unvote_poll(db, &user.id, answer).await?;
     updated
         .poll_for(&user.id)
         .map(Json)

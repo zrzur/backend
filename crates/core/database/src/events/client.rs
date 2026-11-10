@@ -160,6 +160,10 @@ pub enum EventV1 {
         channel_id: String,
         answer_id: u32,
         answers: Vec<PollAnswerCount>,
+        /// Votes of every answer together
+        total: u32,
+        /// Poll version after this change; older events can be dropped
+        version: u64,
     },
 
     /// Someone took back their choice of an answer: the counts after it
@@ -168,6 +172,10 @@ pub enum EventV1 {
         channel_id: String,
         answer_id: u32,
         answers: Vec<PollAnswerCount>,
+        /// Votes of every answer together
+        total: u32,
+        /// Poll version after this change; older events can be dropped
+        version: u64,
     },
 
     /// Your own choice on a poll changed (to your sessions only)
@@ -175,6 +183,8 @@ pub enum EventV1 {
         id: String,
         channel_id: String,
         answers: Vec<u32>,
+        /// Poll version after this change
+        version: u64,
     },
 
     /// A poll closed (ended early or after its time): final counts
@@ -182,6 +192,10 @@ pub enum EventV1 {
         id: String,
         channel_id: String,
         answers: Vec<PollAnswerCount>,
+        /// Votes of every answer together
+        total: u32,
+        /// Poll version after this change; older events can be dropped
+        version: u64,
     },
 
     /// Bulk delete messages
