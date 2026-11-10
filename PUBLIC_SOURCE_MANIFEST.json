@@ -208,8 +208,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "9cfcbc204d708023ffed12f03b65a82e11f8d10e6836455b25bb7f080eafb3b3",
-      "bytes": 75902,
+      "sha256": "78df8e64d3c7ae5e98cb6eb3f171d5cd0aba02198dd34f15bcd9c64bb8423506",
+      "bytes": 75791,
       "category": "public-documentation"
     },
     {
@@ -3316,8 +3316,8 @@
     },
     {
       "path": "crates/delta/src/main.rs",
-      "sha256": "2e58cd16592e51daa5182f6f554b5a12debc49673cce9f528a510d82ca6bb740",
-      "bytes": 4725,
+      "sha256": "1311de14a96ec1397eda1c97b38bc4bb2d248681077ec4ffd2113ba8a8ca7879",
+      "bytes": 5005,
       "category": "product-source-or-build-manifest"
     },
     {
