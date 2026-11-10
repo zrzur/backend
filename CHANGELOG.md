@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Server insights
+
+- `GET /servers/{target}/insights?days=7|30|90&time_zone=&utc_offset=` (Manage Server; own rate-limit bucket `server_insights`, 10): daily joins, leaves, members, messages, active members and voice minutes in the viewer's time zone (IANA zone with daylight saving, else the offset rounded to hours), join sources (invite, Discover, custom link, other) and up to 10 busiest channels the viewer can see; channel counts of 1 to 4 are `null`. One indexed find on `server_insights` (server, day) per view; nothing reads messages or members then.
+- Counts: joins and leaves are one `$inc` upsert as they happen (`Member::create_from` names the source; invite join passes invite, Discover or custom link), voice minutes one `$inc` when someone leaves a voice channel (voice-ingress). Messages are never counted on the send path: crond rolls each finished UTC hour up once (one aggregation over that hour's id range of `messages`, then one update per server; an hour already in a row is skipped, so a crash or a second run never counts twice). Author ids are kept in the open day's row only until crond closes the day, then only their number. Rows older than 90 days (plus one for time zones) are deleted by crond; a deleted server's rows go with it.
+- Migration `PENDING_SERVER_INSIGHTS = -1`: indexes `server_insights` (server, day) and (day). Safe to run twice.
+- `DELTA_PORT` runs delta on another port (test stacks); `CROND_ONLY=server_insights` runs only the insights roll-up beside another crond.
+
 ### Security
 
 - Sign-in: wrong passwords are counted per e-mail address (normalised, hashed in Redis), whether or not an account has it. From the tenth within fifteen minutes the address needs a captcha (`DataLogin` gains optional `captcha`; answer `CaptchaFailed`) when one is configured, else it waits one minute, doubling up to an hour (`LockedOut`), on the network the wrong passwords came from only (IPv4 /24, IPv6 /64). A password reset ends the wait. Keys are an HMAC-SHA256 of the address under `files.encryption_key`; counting is one MULTI step. Unknown and known addresses answer alike, so the lock no longer tells who has an account; the old per-account lock (three tries) is no longer used and is cleared on the next sign-in.

@@ -107,6 +107,10 @@ impl<'a> RatelimitResolver<Request<'a>> for DeltaRatelimits {
                 ("servers", Some(id), _) if extra == Some("events") => {
                     ("server_events", Some(id))
                 }
+                // insights: switching between ranges never holds up server actions
+                ("servers", Some(_), Method::Get) if extra == Some("insights") => {
+                    ("server_insights", None)
+                }
                 ("servers", Some(id), _) => ("servers", Some(id)),
                 ("auth", _, _) => {
                     if request.method() == Method::Delete {
@@ -169,6 +173,7 @@ impl<'a> RatelimitResolver<Request<'a>> for DeltaRatelimits {
             "message_search" => 5,
             "server_events_read" => 20,
             "server_events" => 10,
+            "server_insights" => 10,
             "auth" => self.auth_limit,
             "auth_delete" => 255,
             "default_avatar" => 255,

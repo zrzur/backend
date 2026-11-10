@@ -11,6 +11,7 @@ mod channel_create;
 mod discover;
 mod emoji_list;
 mod events;
+mod insights;
 mod invites_fetch;
 mod join_requests;
 mod lobby_answer;
@@ -74,6 +75,9 @@ mod message_search_tests;
 #[cfg(test)]
 mod events_tests;
 
+#[cfg(test)]
+mod insights_tests;
+
 pub fn routes() -> (Vec<Route>, OpenApi) {
     openapi_get_routes_spec![
         webhook_fetch_all::fetch_server_webhooks,
@@ -117,6 +121,7 @@ pub fn routes() -> (Vec<Route>, OpenApi) {
         events::mark_interested,
         events::unmark_interested,
         events::interested,
+        insights::fetch,
         join_requests::list,
         join_requests::approve,
         join_requests::reject,

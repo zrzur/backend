@@ -41,6 +41,13 @@ async fn main() {
     let db = DatabaseInfo::Auto.connect().await.expect("database");
     let amqp = AMQP::new_auto().await;
 
+    // a second crond beside a running one (a test stack) runs only the
+    // insights roll-up, so no other task runs twice
+    if std::env::var("CROND_ONLY").as_deref() == Ok("server_insights") {
+        cron_task_wrapper(server_insights::task, db, amqp).await;
+        return;
+    }
+
     join!(
         cron_task_wrapper(file_deletion::task, db.clone(), amqp.clone()),
         cron_task_wrapper(prune_dangling_files::task, db.clone(), amqp.clone()),
@@ -53,5 +60,6 @@ async fn main() {
         cron_task_wrapper(expire_sessions::task, db.clone(), amqp.clone()),
         cron_task_wrapper(end_polls::task, db.clone(), amqp.clone()),
         cron_task_wrapper(server_events::task, db.clone(), amqp.clone()),
+        cron_task_wrapper(server_insights::task, db.clone(), amqp.clone()),
     );
 }

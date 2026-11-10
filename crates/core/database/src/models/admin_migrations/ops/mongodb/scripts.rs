@@ -43,6 +43,8 @@ const PENDING_COMMAND_PERMISSIONS_INDEX: i32 = 80;
 const PENDING_POLL_INDEX: i32 = 81;
 // Number given by the coordinator at merge (stream events)
 const PENDING_SERVER_EVENT_INDEXES: i32 = 82;
+// Number given by the coordinator at merge (stream insights)
+const PENDING_SERVER_INSIGHTS: i32 = -1;
 
 /// The earliest day a session from before expiry can expire. At least 30
 /// days out, also with expiry switched off (0), for the day it is switched on.
@@ -2598,6 +2600,11 @@ pub async fn run_migrations(db: &MongoDb, revision: i32) -> i32 {
         create_server_event_indexes(&db.db()).await;
     }
 
+    if revision <= PENDING_SERVER_INSIGHTS {
+        info!("Running migration [revision {PENDING_SERVER_INSIGHTS} / 10-11-2026]: Indexes for server insights");
+        create_server_insight_indexes(&db.db()).await;
+    }
+
     // Reminder to update LATEST_REVISION when adding new migrations.
     LATEST_REVISION.max(revision)
 }
@@ -2754,6 +2761,20 @@ pub async fn create_server_event_indexes(db: &crate::mongodb::Database) {
         db.run_command(doc! { "createIndexes": collection, "indexes": [index] })
             .await
             .unwrap_or_else(|error| panic!("Failed to create an index on {collection}: {error}"));
+    }
+}
+
+/// Server insights: a server's days for its page, and the days crond closes
+/// and deletes. Only indexes (the collection is made by its first write);
+/// creating an index that exists does nothing, so this is safe to run twice.
+pub async fn create_server_insight_indexes(db: &crate::mongodb::Database) {
+    for index in [
+        doc! { "key": { "server": 1_i32, "day": 1_i32 }, "name": "server_day" },
+        doc! { "key": { "day": 1_i32 }, "name": "day" },
+    ] {
+        db.run_command(doc! { "createIndexes": "server_insights", "indexes": [index] })
+            .await
+            .unwrap_or_else(|error| panic!("Failed to create an index on server_insights: {error}"));
     }
 }
 
@@ -3551,6 +3572,42 @@ mod server_event_index_tests {
                     .count();
                 assert_eq!(count, 1, "{collection}.{name}");
             }
+        }
+        db.drop_database().await;
+    }
+}
+
+#[cfg(test)]
+mod server_insight_index_tests {
+    use crate::mongodb::bson::Document;
+    use crate::{Database, DatabaseInfo};
+    use futures::TryStreamExt;
+
+    #[tokio::test]
+    async fn insight_indexes_are_made_once_however_often_it_runs() {
+        let db = DatabaseInfo::Test("server_insight_indexes".to_string())
+            .connect()
+            .await
+            .expect("Database connection failed.");
+        let Database::MongoDb(mongo) = &db else { return };
+        db.drop_database().await;
+        let handle = mongo.db();
+        super::create_server_insight_indexes(&handle).await;
+        super::create_server_insight_indexes(&handle).await;
+        let indexes: Vec<_> = handle
+            .collection::<Document>("server_insights")
+            .list_indexes()
+            .await
+            .unwrap()
+            .try_collect()
+            .await
+            .unwrap();
+        for name in ["server_day", "day"] {
+            let count = indexes
+                .iter()
+                .filter(|index| index.options.as_ref().and_then(|o| o.name.as_deref()) == Some(name))
+                .count();
+            assert_eq!(count, 1, "server_insights.{name}");
         }
         db.drop_database().await;
     }

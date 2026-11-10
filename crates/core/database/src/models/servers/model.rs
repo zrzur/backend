@@ -457,6 +457,8 @@ impl Server {
         db.unplace_supercharges_from_server(&self.id).await?;
         // its paid Discover places go to whoever waits next
         db.delete_promotions_for_target(&self.id).await?;
+        // its insights go with it, not at the end of their retention
+        db.delete_server_insights_of(&self.id).await?;
         db.delete_server(&self.id).await
     }
 

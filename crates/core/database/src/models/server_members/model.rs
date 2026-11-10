@@ -115,6 +115,18 @@ impl Member {
         user: &User,
         channels: Option<Vec<Channel>>,
     ) -> Result<(Member, Vec<Channel>)> {
+        Self::create_from(db, server, user, channels, crate::InsightJoinSource::Other).await
+    }
+
+    /// Create a new member in a server, counting where they came from in
+    /// the server's insights
+    pub async fn create_from(
+        db: &Database,
+        server: &Server,
+        user: &User,
+        channels: Option<Vec<Channel>>,
+        source: crate::InsightJoinSource,
+    ) -> Result<(Member, Vec<Channel>)> {
         if db.fetch_ban(&server.id, &user.id).await.is_ok() {
             return Err(create_error!(Banned));
         }
@@ -143,6 +155,8 @@ impl Member {
         if let Some(updated) = db.insert_or_merge_member(&member).await? {
             member = updated;
         }
+
+        crate::ServerInsightDay::count(db, &server.id, crate::InsightCounter::Join(source)).await;
 
         // a failure here never stops someone joining
         let members = server.get_approximate_member_count(db).await;
@@ -319,6 +333,7 @@ impl Member {
         silent: bool,
     ) -> Result<()> {
         db.soft_delete_member(&self.id).await?;
+        crate::ServerInsightDay::count(db, &server.id, crate::InsightCounter::Leave).await;
         // their "Interested" marks go too, so counts are members only
         if let Err(error) = crate::ServerEvent::forget_member(db, &server.id, &self.id.user).await {
             log::warn!("Could not remove the event marks of a member who left: {error:?}");

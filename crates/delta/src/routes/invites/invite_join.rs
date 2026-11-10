@@ -87,7 +87,14 @@ pub async fn join(
             }
 
             take_use(db, invite.code(), stored).await?;
-            let (_, channels) = match Member::create(db, &server, &user, None).await {
+            let source = if is_discoverable_server {
+                revolt_database::InsightJoinSource::Discover
+            } else if *vanity {
+                revolt_database::InsightJoinSource::Vanity
+            } else {
+                revolt_database::InsightJoinSource::Invite
+            };
+            let (_, channels) = match Member::create_from(db, &server, &user, None, source).await {
                 Ok(created) => created,
                 Err(error) => {
                     give_back_use(db, invite.code(), stored).await;
