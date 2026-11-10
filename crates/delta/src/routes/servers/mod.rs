@@ -42,6 +42,9 @@ mod server_fetch;
 mod member_timeout_tests;
 
 #[cfg(test)]
+mod administrator_tests;
+
+#[cfg(test)]
 mod locked_discover_tests;
 
 #[cfg(test)]

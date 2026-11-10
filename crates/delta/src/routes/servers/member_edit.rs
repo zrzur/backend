@@ -108,6 +108,17 @@ pub async fn edit(
         }
 
         permissions.throw_if_lacking_channel_permission(ChannelPermission::TimeoutMembers)?;
+
+        // A timeout doesn't hold an administrator, so refuse it rather than
+        // pretend it worked
+        if data.timeout.is_some() {
+            let mut target = DatabasePermissionQuery::new(db, &target_user)
+                .server(&server)
+                .member(&member);
+            if calculate_server_permissions(&mut target).await.is_administrator() {
+                return Err(create_error!(InvalidOperation));
+            }
+        }
     }
 
     if data.can_publish.is_some() {

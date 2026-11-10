@@ -51,6 +51,11 @@ impl PermissionValue {
         (self.0 & v) == v
     }
 
+    /// Whether this is an administrator's set (Administrator, or everything)
+    pub fn is_administrator(&self) -> bool {
+        self.has(ChannelPermission::Administrator as u64)
+    }
+
     /// Check whether certain a user permission has been granted
     pub fn has_user_permission(&self, permission: UserPermission) -> bool {
         self.has(permission as u64)
