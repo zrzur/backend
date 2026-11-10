@@ -208,8 +208,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "e77a76bd7f7d28a472c2629bc120d9fbd14bb43f59ef84fb581b6390315aa68d",
-      "bytes": 83297,
+      "sha256": "3cb5b50b1066a2f6e14ca92e96aed83527fda034799012e4aceede76f5b99223",
+      "bytes": 84854,
       "category": "public-documentation"
     },
     {
@@ -609,6 +609,744 @@
       "category": "product-source-or-build-manifest"
     },
     {
+      "path": "crates/core/database/assets/sound-library/LIBRARY.md",
+      "sha256": "e926536c02b301de17c2ede676bcdd861aef8e207879af33b12c1f124d0108cd",
+      "bytes": 10558,
+      "category": "public-documentation"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/library.json",
+      "sha256": "a4e29dc740a5e2404d6a26f6461b1548b37231e57681161484d2f5a833a77b64",
+      "bytes": 67327,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/licenses/casino-audio-License.txt",
+      "sha256": "418596902a86b3bedc8b36bc7c3fd125b2b5d5f53740e0f8185d53acedaf4c1c",
+      "bytes": 467,
+      "category": "license-and-attribution"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/licenses/digital-audio-License.txt",
+      "sha256": "48ac15b3c34deb0a7cddc80a43302654dc9e4cb23dad38fc620a6f70be2d55cd",
+      "bytes": 462,
+      "category": "license-and-attribution"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/licenses/impact-sounds-License.txt",
+      "sha256": "b49aa9c56b04528b95913de13e506a0f7c5e807b9925db9bfef86af1f91120db",
+      "bytes": 608,
+      "category": "license-and-attribution"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/licenses/interface-sounds-License.txt",
+      "sha256": "f7966c773bbed0eca6a9c75081c44a178b38eae112724dbb5fdfbd4192d118a9",
+      "bytes": 574,
+      "category": "license-and-attribution"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/licenses/ui-audio-License.txt",
+      "sha256": "d3727df992b579b2330c14f8326246ab9e3524731d54739b1066ed85adda7af0",
+      "bytes": 459,
+      "category": "license-and-attribution"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/licenses/voiceover-pack-License.txt",
+      "sha256": "0bd4c397eebc8912cf5e11e0bcf7f4d932ca5e15f9389c9b510041199c74c44c",
+      "bytes": 466,
+      "category": "license-and-attribution"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/alert-bong.ogg",
+      "sha256": "0399c247060e9d145d03004eb55eb154e7188ef89b03334d6a6b917243d1eb26",
+      "bytes": 4182,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/alert-buzzer.ogg",
+      "sha256": "648bbe2b3efad8ac6da5bb6f34a105f1c388fa9bb1238b0ba26b1ebd57f8bf67",
+      "bytes": 6138,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/alert-done.ogg",
+      "sha256": "ed71b9a499164928a69f3a41679df825b29e2943dc21177eec0d70a4657aa1ab",
+      "bytes": 5615,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/alert-drop.ogg",
+      "sha256": "46e381a6ea1b1da0341a95f36a0bca50c7ab03933e8432e6e1bda02234cb4a82",
+      "bytes": 5741,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/alert-error.ogg",
+      "sha256": "c4ccb79f1136b9f0d00ca5515600f7f04ff982385e0bc57d8999f72bd0e10ab5",
+      "bytes": 6869,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/alert-hmm.ogg",
+      "sha256": "f259795246d927d9a772eb2834934eff8022ad98abca508bf8a4e2358ba28d49",
+      "bytes": 4903,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/alert-nope.ogg",
+      "sha256": "f5fb156a18a5669492b63783e84b62802e7a2da22bb4b0f1ebd9adf67719c9ec",
+      "bytes": 7470,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/alert-notify.ogg",
+      "sha256": "c7f7636d9bf24c7a1a0107241b51d5a21ad041abecde9c31cba849522b9f0eb0",
+      "bytes": 5348,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/alert-oops.ogg",
+      "sha256": "99bf4011fa1f1ff095c1bebbb614e1900ca3f193e4eb3c142c83d890c14f8d77",
+      "bytes": 5701,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/alert-ping.ogg",
+      "sha256": "ff155a4aa1b5ee4291cc99d7acad2ff00dd6ec30be7ad57cd7588ebebf0e8a6e",
+      "bytes": 7154,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/alert-pluck.ogg",
+      "sha256": "427b2b933a5b5cd292bbcd86161a8e6935f56d176f891ed3b0dc5bc37bc76175",
+      "bytes": 5873,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/alert-question.ogg",
+      "sha256": "5e6fdccdd28fb3da46bcf3a40fb3b752b9dd55992f0f3085ce0ae653d38e87da",
+      "bytes": 5585,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/alert-success-bright.ogg",
+      "sha256": "f593d934aaec625254124b882b5d266ec824f7b6125c9815be64f973603249b2",
+      "bytes": 6845,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/alert-success.ogg",
+      "sha256": "25f39448e2ff58dbc0dd026d6c9088bb31cd03bb4b05fc18df3748470c9e40c1",
+      "bytes": 4802,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/alert-win-chime.ogg",
+      "sha256": "53bb4021e620d58f7f2e7edd1255775fabbc013b6abb16740c592ead58dd733c",
+      "bytes": 5789,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/click-back.ogg",
+      "sha256": "e2002d027720e6f20a9fe4df30ace0e2b44e1e08508f479767909165e69ce40d",
+      "bytes": 4711,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/click-click.ogg",
+      "sha256": "66e179e6c3d5dfd4df712458f212b746d1b5253af1d83d9c94f219d2e23cb1e3",
+      "bytes": 4461,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/click-close.ogg",
+      "sha256": "c2cf09af745bfebfe182d77c5dc044497785abb5e33d82e0c7e0540f5c19b20b",
+      "bytes": 5472,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/click-glitch.ogg",
+      "sha256": "bafcbee2efdb0cf4c44c040fac7c94ef0a85fb65f5ddf06a5f62d5018f4b523b",
+      "bytes": 4822,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/click-mouse.ogg",
+      "sha256": "c788cc4404b279335776c3ba9026034dbc6567417d7e34533ac50352be0e9911",
+      "bytes": 5644,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/click-open.ogg",
+      "sha256": "bdb4525d2ddea65c99adb8bb2d0e8f28737c2abe60a24f78b6f63f5d5a94d9f2",
+      "bytes": 5341,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/click-pop-down.ogg",
+      "sha256": "c60ed456591b5c9bc5d986249960bef88e3397061f0e6552819576bdf3ba0d0d",
+      "bytes": 8643,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/click-pop-up.ogg",
+      "sha256": "2edf27a5ba31964b5185fc4c754b06598077ee8b5a8c799c8c223c4e96e27c1e",
+      "bytes": 8259,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/click-rollover.ogg",
+      "sha256": "8d9af801f0110da29233b9c4427f482ff42790c3586d913b1c33827922a147ff",
+      "bytes": 5392,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/click-scratch.ogg",
+      "sha256": "f45c489c376c514950558a17be91fb3f3ec98ee29426e47355ee5c46e3e42545",
+      "bytes": 5226,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/click-scroll.ogg",
+      "sha256": "cc032e4a634e2d04a9e7cdf8c8b53656c40178a8c7ff7ce0f84dd5c3221a4227",
+      "bytes": 13024,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/click-select.ogg",
+      "sha256": "eef46597010717c1be65d3f0ebc076cbfefdb9c665d88a616812a34104a7aea2",
+      "bytes": 4992,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/click-soft.ogg",
+      "sha256": "16dff08aacf8239b84f37e928cfa46be6639fbdda888fff9c85fc99473511d59",
+      "bytes": 5926,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/click-switch.ogg",
+      "sha256": "403e9792036e6733b1171db114cadc882bfb85acd6a62975dbf8429d69939fcb",
+      "bytes": 7512,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/click-tick.ogg",
+      "sha256": "0b856a86f3c06aaffe62935b32ceeef6c345747525587d9e439a7f00bdc1c804",
+      "bytes": 4172,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/click-toggle.ogg",
+      "sha256": "4d986fbad3779d555e8ad7c5f8333f820f79c67cb2bd494e69f8b7854b4cbd01",
+      "bytes": 4902,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/coins-chip-lay.ogg",
+      "sha256": "d34f5ee80b2dd7f2e6af49b1e53292b22b54be5c1c3603d798e2cf2197381967",
+      "bytes": 7136,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/coins-chip-stack-2.ogg",
+      "sha256": "fda8e5cf3c6a08818b0ab7b90e147470715661c7d205e5534e4e64fbf8c9c367",
+      "bytes": 7840,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/coins-chip-stack.ogg",
+      "sha256": "3a701dddac4660a86b4fdf62a95a284b799064b839b439f032b00a217ab8792c",
+      "bytes": 8403,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/coins-chips-collide-2.ogg",
+      "sha256": "6be1286a7423e5b4ea04a022408f3d7c8b223e61351c5e141fbf634286f62907",
+      "bytes": 8376,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/coins-chips-collide.ogg",
+      "sha256": "68552ca9494a947567a88345b9d3f220bec51c5c45e2153bc0738ce876a293c5",
+      "bytes": 8259,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/coins-chips-handle-2.ogg",
+      "sha256": "d70cc4c5b22fa3f2916ce17fff9e27f6e589f5ab186b36011254f98decdc2535",
+      "bytes": 16596,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/coins-chips-handle.ogg",
+      "sha256": "fddb8af2b9f486d6d2aba16467d3673cadc52f04d5f1636abdfe7efdbb6e9d96",
+      "bytes": 12964,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/game-big-zap.ogg",
+      "sha256": "e1a53471684ff24c33d7f4674ed580a616f4bb2bb11a2f400aa53d705518213b",
+      "bytes": 13259,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/game-blaster.ogg",
+      "sha256": "a3427e593f4ff8a2b47a5ffd99937d0f4e99eae59341a8c6fa263698fbfd0fe7",
+      "bytes": 11561,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/game-bonus.ogg",
+      "sha256": "749f33e44b15f7f01a4dab94913c1939e8e171dcca8041187b6173096c7a52f0",
+      "bytes": 9295,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/game-card-fan.ogg",
+      "sha256": "8477d6fa96ebcef5668f98ed006c2232ba059f13739ee56af80e3b89b490283a",
+      "bytes": 18138,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/game-card-pack.ogg",
+      "sha256": "ee27b6c41eca43a03218f4c3e4a2943d26721c69b5c4c07f294aee9531e5d7ff",
+      "bytes": 17188,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/game-card-place.ogg",
+      "sha256": "c6131f817555b701e6e97d1238bc6058cf2416e49302115c7a913f42900b9cc4",
+      "bytes": 12939,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/game-card-shuffle.ogg",
+      "sha256": "401ff2d2fadb9029cfd65874cda114829f02549b7e4401ef6c960169283fd277",
+      "bytes": 45841,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/game-coin-blip.ogg",
+      "sha256": "26c527cee43bfd552c5e922142bd349dccb29b6855c60b995abbb9f1cf421fdb",
+      "bytes": 7679,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/game-dice-roll.ogg",
+      "sha256": "55a7d94a30b90676e8042bde8611485f94ec64cd12ec85f3f38a0653f84f1785",
+      "bytes": 13025,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/game-dice-shake.ogg",
+      "sha256": "7aced6e8cec08d08a47ff4e893dae163f2b79f6e429ad9336f655387529a0c34",
+      "bytes": 29276,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/game-extra-life.ogg",
+      "sha256": "ceb19c57ad221c2747b2ebb790cbb30afc7af83ce108a463d36529370be18ecc",
+      "bytes": 7365,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/game-fall.ogg",
+      "sha256": "b00ac17d0b9c2da2d7f73f3e1cd5f891cd599b642f7837482d9d436b233d1e08",
+      "bytes": 13910,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/game-jump.ogg",
+      "sha256": "3601d1022458d31c67330b26093036e068d2bc47ed788d309aa2eb08f00fcb76",
+      "bytes": 9871,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/game-laser.ogg",
+      "sha256": "8ef1d44b8b7b1f4f1a87bae4a58eee517f9f73d64acd4e5452b47ba8c4f8eca0",
+      "bytes": 11505,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/game-level-up.ogg",
+      "sha256": "7651a3bc53882146cdd4a4ebeb971c8d3dd319eccb510a6689ef3b6d42de4764",
+      "bytes": 11537,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/game-miss.ogg",
+      "sha256": "1efff02f495b1585cc8371d66bfbe7b86783a047fcae28f8e2424ac599607170",
+      "bytes": 7092,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/game-pep.ogg",
+      "sha256": "51b20d64538f74a3bafd176c9dfca8a9a357945f0f712b4e7b574e55b9fe8147",
+      "bytes": 7317,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/game-phaser-down.ogg",
+      "sha256": "2e1685438284a209c9d994ab0d62632f3531684a63c25cf9e89dd4c6148f2ac9",
+      "bytes": 10560,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/game-phaser-up.ogg",
+      "sha256": "61e16a61db52e1d6e559d7757b2d1d7da674798d31a8b33d9533143a40a086f6",
+      "bytes": 10825,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/game-power-up.ogg",
+      "sha256": "5ae99d83838af722f0471fa5c539ae999c0d3961106a5be9e59b28cf5dc71b46",
+      "bytes": 11726,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/game-retro-tune.ogg",
+      "sha256": "6996bb41ea5132b11112876c0756a6a92c188bf01c872d82e844a75363990625",
+      "bytes": 8617,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/game-rise.ogg",
+      "sha256": "aca961b632e95fee3dcc4eab727f5e437cc69c8eaf4f0b6f605eb97bd0a21bfe",
+      "bytes": 12943,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/game-single-die.ogg",
+      "sha256": "c3052c1a49431282cf4d65662823a51055fbf9c411d0a31908a467f715a04923",
+      "bytes": 11923,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/game-space-junk.ogg",
+      "sha256": "1e4a24e59477445acf5a30133190310393e26b10bedcc9e39130b77471bc1dd7",
+      "bytes": 18465,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/game-three-tone.ogg",
+      "sha256": "29358b2a7f49db8fc5a6b5bc2856d6b2fa2bd2becf8cdcd705fb75aa07dddf33",
+      "bytes": 9673,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/game-two-tone.ogg",
+      "sha256": "39f8c2ba0b529b507a5eb61ddfab372ade869be7cf39510a9140f09ad420f371",
+      "bytes": 9301,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/game-zap.ogg",
+      "sha256": "bb7f30dab51ebd78fc70bbe6f3eb6ce8db74ce00a272ef48cde30da1e66a4b03",
+      "bytes": 10918,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/reaction-bell-short.ogg",
+      "sha256": "15d36260d21c22a5ef7dfaa8624aa081aa7a4cc398131f8d978ef31fda8f07a4",
+      "bytes": 8579,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/reaction-bell.ogg",
+      "sha256": "a3847b540ae7f78e186bf3e1491a46f2bc4b13321c423d88fe45d33704570dfe",
+      "bytes": 12825,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/reaction-footstep.ogg",
+      "sha256": "6e0653984b3d1d969585db2872cea0f247bff4dbdcf9541bee47bc7a801ad953",
+      "bytes": 5507,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/reaction-glass-clink.ogg",
+      "sha256": "681739b985f3bccecfd97ad266114b77022837044b7b67c79ec83516b1f09b4f",
+      "bytes": 6146,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/reaction-glass-smash.ogg",
+      "sha256": "b3ce58f0b630a5c72e7c8fbfe964857da5c629a5fe07a898157dc6c9f505a9d6",
+      "bytes": 8012,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/reaction-heavy-punch.ogg",
+      "sha256": "eb71e8007078892218874817f725fb1d5032b67ea264b977993920c67c9261db",
+      "bytes": 10335,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/reaction-knock.ogg",
+      "sha256": "58e089406653a75210eeed779afa2dcc5f29f46905ec9e9e92323e02e29721e4",
+      "bytes": 5606,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/reaction-knockout.ogg",
+      "sha256": "490811f9f847c420f96d65677962d085caf454140610bbac8554466bbc109c36",
+      "bytes": 7745,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/reaction-metal-clang.ogg",
+      "sha256": "8922cf44e877c66dbafa9abff1aca2c5f7c35d1e0c60ee2f37d0c974f28a63bf",
+      "bytes": 6540,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/reaction-pan.ogg",
+      "sha256": "e85285eff3704b97a6a838a9a01715514278e9e2f6e1821b12d32cbb6bcdd79e",
+      "bytes": 9092,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/reaction-pickaxe.ogg",
+      "sha256": "7510aaf0bd428a944888c634c790e16f9ac31ef0b26f7fd42ecb65fb853595f4",
+      "bytes": 10651,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/reaction-pillow.ogg",
+      "sha256": "ad3467d5d8bdf5f3328b87fe261dad0731eef0f10c9fa7fd844eedcbf0799513",
+      "bytes": 5062,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/reaction-plank.ogg",
+      "sha256": "2b09477132b66b5b461a05ff9f59c2546e730f579c680e17591cbbfcf606d9ba",
+      "bytes": 10940,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/reaction-punch.ogg",
+      "sha256": "8181941e0d5100e25acffcaef6eeb72934c6a6a9b0551690490f5bd7fd5337b7",
+      "bytes": 7843,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/reaction-snow-step.ogg",
+      "sha256": "cb4f9a7149e58f52c4758cefe1c76d5bfce6f490576710220e6dbcdccccbf1a9",
+      "bytes": 7372,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/reaction-thud.ogg",
+      "sha256": "de2e54685630215a8adc0a3181ca21bf8d3b12f28b84285d0d9d96a02469347b",
+      "bytes": 6000,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/reaction-tin-can.ogg",
+      "sha256": "205d563f1cd1065327e125aa50c1607596d9e73745c22aa2c16a85faeb0d42d5",
+      "bytes": 5904,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/reaction-wood-tap.ogg",
+      "sha256": "dd3b05c950337c146c7488bff00c27bc348bd6bcc10063c5638c12eb48d8746e",
+      "bytes": 6001,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/voice-backup.ogg",
+      "sha256": "bf71f59a49cefed02a87a08caf95bf725706db50ba8367f967f708381e924716",
+      "bytes": 13522,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/voice-congratulations.ogg",
+      "sha256": "3b31f3ba7503b4398e0055875de0854cae469f93652d0b192416ec54f1d385cf",
+      "bytes": 18283,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/voice-correct.ogg",
+      "sha256": "02a389438f454e21b53a1c401fa2384b7730b19cfe3d19a23b9d33d1bae680cb",
+      "bytes": 9949,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/voice-cover-me.ogg",
+      "sha256": "8e0405dd751e33753f7dd12fbe39bf8d52cec82edd0b1903927a76b2c4edb1bf",
+      "bytes": 9204,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/voice-final-round.ogg",
+      "sha256": "afc23dc6f3be3058ee1bdd0c591f5034822e19aa163aea518c439a768a428b82",
+      "bytes": 13775,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/voice-fire-in-the-hole.ogg",
+      "sha256": "39c2b23c72bb1d18605ec77a30cfd3cfe190d94a1d7bc3d93ffc17986c58d72d",
+      "bytes": 16089,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/voice-game-over.ogg",
+      "sha256": "27e706e4d09edd56a3f5378431c9eaf05d3765a116d12f2fcdfa773775c5b8e3",
+      "bytes": 16312,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/voice-go-go-go.ogg",
+      "sha256": "b3ba1f035898c20a518ce12f0bf1f46f972559ef364278d83157a44723ac021f",
+      "bytes": 13568,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/voice-go.ogg",
+      "sha256": "baf6a1671d276fe71323398df4ebe9134f3b0d93de8d4ff68949f5e8e2f149c3",
+      "bytes": 9740,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/voice-hurry-up.ogg",
+      "sha256": "b1b7b080171b257ccd73ebfa72438b5719527d99ea35d663991210cd75763cab",
+      "bytes": 10181,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/voice-its-a-tie.ogg",
+      "sha256": "5afbcff553fc336f407902bb129ea82ec1b3a09300fb0db837bddd6c527d276d",
+      "bytes": 13690,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/voice-level-up.ogg",
+      "sha256": "5c437d6f60ef7aee2fdaf231ac766ea43c451d0fc8247e34e1aa6ba170f6e0db",
+      "bytes": 11382,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/voice-look-out.ogg",
+      "sha256": "30e467b22ca32d95fce79c4389efe3da02d85094265d1bd94d19e6d61c94650f",
+      "bytes": 9587,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/voice-medic.ogg",
+      "sha256": "e0de7177955268a4b55a54ab859cb95960802bbe7db866c5bdec5033f34109e2",
+      "bytes": 9943,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/voice-mission-completed.ogg",
+      "sha256": "67fa60361b1031ab3d7767e027b7948f15f9e469b21da9cf9a12fb5d72b3402d",
+      "bytes": 16029,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/voice-mission-failed.ogg",
+      "sha256": "3de37d813ea552fdc726bc9403a053baa3524eaf8d48972fc7012d11ace31d87",
+      "bytes": 14005,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/voice-new-highscore.ogg",
+      "sha256": "0e475538ebe4da1489bfd5fe12c108e359f2db34a3b88e229634ade9d3e5d054",
+      "bytes": 14932,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/voice-objective-achieved.ogg",
+      "sha256": "ad2f600a7a26718aa2e577bde383c12ec4e7035a3aafeeb6e3728e8787ac761b",
+      "bytes": 17813,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/voice-one.ogg",
+      "sha256": "f6c27c066f7876444f2a2dc90378477b720d4dcf12013a62b122d130672a4e53",
+      "bytes": 9388,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/voice-power-up.ogg",
+      "sha256": "66df0e32951c7ba4df44b1edaf8b4e70ee7d4c3ad0e3ba233b23e7ce0ef63d60",
+      "bytes": 11106,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/voice-ready.ogg",
+      "sha256": "2029d218a4b1c95f1d75d43e5b1e2fbefd068c33d391da53e991dc6c71142399",
+      "bytes": 9867,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/voice-reloading.ogg",
+      "sha256": "93f4a07d373cbc743c884d0204f4c85584cf543ab85d4e4856c6462a43535813",
+      "bytes": 12237,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/voice-round.ogg",
+      "sha256": "6c5889c8c01d917158784cf120e174971b6ea69782f72ee8e2497bf90da4d747",
+      "bytes": 10311,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/voice-set.ogg",
+      "sha256": "cbec654f7cb1a1b2933dcfdedcea11752d8047e64ac1e92e76d6d6ca1b9a4e9c",
+      "bytes": 9060,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/voice-target-destroyed.ogg",
+      "sha256": "3c8cb5e548185305d825210f7972bb975055c9977db60062cabc379402c0e9a8",
+      "bytes": 16502,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/voice-three.ogg",
+      "sha256": "3c481773e036e4e72949e5df6893259e6f63bd7d9020d221c562f4a8f0c18986",
+      "bytes": 10931,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/voice-time-over.ogg",
+      "sha256": "04cf69f19142029119e9d9ebbb53fab2f6805878ae19860a14a04d86b2a3a8fe",
+      "bytes": 12494,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/voice-two.ogg",
+      "sha256": "7be0037bee1591146d3dbe81a1d16e4f586d7ad0afee683dbf4c2cef31f0d99e",
+      "bytes": 9442,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/voice-watch-my-back.ogg",
+      "sha256": "0cac543ad046f58beb877d74fdae28fac91ce04c9884b3df30a0a7e9e789e127",
+      "bytes": 12175,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/voice-wrong.ogg",
+      "sha256": "f49bfcf5b4e54fafb27a16e488b665c8d593b23c5a56907eb9de643a1b26ade4",
+      "bytes": 9784,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/voice-you-lose.ogg",
+      "sha256": "3717ce380e45ab2e23e41348595493883fefc0ddc628ac5addacf72690e3262e",
+      "bytes": 16356,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/assets/sound-library/sounds/voice-you-win.ogg",
+      "sha256": "886fe789c25b22cc51147f985300c3bc89be9c3136da79703ca845a6794166bd",
+      "bytes": 12974,
+      "category": "product-source-or-build-manifest"
+    },
+    {
       "path": "crates/core/database/fixtures/group_with_members.json",
       "sha256": "577ce17e573a90b5ee3c782d81de2566b66fb75e6510ec2f5ce7002ed9a41e9c",
       "bytes": 746,
@@ -676,8 +1414,8 @@
     },
     {
       "path": "crates/core/database/src/lib.rs",
-      "sha256": "9b3e17f965fe1116fee3e559f1c72f5e281eb53a637a364e8477683b4b02a3d3",
-      "bytes": 6287,
+      "sha256": "68a3824746c93b59ebfd14e3b8fac5064841c5abd24cbaf0ff0565e3acbfe22e",
+      "bytes": 6310,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -1318,20 +2056,20 @@
     },
     {
       "path": "crates/core/database/src/models/file_hashes/ops.rs",
-      "sha256": "0f9e91f99f2bea284fb57d2c189531885b1329e727426f6b4bb9473212526165",
-      "bytes": 965,
+      "sha256": "42979c448f1cea0fb8b9b10e2f658d9ed30fdec69501990236bc09fe193f9e97",
+      "bytes": 1173,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/database/src/models/file_hashes/ops/mongodb.rs",
-      "sha256": "4f3718a5c1588a6b853ef5a62d97ffb6e65f5bd57c64976753c74a238f3e8818",
-      "bytes": 2347,
+      "sha256": "408a119ea514618207c045ddc28cdb2d7e44e35c4ac66bcf71d4af7b473f8336",
+      "bytes": 3148,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/database/src/models/file_hashes/ops/reference.rs",
-      "sha256": "477aa47419b3e9064e20df807dfb4a41be2292b314c8cbd04ed371571d7e7418",
-      "bytes": 2380,
+      "sha256": "7f036b42c735f717364d99c79f693d6b17fdd778723426d96f50064d1cab605f",
+      "bytes": 2737,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -2032,8 +2770,8 @@
     },
     {
       "path": "crates/core/database/src/models/soundboard/model.rs",
-      "sha256": "fe518cd0d15350d11ecfa7083aeafa8ddbf70726c12373ca441f4d61f210d5f1",
-      "bytes": 3404,
+      "sha256": "0a7dd230413ec32379889f0e30c17d35a887a032540aaf69b7b14ab5ef35c0de",
+      "bytes": 3567,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -2193,6 +2931,18 @@
       "category": "product-source-or-build-manifest"
     },
     {
+      "path": "crates/core/database/src/sound_library/files.rs",
+      "sha256": "113676658e21ab35a13534d116b63b7ed865f91404d452f56097c6442cedb4b7",
+      "bytes": 11206,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/src/sound_library/mod.rs",
+      "sha256": "c9c7b82b0a7a9d941aae80ab3830a8ad421806ff2311eae38a5e462d3463b76a",
+      "bytes": 6905,
+      "category": "product-source-or-build-manifest"
+    },
+    {
       "path": "crates/core/database/src/tasks/ack.rs",
       "sha256": "02b560d3f7a79ada11af2a2a375fbe26c5dff0de4a435dbd4cfd48aa733cfde7",
       "bytes": 11257,
@@ -2242,8 +2992,8 @@
     },
     {
       "path": "crates/core/database/src/util/bridge/v0.rs",
-      "sha256": "1bd230f49eae9fd210d4f8416e056fc68c38c3e070f0d91903a45859608cc8b8",
-      "bytes": 84021,
+      "sha256": "d2647415f06010fe9e3cdc1c118ed58b52970fb3d6f42b95d8c63d4a43b02669",
+      "bytes": 84063,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -2878,8 +3628,8 @@
     },
     {
       "path": "crates/core/models/src/v0/soundboard.rs",
-      "sha256": "2211484637e1d5ecc262630bee7a17b99571b527b58bd1ce9791d0010e8c99ab",
-      "bytes": 2916,
+      "sha256": "17e5b9dcdc46f209385c6a6aed00fac29c6d2861e17098f22a8e03e7700bc52d",
+      "bytes": 5246,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -3052,20 +3802,20 @@
     },
     {
       "path": "crates/core/result/error-codes.txt",
-      "sha256": "777b2817ce9f68afeb4a082b4ee43a487353a69e2e1b72c61fa47622d493f8f3",
-      "bytes": 2720,
+      "sha256": "935f677b9377467ba0c3609f6b91da6de8ca1fd8b347d7982f49642db7c23175",
+      "bytes": 2762,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/result/src/axum.rs",
-      "sha256": "7211bb754afa9a69048b9471115016ffeb7b542c7a64a2f89ec1dbeae39e2fcb",
-      "bytes": 11033,
+      "sha256": "da9b1d65d98f6f7421978070cea2c301398eae3724483f0c344faa0780d484bc",
+      "bytes": 11182,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/result/src/lib.rs",
-      "sha256": "0beed5908cc7e7a71bed3c6cc4254a0dbadcd17f216ab0961e69e82fd7c9f6a2",
-      "bytes": 21558,
+      "sha256": "ae3928737b6f982d7f1cc797fc31e379dbe5530648343e08e510b3832287819f",
+      "bytes": 21756,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -3076,8 +3826,8 @@
     },
     {
       "path": "crates/core/result/src/rocket.rs",
-      "sha256": "6c46555f127539a4523ab2e345ac7ce3c3f923b7b5f060149248c9cb98192755",
-      "bytes": 11138,
+      "sha256": "7d13c65e618116565505e5493fc70011b6f40561b47c70fde88e49b3aa4bd3e7",
+      "bytes": 11278,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -3148,8 +3898,8 @@
     },
     {
       "path": "crates/daemons/crond/src/tasks/file_deletion.rs",
-      "sha256": "05b7d2cf0477709cf7471aad2404d8e9e2c2fdaf4074d4c11f729da4654e48c8",
-      "bytes": 1826,
+      "sha256": "768cbe7647239e6237f88de99e30853f616b8f1ff636a208d97f7d924ab5bc8f",
+      "bytes": 2025,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4258,8 +5008,8 @@
     },
     {
       "path": "crates/delta/src/routes/mod.rs",
-      "sha256": "ff80c24f24ea14ea37b646ddf4d719d3fcc9f8ef031595d115152f494cc4e3aa",
-      "bytes": 12853,
+      "sha256": "1aba7d3d00b2e2d1534a6dd539fd0daae1b606a29b665274e156cda6979f96f5",
+      "bytes": 12995,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4630,8 +5380,8 @@
     },
     {
       "path": "crates/delta/src/routes/servers/mod.rs",
-      "sha256": "75d0e59925ed5fa6f69f31f52d4fc87ecaef218a49e7b8c302802b70a420fdf1",
-      "bytes": 3932,
+      "sha256": "c43fc939419a4d76808dfb92ce8c13b971f42f46840786c3ac3ec264a01fd095",
+      "bytes": 4014,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4732,8 +5482,14 @@
     },
     {
       "path": "crates/delta/src/routes/servers/soundboard.rs",
-      "sha256": "09cd1fcd26b80da6daf71f4588626c09b25ba312e68e8383094a81a2769a72c6",
-      "bytes": 6325,
+      "sha256": "c8884a9570e2c46681eb8810a5547aa7c4a438536edba93fd5efafc07d43b420",
+      "bytes": 10374,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/delta/src/routes/servers/soundboard_library_tests.rs",
+      "sha256": "02dc1e69d33fce20e21485c60499b3f9d6140e8600d98cb70445e2bfc38d8b44",
+      "bytes": 10347,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4812,6 +5568,12 @@
       "path": "crates/delta/src/routes/session/revoke_all.rs",
       "sha256": "f80a37f8381e21603a214aa9e880f552cf34052b8126dbf97fbd67e8999e99f6",
       "bytes": 5792,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/delta/src/routes/soundboard_library.rs",
+      "sha256": "29c688d248da7db5a7529663b82ce68c15ee1124e0f019dec81ab4adf6278ec3",
+      "bytes": 4877,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -5553,9 +6315,15 @@
       "category": "product-source-or-build-manifest"
     },
     {
+      "path": "crates/services/autumn/src/library.rs",
+      "sha256": "4892e182f85dcc52389ec56992bdadf0acc2c7d00af320362d28d08722be2953",
+      "bytes": 6612,
+      "category": "product-source-or-build-manifest"
+    },
+    {
       "path": "crates/services/autumn/src/main.rs",
-      "sha256": "2d849e557be90062625ad792392483e179810b6960ed703e2f60723ed4b55a6d",
-      "bytes": 3740,
+      "sha256": "abb0718aba057150378582e5c1c788ba7702d24121f8f654a094e4e7f31ff967",
+      "bytes": 3937,
       "category": "product-source-or-build-manifest"
     },
     {
