@@ -1886,3 +1886,53 @@ async fn the_promise_is_kept_when_given_by_an_edit_and_dropped_with_the_file() {
     assert_eq!(edit_design(&harness, &session, &id, sent).await, Status::Ok);
     assert_eq!(act(&harness, &boss, &id, "approve", None).await, Status::Ok);
 }
+
+async fn delete(harness: &TestHarness, session: &Session, id: &str) -> Status {
+    harness
+        .client
+        .delete(format!("/community/items/{id}"))
+        .header(Header::new("x-session-token", session.token.clone()))
+        .dispatch()
+        .await
+        .status()
+}
+
+/// A creator can delete a design they withdrew, and its file goes with it
+/// (Creator Terms, CT-2). A published or taken-down design is withdrawn or
+/// decided first; nobody else can delete it.
+#[rocket::async_test]
+async fn a_creator_deletes_a_withdrawn_design() {
+    let harness = TestHarness::new().await;
+    let (session, user) = creator(&harness).await;
+    let (other_session, _) = creator(&harness).await;
+    let (_, live) = submit_design(&harness, &session, &user, "Ring").await;
+    let live = live.unwrap();
+
+    // still published: withdraw first
+    assert_eq!(delete(&harness, &session, &live.id).await, Status::BadRequest);
+    assert_eq!(act(&harness, &session, &live.id, "archive", None).await, Status::Ok);
+    // not someone else's to delete
+    assert_eq!(delete(&harness, &other_session, &live.id).await, Status::NotFound);
+
+    assert_eq!(delete(&harness, &session, &live.id).await, Status::NoContent);
+    assert!(harness.db.fetch_community_item(&live.id).await.is_err());
+    let file = harness.db.fetch_attachment("decorations", &live.file.id).await;
+    assert!(file.map_or(true, |file| file.deleted == Some(true)), "the file goes too");
+    assert_eq!(delete(&harness, &session, &live.id).await, Status::NotFound);
+
+    // a draft that was never public can go straight away
+    let (_, draft) = create_design(&harness, &session, &user, "Sketch", false).await;
+    assert_eq!(delete(&harness, &session, &draft.unwrap().id).await, Status::NoContent);
+
+    // a design a reviewer took down stays until it is decided
+    let (rs, _) = reviewer(&harness).await;
+    let (_, taken) = submit_design(&harness, &session, &user, "Taken").await;
+    let taken = taken.unwrap();
+    assert_eq!(act(&harness, &rs, &taken.id, "suspend", Some("reported")).await, Status::Ok);
+    assert_eq!(delete(&harness, &session, &taken.id).await, Status::BadRequest);
+
+    // nothing changes while the creator is suspended
+    let (_, sketch) = create_design(&harness, &session, &user, "Later", false).await;
+    change_creator(&harness, &user, "suspend", Some("stolen art")).await;
+    assert_eq!(delete(&harness, &session, &sketch.unwrap().id).await, Status::Forbidden);
+}

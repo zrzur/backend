@@ -15,7 +15,7 @@ use iso8601_timestamp::Timestamp;
 use revolt_config::config;
 use revolt_database::{
     community_tags, community_text_blocked, community_transition, creator_is_active, is_declared_adult,
-    creator_is_suspended, epoch_ms,
+    creator_is_suspended, epoch_ms, erase_community_item,
     platform_permissions, util::cdn_purge::purge_files_later, CommunityItem, CommunityItemKind,
     CommunityItemQuery, CommunityItemStatus, CommunityReview, CommunityReviewAction,
     CommunityRevision, CommunityRights, CommunitySort, CreatorStanding, Database, File,
@@ -57,6 +57,7 @@ pub fn routes() -> (Vec<Route>, OpenApi) {
         request_changes,
         suspend,
         archive,
+        delete_item,
         override_review,
         favourite,
         unfavourite,
@@ -1332,6 +1333,35 @@ pub async fn archive(db: &State<Database>, user: User, id: &str) -> Result<Json<
     }
     log(db, &after, &user.id, CommunityReviewAction::Archive, None).await?;
     Ok(Json(after.into_v0(true, false)))
+}
+
+/// # Delete
+///
+/// The creator deletes one of their designs for good, with its image. Only
+/// a design nobody can see: withdraw a published one first. A design taken
+/// down by a reviewer stays until the review is over, and so does
+/// everything while the creator is suspended.
+#[openapi(tag = "Community")]
+#[delete("/items/<id>")]
+pub async fn delete_item(db: &State<Database>, user: User, id: &str) -> Result<EmptyResponse> {
+    let item = db.fetch_community_item(id).await?;
+    // deleting is the creator's own right, with or without a creator rank
+    if item.creator_id != user.id {
+        return Err(create_error!(NotFound));
+    }
+    if creator_is_suspended(db, &user.id).await? {
+        return Err(create_error!(MissingPlatformPermission {
+            permission: PlatformPermission::CosmeticsSubmit.name().to_string()
+        }));
+    }
+    if matches!(
+        item.status,
+        CommunityItemStatus::Published | CommunityItemStatus::Suspended
+    ) {
+        return Err(create_error!(InvalidOperation));
+    }
+    erase_community_item(db, &item.id).await?;
+    Ok(EmptyResponse)
 }
 
 /// # Override review

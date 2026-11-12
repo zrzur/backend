@@ -63,6 +63,18 @@ pub async fn is_declared_adult(db: &crate::Database, user: &User) -> bool {
     owner_band(db, user).await == revolt_models::v0::AgeBand::AdultDeclared
 }
 
+/// One design goes for good, with every file it ever had. Wearers come off
+/// first, so no profile points at nothing; a file kept as Safety evidence
+/// stays until its case is over. Safe to run twice.
+pub async fn erase_community_item(db: &crate::Database, id: &str) -> revolt_result::Result<()> {
+    db.unset_community_item_from_users(id).await?;
+    let files = db.fetch_community_item_files(id).await?;
+    let ids: Vec<String> = files.iter().map(|file| file.id.clone()).collect();
+    db.mark_attachments_as_deleted(&ids).await?;
+    purge_files_later(files);
+    db.delete_community_item(id).await
+}
+
 /// An account is erased: everything its owner made on Designs goes, whatever
 /// its state (owner, 2026-11-06). Safe to run twice; a failure leaves the rest
 /// for the next try. Wearers come off first, so no profile points at nothing,
@@ -83,12 +95,7 @@ pub async fn erase_community_items_of(
             break;
         }
         for item in items {
-            db.unset_community_item_from_users(&item.id).await?;
-            let files = db.fetch_community_item_files(&item.id).await?;
-            let ids: Vec<String> = files.iter().map(|file| file.id.clone()).collect();
-            db.mark_attachments_as_deleted(&ids).await?;
-            purge_files_later(files);
-            db.delete_community_item(&item.id).await?;
+            erase_community_item(db, &item.id).await?;
         }
     }
     // no rank and no public name left behind on a deleted user
