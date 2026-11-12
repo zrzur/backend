@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use validator::Validate;
 
 /// Version of the reporting policy new reports are filed under
-pub const SAFETY_POLICY_VERSION: &str = "2026-11-07";
+pub const SAFETY_POLICY_VERSION: &str = "2026-11-12";
 
 /// `reporter_id` of reports filed without an account
 pub const PUBLIC_REPORTER_ID: &str = "public";

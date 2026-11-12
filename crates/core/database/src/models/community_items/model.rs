@@ -260,4 +260,4 @@ pub const COMMUNITY_REPORTS_TO_HIDE: usize = 5;
 
 /// Version of the Creator Terms a creator accepts with an effect. Changes
 /// when `website/src/policies/creator-terms.ts` changes in substance.
-pub const CREATOR_TERMS_VERSION: &str = "2026-11-07";
+pub const CREATOR_TERMS_VERSION: &str = "2026-11-12";

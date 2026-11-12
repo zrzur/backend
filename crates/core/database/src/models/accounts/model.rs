@@ -36,7 +36,7 @@ pub const NEW_ACCOUNT_HOURS: i64 = 24;
 /// Version of the Terms of Service a new account accepts: the `version` of
 /// the terms page on zrzur.com (`website/src/policies`, the date of the text).
 /// Change it together with the terms (T-6).
-pub const TERMS_VERSION: &str = "2026-11-04";
+pub const TERMS_VERSION: &str = "2026-11-12";
 
 auto_derived_partial!(
     /// Account model
