@@ -1288,6 +1288,52 @@ async fn simulated_payments_still_work_locally() {
     assert_eq!(deliveries(&harness, &order_id).await, 1);
 }
 
+/// Only people who declared 18 or over can buy or pay (PS-2): under 18 and
+/// no declared age are refused, and an order made before the age changed
+/// cannot be paid
+#[rocket::async_test]
+async fn only_declared_adults_can_buy() {
+    revolt_config::overwrite_config(|config| {
+        config.features.billing.enabled = true;
+        config.features.billing.test_mode = true;
+        config.features.billing.provider.name = String::new();
+    })
+    .await;
+    let harness = TestHarness::new().await;
+    let now = iso8601_timestamp::Timestamp::now_utc();
+
+    let (mut teen_account, teen_session, teen) = harness.new_user().await;
+    teen_account.age = Some(revolt_database::AccountAge::declare((
+        now.year() - 17,
+        u8::from(now.month()),
+    )));
+    teen_account.save(&harness.db).await.unwrap();
+    let (status, body) = buy(&harness, &teen_session, json!({ "type": "Plus" })).await;
+    assert_eq!(status, Status::Forbidden, "{body}");
+    assert_eq!(body["type"], "AgeRequirementNotMet");
+
+    let (_, unknown_session, _) = harness.new_user_without_age().await;
+    let (status, body) = buy(&harness, &unknown_session, json!({ "type": "Plus" })).await;
+    assert_eq!(status, Status::Forbidden, "{body}");
+    assert_eq!(body["type"], "AgeRequirementNotMet");
+
+    // an adult starts an order, then their age is corrected below 18
+    let (mut account, session, user) = harness.new_user().await;
+    let (status, checkout) = buy(&harness, &session, json!({ "type": "Plus" })).await;
+    assert_eq!(status, Status::Ok, "{checkout}");
+    let order_id = checkout["order"]["_id"].as_str().unwrap().to_string();
+    account.age = Some(revolt_database::AccountAge::declare((
+        now.year() - 16,
+        u8::from(now.month()),
+    )));
+    account.save(&harness.db).await.unwrap();
+    let (status, body) =
+        post_json(&harness, &session, &format!("/billing/orders/{order_id}/pay"), json!({})).await;
+    assert_eq!(status, Status::Forbidden, "{body}");
+    assert!(!has_plus(&harness, &user).await);
+    assert!(!has_plus(&harness, &teen).await);
+}
+
 // =====================================================================
 // PayPal, and Stripe + PayPal side by side
 // =====================================================================
