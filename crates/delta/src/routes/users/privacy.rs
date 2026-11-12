@@ -41,6 +41,11 @@ pub async fn edit_privacy(
     if let Some(group_invites) = data.group_invites {
         privacy.group_invites = group_invites;
     }
+    // under 18 the server keeps direct messages to friends, so that is what
+    // is saved and answered, whatever was asked for
+    let mut privacy_user = user.clone();
+    privacy_user.privacy = Some(privacy);
+    let privacy = privacy_user.effective_privacy(db).await;
 
     // Written directly: a user update event would go to everyone
     // subscribed to this user, and the settings are private
@@ -238,14 +243,82 @@ mod test {
             v0::DirectMessagePrivacy::Friends
         );
 
-        // an explicit choice is kept as chosen
-        let (_, privacy) = set_privacy(
-            &harness,
-            &session.token,
-            json!({ "direct_messages": "Mutual" }),
-        )
-        .await;
-        assert_eq!(privacy.unwrap().direct_messages, v0::DirectMessagePrivacy::Mutual);
+        // a wider choice is not taken: the server keeps friends only (PR-9)
+        for wider in ["Mutual", "Everyone"] {
+            let (status, privacy) = set_privacy(
+                &harness,
+                &session.token,
+                json!({ "direct_messages": wider }),
+            )
+            .await;
+            assert_eq!(status, Status::Ok);
+            assert_eq!(
+                privacy.unwrap().direct_messages,
+                v0::DirectMessagePrivacy::Friends,
+                "{wider}"
+            );
+            let (status, kind) = open_dm(&harness, &session_s.token, &teen.id).await;
+            assert_eq!(status, Status::Forbidden, "{wider}");
+            assert_eq!(kind, "DirectMessagesRestricted");
+        }
+        let stored = harness.db.fetch_user(&teen.id).await.unwrap();
+        assert_eq!(stored.privacy().direct_messages, v0::DirectMessagePrivacy::Friends);
+    }
+
+    /// A wider setting saved before (or written around the route) does not
+    /// open direct messages to someone aged 16 or 17, not even for a
+    /// stranger who shares nothing with them
+    #[rocket::async_test]
+    async fn under_18_saved_wider_setting_is_not_enforced() {
+        let harness = TestHarness::new().await;
+        let (mut account, session, teen) = harness.new_user().await;
+        let now = revolt_database::iso8601_timestamp::Timestamp::now_utc();
+        account.age = Some(revolt_database::AccountAge::declare((
+            now.year() - 17,
+            u8::from(now.month()),
+        )));
+        account.save(&harness.db).await.unwrap();
+        harness
+            .db
+            .update_user(
+                &teen.id,
+                &revolt_database::PartialUser {
+                    privacy: Some(v0::UserPrivacy {
+                        direct_messages: v0::DirectMessagePrivacy::Everyone,
+                        group_invites: v0::GroupInvitePrivacy::Everyone,
+                    }),
+                    ..Default::default()
+                },
+                vec![],
+            )
+            .await
+            .unwrap();
+
+        let response = harness
+            .client
+            .get("/users/@me/privacy")
+            .header(Header::new("x-session-token", session.token.to_string()))
+            .dispatch()
+            .await;
+        let privacy: v0::UserPrivacy = response.into_json().await.unwrap();
+        assert_eq!(privacy.direct_messages, v0::DirectMessagePrivacy::Friends);
+        // the other setting stays theirs
+        assert_eq!(privacy.group_invites, v0::GroupInvitePrivacy::Everyone);
+
+        // a stranger sharing nothing
+        let (_, session_s, mut stranger) = harness.new_user().await;
+        let (status, kind) = open_dm(&harness, &session_s.token, &teen.id).await;
+        assert_eq!(status, Status::Forbidden);
+        assert_eq!(kind, "DirectMessagesRestricted");
+
+        // a stranger sharing a group
+        share_group(&harness, &stranger, &teen).await;
+        let (status, _) = open_dm(&harness, &session_s.token, &teen.id).await;
+        assert_eq!(status, Status::Forbidden);
+
+        // a friend can
+        let mut teen = harness.db.fetch_user(&teen.id).await.unwrap();
+        befriend(&harness, &mut stranger, &mut teen).await;
         let (status, _) = open_dm(&harness, &session_s.token, &teen.id).await;
         assert_eq!(status, Status::Ok);
     }

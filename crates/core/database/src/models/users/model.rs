@@ -398,23 +398,23 @@ impl User {
         self.privacy.clone().unwrap_or_default()
     }
 
-    /// This user's privacy settings as enforced: until they choose
-    /// something themselves, people under 18 only get messages from friends
+    /// This user's privacy settings as enforced. People aged 16 or 17 (and
+    /// anyone below the minimum age) only get direct messages from friends,
+    /// whatever is saved (privacy policy, PR-9); the other settings are
+    /// theirs to choose.
     pub async fn effective_privacy(&self, db: &Database) -> v0::UserPrivacy {
-        if let Some(privacy) = &self.privacy {
-            return privacy.clone();
+        let mut privacy = self.privacy();
+        if privacy.direct_messages != v0::DirectMessagePrivacy::Friends
+            && self.bot.is_none()
+            && db.fetch_account(&self.id).await.is_ok_and(|account| {
+                matches!(
+                    account.age_band(),
+                    v0::AgeBand::Teen | v0::AgeBand::UnderMinimum
+                )
+            })
+        {
+            privacy.direct_messages = v0::DirectMessagePrivacy::Friends;
         }
-
-        let mut privacy = v0::UserPrivacy::default();
-        if let Ok(account) = db.fetch_account(&self.id).await {
-            if matches!(
-                account.age_band(),
-                v0::AgeBand::Teen | v0::AgeBand::UnderMinimum
-            ) {
-                privacy.direct_messages = v0::DirectMessagePrivacy::Friends;
-            }
-        }
-
         privacy
     }
 
