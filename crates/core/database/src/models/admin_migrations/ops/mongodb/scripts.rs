@@ -3350,7 +3350,8 @@ mod statement_migration_tests {
             id: "old".to_string(),
             user_id: "u".to_string(),
             token: "old-token".to_string(),
-            token_hash: String::new(),
+            // as every session since C3: found by the hash of its token
+            token_hash: crate::models::hash_secret("old-token"),
             name: "old".to_string(),
             last_seen: long_ago,
             idle_grace_until: None,
@@ -3366,6 +3367,7 @@ mod statement_migration_tests {
         let late_write = Session {
             id: "late".to_string(),
             token: "late-token".to_string(),
+            token_hash: crate::models::hash_secret("late-token"),
             ..old.clone()
         };
         db.save_session(&late_write).await.unwrap();

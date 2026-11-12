@@ -59,8 +59,13 @@ impl MongoDb {
 #[async_trait]
 impl AbstractServerEvents for MongoDb {
     async fn insert_server_event(&self, event: &ServerEvent) -> Result<()> {
-        self.col::<ServerEvent>(COL)
-            .insert_one(event)
+        // through `to_document`, like the status changes and the crond query:
+        // a typed insert stores the times in another BSON form, and the
+        // `starts_at <= now` query then matches none of them
+        let document =
+            to_document(event).map_err(|_| create_database_error!("to_document", COL))?;
+        self.col::<Document>(COL)
+            .insert_one(document)
             .await
             .map(|_| ())
             .map_err(|_| create_database_error!("insert_one", COL))

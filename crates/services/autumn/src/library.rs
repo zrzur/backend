@@ -101,7 +101,9 @@ mod tests {
             let mut file = tempfile::Builder::new().suffix(".ogg").tempfile().unwrap();
             file.write_all(sound.bytes).unwrap();
             let measured = probe_ms(file.path()).await.unwrap();
-            assert!(measured <= SOUND_MAX_MS && measured <= 5_000, "{}: {measured} ms", sound.id);
+            // the library keeps under five seconds, inside the upload limit
+            assert!(measured <= 5_000, "{}: {measured} ms", sound.id);
+            const { assert!(5_000 <= SOUND_MAX_MS) };
             assert!(measured.abs_diff(sound.duration_ms) <= 20, "{}: {measured} ms", sound.id);
             let name = format!("{}.ogg", sound.id);
             let mime = crate::mime_type::determine_mime_type(&mut file, sound.bytes, &name);

@@ -66,7 +66,7 @@ jobs:
             -e MINIO_ROOT_PASSWORD=minioautumn -e MINIO_REGION=minio \
             docker.io/pgsty/silo:RELEASE.2026-10-18T00-00-00Z server /data
       - name: System libraries
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libssl-dev libdav1d-dev
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libssl-dev libdav1d-dev ffmpeg
       - name: Free runner disk space
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" && df -h /
       - uses: dtolnay/rust-toolchain@1.92.0
@@ -132,7 +132,7 @@ jobs:
             sleep 2
           done
       - name: System libraries
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libssl-dev libdav1d-dev
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libssl-dev libdav1d-dev ffmpeg
       - name: Free runner disk space
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" && df -h /
       - uses: dtolnay/rust-toolchain@1.92.0

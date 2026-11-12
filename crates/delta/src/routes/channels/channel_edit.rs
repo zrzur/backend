@@ -342,10 +342,20 @@ pub async fn edit(
         _ => return Err(create_error!(InvalidOperation)),
     };
 
+    // a field this request also sets is written, not removed: the new value
+    // already replaces the old one, and MongoDB refuses to set and unset one
+    // path in a single update
     let remove = data
         .remove
         .into_iter()
         .map(|f| f.into())
+        .filter(|field: &FieldsChannel| match field {
+            FieldsChannel::Description => partial.description.is_none(),
+            FieldsChannel::Icon => partial.icon.is_none(),
+            FieldsChannel::Voice => partial.voice.is_none(),
+            FieldsChannel::Slowmode => partial.slowmode.is_none(),
+            FieldsChannel::DefaultPermissions => true,
+        })
         .collect::<Vec<FieldsChannel>>();
 
     let before = if before_channel.server().is_some() {
