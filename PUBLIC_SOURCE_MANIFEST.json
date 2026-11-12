@@ -1498,7 +1498,7 @@
     },
     {
       "path": "crates/core/database/src/models/accounts/model.rs",
-      "sha256": "1b8d64f01ed529a11df4fe2b792eb4838f80efffa09854f149e0d109756d00b6",
+      "sha256": "a4acedb77cf3e5f1d60ed66b0c228378ae11298a1c32542b701c25fb0c5e3d75",
       "bytes": 36361,
       "category": "product-source-or-build-manifest"
     },
@@ -1954,7 +1954,7 @@
     },
     {
       "path": "crates/core/database/src/models/community_items/model.rs",
-      "sha256": "4f8b9f799fefc58a3a23f5dc3dacb7ab98848413168e8cc1ed7e93a023ec3865",
+      "sha256": "99a7ddde4f0fd5420d30e19982f2e285a49d1ac476445e2232b9c890c6ca5f70",
       "bytes": 9722,
       "category": "product-source-or-build-manifest"
     },
@@ -3640,7 +3640,7 @@
     },
     {
       "path": "crates/core/models/src/v0/trust_safety.rs",
-      "sha256": "f31d2ed5eaf3dc48cb54a3e2662840974b59dd60faf92140967617950267c283",
+      "sha256": "662ee8c7addf42e1464178b51c50eb77505df80057625faeb4bf9ec4a56c6edc",
       "bytes": 38770,
       "category": "product-source-or-build-manifest"
     },
