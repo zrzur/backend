@@ -113,7 +113,7 @@ call_ring_duration = 30
 
 [api.audit_logs]
 # How long audit log entries last before being removed, in seconds
-expires_after = 2592000  # 30d
+expires_after = 7776000  # 90d, as the privacy policy says
 
 [api.livekit.nodes]
 
