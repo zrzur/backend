@@ -55,16 +55,34 @@ impl SoundboardSound {
     /// Save a new sound and tell the server. The limit is checked after the
     /// insert, so two uploads at once can't both take the last place: the
     /// one over the limit is taken back. Returns false when it was.
+    ///
+    /// Two uploads at the very same moment can each see the other and both
+    /// step back, leaving the place empty. A sound that stepped back while a
+    /// place is free again tries once more after a short wait of its own, so
+    /// one of them gets it.
     pub async fn create(&self, db: &Database, max: usize) -> Result<bool> {
-        db.insert_soundboard_sound(self).await?;
-        if db.count_soundboard_sounds(&self.server).await? > max {
+        const TRIES: u64 = 3;
+        for attempt in 1..=TRIES {
+            db.insert_soundboard_sound(self).await?;
+            if db.count_soundboard_sounds(&self.server).await? <= max {
+                EventV1::SoundboardSoundCreate(self.clone().into())
+                    .p(self.server.clone())
+                    .await;
+                return Ok(true);
+            }
             db.delete_soundboard_sound(&self.id).await?;
-            return Ok(false);
+            if attempt == TRIES || db.count_soundboard_sounds(&self.server).await? >= max {
+                return Ok(false);
+            }
+            // a wait that differs per sound, so the two do not meet again
+            let own = self
+                .id
+                .bytes()
+                .fold(0u64, |sum, byte| sum.wrapping_mul(31).wrapping_add(byte as u64))
+                % 40;
+            tokio::time::sleep(std::time::Duration::from_millis((10 + own) * attempt)).await;
         }
-        EventV1::SoundboardSoundCreate(self.clone().into())
-            .p(self.server.clone())
-            .await;
-        Ok(true)
+        Ok(false)
     }
 
     /// Change a sound and tell the server
