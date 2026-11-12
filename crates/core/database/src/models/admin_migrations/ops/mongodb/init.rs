@@ -386,10 +386,11 @@ pub async fn create_database(db: &MongoDb) {
         "createIndexes": "sessions",
         "indexes": [
             {
+                // sessions keep only a hash of their token (see scripts.rs, index_sessions_by_token_hash)
                 "key": {
-                    "token": 1
+                    "token_hash": 1
                 },
-                "name": "token",
+                "name": "token_hash",
                 "unique": true
             },
             {

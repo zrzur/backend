@@ -440,6 +440,20 @@ mod session_rule_tests {
     }
 
     #[tokio::test]
+    async fn many_people_can_be_signed_in_at_once() {
+        // regression: the old unique index on `token` refused every session
+        // after the first, once sessions kept only their hash (MONGODB only)
+        database_test!(|db| async move {
+            let first = account(&db).await;
+            let a = first.create_session(&db, "one".to_owned()).await.unwrap();
+            let b = first.create_session(&db, "two".to_owned()).await.unwrap();
+            assert_ne!(a.id, b.id);
+            assert!(db.fetch_session(&a.id).await.is_ok());
+            assert!(db.fetch_session(&b.id).await.is_ok());
+        });
+    }
+
+    #[tokio::test]
     async fn a_new_session_is_ready_to_expire_from_the_start() {
         database_test!(|db| async move {
             let account = account(&db).await;

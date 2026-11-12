@@ -26,7 +26,7 @@ struct MigrationInfo {
     revision: i32,
 }
 
-pub const LATEST_REVISION: i32 = 88; // MUST BE +1 to last migration
+pub const LATEST_REVISION: i32 = 89; // MUST BE +1 to last migration
 // Number given only in the release after the one above, once no old delta runs:
 // a session an old delta wrote during the rollout has no date and never expires.
 const PENDING_SESSION_EXPIRY_FILL: i32 = -1;
@@ -50,6 +50,9 @@ const PENDING_SERVER_INSIGHTS: i32 = 85;
 // Number given by the coordinator at merge (stream voice-extras)
 const PENDING_SOUNDBOARD: i32 = 86;
 const PENDING_SESSION_HASHES: i32 = 87;
+// Sessions are looked up by token hash; the old unique index on `token` made
+// every session after the first a duplicate (all have no `token`)
+const PENDING_SESSION_TOKEN_INDEX: i32 = 88;
 
 /// The earliest day a session from before expiry can expire. At least 30
 /// days out, also with expiry switched off (0), for the day it is switched on.
@@ -2625,6 +2628,11 @@ pub async fn run_migrations(db: &MongoDb, revision: i32) -> i32 {
         end_sessions_without_hash(&db.db()).await;
     }
 
+    if revision <= PENDING_SESSION_TOKEN_INDEX {
+        info!("Running migration [revision {PENDING_SESSION_TOKEN_INDEX} / 12-11-2026]: sessions are unique by token hash, not by the token they no longer keep");
+        index_sessions_by_token_hash(&db.db()).await;
+    }
+
     // Reminder to update LATEST_REVISION when adding new migrations.
     LATEST_REVISION.max(revision)
 }
@@ -2637,6 +2645,23 @@ pub async fn end_sessions_without_hash(db: &mongodb::Database) {
         .delete_many(doc! { "token_hash": { "$exists": false } })
         .await
         .expect("Failed to end sessions without a token hash");
+}
+
+/// Sessions keep only `token_hash`, so the unique index on `token` saw every
+/// new session as `token: null` and refused all but the first. Drops that
+/// index and makes `token_hash` unique. Safe to run twice: dropping an index
+/// that is gone is ignored, and creating one that exists is a no-op.
+pub async fn index_sessions_by_token_hash(db: &mongodb::Database) {
+    // an error here only means the old index is already gone
+    let _ = db
+        .run_command(doc! { "dropIndexes": "sessions", "index": "token" })
+        .await;
+    db.run_command(doc! {
+        "createIndexes": "sessions",
+        "indexes": [{ "key": { "token_hash": 1_i32 }, "name": "token_hash", "unique": true }]
+    })
+    .await
+    .expect("Failed to index sessions by token hash");
 }
 
 /// Indexes of "Download my data" and of the lookups it makes. Safe to run
