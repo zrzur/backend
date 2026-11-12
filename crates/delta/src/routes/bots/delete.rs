@@ -34,7 +34,10 @@ pub async fn delete_bot(
         return Err(create_error!(InvalidCredentials));
     }
 
-    bot.delete(db).await?;
+    let deleted = bot.delete(db).await;
+    // also after a partial failure: the list must not outlive the bot
+    crate::util::public_commands::forget(&bot.id);
+    deleted?;
 
     remove_user_from_voice_channels(voice_client, &bot.id).await?;
 

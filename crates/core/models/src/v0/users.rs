@@ -479,8 +479,13 @@ auto_derived!(
 
     /// Bot information for if the user is a bot
     pub struct BotInformation {
-        /// Id of the owner of this bot
-        #[cfg_attr(feature = "serde", serde(rename = "owner"))]
+        /// Id of the owner of this bot. Sent only to the owner, the bot
+        /// itself and platform staff; missing for everyone else (who made a
+        /// bot is the owner's choice: `PublicBot.creator`)
+        #[cfg_attr(
+            feature = "serde",
+            serde(rename = "owner", skip_serializing_if = "String::is_empty", default)
+        )]
         pub owner_id: String,
         /// Verified by Trust & Safety
         #[cfg_attr(

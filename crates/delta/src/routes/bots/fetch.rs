@@ -32,7 +32,7 @@ pub async fn fetch_bot(
     }
 
     Ok(Json(FetchBotResponse {
-        user: db.fetch_user(&bot.id).await?.into(db, None).await,
+        user: db.fetch_user(&bot.id).await?.into(db, &user).await,
         bot: bot.into(),
     }))
 }

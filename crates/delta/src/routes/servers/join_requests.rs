@@ -44,7 +44,7 @@ pub async fn list(
         db.fetch_users(&ids)
             .await?
             .into_iter()
-            .map(|u| u.into_self(false)),
+            .map(|u| u.into_listed()),
     )
     .await;
 

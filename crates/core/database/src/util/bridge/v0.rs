@@ -1232,6 +1232,25 @@ impl From<FieldsRole> for crate::FieldsRole {
     }
 }
 
+/// A bot's information as one reader may see it: the owner's account id only
+/// for the owner, the bot itself and platform staff (who made a bot is
+/// otherwise the owner's choice, `show_creator`, by name on its public page)
+fn bot_for_reader(
+    bot: Option<crate::BotInformation>,
+    user_id: &str,
+    reader: Option<&crate::User>,
+) -> Option<BotInformation> {
+    bot.map(|bot| {
+        let shown = reader.is_some_and(|reader| {
+            reader.id == bot.owner || reader.id == user_id || reader.privileged
+        });
+        BotInformation {
+            owner_id: if shown { bot.owner } else { String::new() },
+            verified: bot.verified,
+        }
+    })
+}
+
 impl crate::User {
     pub async fn into<'a, P>(self, db: &Database, perspective: P) -> User
     where
@@ -1268,6 +1287,7 @@ impl crate::User {
         let badges = self.get_badges().await;
         let viewer = perspective.map(|perspective| perspective.id.clone());
 
+        let shown_bot = bot_for_reader(self.bot.clone(), &self.id, perspective);
         let mut user = User {
             username: self.username,
             discriminator: self.discriminator,
@@ -1307,7 +1327,7 @@ impl crate::User {
             official: self.official,
             official_bot: self.official_bot,
             official_names: self.official_names,
-            bot: self.bot.map(|bot| bot.into()),
+            bot: shown_bot,
             style: self.style,
             relationship,
             id: self.id,
@@ -1368,6 +1388,7 @@ impl crate::User {
 
         let badges = self.get_badges().await;
 
+        let shown_bot = bot_for_reader(self.bot.clone(), &self.id, perspective);
         User {
             username: self.username,
             discriminator: self.discriminator,
@@ -1395,7 +1416,7 @@ impl crate::User {
             official: self.official,
             official_bot: self.official_bot,
             official_names: self.official_names,
-            bot: self.bot.map(|bot| bot.into()),
+            bot: shown_bot,
             style: self.style,
             relationship,
             id: self.id,
@@ -1406,6 +1427,7 @@ impl crate::User {
     pub async fn into_known_static(self, is_online: bool) -> User {
         let badges = self.get_badges().await;
 
+        let shown_bot = bot_for_reader(self.bot.clone(), &self.id, None);
         User {
             username: self.username,
             discriminator: self.discriminator,
@@ -1434,11 +1456,21 @@ impl crate::User {
             official: self.official,
             official_bot: self.official_bot,
             official_names: self.official_names,
-            bot: self.bot.map(|bot| bot.into()),
+            bot: shown_bot,
             style: self.style,
             relationship: RelationshipStatus::None, // events client will populate this from cache
             id: self.id,
         }
+    }
+
+    /// Another person in a list (bans, join requests) with the fields of
+    /// `into_self`, but a bot's owner id is left out
+    pub async fn into_listed(self) -> User {
+        let mut user = self.into_self(false).await;
+        if let Some(bot) = user.bot.as_mut() {
+            bot.owner_id.clear();
+        }
+        user
     }
 
     pub async fn into_self(self, force_online: bool) -> User {
@@ -1539,7 +1571,11 @@ impl From<crate::PartialUser> for PartialUser {
             official: value.official,
             official_bot: value.official_bot,
             official_names: value.official_names,
-            bot: value.bot.map(|bot| bot.into()),
+            // events reach everyone: never the owner id
+            bot: value.bot.map(|bot| BotInformation {
+                owner_id: String::new(),
+                verified: bot.verified,
+            }),
             style: value.style,
             relationship: None,
             online: None,

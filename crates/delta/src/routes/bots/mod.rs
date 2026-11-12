@@ -41,3 +41,5 @@ pub fn routes() -> (Vec<Route>, OpenApi) {
 mod verification_tests;
 #[cfg(test)]
 mod group_tests;
+#[cfg(test)]
+mod owner_privacy_tests;
