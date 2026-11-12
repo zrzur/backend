@@ -1558,14 +1558,14 @@
     },
     {
       "path": "crates/core/database/src/models/admin_migrations/ops/mongodb/init.rs",
-      "sha256": "1d140630f31a02b1733824367d4a02f39f24a5587a1687f315a066b5fd6ab9c8",
-      "bytes": 13226,
+      "sha256": "e99d22c81395525d5b3af358c30ed99600becf5b94fac5de9f80ac001b9cb06d",
+      "bytes": 13343,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/database/src/models/admin_migrations/ops/mongodb/scripts.rs",
-      "sha256": "05e8cf5879873ab4af3965a78398bbdd27e7a03040887297c77e92d952bd7455",
-      "bytes": 145067,
+      "sha256": "59dcc5b365404dc3d4c75e2e928537faa9ec43fabd46b056adb4ba6b765c04bf",
+      "bytes": 146300,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -2728,8 +2728,8 @@
     },
     {
       "path": "crates/core/database/src/models/sessions/model.rs",
-      "sha256": "a4b55baf4688ce512ed5d2cd1fa15f67df2b7f0e5f3b38e51846711c0a1eeb1e",
-      "bytes": 34462,
+      "sha256": "89721b75b86f8dde519b6baf471daf50d802af115c3158a9a555ccff7eeb32f6",
+      "bytes": 35110,
       "category": "product-source-or-build-manifest"
     },
     {
