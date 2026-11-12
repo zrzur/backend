@@ -60,6 +60,17 @@ async fn checkout_allowed(billing: &FeaturesBilling, user: &User) -> Result<()> 
     Ok(())
 }
 
+/// Purchases are open only to people who declared an age of 18 or over
+/// (owner decision Q4, paid services terms, PS-2). No declared age counts
+/// as under 18.
+async fn adult_buyer(db: &Database, user: &User) -> Result<()> {
+    if revolt_database::is_declared_adult(db, user).await {
+        Ok(())
+    } else {
+        Err(create_error!(AgeRequirementNotMet))
+    }
+}
+
 /// The server, if the user may manage it
 pub async fn managed_server(db: &Database, user: &User, id: &str) -> Result<Server> {
     let server = db.fetch_server(id).await?;
@@ -186,6 +197,7 @@ pub async fn create_order(
         return Err(create_error!(IsBot));
     }
     checkout_allowed(&billing, &user).await?;
+    adult_buyer(db, &user).await?;
     let data = data.into_inner();
     data.validate().map_err(|error| revolt_database::util::validation::validation_failed(&error))?;
     if !data
@@ -307,6 +319,7 @@ pub async fn pay_order(db: &State<Database>, user: User, id: &str) -> Result<Jso
     if order.user_id != user.id || order.provider != "test" {
         return Err(create_error!(NotFound));
     }
+    adult_buyer(db, &user).await?;
     match order.status {
         OrderStatus::Pending => {
             if db

@@ -1,6 +1,6 @@
 use revolt_result::Result;
 
-use crate::{ReferenceDb, SupportTicket};
+use crate::{ReferenceDb, SupportTicket, SupportTicketStatus};
 
 use super::{AbstractSupportTicket, SupportTicketQuery};
 
@@ -32,6 +32,15 @@ impl AbstractSupportTicket for ReferenceDb {
             }
             _ => Ok(false),
         }
+    }
+
+    async fn delete_support_tickets_closed_before(&self, before: i64) -> Result<u64> {
+        let mut store = self.support_tickets.lock().await;
+        let count = store.len();
+        store.retain(|_, t| {
+            !(t.status == SupportTicketStatus::Closed && t.closed_at.is_some_and(|c| c < before))
+        });
+        Ok((count - store.len()) as u64)
     }
 
     async fn fetch_support_tickets(&self, query: SupportTicketQuery<'_>) -> Result<Vec<SupportTicket>> {

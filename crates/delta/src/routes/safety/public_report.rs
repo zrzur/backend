@@ -1,6 +1,6 @@
 //! `POST /safety/public-reports`: report illegal content without an
 //! account (DSA Art. 16(1)-(2)). No session is needed, so it is guarded by a
-//! per-IP limit, a total cap, size limits and, when sign-up uses it, hCaptcha.
+//! per-IP limit, a total cap, size limits and, when sign-up uses it, Cloudflare Turnstile.
 //! The report goes into the same case queue as in-app reports, marked as
 //! public (`reporter_id == "public"`).
 //!
@@ -103,7 +103,7 @@ impl PublicReportGuard {
     }
 
     /// May this address try now? Asked before the captcha, which costs a call
-    /// to hCaptcha: an address over its limit is stopped here, and failed tries
+    /// to Cloudflare Turnstile: an address over its limit is stopped here, and failed tries
     /// count too, so wrong tokens cannot keep us calling out.
     pub(crate) fn may_try(&self, ip: &str, now: i64) -> bool {
         let key = if ip.is_empty() { "unknown" } else { ip };
@@ -297,7 +297,7 @@ pub(crate) async fn resolve_owner(
     }
 }
 
-/// What the captcha settings ask of a report, before hCaptcha is called. With
+/// What the captcha settings ask of a report, before Turnstile is called. With
 /// a site key the form shows the check, so a token is needed; a site key without
 /// a secret cannot verify one, so no token is good enough.
 pub(crate) fn captcha_settings_allow(site_key: &str, secret: &str, token: Option<&str>) -> bool {

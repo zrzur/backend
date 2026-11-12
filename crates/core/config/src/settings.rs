@@ -2007,6 +2007,13 @@ mod release_integrity_tests {
             .unwrap()
     }
 
+    /// The privacy policy keeps server audit log entries for 90 days (PR-15)
+    #[test]
+    fn shipped_audit_log_lasts_ninety_days() {
+        let s = shipped();
+        assert_eq!(s.api.audit_logs.expires_after, 90 * 24 * 60 * 60);
+    }
+
     #[test]
     fn shipped_defaults_limit_sessions() {
         let s = shipped();

@@ -120,8 +120,12 @@ impl PermissionQuery for DatabasePermissionQuery<'_> {
         let shares_nothing = !self.have_mutual_connection().await;
         if let Some(user) = &self.user {
             if shares_nothing {
+                // a saved "Everyone" still gives way to the under-18 rule
                 return matches!(
                     user.privacy().direct_messages,
+                    revolt_models::v0::DirectMessagePrivacy::Everyone
+                ) && matches!(
+                    user.effective_privacy(self.database).await.direct_messages,
                     revolt_models::v0::DirectMessagePrivacy::Everyone
                 );
             }
