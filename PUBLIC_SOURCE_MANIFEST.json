@@ -46,8 +46,8 @@
     },
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "ff83f3d1cc11d2c1dcf4cfa32560183ebf8845645e1ef05ddee6db9af2e352d0",
-      "bytes": 5695,
+      "sha256": "27197c25a70d196020c409dd26f0ff08de7189e1cd1908ba285a6e8e7b83cf8c",
+      "bytes": 5709,
       "category": "reviewed-build-and-ci"
     },
     {
@@ -1564,8 +1564,8 @@
     },
     {
       "path": "crates/core/database/src/models/admin_migrations/ops/mongodb/scripts.rs",
-      "sha256": "59dcc5b365404dc3d4c75e2e928537faa9ec43fabd46b056adb4ba6b765c04bf",
-      "bytes": 146300,
+      "sha256": "d9934c030ec70f747ce4912628b5daa78ed095767f05b61912e476ab08458eff",
+      "bytes": 146465,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -2584,8 +2584,8 @@
     },
     {
       "path": "crates/core/database/src/models/server_events/ops/mongodb.rs",
-      "sha256": "37163dcf5db92ca399581bc64dc2b531ea8eadd807d59a366c39db5718e0a5c4",
-      "bytes": 10854,
+      "sha256": "07df96d534f6301b50a639c9a321885f6a39fbbba9350d05e7dc1848a2479a71",
+      "bytes": 11180,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -2770,8 +2770,8 @@
     },
     {
       "path": "crates/core/database/src/models/soundboard/model.rs",
-      "sha256": "0a7dd230413ec32379889f0e30c17d35a887a032540aaf69b7b14ab5ef35c0de",
-      "bytes": 3567,
+      "sha256": "2fec77fcffeeacfcc39da5bf6e1e3c18b480e81890d21f8f40ec464b68713cf6",
+      "bytes": 4443,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4522,8 +4522,8 @@
     },
     {
       "path": "crates/delta/src/routes/channels/channel_edit.rs",
-      "sha256": "7bc5bafb21c3d5c490998b27a17d5d16bfb3b58245043a48a404089a047ab988",
-      "bytes": 17521,
+      "sha256": "6b272ba7ba52e9b75cd0050388800a7daa9fc5c6c3528aa8112a87898e437ed2",
+      "bytes": 18087,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6340,8 +6340,8 @@
     },
     {
       "path": "crates/services/autumn/src/library.rs",
-      "sha256": "4892e182f85dcc52389ec56992bdadf0acc2c7d00af320362d28d08722be2953",
-      "bytes": 6612,
+      "sha256": "64a011796c4b1c5c2b76a42a4afa59d9b437ebe47c7d3e5dbd0b3572423c0c89",
+      "bytes": 6715,
       "category": "product-source-or-build-manifest"
     },
     {
