@@ -12,7 +12,7 @@ use revolt_database::{
         password::assert_safe,
         shield::{validate_shield, ShieldValidationInput},
     },
-    Account, AccountAge, Database,
+    Account, AccountAge, Database, TermsAcceptance,
 };
 use revolt_models::v0::{self, AgeBand};
 use revolt_result::{create_error, Result};
@@ -86,13 +86,15 @@ pub async fn create_account(
         None
     };
 
-    // Create account
-    let account = match Account::new_with_age(
+    // Create account. Signing up accepts the Terms of Service the sign-up
+    // page links to; which version and when is kept on the account (T-6).
+    let account = match Account::new_with_age_and_terms(
         db,
         data.email,
         data.password,
         true,
         birth.map(AccountAge::declare),
+        Some(TermsAcceptance::current()),
     )
     .await
     {
@@ -153,6 +155,51 @@ mod tests {
                 EventV1::CreateAccount { account } => account.email == "success@validemail.com",
                 _ => false,
             }).await;
+    }
+
+    /// Sign-up records the terms version and the time (T-6); a second
+    /// sign-up with the same address changes nothing on the account
+    #[rocket::async_test]
+    async fn sign_up_records_the_accepted_terms() {
+        let harness = TestHarness::new().await;
+        let email = format!("{}@validemail.com", TestHarness::rand_string().to_lowercase());
+        let before = revolt_database::iso8601_timestamp::Timestamp::now_utc();
+        let sign_up = || {
+            harness
+                .client
+                .post("/auth/account/create")
+                .header(ContentType::JSON)
+                .body(
+                    json!({
+                        "email": email,
+                        "password": "valid password",
+                        "birth_month": "1990-01"
+                    })
+                    .to_string(),
+                )
+                .dispatch()
+        };
+        assert_eq!(sign_up().await.status(), Status::NoContent);
+
+        let normalised = revolt_database::util::email::normalise_email(email.clone());
+        let account = harness
+            .db
+            .fetch_account_by_normalised_email(&normalised)
+            .await
+            .unwrap()
+            .expect("account");
+        let terms = account.terms.clone().expect("terms accepted at sign-up");
+        assert_eq!(terms.version, revolt_database::TERMS_VERSION);
+        assert!(terms.accepted_at >= before);
+
+        assert_eq!(sign_up().await.status(), Status::NoContent);
+        let again = harness
+            .db
+            .fetch_account_by_normalised_email(&normalised)
+            .await
+            .unwrap()
+            .expect("account");
+        assert_eq!(again.terms, Some(terms));
     }
 
     #[rocket::async_test]

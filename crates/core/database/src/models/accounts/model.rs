@@ -33,6 +33,11 @@ pub const ACCOUNT_CONTACT_EMAIL: &str = "privacy@zrzur.com";
 /// when its first age statement is under the minimum
 pub const NEW_ACCOUNT_HOURS: i64 = 24;
 
+/// Version of the Terms of Service a new account accepts: the `version` of
+/// the terms page on zrzur.com (`website/src/policies`, the date of the text).
+/// Change it together with the terms (T-6).
+pub const TERMS_VERSION: &str = "2026-11-04";
+
 auto_derived_partial!(
     /// Account model
     pub struct Account {
@@ -73,9 +78,34 @@ auto_derived_partial!(
         /// Declared age (year and month of birth only)
         #[serde(skip_serializing_if = "Option::is_none", default)]
         pub age: Option<AccountAge>,
+
+        /// Which Terms of Service the person accepted, and when (T-6).
+        /// Accounts from before this was recorded have none.
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        pub terms: Option<TermsAcceptance>,
     },
     "PartialAccount"
 );
+
+auto_derived!(
+    /// The Terms of Service version a person accepted
+    pub struct TermsAcceptance {
+        /// Version of the terms ([TERMS_VERSION] at the time)
+        pub version: String,
+        /// When they accepted it
+        pub accepted_at: Timestamp,
+    }
+);
+
+impl TermsAcceptance {
+    /// The current terms, accepted now
+    pub fn current() -> TermsAcceptance {
+        TermsAcceptance {
+            version: TERMS_VERSION.to_string(),
+            accepted_at: Timestamp::now_utc(),
+        }
+    }
+}
 
 auto_derived!(
     /// Declared age
@@ -421,6 +451,22 @@ impl Account {
         verify_email: bool,
         age: Option<AccountAge>,
     ) -> Result<Account> {
+        Account::new_with_age_and_terms(db, email, plaintext_password, verify_email, age, None).await
+    }
+
+    /// Create a new account with a declared age and the terms its owner
+    /// accepted at sign-up
+    ///
+    /// Like the age, the terms are only stored on a newly created account,
+    /// never on an existing account that shares the email address.
+    pub async fn new_with_age_and_terms(
+        db: &Database,
+        email: String,
+        plaintext_password: String,
+        verify_email: bool,
+        age: Option<AccountAge>,
+        terms: Option<TermsAcceptance>,
+    ) -> Result<Account> {
         // Get a normalised representation of the user's email
         let email_normalised = normalise_email(email.clone());
 
@@ -457,6 +503,7 @@ impl Account {
 
                 mfa: Default::default(),
                 age,
+                terms,
             };
 
             // Send email verification

@@ -120,6 +120,7 @@ impl TestHarness {
                 iso8601_timestamp::Timestamp::now_utc().year() - 30,
                 1,
             ))),
+            terms: Some(revolt_database::TermsAcceptance::current()),
         };
 
         self.db.save_account(&account).await.expect("`Account`");

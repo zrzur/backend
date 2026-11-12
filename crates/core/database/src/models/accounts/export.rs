@@ -196,6 +196,8 @@ pub async fn build_export_zip(db: &Database, account: &Account, user: &User) -> 
         "birth_month": account.age.as_ref().map(|a| a.birth_month.clone()),
         "age_declared_at": account.age.as_ref().map(|a| a.declared_at),
         "age_group_changes": account.age.as_ref().map(|a| a.changes.clone()),
+        "terms_version_accepted": account.terms.as_ref().map(|t| t.version.clone()),
+        "terms_accepted_at": account.terms.as_ref().map(|t| t.accepted_at),
         "created_at": ulid::Ulid::from_string(&account.id).ok().map(|u| u.timestamp_ms()),
     });
 
