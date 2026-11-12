@@ -1312,10 +1312,11 @@ async fn only_declared_adults_can_buy() {
     assert_eq!(status, Status::Forbidden, "{body}");
     assert_eq!(body["type"], "AgeRequirementNotMet");
 
+    // no declared age: the age gate in front of every route refuses first
     let (_, unknown_session, _) = harness.new_user_without_age().await;
     let (status, body) = buy(&harness, &unknown_session, json!({ "type": "Plus" })).await;
     assert_eq!(status, Status::Forbidden, "{body}");
-    assert_eq!(body["type"], "AgeRequirementNotMet");
+    assert_eq!(body["type"], "AgeNotDeclared");
 
     // an adult starts an order, then their age is corrected below 18
     let (mut account, session, user) = harness.new_user().await;
