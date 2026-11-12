@@ -1262,6 +1262,7 @@ mod session_check_tests {
             id: id.to_owned(),
             user_id: "user".to_owned(),
             token: format!("token-{id}"),
+            token_hash: revolt_database::hash_secret(&format!("token-{id}")),
             name: id.to_owned(),
             last_seen,
             idle_grace_until: Some(Timestamp::UNIX_EPOCH),

@@ -92,9 +92,12 @@ staff_origins = ["http://localhost:31030", "http://127.0.0.1:31030"]
 auth = 15
 
 [api.security.captcha]
-# hCaptcha configuration
-hcaptcha_key = ""
-hcaptcha_sitekey = ""
+# Cloudflare Turnstile. Empty = off (development only). A release start
+# refuses to run without both values: set them in Revolt.overrides.toml.
+turnstile_secret = ""
+turnstile_sitekey = ""
+# New accounts one source address may make a day (on top of the captcha)
+signups_per_source_per_day = 3
 
 [api.security.shield]
 host = ""
@@ -194,6 +197,9 @@ team_id = ""
 blocked_domains = []
 # When set, /embed answers only the API workers, which send this key.
 # Generate your own with `openssl rand -base64 32`; empty keeps it open.
+# Required in a release run (the start refuses without it): the link preview
+# service only answers requests that send this key. Generate with
+# `openssl rand -hex 32`. Empty is for development only.
 embed_key = ""
 # Signs media proxy tickets, on both the API and January.
 # Generate your own with `openssl rand -base64 32`.

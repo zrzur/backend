@@ -29,6 +29,7 @@ pub async fn create_account(
     db: &State<Database>,
     data: Json<v0::DataCreateAccount>,
     mut shield: ShieldValidationInput,
+    client: crate::routes::safety::public_report::ClientAddress,
 ) -> Result<EmptyResponse> {
     let data = data.into_inner();
 
@@ -37,6 +38,16 @@ pub async fn create_account(
 
     // Check Captcha token
     check_captcha(data.captcha.as_deref()).await?;
+
+    // Even with a solved captcha, a few new accounts a day per source address
+    let per_day = config().await.api.security.captcha.signups_per_source_per_day;
+    if !revolt_database::util::signup_limit::allow_signup(&client.0, per_day).await {
+        // retry_after is in milliseconds: the window resets within a day
+        return Err(create_error!(RateLimited {
+            retry_after: 60 * 60 * 1000,
+            global: false
+        }));
+    }
 
     // Check the minimum age; nothing is stored for a refused sign-up.
     // With `require_birth_month` off, an age is still checked when given.
@@ -313,8 +324,8 @@ mod tests {
     #[rocket::async_test]
     async fn fail_missing_captcha() {
         overwrite_config(|config| {
-            config.api.security.captcha.hcaptcha_key =
-                "0x0000000000000000000000000000000000000000".to_string()
+            config.api.security.captcha.turnstile_secret =
+                "1x0000000000000000000000000000000AA".to_string()
         })
         .await;
 
@@ -344,9 +355,10 @@ mod tests {
 
     #[rocket::async_test]
     async fn fail_captcha_invalid() {
+        // Cloudflare's published test secret that rejects every token
         overwrite_config(|config| {
-            config.api.security.captcha.hcaptcha_key =
-                "0x0000000000000000000000000000000000000000".to_string()
+            config.api.security.captcha.turnstile_secret =
+                "2x0000000000000000000000000000000AA".to_string()
         })
         .await;
 
@@ -378,8 +390,8 @@ mod tests {
     #[rocket::async_test]
     async fn success_captcha_valid() {
         overwrite_config(|config| {
-            config.api.security.captcha.hcaptcha_key =
-                "0x0000000000000000000000000000000000000000".to_string()
+            config.api.security.captcha.turnstile_secret =
+                "1x0000000000000000000000000000000AA".to_string()
         })
         .await;
 
@@ -394,7 +406,7 @@ mod tests {
                     "email": "success_captcha_valid@validemail.com",
                     "password": "valid password",
                     "birth_month": "1990-01",
-                    "captcha": "20000000-aaaa-bbbb-cccc-000000000002"
+                    "captcha": "XXXX.DUMMY.TOKEN.XXXX"
                 })
                 .to_string(),
             )

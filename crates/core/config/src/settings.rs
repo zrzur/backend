@@ -171,8 +171,17 @@ pub struct PushApn {
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct ApiSecurityCaptcha {
-    pub hcaptcha_key: String,
-    pub hcaptcha_sitekey: String,
+    /// Cloudflare Turnstile secret key (server side; never sent to clients)
+    pub turnstile_secret: String,
+    /// Cloudflare Turnstile site key (public; the web app renders the widget with it)
+    pub turnstile_sitekey: String,
+    /// New accounts one source address may make a day, on top of the captcha
+    #[serde(default = "default_signups_per_source_per_day")]
+    pub signups_per_source_per_day: i64,
+}
+
+fn default_signups_per_source_per_day() -> i64 {
+    3
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -1357,10 +1366,43 @@ impl Settings {
     }
 
     /// Stop the process when an example secret reaches a release run
+    /// Settings a release run must set to a value of its own (not empty):
+    /// the captcha that protects sign-up, and the key that keeps the link
+    /// preview service (January) from serving the whole internet.
+    pub fn missing_for_release(&self, release_build: bool, allowed_locally: bool) -> Vec<&'static str> {
+        if !self.refuses_examples(release_build, allowed_locally) {
+            return Vec::new();
+        }
+        let mut missing = Vec::new();
+        if self.api.security.captcha.turnstile_secret.is_empty() {
+            missing.push("api.security.captcha.turnstile_secret");
+        }
+        if self.api.security.captcha.turnstile_sitekey.is_empty() {
+            missing.push("api.security.captcha.turnstile_sitekey");
+        }
+        if self.january.embed_key.is_empty() {
+            missing.push("january.embed_key");
+        }
+        missing
+    }
+
     pub fn refuse_default_secrets(&self) {
         let bad = self.default_secrets_in_use();
         if !bad.is_empty() {
             panic!("{}", Self::default_secrets_message(&bad));
+        }
+
+        let allowed = std::env::var(ALLOW_EXAMPLE_SECRETS).is_ok_and(|value| value == "local");
+        let missing = self.missing_for_release(!cfg!(debug_assertions), allowed);
+        if !missing.is_empty() {
+            panic!(
+                "refusing to start: {} must be set to your own value. \
+                 Captcha: create a Cloudflare Turnstile widget and set its secret and site key \
+                 (api.security.captcha.turnstile_secret and turnstile_sitekey). \
+                 Embed key: `openssl rand -hex 32` for january.embed_key. \
+                 Set them in Revolt.overrides.toml or as environment variables.",
+                missing.join(" and ")
+            );
         }
     }
 
@@ -1369,10 +1411,6 @@ impl Settings {
 
         if self.api.smtp.host.is_empty() {
             log::warn!("No SMTP settings specified! Remember to configure email.");
-        }
-
-        if self.api.security.captcha.hcaptcha_key.is_empty() {
-            log::warn!("No Captcha key specified! Remember to add hCaptcha key.");
         }
     }
 }
@@ -2089,6 +2127,9 @@ mod release_integrity_tests {
         s.rabbit.password = "own-rabbit".into();
         s.database.mongodb = "mongodb://zrzur:own@database:27017/".into();
         s.database.redis = "redis://:own@redis:6379/".into();
+        s.api.security.captcha.turnstile_secret = "own-turnstile".into();
+        s.api.security.captcha.turnstile_sitekey = "own-turnstile-site".into();
+        s.january.embed_key = "own-embed".into();
         s
     }
 

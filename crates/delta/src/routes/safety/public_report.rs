@@ -358,7 +358,7 @@ pub async fn create_public(
         return Err(create_error!(TooManyReports { max: guard.per_ip() }));
     }
     let captcha = config().await.api.security.captcha;
-    if !captcha_settings_allow(&captcha.hcaptcha_sitekey, &captcha.hcaptcha_key, data.captcha.as_deref()) {
+    if !captcha_settings_allow(&captcha.turnstile_sitekey, &captcha.turnstile_secret, data.captcha.as_deref()) {
         return Err(create_error!(CaptchaFailed));
     }
     check_captcha(data.captcha.as_deref()).await?;

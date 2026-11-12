@@ -78,7 +78,8 @@ impl AbstractSessions for MongoDb {
             find_one,
             COL,
             doc! {
-                "token": token
+                // only the hash of a token is stored (see Session::token_hash)
+                "token_hash": crate::models::hash_secret(token)
             }
         )?
         .ok_or_else(|| create_error!(InvalidSession))

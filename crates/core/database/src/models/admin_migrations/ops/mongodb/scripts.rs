@@ -26,7 +26,7 @@ struct MigrationInfo {
     revision: i32,
 }
 
-pub const LATEST_REVISION: i32 = 87; // MUST BE +1 to last migration
+pub const LATEST_REVISION: i32 = 88; // MUST BE +1 to last migration
 // Number given only in the release after the one above, once no old delta runs:
 // a session an old delta wrote during the rollout has no date and never expires.
 const PENDING_SESSION_EXPIRY_FILL: i32 = -1;
@@ -49,6 +49,7 @@ const PENDING_STATUS_MUTUAL_INDEXES: i32 = 83;
 const PENDING_SERVER_INSIGHTS: i32 = 85;
 // Number given by the coordinator at merge (stream voice-extras)
 const PENDING_SOUNDBOARD: i32 = 86;
+const PENDING_SESSION_HASHES: i32 = 87;
 
 /// The earliest day a session from before expiry can expire. At least 30
 /// days out, also with expiry switched off (0), for the day it is switched on.
@@ -2619,8 +2620,23 @@ pub async fn run_migrations(db: &MongoDb, revision: i32) -> i32 {
         create_soundboard(&db.db()).await;
     }
 
+    if revision <= PENDING_SESSION_HASHES {
+        info!("Running migration [revision {PENDING_SESSION_HASHES} / 11-11-2026]: sessions keep only a hash of their token; the old sessions end");
+        end_sessions_without_hash(&db.db()).await;
+    }
+
     // Reminder to update LATEST_REVISION when adding new migrations.
     LATEST_REVISION.max(revision)
+}
+
+/// Sessions keep only a hash of the token (`Session::token_hash`). The old
+/// sessions hold the token itself, so they are removed and their owners sign
+/// in again. Safe to run twice: nothing is left to remove the second time.
+pub async fn end_sessions_without_hash(db: &mongodb::Database) {
+    db.collection::<Document>("sessions")
+        .delete_many(doc! { "token_hash": { "$exists": false } })
+        .await
+        .expect("Failed to end sessions without a token hash");
 }
 
 /// Indexes of "Download my data" and of the lookups it makes. Safe to run
@@ -3309,6 +3325,7 @@ mod statement_migration_tests {
             id: "old".to_string(),
             user_id: "u".to_string(),
             token: "old-token".to_string(),
+            token_hash: String::new(),
             name: "old".to_string(),
             last_seen: long_ago,
             idle_grace_until: None,

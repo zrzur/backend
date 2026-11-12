@@ -10,6 +10,7 @@ pub mod email;
 mod funcs;
 pub mod idempotency;
 pub mod mail_limit;
+pub mod signup_limit;
 pub mod mfa_limit;
 pub mod ip;
 pub mod login_limit;

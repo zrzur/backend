@@ -14,8 +14,16 @@ auto_derived_partial!(
         /// User Id
         pub user_id: String,
 
-        /// Session token
+        /// Session token, in memory only: the client gets it once, at sign-in,
+        /// and it is never stored or sent back in an API response
+        #[serde(skip)]
         pub token: String,
+
+        /// SHA-256 of the token: the only form kept in the database. A session
+        /// stored before this field existed has none, so it no longer works
+        /// and its owner signs in again (migration 87 removes those rows).
+        #[serde(rename = "token_hash", default)]
+        pub token_hash: String,
 
         /// Display name
         pub name: String,
@@ -330,6 +338,7 @@ mod session_rule_tests {
             id: id.to_owned(),
             user_id: "user".to_owned(),
             token: format!("token-{id}"),
+            token_hash: crate::models::hash_secret(&format!("token-{id}")),
             name: id.to_owned(),
             last_seen,
             idle_grace_until: Some(Timestamp::UNIX_EPOCH),

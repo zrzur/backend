@@ -6,7 +6,7 @@ use rocket::serde::json::{Json, Value};
 use serde::Serialize;
 use std::collections::HashMap;
 
-/// # hCaptcha Configuration
+/// # Captcha Configuration (Cloudflare Turnstile)
 #[derive(Serialize, JsonSchema, Debug)]
 pub struct CaptchaFeature {
     /// Whether captcha is enabled
@@ -45,7 +45,7 @@ pub struct VoiceFeature {
 /// # Feature Configuration
 #[derive(Serialize, JsonSchema, Debug)]
 pub struct RevoltFeatures {
-    /// hCaptcha configuration
+    /// Captcha configuration (Turnstile)
     pub captcha: CaptchaFeature,
     /// Whether email verification is enabled
     pub email: bool,
@@ -214,8 +214,8 @@ pub async fn root() -> Result<Json<RevoltConfig>> {
         commit: Some(env!("ZRZUR_GIT_COMMIT").to_string()).filter(|c| !c.is_empty()),
         features: RevoltFeatures {
             captcha: CaptchaFeature {
-                enabled: !config.api.security.captcha.hcaptcha_key.is_empty(),
-                key: config.api.security.captcha.hcaptcha_sitekey.clone(),
+                enabled: !config.api.security.captcha.turnstile_secret.is_empty(),
+                key: config.api.security.captcha.turnstile_sitekey.clone(),
             },
             email: !config.api.smtp.host.is_empty(),
             invite_only: config.api.registration.invite_only,

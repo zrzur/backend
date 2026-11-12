@@ -430,6 +430,9 @@ async fn production_starts_on_own_values() {
         for node in config.api.livekit.nodes.values_mut() {
             node.secret = "not-an-example".into();
         }
+        config.api.security.captcha.turnstile_secret = "not-an-example".into();
+        config.api.security.captcha.turnstile_sitekey = "not-an-example".into();
+        config.january.embed_key = "not-an-example".into();
     })
     .await;
     let harness = TestHarness::new().await;

@@ -58,7 +58,7 @@ impl AbstractSessions for ReferenceDb {
         let sessions = self.sessions.lock().await;
         sessions
             .values()
-            .find(|session| session.token == token)
+            .find(|session| session.token_hash == crate::models::hash_secret(token))
             .cloned()
             .ok_or_else(|| create_error!(InvalidSession))
     }
@@ -68,7 +68,7 @@ impl AbstractSessions for ReferenceDb {
         let mut sessions = self.sessions.lock().await;
         if sessions
             .values()
-            .any(|other| other.id == session.id || other.token == session.token)
+            .any(|other| other.id == session.id || other.token_hash == session.token_hash)
         {
             return Err(create_database_error!("insert_one", "sessions"));
         }

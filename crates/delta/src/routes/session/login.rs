@@ -50,7 +50,7 @@ pub async fn login(
             // server has one), or else a wait for the network they came
             // from. Counted per address whether or not an account has it, so
             // the answer tells nothing about accounts.
-            let captcha_enabled = !config().await.api.security.captcha.hcaptcha_key.is_empty();
+            let captcha_enabled = !config().await.api.security.captcha.turnstile_secret.is_empty();
             match login_gate(&email_normalised, &client.0, captcha_enabled).await {
                 LoginGate::Open => {}
                 LoginGate::Captcha => check_captcha(captcha.as_deref()).await?,
@@ -643,8 +643,8 @@ mod tests {
     #[rocket::async_test]
     async fn with_a_captcha_many_wrong_passwords_ask_for_one() {
         overwrite_config(|config| {
-            config.api.security.captcha.hcaptcha_key =
-                "0x0000000000000000000000000000000000000000".to_string()
+            config.api.security.captcha.turnstile_secret =
+                "1x0000000000000000000000000000000AA".to_string()
         })
         .await;
         let harness = TestHarness::new().await;

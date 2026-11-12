@@ -55,3 +55,8 @@ endpoint = "http://127.0.0.1:14009"
 # Tests exercise the adult path; the shipped default is "blocked"
 [features.age_safety]
 mature_content = "self_declared_adults"
+
+[api.security.captcha]
+# the sign-up tests all come from one test address: lift the per-address daily limit
+signups_per_source_per_day = 1000000
+

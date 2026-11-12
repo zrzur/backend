@@ -482,9 +482,11 @@ impl Account {
         let config = config().await;
 
         let now = Timestamp::now_utc();
+        let token = nanoid!(64);
         let session = Session {
             id: ulid::Ulid::new().to_string(),
-            token: nanoid!(64),
+            token_hash: crate::models::hash_secret(&token),
+            token,
 
             user_id: self.id.clone(),
             name,
