@@ -30,6 +30,10 @@ pub trait AbstractSupportTicket: Sync + Send {
     /// otherwise
     async fn update_support_ticket(&self, ticket: &SupportTicket, updated_at: i64) -> Result<bool>;
 
+    /// Delete closed tickets closed before `before` (milliseconds since the
+    /// epoch); returns how many went
+    async fn delete_support_tickets_closed_before(&self, before: i64) -> Result<u64>;
+
     /// Most recently updated first
     async fn fetch_support_tickets(&self, query: SupportTicketQuery<'_>) -> Result<Vec<SupportTicket>>;
 }

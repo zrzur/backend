@@ -34,6 +34,17 @@ impl AbstractSupportTicket for MongoDb {
             .map_err(|_| create_database_error!("replace_one", COL))
     }
 
+    async fn delete_support_tickets_closed_before(&self, before: i64) -> Result<u64> {
+        self.col::<SupportTicket>(COL)
+            .delete_many(doc! {
+                "status": status_name(SupportTicketStatus::Closed),
+                "closed_at": { "$lt": before },
+            })
+            .await
+            .map(|r| r.deleted_count)
+            .map_err(|_| create_database_error!("delete_many", COL))
+    }
+
     async fn fetch_support_tickets(&self, query: SupportTicketQuery<'_>) -> Result<Vec<SupportTicket>> {
         let mut filter = doc! {};
         if let Some(status) = query.status {
