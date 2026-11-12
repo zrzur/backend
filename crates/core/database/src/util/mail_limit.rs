@@ -4,8 +4,9 @@
 //! silently by the caller, so the answer never reveals whether an account
 //! exists.
 
-use std::collections::hash_map::DefaultHasher;
-use std::hash::Hasher;
+use hmac::{Hmac, Mac};
+use revolt_config::config;
+use sha2::Sha256;
 
 use redis_kiss::{
     get_connection,
@@ -20,10 +21,20 @@ pub const MAIL_PER_ADDRESS_PER_DAY: i64 = 5;
 /// Mails an hour that one source address may ask for
 pub const MAIL_PER_SOURCE_PER_HOUR: i64 = 20;
 
-fn digest(value: &str) -> u64 {
-    let mut hash = DefaultHasher::new();
-    hash.write(value.as_bytes());
-    hash.finish()
+const TAG: &[u8] = b"zrzur-mail-limit\0";
+
+/// HMAC-SHA256 under the server's `files.encryption_key`, hex, 32 characters:
+/// without the key a stored value cannot be turned back into an address
+/// by trying every IPv4 address
+async fn digest(value: &str) -> String {
+    keyed_digest(&config().await.files.encryption_key, value)
+}
+
+fn keyed_digest(key: &str, value: &str) -> String {
+    let mut mac = Hmac::<Sha256>::new_from_slice(key.as_bytes()).expect("any key length");
+    mac.update(TAG);
+    mac.update(value.as_bytes());
+    hex::encode(&mac.finalize().into_bytes()[..16])
 }
 
 /// Count one request against `counter`; true while it is within `limit`.
@@ -58,13 +69,13 @@ async fn start_cooldown(key: &str) -> Option<bool> {
 /// mail is allowed: a broken cache must not lock people out of recovery.
 pub async fn allow_mail(kind: &str, email: &str, source: Option<&str>) -> bool {
     if let Some(source) = source.filter(|source| !source.is_empty()) {
-        let key = format!("mail:src:{}", digest(source));
+        let key = format!("mail:src:{}", digest(source).await);
         if within(&key, MAIL_PER_SOURCE_PER_HOUR, 3600).await == Some(false) {
             return false;
         }
     }
 
-    let email = digest(email);
+    let email = digest(email).await;
     if start_cooldown(&format!("mail:cd:{kind}:{email}")).await == Some(false) {
         return false;
     }
