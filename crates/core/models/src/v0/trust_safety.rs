@@ -477,7 +477,7 @@ auto_derived!(
         /// Page language (en, ar, de), used for the receipt e-mail
         #[cfg_attr(feature = "validator", validate(length(max = 8)))]
         pub language: Option<String>,
-        /// hCaptcha token, when it is switched on
+        /// Cloudflare Turnstile token, when the check is switched on
         #[cfg_attr(feature = "validator", validate(length(max = 4000)))]
         pub captcha: Option<String>,
     }
