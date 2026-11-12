@@ -3052,8 +3052,8 @@
     },
     {
       "path": "crates/core/database/src/util/mail_limit.rs",
-      "sha256": "0a509ecbdddeb6444c65d91d209f375445fc2571f6291e3161ed9b2a992be512",
-      "bytes": 3694,
+      "sha256": "d8d59c2df213db8964baf1474ace155e52b73feb5c7fa88bbfe7b91c442c3a80",
+      "bytes": 4163,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -3118,8 +3118,8 @@
     },
     {
       "path": "crates/core/database/src/util/signup_limit.rs",
-      "sha256": "6b5f80e9b1ba2bdb681e562479372786f3828545925bdd64ca6e0deb18d375bb",
-      "bytes": 1439,
+      "sha256": "d8cc5c4fefb18d6e395fb19ba58f6dcd0cc663843d795f684e63409ea63f5918",
+      "bytes": 2247,
       "category": "product-source-or-build-manifest"
     },
     {
