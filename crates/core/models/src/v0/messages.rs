@@ -547,6 +547,8 @@ auto_derived!(
         /// Message will mention all users who are online and can see the channel.
         /// This cannot be true if MentionsEveryone is true
         MentionsOnline = 3,
+        /// Link previews were removed and are not added again
+        SuppressEmbeds = 4,
     }
 
     /// Optional fields on message

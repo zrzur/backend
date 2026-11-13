@@ -16,6 +16,7 @@ mod message_delete;
 mod message_edit;
 mod message_fetch;
 mod message_forward;
+mod message_embeds_remove;
 mod message_pin;
 mod message_polls;
 mod message_query;
@@ -73,6 +74,7 @@ pub fn routes() -> (Vec<Route>, OpenApi) {
         message_query::query,
         message_search::search,
         typing::start_typing,
+        message_embeds_remove::message_embeds_remove,
         message_pin::message_pin,
         message_fetch::fetch,
         message_edit::edit,

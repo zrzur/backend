@@ -122,7 +122,10 @@ pub async fn edit(
     message.update(db, partial, vec![]).await?;
 
     // Queue up a task for processing embeds if the we have sufficient permissions
-    if permissions.has_channel_permission(ChannelPermission::SendEmbeds) {
+    // (not when the previews of this message were removed)
+    if permissions.has_channel_permission(ChannelPermission::SendEmbeds)
+        && !message.has_suppressed_embeds()
+    {
         if let Some(content) = edit.content {
             tasks::process_embeds::queue(
                 message.channel.to_string(),

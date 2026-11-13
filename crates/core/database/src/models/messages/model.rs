@@ -1127,6 +1127,12 @@ impl Message {
         }
     }
 
+    /// Whether the author or a moderator removed this message's link previews
+    pub fn has_suppressed_embeds(&self) -> bool {
+        self.flags
+            .is_some_and(|flags| MessageFlagsValue(flags).has(MessageFlags::SuppressEmbeds))
+    }
+
     pub fn contains_mass_push_mention(&self) -> bool {
         let ping = if let Some(flags) = self.flags {
             MessageFlagsValue(flags).has(MessageFlags::MentionsEveryone)
@@ -1271,6 +1277,11 @@ impl Message {
         channel: String,
         append: AppendMessage,
     ) -> Result<()> {
+        // previews removed while the links were still being fetched stay removed
+        if append.embeds.is_some() && db.fetch_message(&id).await?.has_suppressed_embeds() {
+            return Ok(());
+        }
+
         db.append_message(&id, &append).await?;
 
         EventV1::MessageAppend {
