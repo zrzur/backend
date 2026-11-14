@@ -1,12 +1,13 @@
 /// The Zrzur sites and app. Never `*`: a browser on any other site gets no
 /// answer it may read from the API, the file server or the GIF service.
-const ZRZUR_ORIGINS: [&str; 8] = [
+const ZRZUR_ORIGINS: [&str; 9] = [
     "https://zrzur.com",
     "https://www.zrzur.com",
     "https://app.zrzur.com",
     "https://beta.zrzur.com",
     "https://discover.zrzur.com",
     "https://designs.zrzur.com",
+    "https://developers.zrzur.com",
     "https://discover-beta.zrzur.com",
     "https://designs-beta.zrzur.com",
 ];
@@ -83,6 +84,7 @@ mod tests {
     fn production_lists_the_zrzur_sites_and_nothing_else() {
         let origins = CorsOrigins::new("https://app.zrzur.com/", &[], None);
         assert!(origins.allows("https://discover.zrzur.com"));
+        assert!(origins.allows("https://developers.zrzur.com"));
         assert!(origins.allows("https://app.zrzur.com"));
         assert!(!origins.allows("https://evil.example"));
         assert!(!origins.allows("https://zrzur.com.evil.example"));
