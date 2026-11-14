@@ -11,7 +11,7 @@ use reqwest::{
 use revolt_config::{config, report_internal_error};
 use revolt_files::{create_thumbnail, decode_image, image_size_vec, is_valid_image, video_size};
 use revolt_models::v0::{Embed, Image, ImageSize, Video};
-use revolt_result::{Error, Result, ToRevoltError, create_error};
+use revolt_result::{Error, Result, create_error};
 use std::net::{IpAddr, SocketAddr};
 use std::{
     io::{Cursor, Write},
@@ -349,15 +349,19 @@ impl Request {
                         .and_then(|value| value.to_str().ok())
                         .and_then(|value| value.parse::<Mime>().ok());
 
-                    let encoding_name = content_type
+                    let header_charset = content_type
                         .as_ref()
-                        .and_then(|mime| mime.get_param("charset").map(|charset| charset.as_str()))
-                        .unwrap_or("utf-8");
+                        .and_then(|mime| mime.get_param("charset").map(|charset| charset.as_str().to_string()));
 
+                    let bytes = request.read_body().await?;
+
+                    // the header's charset, else the page's own <meta charset>
+                    let encoding_name = header_charset
+                        .or_else(|| meta_charset(&bytes))
+                        .unwrap_or_else(|| "utf-8".to_string());
                     let encoding =
                         Encoding::for_label(encoding_name.as_bytes()).unwrap_or(&UTF_8_INIT);
 
-                    let bytes = request.read_body().await?;
                     let (text, _, _) = encoding.decode(&bytes);
 
                     crate::website_embed::create_website_embed(&url, &text)
@@ -399,7 +403,7 @@ impl Request {
 
         loop {
             let response = CLIENT
-                .get(url)
+                .get(url.clone())
                 .header(
                     "User-Agent",
                     if RE_USER_AGENT_SPOOFING_AS_DISCORD.is_match(&url_host_str) {
@@ -421,7 +425,7 @@ impl Request {
                 }
                 if let Some(location) = response.headers().get("location") {
                     let location = location.to_str().map_err(|_| create_error!(ProxyError))?;
-                    url = Url::from_str(location).to_internal_error()?;
+                    url = redirect_target(&url, location)?;
 
                     blocker = Request::url_is_blacklisted(&url).await?;
 
@@ -540,10 +544,71 @@ impl Request {
     }
 }
 
+/// Where a redirect goes: an absolute Location, or one relative to the page
+/// that sent it ("/ar/"). Only http and https; every hop is still checked
+/// against the address blocklist by the caller.
+fn redirect_target(from: &Url, location: &str) -> Result<Url> {
+    let target = from.join(location).map_err(|_| create_error!(ProxyError))?;
+    match target.scheme() {
+        "http" | "https" => Ok(target),
+        _ => Err(create_error!(InvalidOperation)),
+    }
+}
+
+/// The charset a page declares in its own head (`<meta charset="...">` or
+/// the http-equiv form), for pages whose server sends no charset
+fn meta_charset(body: &[u8]) -> Option<String> {
+    lazy_static! {
+        static ref RE_META_CHARSET: Regex =
+            Regex::new(r#"(?i)<meta[^>]+charset\s*=\s*["']?([a-z0-9_:.-]{2,40})"#)
+                .expect("valid regex");
+    }
+    let head = String::from_utf8_lossy(&body[..body.len().min(4096)]);
+    RE_META_CHARSET
+        .captures(&head)
+        .map(|captures| captures[1].to_string())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::ip_is_allowed;
+    use super::{ip_is_allowed, meta_charset, redirect_target};
     use std::net::IpAddr;
+    use url::Url;
+
+    #[test]
+    fn follows_relative_and_absolute_redirects() {
+        let from = Url::parse("https://www.dw.com/ar/").unwrap();
+        assert_eq!(
+            redirect_target(&from, "/ar/%D8%A7/s-9106").unwrap().as_str(),
+            "https://www.dw.com/ar/%D8%A7/s-9106"
+        );
+        assert_eq!(
+            redirect_target(&from, "https://example.org/x").unwrap().as_str(),
+            "https://example.org/x"
+        );
+        assert_eq!(
+            redirect_target(&from, "next").unwrap().as_str(),
+            "https://www.dw.com/ar/next"
+        );
+        assert!(redirect_target(&from, "javascript:alert(1)").is_err());
+        assert!(redirect_target(&from, "file:///etc/passwd").is_err());
+    }
+
+    #[test]
+    fn reads_the_pages_own_charset() {
+        assert_eq!(
+            meta_charset(b"<html><head><meta charset=\"windows-1256\">").as_deref(),
+            Some("windows-1256")
+        );
+        assert_eq!(
+            meta_charset(
+                b"<meta http-equiv=\"Content-Type\" content=\"text/html; charset=ISO-8859-1\">"
+            )
+            .as_deref(),
+            Some("ISO-8859-1")
+        );
+        assert_eq!(meta_charset(b"<html><head><title>x</title>"), None);
+    }
 
     fn allowed(ip: &str) -> bool {
         ip_is_allowed(&ip.parse::<IpAddr>().unwrap())
