@@ -1,10 +1,10 @@
 use axum::{
-    extract::Query, middleware::from_fn, response::IntoResponse, routing::get, Json, Router,
+    Json, Router, extract::Query, middleware::from_fn, response::IntoResponse, routing::get,
 };
 use reqwest::header;
 use revolt_config::config;
 use revolt_models::v0::Embed;
-use revolt_result::{create_error, Result};
+use revolt_result::{Result, create_error};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 

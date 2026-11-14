@@ -118,6 +118,19 @@ auto_derived!(
         },
         /// Streamable Video
         Streamable { id: String },
+        /// The own player of a site on the fixed list in January (Vimeo,
+        /// TikTok, Instagram, Deezer, Dailymotion, Apple Podcasts, Kick,
+        /// Mixcloud, Tidal). The address is built by the server from the
+        /// link; clients still load only addresses on their own list.
+        Player {
+            /// Site name, as shown to people ("Vimeo")
+            provider: String,
+            /// Address of the site's player, always https
+            embed_url: String,
+            /// Natural size of the player, in CSS pixels
+            width: u32,
+            height: u32,
+        },
     }
 
     /// Website metadata

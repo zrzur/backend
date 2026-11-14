@@ -294,7 +294,9 @@ mod tests {
         let (url, sent) = endless_server("HTTP/1.1 200 OK\r\n\r\n", 64 * 1024).await;
         let response = reqwest::get(url).await.unwrap();
 
-        let error = read_capped(response, 1024 * 1024).await.expect_err("over the cap");
+        let error = read_capped(response, 1024 * 1024)
+            .await
+            .expect_err("over the cap");
         assert!(too_large(error));
         // the read stopped: the sender is not still being drained
         assert!(sent.load(Ordering::Relaxed) < 64 * 1024 * 1024);
@@ -313,13 +315,12 @@ mod tests {
 
     #[tokio::test]
     async fn a_declared_length_over_the_cap_reads_nothing() {
-        let (url, _) = endless_server(
-            "HTTP/1.1 200 OK\r\nContent-Length: 999999999\r\n\r\n",
-            1024,
-        )
-        .await;
+        let (url, _) =
+            endless_server("HTTP/1.1 200 OK\r\nContent-Length: 999999999\r\n\r\n", 1024).await;
         let response = reqwest::get(url).await.unwrap();
-        assert!(too_large(read_capped(response, MAX_BODY_BYTES).await.unwrap_err()));
+        assert!(too_large(
+            read_capped(response, MAX_BODY_BYTES).await.unwrap_err()
+        ));
     }
 
     #[tokio::test]
@@ -334,7 +335,10 @@ mod tests {
     #[tokio::test]
     async fn an_address_is_limited_and_another_is_not() {
         let limiter = AddressLimiter::new(3, Duration::from_secs(60));
-        let (a, b): (IpAddr, IpAddr) = ("203.0.113.1".parse().unwrap(), "203.0.113.2".parse().unwrap());
+        let (a, b): (IpAddr, IpAddr) = (
+            "203.0.113.1".parse().unwrap(),
+            "203.0.113.2".parse().unwrap(),
+        );
         for _ in 0..3 {
             assert!(limiter.allow(a).await);
         }
@@ -356,7 +360,11 @@ mod tests {
     async fn rotating_inside_an_ipv6_block_does_not_help() {
         let limiter = AddressLimiter::new(1, Duration::from_secs(60));
         assert!(limiter.allow("2606:4700:1:2::1".parse().unwrap()).await);
-        assert!(!limiter.allow("2606:4700:1:2:ffff::9".parse().unwrap()).await);
+        assert!(
+            !limiter
+                .allow("2606:4700:1:2:ffff::9".parse().unwrap())
+                .await
+        );
         assert!(limiter.allow("2606:4700:1:3::1".parse().unwrap()).await);
     }
 
@@ -371,7 +379,10 @@ mod tests {
     #[test]
     fn a_stranger_cannot_choose_their_address() {
         let peer: IpAddr = "8.8.8.8".parse().unwrap();
-        let spoofed = headers(&[("x-forwarded-for", "1.2.3.4"), ("cf-connecting-ip", "1.2.3.4")]);
+        let spoofed = headers(&[
+            ("x-forwarded-for", "1.2.3.4"),
+            ("cf-connecting-ip", "1.2.3.4"),
+        ]);
         assert_eq!(client_address(peer, &spoofed, false), peer);
     }
 
@@ -380,7 +391,10 @@ mod tests {
         let proxy: IpAddr = "172.20.0.5".parse().unwrap();
         let forwarded = headers(&[("x-forwarded-for", "9.9.9.9, 1.1.1.1")]);
         // the last entry is the one our proxy wrote
-        assert_eq!(client_address(proxy, &forwarded, false), "1.1.1.1".parse::<IpAddr>().unwrap());
+        assert_eq!(
+            client_address(proxy, &forwarded, false),
+            "1.1.1.1".parse::<IpAddr>().unwrap()
+        );
         assert_eq!(client_address(proxy, &HeaderMap::new(), false), proxy);
         assert_eq!(
             client_address(proxy, &headers(&[("x-forwarded-for", "nonsense")]), false),
@@ -392,7 +406,10 @@ mod tests {
     fn cloudflare_is_believed_only_when_configured() {
         let peer: IpAddr = "8.8.8.8".parse().unwrap();
         let cf = headers(&[("cf-connecting-ip", "1.1.1.1")]);
-        assert_eq!(client_address(peer, &cf, true), "1.1.1.1".parse::<IpAddr>().unwrap());
+        assert_eq!(
+            client_address(peer, &cf, true),
+            "1.1.1.1".parse::<IpAddr>().unwrap()
+        );
         assert_eq!(client_address(peer, &cf, false), peer);
     }
 
@@ -456,8 +473,19 @@ mod tests {
         let later = TICKET.replacen("1893456000", "1893456999", 1);
         let other_user = TICKET.replacen("01ABC", "01ABD", 1);
         let cut = &TICKET[..TICKET.len() - 2];
-        for ticket in [later.as_str(), other_user.as_str(), cut, "", ".", "1.2.3", "a.b.zz"] {
-            assert!(!proxy_ticket_is_valid(KEY, Some(ticket), BEFORE), "{ticket}");
+        for ticket in [
+            later.as_str(),
+            other_user.as_str(),
+            cut,
+            "",
+            ".",
+            "1.2.3",
+            "a.b.zz",
+        ] {
+            assert!(
+                !proxy_ticket_is_valid(KEY, Some(ticket), BEFORE),
+                "{ticket}"
+            );
         }
     }
 

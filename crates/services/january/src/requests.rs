@@ -130,7 +130,8 @@ impl reqwest::dns::Resolve for CachedDnsResolver {
                 return Err(Box::new(std::io::Error::new(
                     std::io::ErrorKind::PermissionDenied,
                     "address not allowed",
-                )) as Box<dyn std::error::Error + Send + Sync>);
+                ))
+                    as Box<dyn std::error::Error + Send + Sync>);
             }
 
             {
@@ -168,7 +169,9 @@ async fn thumbnail(bytes: Vec<u8>, mime: Mime) -> Result<Vec<u8>> {
 impl Request {
     /// Read the body, at most [`MAX_BODY_BYTES`], and give up the download place
     pub async fn read_body(self) -> Result<Vec<u8>> {
-        let Request { response, permit, .. } = self;
+        let Request {
+            response, permit, ..
+        } = self;
         let body = read_capped(response, MAX_BODY_BYTES).await;
         drop(permit);
         body
@@ -396,19 +399,19 @@ impl Request {
 
         loop {
             let response = CLIENT
-            .get(url)
-            .header(
-                "User-Agent",
-                if RE_USER_AGENT_SPOOFING_AS_DISCORD.is_match(&url_host_str) {
-                    "Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)"
-                } else {
-                    "Mozilla/5.0 (compatible; January/2.0; +https://zrzur.com)"
-                },
-            )
-            .header("Accept-Language", "en-US,en;q=0.5")
-            .send()
-            .await
-            .map_err(|_| create_error!(ProxyError))?;
+                .get(url)
+                .header(
+                    "User-Agent",
+                    if RE_USER_AGENT_SPOOFING_AS_DISCORD.is_match(&url_host_str) {
+                        "Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)"
+                    } else {
+                        "Mozilla/5.0 (compatible; January/2.0; +https://zrzur.com)"
+                    },
+                )
+                .header("Accept-Language", "en-US,en;q=0.5")
+                .send()
+                .await
+                .map_err(|_| create_error!(ProxyError))?;
 
             if response.status().is_redirection() {
                 redirect_count += 1;
@@ -448,7 +451,11 @@ impl Request {
                 .parse()
                 .map_err(|_| create_error!(ProxyError))?;
 
-            return Ok(Request { response, mime, permit });
+            return Ok(Request {
+                response,
+                mime,
+                permit,
+            });
         }
     }
 
@@ -503,9 +510,7 @@ impl Request {
                     // Second step: resolve the IP and check the blocklist
                     let resolver = CachedDnsResolver {};
                     if let Ok(resolved_ips) = resolver
-                        .resolve(
-                            Name::from_str(&domain).map_err(|_| create_error!(ProxyError))?,
-                        )
+                        .resolve(Name::from_str(&domain).map_err(|_| create_error!(ProxyError))?)
                         .await
                     {
                         for resolved in resolved_ips {
@@ -588,7 +593,12 @@ mod tests {
 
     #[test]
     fn allows_public_addresses() {
-        for ip in ["1.1.1.1", "8.8.8.8", "93.184.216.34", "2606:4700:4700::1111"] {
+        for ip in [
+            "1.1.1.1",
+            "8.8.8.8",
+            "93.184.216.34",
+            "2606:4700:4700::1111",
+        ] {
             assert!(allowed(ip), "{ip} must be allowed");
         }
     }
