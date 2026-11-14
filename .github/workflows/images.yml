@@ -19,7 +19,7 @@ jobs:
     env:
       REGISTRY: ghcr.io/zrzur
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Verify reviewed public source files

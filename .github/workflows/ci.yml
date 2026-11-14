@@ -18,7 +18,7 @@ jobs:
     name: Publication guard and secret scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -56,7 +56,7 @@ jobs:
           MAILDEV_INCOMING_PASS: smtp
         ports: ["14025:25", "14080:8080"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: LiveKit for the voice tests, MinIO for the file tests
@@ -114,7 +114,7 @@ jobs:
           MAILDEV_INCOMING_PASS: smtp
         ports: ["14025:25", "14080:8080"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: LiveKit, MinIO and a one-node MongoDB replica set
