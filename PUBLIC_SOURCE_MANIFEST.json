@@ -6568,8 +6568,8 @@
     },
     {
       "path": "crates/services/january/src/requests.rs",
-      "sha256": "a5ecdbd4f3922f3a86f045d13b9c234035da6704e66548e9c40daeda6bec5440",
-      "bytes": 21898,
+      "sha256": "13279b1f566015114fa50e4a0ab05a153200cb6abbf3fd5e31274feead306d29",
+      "bytes": 24399,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6598,8 +6598,8 @@
     },
     {
       "path": "crates/services/january/src/website_embed.rs",
-      "sha256": "92f99038781437686eebbecdb6c0f893fdad3bad610e8bd9771ebebf99d12de4",
-      "bytes": 27611,
+      "sha256": "6ff0535cdff7b7384004b2ceee179c7b9f6c00e107ff11a6a6ab35d86d874c5a",
+      "bytes": 25002,
       "category": "product-source-or-build-manifest"
     },
     {
