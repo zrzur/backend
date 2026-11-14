@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Linked Steam accounts (2026-11-14)
+
+- A person links Steam by signing in on Steam's own page (OpenID 2.0). `POST /users/@me/connections/steam/start` returns Steam's sign-in address and remembers the request for 10 minutes (Redis, one use, bound to the person); `POST /users/@me/connections/steam/finish` checks the fields Steam sent back (return address, endpoint, signed field list, SteamID form) and has Steam confirm them (`check_authentication`). Steam gives no token, so none is kept.
+- Only an allowlist is copied, on the person's request only (link, Refresh once every 10 minutes): Steam name, profile link, game count, total hours, the 10 most played games with hours and unlocked/total achievements. Real name, country, avatar, friends, online state and every time stamp are dropped on arrival. New collection `linked_accounts` (one Steam account links to one Zrzur account; `LinkedAccountTaken`, 409).
+- A new link starts hidden; `PATCH /users/@me/connections/steam` shows it and hides single games. `DELETE` removes the link and the copy at once; both account-deletion paths remove it too, and "Download my data" gains `linked_accounts.json`.
+- Profiles: new section id `games`; `UserProfile.games` is filled only when the person shows it, the section is not hidden, and the viewer may see personal sections (on a profile under 18 or of unknown age, friends only). A private Steam account shows `private: true` without name or link.
+- Config `[api.connections.steam]` (`web_api_key`, `return_origins`); empty key = off (`FeatureDisabled { feature: "steam" }`). New errors `LinkedSignInFailed`, `LinkedServiceFailed`, `LinkedRefreshTooSoon`. Rate-limit bucket `connections` (10). Migration: indexes on `linked_accounts` (`PENDING_LINKED_ACCOUNT_INDEXES`).
+
 ### Events off by default per server
 
 - `DELETE /servers/{id}/events/{event}?series=true` deletes this occurrence of a repeating event and schedules nothing next, so the series ends (before, every delete wrote the next weekly occurrence and the card looked unchanged). Without `series` one occurrence goes and the series goes on, as before.

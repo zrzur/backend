@@ -23,6 +23,12 @@ plugins_enabled = true
 [features.community]
 effects_enabled = true
 
+# Steam on: the tests answer for Steam in-process (delta util/steam.rs).
+# Not a real key.
+[api.connections.steam]
+web_api_key = "test-steam-key-not-real"
+return_origins = ["http://localhost:5173"]
+
 # The tests talk to a bot endpoint on 127.0.0.1
 [api.interactions]
 signing_key = "test-signing-key-of-at-least-32-bytes"

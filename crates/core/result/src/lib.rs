@@ -487,6 +487,17 @@ pub enum ErrorType {
     AlreadyConnected,
     NotConnected,
     UnknownNode,
+    // ? Linked accounts (Steam)
+    /// This account on the other service is linked to another Zrzur account
+    LinkedAccountTaken,
+    /// The sign-in at the other service could not be confirmed
+    LinkedSignInFailed,
+    /// The other service did not answer or refused the request
+    LinkedServiceFailed,
+    /// Refreshed a moment ago; try again after this many seconds
+    LinkedRefreshTooSoon {
+        retry_after: u64,
+    },
     // ? Micro-service errors
     ProxyError,
     FileTooSmall,

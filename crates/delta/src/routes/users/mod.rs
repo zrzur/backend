@@ -4,6 +4,9 @@ use rocket::Route;
 mod add_friend;
 mod block_user;
 mod change_username;
+pub(crate) mod connections;
+#[cfg(test)]
+mod connections_tests;
 pub(crate) mod change_requests;
 mod edit_user;
 mod fetch_dms;
@@ -38,6 +41,13 @@ pub fn routes() -> (Vec<Route>, OpenApi) {
         fetch_mentions::fetch_mentions,
         privacy::fetch_privacy,
         privacy::edit_privacy,
+        // Linked accounts
+        connections::list,
+        connections::steam_start,
+        connections::steam_finish,
+        connections::steam_edit,
+        connections::steam_refresh,
+        connections::steam_disconnect,
         // Direct Messaging
         fetch_dms::direct_messages,
         open_dm::open_dm,

@@ -154,6 +154,10 @@ impl<'r> Responder<'r, 'static> for Error {
             ErrorType::AlreadyConnected => Status::BadRequest,
             ErrorType::NotConnected => Status::BadRequest,
             ErrorType::UnknownNode => Status::BadRequest,
+            ErrorType::LinkedAccountTaken => Status::Conflict,
+            ErrorType::LinkedSignInFailed => Status::BadRequest,
+            ErrorType::LinkedServiceFailed => Status::BadGateway,
+            ErrorType::LinkedRefreshTooSoon { .. } => Status::TooManyRequests,
             ErrorType::FeatureDisabled { .. } => Status::BadRequest,
             ErrorType::HeaderTooLarge => Status::BadRequest,
 

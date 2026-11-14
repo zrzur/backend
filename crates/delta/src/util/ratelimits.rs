@@ -47,6 +47,10 @@ impl<'a> RatelimitResolver<Request<'a>> for DeltaRatelimits {
 
             let method = request.method();
             match (segment, resource, method) {
+                // linked accounts call out to Steam: a bucket of their own
+                ("users", Some("@me"), _) if extra == Some("connections") => {
+                    ("connections", None)
+                }
                 ("users", target, Method::Patch) => ("user_edit", target),
                 ("users", _, _) => {
                     if let Some("default_avatar") = extra {
@@ -169,6 +173,7 @@ impl<'a> RatelimitResolver<Request<'a>> for DeltaRatelimits {
             // server-side rendering of the public sites (cached there)
             "internal_sites" => 600,
             "user_edit" => 2,
+            "connections" => 10,
             "users" => 20,
             "bots" => 10,
             "bot_public" => 40,

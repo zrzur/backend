@@ -4,7 +4,7 @@ use iso8601_timestamp::Timestamp;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
-use super::File;
+use super::{File, ProfileGames};
 
 #[cfg(feature = "validator")]
 use validator::Validate;
@@ -226,6 +226,11 @@ auto_derived!(
             serde(skip_serializing_if = "Vec::is_empty", default)
         )]
         pub hidden_sections: Vec<String>,
+        /// Games from a linked Steam account. Only when the person shows it,
+        /// the `games` section is not hidden and this viewer may see
+        /// personal sections. Filled by the profile route, not stored here.
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub games: Option<ProfileGames>,
     }
 
     /// User badge bitfield
@@ -595,6 +600,7 @@ pub const PROFILE_SECTIONS: &[&str] = &[
     "wearing",
     "member_since",
     "interests",
+    "games",
 ];
 
 /// Links on one profile
