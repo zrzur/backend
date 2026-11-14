@@ -280,7 +280,7 @@ async fn one_account_one_person_and_relinking_keeps_choices() {
 }
 
 #[rocket::async_test]
-async fn battlenet_hides_after_thirty_days_until_confirmed() {
+async fn battlenet_is_deleted_after_thirty_days_unless_confirmed() {
     let harness = TestHarness::new().await;
     let (_, session, owner) = person(&harness, 30).await;
     let (_, viewer_session, viewer) = person(&harness, 30).await;
@@ -290,27 +290,119 @@ async fn battlenet_hides_after_thirty_days_until_confirmed() {
     edit(&harness, &session, "battlenet", serde_json::json!({ "shown": true })).await;
     assert_eq!(profile(&harness, &viewer_session, &owner.id).await.connections.len(), 1);
 
-    // 30 days later
+    // confirming again before the 30 days are over keeps it, still shown,
+    // and starts the 30 days again
+    let mut stored = harness.db.fetch_linked_account(&owner.id, "battlenet").await.unwrap().unwrap();
+    stored.expires_at = Some(super::connections_oauth::now_ms() + 60_000);
+    harness.db.save_linked_account(&stored).await.unwrap();
+    let confirmed = link(&harness, &session, "battlenet", &id).await;
+    assert!(confirmed.shown);
+    assert!(confirmed.expires_at.unwrap() > super::connections_oauth::now_ms() + 29 * 86_400_000);
+
+    // 30 days later: hidden at once, and gone after the upkeep
     let mut stored = harness.db.fetch_linked_account(&owner.id, "battlenet").await.unwrap().unwrap();
     stored.expires_at = Some(super::connections_oauth::now_ms() - 1);
     harness.db.save_linked_account(&stored).await.unwrap();
     assert!(profile(&harness, &viewer_session, &owner.id).await.connections.is_empty());
-    // the owner still sees it in settings, with the date
-    assert!(list(&harness, &session).await.battlenet.account.unwrap().expires_at.is_some());
-
-    // confirming again shows it again, still switched on
-    let confirmed = link(&harness, &session, "battlenet", &id).await;
-    assert!(confirmed.shown);
-    assert_eq!(profile(&harness, &viewer_session, &owner.id).await.connections.len(), 1);
-
-    // the upkeep deletes a copy 7 days after it ran out
-    let mut stored = harness.db.fetch_linked_account(&owner.id, "battlenet").await.unwrap().unwrap();
-    stored.expires_at = Some(super::connections_oauth::now_ms() - super::connections_oauth::BATTLENET_GRACE_MS - 1);
-    harness.db.save_linked_account(&stored).await.unwrap();
     crate::util::linked_upkeep::run_once(&harness.db, super::connections_oauth::now_ms())
         .await
         .unwrap();
     assert!(harness.db.fetch_linked_account(&owner.id, "battlenet").await.unwrap().is_none());
+
+    // settings delete an expired copy on sight too, before the upkeep runs
+    link(&harness, &session, "battlenet", &id).await;
+    let mut stored = harness.db.fetch_linked_account(&owner.id, "battlenet").await.unwrap().unwrap();
+    stored.expires_at = Some(super::connections_oauth::now_ms() - 1);
+    harness.db.save_linked_account(&stored).await.unwrap();
+    assert!(list(&harness, &session).await.battlenet.account.is_none());
+    assert!(harness.db.fetch_linked_account(&owner.id, "battlenet").await.unwrap().is_none());
+}
+
+#[rocket::async_test]
+async fn bots_never_get_linked_accounts() {
+    let harness = TestHarness::new().await;
+    let (_, session, owner) = person(&harness, 30).await;
+    link(&harness, &session, "github", &fresh_id()).await;
+    edit(&harness, &session, "github", serde_json::json!({ "shown": true })).await;
+
+    let (bot, _) = harness.new_bot(&owner).await;
+    let response = harness
+        .client
+        .get(format!("/users/{}/profile", owner.id))
+        .header(Header::new("x-bot-token", bot.token.clone()))
+        .dispatch()
+        .await;
+    let status = response.status();
+    let body = response.into_string().await.unwrap_or_default();
+    assert!(!body.contains("\"connections\""), "{status} {body}");
+    assert!(!body.contains("\"games\""), "{status} {body}");
+}
+
+#[rocket::async_test]
+async fn github_refresh_asks_who_the_id_is_now() {
+    let harness = TestHarness::new().await;
+    let (_, session, owner) = person(&harness, 30).await;
+    // the fake renames ids ending in 7
+    let id = format!("{}7", rand::random::<u32>());
+    link(&harness, &session, "github", &id).await;
+    let mut stored = harness.db.fetch_linked_account(&owner.id, "github").await.unwrap().unwrap();
+    stored.refreshed_at -= super::connections_oauth::REFRESH_COOLDOWN_MS + 1;
+    harness.db.save_linked_account(&stored).await.unwrap();
+    let (status, body) = call(&harness, Method::Post, &session, "/users/@me/connections/github/refresh", None).await;
+    assert_eq!(status, Status::Ok, "{body}");
+    let refreshed: v0::ServiceAccount = serde_json::from_str(&body).unwrap();
+    assert_eq!(refreshed.display_name, format!("renamed-{id}"));
+    assert_eq!(refreshed.profile_url, format!("https://github.com/renamed-{id}"));
+    assert!(refreshed
+        .repos
+        .iter()
+        .all(|r| r.url.starts_with(&format!("https://github.com/renamed-{id}/"))));
+
+    // an id GitHub no longer has: the link goes
+    let (_, gone_session, gone) = person(&harness, 30).await;
+    let gone_id = format!("{}404", rand::random::<u16>());
+    link(&harness, &gone_session, "github", &gone_id).await;
+    let mut stored = harness.db.fetch_linked_account(&gone.id, "github").await.unwrap().unwrap();
+    stored.refreshed_at = 0;
+    harness.db.save_linked_account(&stored).await.unwrap();
+    let (status, _) = call(&harness, Method::Post, &gone_session, "/users/@me/connections/github/refresh", None).await;
+    assert_eq!(status, Status::NotFound);
+    assert!(harness.db.fetch_linked_account(&gone.id, "github").await.unwrap().is_none());
+}
+
+#[rocket::async_test]
+async fn twitch_copies_older_than_a_day_are_blanked_when_twitch_is_down() {
+    let harness = TestHarness::new().await;
+    let (_, session, owner) = person(&harness, 30).await;
+    // the fake fails for a batch with an id ending in 503
+    let id = format!("{}503", rand::random::<u16>());
+    link(&harness, &session, "twitch", &id).await;
+    let now = super::connections_oauth::now_ms();
+    let mut stored = harness.db.fetch_linked_account(&owner.id, "twitch").await.unwrap().unwrap();
+    stored.refreshed_at = now - super::connections_oauth::TWITCH_FRESH_MS - 1;
+    stored.live = Some(true);
+    stored.live_title = Some("Old".into());
+    stored.live_at = Some(now - super::connections_oauth::TWITCH_FRESH_MS - 1);
+    harness.db.save_linked_account(&stored).await.unwrap();
+    crate::util::linked_upkeep::run_once(&harness.db, now).await.unwrap();
+    let kept = harness.db.fetch_linked_account(&owner.id, "twitch").await.unwrap().unwrap();
+    assert_eq!(kept.external_id, id);
+    assert_eq!(kept.display_name, "");
+    assert_eq!(kept.profile_url, "");
+    assert_eq!(kept.live_title, None);
+    assert_eq!(kept.live, Some(false));
+    assert!(test_twitch::called("subscribe revocations"));
+}
+
+#[rocket::async_test]
+async fn orphan_twitch_subscriptions_are_ended() {
+    let harness = TestHarness::new().await;
+    let channel = format!("{}1", rand::random::<u32>());
+    test_twitch::add_subscription(&format!("orphan-{channel}"), &channel);
+    crate::util::linked_upkeep::run_once(&harness.db, super::connections_oauth::now_ms())
+        .await
+        .unwrap();
+    assert!(test_twitch::called(&format!("unsubscribe orphan-{channel}")));
 }
 
 #[rocket::async_test]

@@ -65,14 +65,20 @@ pub async fn profile(
         && creator_is_active(db, &target.id).await?;
     // linked games follow the same rule as links: on a minor's profile, or
     // one of unknown age, friends only; never when the section is hidden
-    let games = if personal && target.bot.is_none() && target.shows_section("games") {
+    // bots never get linked accounts: the services' data is not for third parties
+    let games = if personal
+        && user.bot.is_none()
+        && target.bot.is_none()
+        && target.shows_section("games")
+    {
         super::connections::profile_games(db, &target.id, &user).await?
     } else {
         None
     };
     // Twitch, GitHub, Battle.net: the same rule, under their own section
     let connections =
-        if personal && target.bot.is_none() && target.shows_section("connections") {
+        if personal && user.bot.is_none() && target.bot.is_none() && target.shows_section("connections")
+        {
             super::connections_oauth::profile_connections(db, &target.id).await?
         } else {
             vec![]

@@ -135,6 +135,7 @@ pub async fn subscribe_revocations(config: &ApiConnectionOAuth) -> Result<()> {
     }
     #[cfg(test)]
     {
+        test_twitch::record("subscribe revocations".into());
         return Ok(());
     }
 
@@ -239,6 +240,10 @@ pub async fn users(config: &ApiConnectionOAuth, ids: &[String]) -> Result<Vec<Id
     #[cfg(test)]
     {
         let _ = config;
+        // a channel id ending in 503: Twitch is down for this request
+        if ids.iter().any(|id| id.ends_with("503")) {
+            return Err(create_error!(LinkedServiceFailed));
+        }
         return Ok(ids
             .iter()
             .filter(|id| !id.ends_with("404"))
@@ -268,6 +273,71 @@ pub async fn users(config: &ApiConnectionOAuth, ids: &[String]) -> Result<Vec<Id
     }
 }
 
+#[derive(Deserialize)]
+struct SubscriptionPage {
+    data: Vec<SubscriptionEntry>,
+    #[serde(default)]
+    pagination: Pagination,
+}
+
+#[derive(Deserialize, Default)]
+struct Pagination {
+    #[serde(default)]
+    cursor: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct SubscriptionEntry {
+    id: String,
+    #[serde(rename = "type")]
+    kind: String,
+    #[serde(default)]
+    condition: SubscriptionCondition,
+}
+
+#[derive(Deserialize, Default)]
+struct SubscriptionCondition {
+    #[serde(default)]
+    broadcaster_user_id: Option<String>,
+}
+
+/// Our live/offline subscriptions at Twitch: (subscription id, channel id)
+pub async fn stream_subscriptions(config: &ApiConnectionOAuth) -> Result<Vec<(String, String)>> {
+    if !config.live_enabled() {
+        return Ok(vec![]);
+    }
+    #[cfg(test)]
+    {
+        return Ok(test_twitch::subscriptions());
+    }
+
+    #[allow(unreachable_code)]
+    {
+        let mut found = vec![];
+        let mut cursor: Option<String> = None;
+        // at most 100 pages of 100: far more than this server links
+        for _ in 0..100 {
+            let mut request = helix(config, reqwest::Method::GET, "eventsub/subscriptions").await?;
+            if let Some(after) = &cursor {
+                request = request.query(&[("after", after.as_str())]);
+            }
+            let page: SubscriptionPage = get_json(request).await?;
+            for entry in page.data {
+                if entry.kind.starts_with("stream.") {
+                    if let Some(channel) = entry.condition.broadcaster_user_id {
+                        found.push((entry.id, channel));
+                    }
+                }
+            }
+            match page.pagination.cursor {
+                Some(next) if !next.is_empty() => cursor = Some(next),
+                _ => break,
+            }
+        }
+        Ok(found)
+    }
+}
+
 /// What the tests saw the server ask Twitch to do
 #[cfg(test)]
 pub mod test_twitch {
@@ -275,8 +345,19 @@ pub mod test_twitch {
 
     static CALLS: Mutex<Vec<String>> = Mutex::new(vec![]);
 
+    static SUBSCRIPTIONS: Mutex<Vec<(String, String)>> = Mutex::new(vec![]);
+
     pub fn record(call: String) {
         CALLS.lock().unwrap().push(call);
+    }
+
+    /// Make Twitch report a subscription for this channel
+    pub fn add_subscription(id: &str, channel: &str) {
+        SUBSCRIPTIONS.lock().unwrap().push((id.into(), channel.into()));
+    }
+
+    pub fn subscriptions() -> Vec<(String, String)> {
+        SUBSCRIPTIONS.lock().unwrap().clone()
     }
 
     /// Whether this call was made (tests run in parallel: look for your own ids)

@@ -1,18 +1,23 @@
 //! Hourly upkeep of linked accounts, as the services' terms ask:
-//! - Twitch: names older than 23 hours are read again (copies may be at most
-//!   24 hours old); a live flag older than that is checked again. Accounts
-//!   Twitch no longer returns (deleted, suspended) are unlinked.
-//! - Battle.net: a copy whose 30 days ran out more than 7 days ago is deleted.
+//! - Battle.net: a copy is deleted when its 30 days are over (Blizzard keeps
+//!   copies to 30 days).
+//! - Twitch (copies at most 24 hours old): names older than 23 hours are
+//!   read again; when Twitch cannot answer, anything over 24 hours is blanked
+//!   in the database, keeping only the id. A live flag older than that is
+//!   checked again or dropped. Accounts Twitch no longer returns are unlinked.
+//! - Twitch: the app-wide "removed at Twitch" subscription is made again if
+//!   it is missing, and live/offline subscriptions for channels nobody links
+//!   any more (account deleted) are ended.
 //!
 //! Runs inside delta; running twice at once does no harm.
 
-use std::time::Duration;
+use std::{collections::HashSet, time::Duration};
 
-use revolt_database::Database;
+use revolt_database::{Database, LinkedAccount};
 use revolt_result::Result;
 
 use crate::{
-    routes::users::connections_oauth::{now_ms, BATTLENET_GRACE_MS},
+    routes::users::connections_oauth::{now_ms, TWITCH_FRESH_MS},
     util::{oauth_link::Service, twitch},
 };
 
@@ -30,14 +35,19 @@ pub async fn run(db: Database) {
     }
 }
 
+/// A Twitch copy over 24 hours old with nothing to renew it: only the id stays
+fn blank(account: &mut LinkedAccount) {
+    account.display_name = String::new();
+    account.profile_url = String::new();
+    account.live = Some(false);
+    account.live_title = None;
+}
+
 /// One round, at time `now`
 pub async fn run_once(db: &Database, now: i64) -> Result<()> {
-    // Battle.net: hidden for 7 days, now gone
+    // Battle.net: the 30 days are over
     for account in db.fetch_linked_accounts_of_service("battlenet").await? {
-        if account
-            .expires_at
-            .map_or(true, |at| now >= at + BATTLENET_GRACE_MS)
-        {
+        if account.expires_at.map_or(true, |at| now >= at) {
             db.delete_linked_account(&account.user_id, "battlenet").await?;
         }
     }
@@ -45,6 +55,9 @@ pub async fn run_once(db: &Database, now: i64) -> Result<()> {
     let config = Service::Twitch.config().await;
     if !config.enabled() {
         return Ok(());
+    }
+    if twitch::subscribe_revocations(&config).await.is_err() {
+        log::warn!("Twitch revocation messages are not set up; trying again next hour");
     }
     let accounts = db.fetch_linked_accounts_of_service("twitch").await?;
 
@@ -56,48 +69,82 @@ pub async fn run_once(db: &Database, now: i64) -> Result<()> {
         .collect();
     for batch in stale.chunks(100) {
         let ids: Vec<String> = batch.iter().map(|a| a.external_id.clone()).collect();
-        let Ok(found) = twitch::users(&config, &ids).await else {
-            // Twitch failed: try again next hour; the profile hides the
-            // name once it is over 25 hours old
-            continue;
-        };
-        for mut account in batch.iter().cloned() {
-            match found.iter().find(|identity| identity.external_id == account.external_id) {
-                Some(identity) => {
-                    account.display_name = identity.display_name.clone();
-                    account.profile_url = identity.profile_url.clone();
-                    account.refreshed_at = now;
-                    db.save_linked_account(&account).await?;
+        match twitch::users(&config, &ids).await {
+            Ok(found) => {
+                for mut account in batch.iter().cloned() {
+                    match found.iter().find(|identity| identity.external_id == account.external_id) {
+                        Some(identity) => {
+                            account.display_name = identity.display_name.clone();
+                            account.profile_url = identity.profile_url.clone();
+                            account.refreshed_at = now;
+                            db.save_linked_account(&account).await?;
+                        }
+                        None => {
+                            twitch::unsubscribe(&config, &account.subscriptions).await;
+                            db.delete_linked_account(&account.user_id, "twitch").await?;
+                        }
+                    }
                 }
-                None => {
-                    twitch::unsubscribe(&config, &account.subscriptions).await;
-                    db.delete_linked_account(&account.user_id, "twitch").await?;
+            }
+            // Twitch failed: try again next hour, and keep nothing too old
+            Err(_) => {
+                for mut account in batch.iter().cloned() {
+                    if now - account.refreshed_at >= TWITCH_FRESH_MS && !account.display_name.is_empty() {
+                        blank(&mut account);
+                        db.save_linked_account(&account).await?;
+                    }
                 }
             }
         }
     }
 
     // live flags that Twitch has not touched for a day
-    let old_live: Vec<_> = db
-        .fetch_linked_accounts_of_service("twitch")
-        .await?
-        .into_iter()
+    let linked = db.fetch_linked_accounts_of_service("twitch").await?;
+    let old_live: Vec<_> = linked
+        .iter()
         .filter(|account| {
             account.live == Some(true)
                 && account.live_at.map_or(true, |at| now - at >= RENAME_AFTER_MS)
         })
+        .cloned()
         .collect();
     for batch in old_live.chunks(100) {
         let ids: Vec<String> = batch.iter().map(|a| a.external_id.clone()).collect();
-        let Ok(live) = twitch::live_streams(&config, &ids).await else {
-            continue;
-        };
+        let live = twitch::live_streams(&config, &ids).await.ok();
         for mut account in batch.iter().cloned() {
-            let title = live.get(&account.external_id).cloned();
-            account.live = Some(title.is_some());
-            account.live_title = title.filter(|t| !t.is_empty());
-            account.live_at = Some(now);
+            match &live {
+                Some(live) => {
+                    let title = live.get(&account.external_id).cloned();
+                    account.live = Some(title.is_some());
+                    account.live_title = title.filter(|t| !t.is_empty());
+                    account.live_at = Some(now);
+                }
+                None if account.live_at.map_or(true, |at| now - at >= TWITCH_FRESH_MS) => {
+                    account.live = Some(false);
+                    account.live_title = None;
+                }
+                None => continue,
+            }
             db.save_linked_account(&account).await?;
+        }
+    }
+
+    // subscriptions for channels nobody links any more
+    if let Ok(subscriptions) = twitch::stream_subscriptions(&config).await {
+        // read after the list, so a link made meanwhile is not taken for an orphan
+        let channels: HashSet<String> = db
+            .fetch_linked_accounts_of_service("twitch")
+            .await?
+            .into_iter()
+            .map(|a| a.external_id)
+            .collect();
+        let orphans: Vec<String> = subscriptions
+            .into_iter()
+            .filter(|(_, channel)| !channels.contains(channel))
+            .map(|(id, _)| id)
+            .collect();
+        if !orphans.is_empty() {
+            twitch::unsubscribe(&config, &orphans).await;
         }
     }
     Ok(())

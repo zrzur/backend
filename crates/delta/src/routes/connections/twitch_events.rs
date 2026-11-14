@@ -172,6 +172,13 @@ pub async fn twitch_events(
             Ok(RawText(String::new()))
         }
         "revocation" => {
+            // the app-wide "removed at Twitch" subscription must never lapse
+            if message.subscription.kind == "user.authorization.revoke" {
+                if twitch::subscribe_revocations(&config).await.is_err() {
+                    log::warn!("Twitch revocation messages could not be set up again; the hourly upkeep tries again");
+                }
+                return Ok(RawText(String::new()));
+            }
             // Twitch ended a subscription (account gone, too many failures):
             // forget it, so Disconnect does not ask for it again
             if let Some(broadcaster) = message.subscription.condition.broadcaster_user_id {

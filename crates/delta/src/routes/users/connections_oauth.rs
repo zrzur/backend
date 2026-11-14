@@ -6,9 +6,8 @@
 //! What may be kept for how long follows each service's terms:
 //! - Twitch: names and live status at most 24 hours old (`util::linked_upkeep`
 //!   reads names again daily; live status comes from Twitch's own messages).
-//! - Battle.net: the BattleTag shows for 30 days after the person's last
-//!   sign-in there, then hides until they confirm again; 7 days later the
-//!   copy is deleted.
+//! - Battle.net: the BattleTag is kept for 30 days after the person's last
+//!   sign-in there and deleted then, unless they confirmed again before.
 //! - GitHub: public repositories, read on link and on Refresh only.
 
 use iso8601_timestamp::Timestamp;
@@ -33,12 +32,10 @@ use crate::util::{
 const STATE_SECONDS: usize = 600;
 /// Time between two refreshes (GitHub)
 pub const REFRESH_COOLDOWN_MS: i64 = 10 * 60 * 1000;
-/// Battle.net: how long a copy may show after the person's sign-in there
+/// Battle.net: how long a copy may be kept after the person's sign-in there
 pub const BATTLENET_TTL_MS: i64 = 30 * 24 * 60 * 60 * 1000;
-/// Battle.net: how long after that the hidden copy is deleted
-pub const BATTLENET_GRACE_MS: i64 = 7 * 24 * 60 * 60 * 1000;
-/// Twitch: oldest name or live flag that may still show
-pub const TWITCH_FRESH_MS: i64 = 25 * 60 * 60 * 1000;
+/// Twitch: oldest name or live flag that may be kept or shown
+pub const TWITCH_FRESH_MS: i64 = 24 * 60 * 60 * 1000;
 /// GitHub: repositories shown after linking, before the person picks
 const DEFAULT_SHOWN_REPOS: usize = 3;
 
@@ -56,9 +53,19 @@ fn service_of(name: &str) -> Result<Service> {
     Service::parse(name).ok_or_else(|| create_error!(NotFound))
 }
 
+/// The service can be linked on this server. Twitch also needs its live
+/// messages: without them nobody would hear when someone removes Zrzur at
+/// Twitch, and the link would stay (Twitch Developer Agreement).
+pub fn usable(service: Service, config: &ApiConnectionOAuth) -> bool {
+    match service {
+        Service::Twitch => config.live_enabled(),
+        _ => config.enabled(),
+    }
+}
+
 async fn enabled_config(service: Service) -> Result<ApiConnectionOAuth> {
     let config = service.config().await;
-    if config.enabled() {
+    if usable(service, &config) {
         Ok(config)
     } else {
         Err(create_error!(FeatureDisabled {
@@ -170,12 +177,18 @@ pub async fn profile_connections(db: &Database, user_id: &str) -> Result<Vec<v0:
 
 /// One service for the settings list
 pub async fn connection(db: &Database, user_id: &str, service: Service) -> Result<v0::ServiceConnection> {
+    let mut account = db.fetch_linked_account(user_id, service.id()).await?;
+    // Battle.net's 30 days are over: the copy goes now, not at the next upkeep
+    if account
+        .as_ref()
+        .is_some_and(|a| a.expires_at.is_some_and(|at| now_ms() >= at))
+    {
+        db.delete_linked_account(user_id, service.id()).await?;
+        account = None;
+    }
     Ok(v0::ServiceConnection {
-        available: service.config().await.enabled(),
-        account: db
-            .fetch_linked_account(user_id, service.id())
-            .await?
-            .map(owner_view),
+        available: usable(service, &service.config().await),
+        account: account.map(owner_view),
     })
 }
 
@@ -338,7 +351,9 @@ pub async fn service_finish(
                     Ok(ids) => account.subscriptions = ids,
                     Err(_) => log::warn!("Twitch live status could not be set up for a new link"),
                 }
-                let _ = twitch::subscribe_revocations(&config).await;
+                if twitch::subscribe_revocations(&config).await.is_err() {
+                    log::warn!("Twitch revocation messages could not be set up; the hourly upkeep tries again");
+                }
             }
         }
         Service::Github => {
@@ -431,11 +446,14 @@ pub async fn service_refresh(
         }));
     }
 
-    let login = account
-        .profile_url
-        .strip_prefix("https://github.com/")
-        .unwrap_or_default()
-        .to_string();
+    // the login can change, and an old one can go to someone else: ask
+    // GitHub who this id is now
+    let Some(login) = github::login_of(&config, &account.external_id).await? else {
+        db.delete_linked_account(&user.id, service.id()).await?;
+        return Err(create_error!(NotFound));
+    };
+    account.display_name = login.clone();
+    account.profile_url = format!("https://github.com/{login}");
     let repos = github::repos(&config, &login, None).await?;
     account
         .shown_repos

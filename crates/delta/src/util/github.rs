@@ -90,6 +90,47 @@ pub async fn repos(config: &ApiConnectionOAuth, login: &str, token: Option<&str>
     }
 }
 
+#[derive(Deserialize)]
+struct UserById {
+    login: String,
+}
+
+/// The login of this GitHub account id now, with the app's own id and
+/// secret. `None` when GitHub no longer has the account.
+pub async fn login_of(config: &ApiConnectionOAuth, id: &str) -> Result<Option<String>> {
+    #[cfg(test)]
+    {
+        let _ = config;
+        return Ok(test_github::login_of(id));
+    }
+
+    #[allow(unreachable_code)]
+    {
+        if !super::oauth_link::valid_numeric_id(id) {
+            return Ok(None);
+        }
+        let answer = client()
+            .get(format!("{}/user/{id}", config.api_base_or(GITHUB_API)))
+            .header("accept", "application/vnd.github+json")
+            .header("x-github-api-version", "2022-11-28")
+            .basic_auth(&config.client_id, Some(&config.client_secret))
+            .send()
+            .await
+            .map_err(|_| revolt_result::create_error!(LinkedServiceFailed))?;
+        if answer.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !answer.status().is_success() {
+            return Err(revolt_result::create_error!(LinkedServiceFailed));
+        }
+        let user: UserById = answer
+            .json()
+            .await
+            .map_err(|_| revolt_result::create_error!(LinkedServiceFailed))?;
+        Ok(valid_github_login(&user.login).then_some(user.login))
+    }
+}
+
 /// Give the person's token back to GitHub so it stops working at once.
 /// Best effort: it also runs out by itself after 8 hours.
 pub async fn revoke(config: &ApiConnectionOAuth, token: &str) {
@@ -119,6 +160,17 @@ pub async fn revoke(config: &ApiConnectionOAuth, token: &str) {
 #[cfg(test)]
 pub mod test_github {
     use super::RepoAnswer;
+
+    /// Ids ending in 404 are gone; ids ending in 7 were renamed
+    pub fn login_of(id: &str) -> Option<String> {
+        if id.ends_with("404") {
+            None
+        } else if id.ends_with('7') {
+            Some(format!("renamed-{id}"))
+        } else {
+            Some(format!("dev-{id}"))
+        }
+    }
 
     pub fn repos(_login: &str) -> Vec<RepoAnswer> {
         vec![
