@@ -556,8 +556,8 @@
     },
     {
       "path": "crates/core/config/src/cors.rs",
-      "sha256": "72f42e8822e7e55678e03b93fc0195add55bb5ed7e097974635f6956e5694751",
-      "bytes": 4461,
+      "sha256": "19898b8cd6eede079977de608e2c58ac1bc9b5c0fbad7f4a1c28b0540202781c",
+      "bytes": 4562,
       "category": "product-source-or-build-manifest"
     },
     {
