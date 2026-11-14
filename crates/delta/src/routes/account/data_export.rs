@@ -240,6 +240,7 @@ mod tests {
             "support.json",
             "bots.json",
             "creations.json",
+            "linked_accounts.json",
         ] {
             assert!(text.contains(name), "{name} missing");
         }

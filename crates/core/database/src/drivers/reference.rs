@@ -45,6 +45,7 @@ database_derived!(
         pub platform_notices: Arc<Mutex<HashMap<String, crate::PlatformNotice>>>,
         pub notice_dismissals: Arc<Mutex<std::collections::HashSet<(String, String)>>>,
         pub support_tickets: Arc<Mutex<HashMap<String, crate::SupportTicket>>>,
+        pub linked_accounts: Arc<Mutex<HashMap<String, crate::LinkedAccount>>>,
         pub community_reviews: Arc<Mutex<Vec<CommunityReview>>>,
         pub community_favourites: Arc<Mutex<Vec<(String, String)>>>,
         pub community_uses: Arc<Mutex<std::collections::HashSet<String>>>,

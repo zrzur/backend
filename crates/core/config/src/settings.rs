@@ -267,6 +267,51 @@ pub struct Api {
     pub sessions: ApiSessions,
     pub audit_logs: ApiAuditLogs,
     pub interactions: ApiInteractions,
+    /// Accounts on other services a person can link to their profile
+    #[serde(default)]
+    pub connections: ApiConnections,
+}
+
+/// Accounts on other services a person can link to their profile
+#[derive(Deserialize, Debug, Clone, Default)]
+pub struct ApiConnections {
+    #[serde(default)]
+    pub steam: ApiConnectionSteam,
+}
+
+/// Steam: sign-in through Steam's OpenID 2.0, then the Steam Web API
+#[derive(Deserialize, Debug, Clone)]
+#[serde(default)]
+pub struct ApiConnectionSteam {
+    /// Steam Web API key (steamcommunity.com/dev/apikey). Empty switches
+    /// Steam off. Lives only in the server's config, never in git.
+    pub web_api_key: String,
+    /// Web app origins Steam may send people back to, for example
+    /// `https://app.zrzur.com`. The client names its own; anything else is
+    /// refused.
+    pub return_origins: Vec<String>,
+    /// Steam's OpenID endpoint. Changed only for a test stack's mock.
+    pub openid_endpoint: String,
+    /// Base address of the Steam Web API. Changed only for a test stack's mock.
+    pub api_base: String,
+}
+
+impl Default for ApiConnectionSteam {
+    fn default() -> Self {
+        ApiConnectionSteam {
+            web_api_key: String::new(),
+            return_origins: vec![],
+            openid_endpoint: "https://steamcommunity.com/openid/login".into(),
+            api_base: "https://api.steampowered.com".into(),
+        }
+    }
+}
+
+impl ApiConnectionSteam {
+    /// Steam can be linked on this server
+    pub fn enabled(&self) -> bool {
+        !self.web_api_key.trim().is_empty() && !self.return_origins.is_empty()
+    }
 }
 
 /// Bots that receive interactions over HTTP

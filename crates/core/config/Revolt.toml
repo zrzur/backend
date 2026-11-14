@@ -126,6 +126,17 @@ signing_key = ""
 # Never on a public instance: it opens the door to SSRF.
 allow_private_urls = false
 
+[api.connections.steam]
+# Steam Web API key from steamcommunity.com/dev/apikey. Empty switches the
+# Steam connection off. Production writes it from /etc/zrzur/steam.json
+# (enter-steam.py); never put a real key in this file or in git.
+web_api_key = ""
+# Web app origins Steam may send people back to after they sign in there.
+return_origins = []
+# Steam's own addresses. Only a test stack points these at a mock.
+openid_endpoint = "https://steamcommunity.com/openid/login"
+api_base = "https://api.steampowered.com"
+
 [api.sessions]
 # Most sessions one account keeps. A sign-in over this closes the least
 # recently used one. Only a test stack, where parallel tests share one

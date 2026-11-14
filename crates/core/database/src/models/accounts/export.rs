@@ -204,6 +204,21 @@ pub async fn build_export_zip(db: &Database, account: &Account, user: &User) -> 
     // Profile: the User document (people in `relations` are ids only)
     let profile = serde_json::to_value(user).unwrap_or(Value::Null);
 
+    // Accounts they linked (Steam) and the copy we keep, with where it came
+    // from (Art. 15(1)(g) GDPR). There is no token to leave out.
+    let linked_accounts: Vec<Value> = db
+        .fetch_linked_accounts(&user.id)
+        .await?
+        .into_iter()
+        .map(|account| {
+            let mut value = serde_json::to_value(account).unwrap_or(Value::Null);
+            if let Some(o) = value.as_object_mut() {
+                o.insert("source".into(), json!("Copied from what the service shows publicly, at your request"));
+            }
+            value
+        })
+        .collect();
+
     // Designs they made, with what they promised about each. Who reported or
     // reviewed one is not theirs to have.
     let creations: Vec<Value> = db
@@ -356,7 +371,7 @@ pub async fn build_export_zip(db: &Database, account: &Account, user: &User) -> 
         "Zrzur data export
 Created: {}
 
-This ZIP holds your own data as JSON files: account.json (no password or secrets), profile.json, messages.json (messages you sent, up to {DATA_EXPORT_MAX_MESSAGES}; polls show how many chose each answer), poll_votes.json (the answers you chose in polls), files.json (files you uploaded, with links that work while the file exists), servers.json, purchases.json, reports.json (reports you filed), support.json (your support tickets), bots.json (bots you own, without tokens), creations.json (designs you made, with your rights confirmations) and settings.json. Other people appear as ids only.
+This ZIP holds your own data as JSON files: account.json (no password or secrets), profile.json, messages.json (messages you sent, up to {DATA_EXPORT_MAX_MESSAGES}; polls show how many chose each answer), poll_votes.json (the answers you chose in polls), files.json (files you uploaded, with links that work while the file exists), servers.json, purchases.json, reports.json (reports you filed), support.json (your support tickets), bots.json (bots you own, without tokens), creations.json (designs you made, with your rights confirmations), linked_accounts.json (accounts on other services you linked, such as Steam, and the copy we keep) and settings.json. Other people appear as ids only.
 {cap_note}
 Why we use this data, who receives it, how long we keep it, your rights and how to complain to the Austrian data protection authority: https://zrzur.com/legal/privacy . Questions: {ACCOUNT_CONTACT_EMAIL}.
 ",
@@ -381,6 +396,7 @@ Why we use this data, who receives it, how long we keep it, your rights and how 
         ("support.json".into(), compact(Value::Array(support))),
         ("bots.json".into(), compact(Value::Array(bots))),
         ("creations.json".into(), compact(Value::Array(creations))),
+        ("linked_accounts.json".into(), compact(Value::Array(linked_accounts))),
         ("settings.json".into(), compact(Value::Array(settings))),
     ]))
 }

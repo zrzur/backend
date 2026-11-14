@@ -461,6 +461,7 @@ pub async fn create_database(db: &MongoDb) {
     super::scripts::create_soundboard(&db).await;
     super::scripts::create_data_export_indexes(&db).await;
     super::scripts::create_webhook_indexes(&db).await;
+    super::scripts::create_linked_account_indexes(&db).await;
     super::scripts::seed_platform_words(&db).await;
 
     info!("Created database.");

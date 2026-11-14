@@ -26,7 +26,7 @@ struct MigrationInfo {
     revision: i32,
 }
 
-pub const LATEST_REVISION: i32 = 89; // MUST BE +1 to last migration
+pub const LATEST_REVISION: i32 = 90; // MUST BE +1 to last migration
 // Number given only in the release after the one above, once no old delta runs:
 // a session an old delta wrote during the rollout has no date and never expires.
 const PENDING_SESSION_EXPIRY_FILL: i32 = -1;
@@ -53,6 +53,8 @@ const PENDING_SESSION_HASHES: i32 = 87;
 // Sessions are looked up by token hash; the old unique index on `token` made
 // every session after the first a duplicate (all have no `token`)
 const PENDING_SESSION_TOKEN_INDEX: i32 = 88;
+// Number given by the coordinator at merge (stream steam-connection)
+const PENDING_LINKED_ACCOUNT_INDEXES: i32 = 89;
 
 /// The earliest day a session from before expiry can expire. At least 30
 /// days out, also with expiry switched off (0), for the day it is switched on.
@@ -2633,8 +2635,31 @@ pub async fn run_migrations(db: &MongoDb, revision: i32) -> i32 {
         index_sessions_by_token_hash(&db.db()).await;
     }
 
+    if revision <= PENDING_LINKED_ACCOUNT_INDEXES {
+        info!("Running migration [revision {PENDING_LINKED_ACCOUNT_INDEXES} / 14-11-2026]: Indexes for linked accounts (Steam)");
+        create_linked_account_indexes(&db.db()).await;
+    }
+
     // Reminder to update LATEST_REVISION when adding new migrations.
     LATEST_REVISION.max(revision)
+}
+
+/// Linked accounts: found by person, and one service account links to one
+/// Zrzur account only. Safe to run twice.
+pub async fn create_linked_account_indexes(db: &mongodb::Database) {
+    db.run_command(doc! {
+        "createIndexes": "linked_accounts",
+        "indexes": [
+            { "key": { "user_id": 1_i32 }, "name": "user_id" },
+            {
+                "key": { "service": 1_i32, "external_id": 1_i32 },
+                "name": "service_external_id",
+                "unique": true
+            }
+        ]
+    })
+    .await
+    .expect("Failed to create the linked account indexes");
 }
 
 /// Sessions keep only a hash of the token (`Session::token_hash`). The old

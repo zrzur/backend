@@ -17,6 +17,7 @@ mod emojis;
 mod file_hashes;
 mod files;
 mod interactions;
+mod linked_accounts;
 mod messages;
 mod oauth;
 mod mfa_tickets;
@@ -62,6 +63,7 @@ pub use emojis::*;
 pub use file_hashes::*;
 pub use files::*;
 pub use interactions::*;
+pub use linked_accounts::*;
 pub use messages::*;
 pub use oauth::*;
 pub use mfa_tickets::*;
@@ -140,6 +142,7 @@ pub trait AbstractDatabase:
     + official_mark_requests::AbstractOfficialMarkRequest
     + platform_notices::AbstractPlatformNotice
     + support_tickets::AbstractSupportTicket
+    + linked_accounts::AbstractLinkedAccounts
 {
 }
 

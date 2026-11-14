@@ -915,6 +915,8 @@ impl Account {
         self.delete_all_sessions(db, None).await?;
         db.remove_data_exports_for_user(&self.id).await?;
         crate::erase_community_items_of(db, &self.id).await?;
+        // linked accounts (Steam) and their copies
+        db.delete_linked_accounts(&self.id).await?;
 
         self.email = format!("Deleted User {}", &self.id);
         self.email_normalised = format!("Deleted User {}", &self.id);
@@ -966,6 +968,7 @@ impl Account {
     /// document nothing would try again.
     pub async fn erase_completely(&mut self, db: &Database) -> Result<()> {
         crate::erase_community_items_of(db, &self.id).await?;
+        db.delete_linked_accounts(&self.id).await?;
         db.remove_account(&self.id).await?;
 
         if let Err(error) = self.delete_all_sessions(db, None).await {

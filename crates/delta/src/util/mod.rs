@@ -5,6 +5,7 @@ pub mod signed_delivery;
 pub mod official;
 pub mod public_commands;
 pub mod ratelimits;
+pub mod steam;
 pub mod webhooks;
 
 #[cfg(test)]

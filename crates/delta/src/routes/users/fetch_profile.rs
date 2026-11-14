@@ -27,8 +27,15 @@ pub async fn profile(
 ) -> Result<Json<v0::UserProfile>> {
     if user.id == target.id {
         let creator = creator_is_active(db, &user.id).await?;
+        // what others see: shown, without hidden games
+        let games = if user.bot.is_none() {
+            super::connections::profile_games(db, &user.id).await?
+        } else {
+            None
+        };
         return Ok(Json(v0::UserProfile {
             creator,
+            games,
             ..user
                 .profile
                 .unwrap_or_default()
@@ -50,8 +57,16 @@ pub async fn profile(
         && target.bot.is_none()
         && target.shows_section("creations")
         && creator_is_active(db, &target.id).await?;
+    // linked games follow the same rule as links: on a minor's profile, or
+    // one of unknown age, friends only; never when the section is hidden
+    let games = if personal && target.bot.is_none() && target.shows_section("games") {
+        super::connections::profile_games(db, &target.id).await?
+    } else {
+        None
+    };
     Ok(Json(v0::UserProfile {
         creator,
+        games,
         ..target
             .profile
             .unwrap_or_default()
