@@ -91,6 +91,62 @@ impl TestHarness {
         (account, session, user)
     }
 
+    /// Make a user `privileged` the way it works in production: the flag,
+    /// an Owner staff grant, and an open staff session for each of their
+    /// current sign-ins (the flag alone counts for nothing)
+    pub async fn make_privileged(&self, user_id: &str) {
+        use revolt_database::{staff_now, staff_token_hash, StaffGrant, StaffRole, StaffSession};
+        self.db
+            .update_user(
+                user_id,
+                &revolt_database::PartialUser {
+                    privileged: Some(true),
+                    ..Default::default()
+                },
+                vec![],
+            )
+            .await
+            .expect("privileged");
+        let now = staff_now();
+        let current = self.db.fetch_staff_grant(user_id).await.expect("grant");
+        let mut grant = current.clone().unwrap_or(StaffGrant {
+            id: user_id.to_string(),
+            roles: vec![],
+            disabled: false,
+            expires_at: None,
+            last_totp_step: 0,
+            version: 0,
+            updated_at: now,
+            updated_by: "test".to_string(),
+        });
+        if !grant.roles.contains(&StaffRole::Owner) {
+            grant.roles.push(StaffRole::Owner);
+        }
+        grant.version += 1;
+        assert!(self
+            .db
+            .save_staff_grant(&grant, current.map(|g| g.version))
+            .await
+            .expect("grant"));
+        for session in self.db.fetch_sessions(user_id).await.expect("sessions") {
+            self.db
+                .insert_staff_session(&StaffSession {
+                    id: ulid::Ulid::new().to_string(),
+                    token_hash: staff_token_hash(&TestHarness::rand_string()),
+                    user_id: user_id.to_string(),
+                    session_id: session.id.clone(),
+                    created_at: now,
+                    last_seen_at: now,
+                    expires_at: now + revolt_database::STAFF_SESSION_MAX_MS,
+                    step_up_until: None,
+                    revoked_at: None,
+                    user_agent: None,
+                })
+                .await
+                .expect("staff session");
+        }
+    }
+
     /// A person who has not declared an age yet
     pub async fn new_user_without_age(&self) -> (Account, Session, User) {
         let (mut account, session, user) = self.new_user().await;

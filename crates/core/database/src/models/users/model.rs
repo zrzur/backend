@@ -532,6 +532,25 @@ impl User {
         }
     }
 
+    /// Drop the `privileged` flag for this request unless it is in effect:
+    /// never for a bot token (`session_id` = `None`), and for a person only
+    /// with an open Owner staff session from the same sign-in
+    /// ([`crate::privileged_in_effect`]).
+    pub async fn confirm_privileged(mut self, db: &Database, session_id: Option<&str>) -> User {
+        if self.privileged {
+            let confirmed = match session_id {
+                Some(session_id) if self.bot.is_none() => {
+                    crate::privileged_in_effect(db, &self.id, session_id).await
+                }
+                _ => false,
+            };
+            if !confirmed {
+                self.privileged = false;
+            }
+        }
+        self
+    }
+
     /// Find a user and session ID from a given token and hint
     #[async_recursion]
     pub async fn from_token(db: &Database, token: &str, hint: UserHint) -> Result<(User, String)> {
@@ -544,11 +563,17 @@ impl User {
                 if crate::bot_suspended(&bot) {
                     return Err(create_error!(InvalidSession));
                 }
-                Ok((db.fetch_user(&bot.id).await?, String::new()))
+                let user = db.fetch_user(&bot.id).await?.confirm_privileged(db, None).await;
+                Ok((user, String::new()))
             }
             UserHint::User => {
                 let session = crate::Session::from_token(db, token).await?;
-                Ok((db.fetch_user(&session.user_id).await?, session.id))
+                let user = db
+                    .fetch_user(&session.user_id)
+                    .await?
+                    .confirm_privileged(db, Some(&session.id))
+                    .await;
+                Ok((user, session.id))
             }
             UserHint::Any => {
                 match User::from_token(db, token, UserHint::User).await {

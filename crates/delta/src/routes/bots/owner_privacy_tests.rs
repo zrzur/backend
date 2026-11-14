@@ -2,7 +2,6 @@
 //! page, by name only). The owner's account id in `User.bot.owner` is sent
 //! only to the owner, the bot itself and platform staff.
 
-use revolt_database::PartialUser;
 use rocket::http::{Header, Status};
 use serde_json::Value;
 
@@ -26,18 +25,7 @@ async fn a_bots_owner_id_is_only_shown_to_its_owner_and_staff() {
     let (_, owner_session, owner) = harness.new_user().await;
     let (_, stranger_session, _) = harness.new_user().await;
     let (_, staff_session, staff) = harness.new_user().await;
-    harness
-        .db
-        .update_user(
-            &staff.id,
-            &PartialUser {
-                privileged: Some(true),
-                ..Default::default()
-            },
-            vec![],
-        )
-        .await
-        .unwrap();
+    harness.make_privileged(&staff.id).await;
     let (bot, _) = harness.new_bot(&owner).await;
 
     assert_eq!(bot_owner_as_seen_by(&harness, &bot.id, Some(&stranger_session.token)).await, None);

@@ -20,12 +20,16 @@ where
             if crate::bot_suspended(&bot) {
                 return Err(create_error!(InvalidSession));
             }
-            db.fetch_user(&bot.id).await
+            Ok(db.fetch_user(&bot.id).await?.confirm_privileged(&db, None).await)
         } else if let Some(Ok(session_token)) =
             parts.headers.get("x-session-token").map(|v| v.to_str())
         {
             let session = Session::from_token(&db, session_token).await?;
-            db.fetch_user(&session.user_id).await
+            Ok(db
+                .fetch_user(&session.user_id)
+                .await?
+                .confirm_privileged(&db, Some(&session.id))
+                .await)
         } else {
             Err(create_error!(NotAuthenticated))
         }
