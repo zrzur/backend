@@ -46,8 +46,8 @@
     },
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "27197c25a70d196020c409dd26f0ff08de7189e1cd1908ba285a6e8e7b83cf8c",
-      "bytes": 5709,
+      "sha256": "3f5b9af411434e8660892c74ca34eef8cb4c8d2684084b7f0f654095e228a5bf",
+      "bytes": 5884,
       "category": "reviewed-build-and-ci"
     },
     {
@@ -3850,8 +3850,8 @@
     },
     {
       "path": "crates/core/result/error-codes.txt",
-      "sha256": "935f677b9377467ba0c3609f6b91da6de8ca1fd8b347d7982f49642db7c23175",
-      "bytes": 2762,
+      "sha256": "5cb8ffe4c555f79e35c03dcf480856a4b9e0269921f3bcbe4b997ec5356eb162",
+      "bytes": 2841,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -5206,8 +5206,8 @@
     },
     {
       "path": "crates/delta/src/routes/safety/actions.rs",
-      "sha256": "1e45109341fbe39af7f5b55f04a121290da3e2fd60f9f2d2959c812f2028c49e",
-      "bytes": 39391,
+      "sha256": "7f7193e1fa4e708e28f883942cf431aa7090aeeb21252d9339dc52f1f2f66859",
+      "bytes": 39564,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -5776,8 +5776,8 @@
     },
     {
       "path": "crates/delta/src/routes/staff/test.rs",
-      "sha256": "ab7c7b45dd3423fe885cdac1b437d4d2e32767a9fd21062df97ff2a8a843e43b",
-      "bytes": 124453,
+      "sha256": "d961d60eba2886978f39cc93f97b793514524fe43b5f6532df42de22c32c3e39",
+      "bytes": 124728,
       "category": "product-source-or-build-manifest"
     },
     {
