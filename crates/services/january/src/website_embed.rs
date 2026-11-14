@@ -254,9 +254,10 @@ pub fn site_player(url: &str) -> Option<Special> {
     if let Some(c) = RE_TIKTOK.captures(url) {
         return player(
             "TikTok",
-            format!("https://www.tiktok.com/embed/v2/{}", &c[1]),
+            // the video-only player: embed/v2 leaves an empty white block
+            format!("https://www.tiktok.com/player/v1/{}", &c[1]),
             325,
-            740,
+            578,
         );
     }
     if let Some(c) = RE_INSTAGRAM.captures(url) {
@@ -284,7 +285,8 @@ pub fn site_player(url: &str) -> Option<Special> {
     if let Some(c) = RE_APPLE_PODCASTS.captures(url) {
         let (query, height) = match c.get(2) {
             Some(episode) => (format!("?i={}", episode.as_str()), 175),
-            None => (String::new(), 450),
+            // a show's card keeps this shape at any width (450 left a gap)
+            None => (String::new(), 218),
         };
         return player(
             "Apple Podcasts",
@@ -382,7 +384,7 @@ mod site_player_tests {
             (
                 "https://www.tiktok.com/@some.user/video/7301234567890123456?lang=ar",
                 "TikTok",
-                "https://www.tiktok.com/embed/v2/7301234567890123456",
+                "https://www.tiktok.com/player/v1/7301234567890123456",
             ),
             (
                 "https://www.instagram.com/p/CxYz_12-ab/",
