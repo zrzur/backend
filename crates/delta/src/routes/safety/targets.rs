@@ -377,7 +377,38 @@ pub async fn resolve(
             }
             resolved.target.facet = input.facet;
             resolved.owner_id = Some(user.id.clone());
-            resolved.evidence.push(user_evidence(&user, input.facet, now));
+            let mut snap = user_evidence(&user, input.facet, now);
+            // what the profile shows from a linked Steam account, so staff can
+            // judge the games and achievements a report is about
+            if let Ok(Some(steam)) = db.fetch_linked_account(&user.id, "steam").await {
+                if steam.shown && !steam.private {
+                    let games: Vec<&str> = steam
+                        .games
+                        .iter()
+                        .filter(|g| !steam.hidden_titles.contains(&g.appid))
+                        .map(|g| g.name.as_str())
+                        .collect();
+                    let achievements: Vec<&str> = steam
+                        .achievements
+                        .iter()
+                        .filter(|a| !steam.hidden_titles.contains(&a.appid))
+                        .map(|a| a.name.as_str())
+                        .collect();
+                    snap.metadata.insert(
+                        "steam".into(),
+                        truncate(
+                            &format!(
+                                "{} | games: {} | achievements: {}",
+                                steam.display_name,
+                                games.join(", "),
+                                achievements.join(", ")
+                            ),
+                            1000,
+                        ),
+                    );
+                }
+            }
+            resolved.evidence.push(snap);
             // a message the user sent, as context (only if the reporter can read it)
             if let Some(message_id) = &input.message_id {
                 let (message, channel) = visible_message(db, reporter, message_id).await?;

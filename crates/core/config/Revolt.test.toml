@@ -28,6 +28,8 @@ effects_enabled = true
 [api.connections.steam]
 web_api_key = "test-steam-key-not-real"
 return_origins = ["http://localhost:5173"]
+# a maker asked: Portal 2 shows without pictures
+no_picture_appids = [620]
 
 # The tests talk to a bot endpoint on 127.0.0.1
 [api.interactions]

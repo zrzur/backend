@@ -29,7 +29,7 @@ pub async fn profile(
         let creator = creator_is_active(db, &user.id).await?;
         // what others see: shown, without hidden games
         let games = if user.bot.is_none() {
-            super::connections::profile_games(db, &user.id).await?
+            super::connections::profile_games(db, &user.id, &user).await?
         } else {
             None
         };
@@ -60,7 +60,7 @@ pub async fn profile(
     // linked games follow the same rule as links: on a minor's profile, or
     // one of unknown age, friends only; never when the section is hidden
     let games = if personal && target.bot.is_none() && target.shows_section("games") {
-        super::connections::profile_games(db, &target.id).await?
+        super::connections::profile_games(db, &target.id, &user).await?
     } else {
         None
     };

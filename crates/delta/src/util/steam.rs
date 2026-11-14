@@ -11,7 +11,9 @@
 use std::{collections::BTreeMap, sync::OnceLock, time::Duration};
 
 use revolt_config::ApiConnectionSteam;
-use revolt_database::{LinkedGame, LINKED_TOP_GAMES};
+use revolt_database::{
+    LinkedAchievement, LinkedGame, LINKED_LATEST_ACHIEVEMENTS, LINKED_TOP_GAMES,
+};
 use revolt_result::{create_error, Result};
 use serde::Deserialize;
 
@@ -32,6 +34,51 @@ pub struct SteamSnapshot {
     pub game_count: Option<u32>,
     pub total_hours: Option<u32>,
     pub games: Vec<LinkedGame>,
+    /// Newest first, at most [LINKED_LATEST_ACHIEVEMENTS]
+    pub achievements: Vec<LinkedAchievement>,
+}
+
+/// A Steam image file name: 40 hexadecimal characters, nothing else
+pub fn image_hash(value: &str) -> Option<String> {
+    let value = value.trim();
+    (value.len() == 40 && value.bytes().all(|b| b.is_ascii_hexdigit()))
+        .then(|| value.to_ascii_lowercase())
+}
+
+/// The file name from an image address Steam gives (`…/<hash>.jpg`)
+pub fn image_hash_of_url(url: &str) -> Option<String> {
+    let name = url.rsplit('/').next()?;
+    image_hash(name.strip_suffix(".jpg").unwrap_or(name))
+}
+
+/// A game's or achievement's icon on Steam's image server
+pub fn icon_url(appid: u32, hash: &str) -> String {
+    format!("https://media.steampowered.com/steamcommunity/public/images/apps/{appid}/{hash}.jpg")
+}
+
+/// A game's wide header picture on Steam's image server
+pub fn header_url(appid: u32) -> String {
+    format!("https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/header.jpg")
+}
+
+/// A game's page in the Steam store
+pub fn store_url(appid: u32) -> String {
+    format!("https://store.steampowered.com/app/{appid}/")
+}
+
+/// The UTC day of a Unix time, `YYYY-MM-DD`. The time of day is dropped.
+pub fn day_of(unix_seconds: i64) -> String {
+    // days since 1970-01-01 to a civil date (H. Hinnant's algorithm)
+    let z = unix_seconds.div_euclid(86_400) + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!("{year:04}-{month:02}-{day:02}")
 }
 
 /// Where Steam sends the person back to, for this web app origin
@@ -215,6 +262,9 @@ pub struct OwnedGame {
     /// Minutes
     #[serde(default)]
     pub playtime_forever: u64,
+    /// Icon file name
+    #[serde(default)]
+    pub img_icon_url: String,
 }
 
 #[derive(Deserialize, Default)]
@@ -234,7 +284,121 @@ pub struct PlayerStats {
 #[derive(Deserialize, Default)]
 pub struct Achievement {
     #[serde(default)]
+    pub apiname: String,
+    #[serde(default)]
     pub achieved: u8,
+    /// Unix time; only the day is kept
+    #[serde(default)]
+    pub unlocktime: i64,
+    /// Present when asked with `l`
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+}
+
+#[derive(Deserialize, Default)]
+pub struct SchemaAnswer {
+    #[serde(default)]
+    pub game: SchemaGame,
+}
+
+#[derive(Deserialize, Default)]
+pub struct SchemaGame {
+    #[serde(default, rename = "availableGameStats")]
+    pub stats: SchemaStats,
+}
+
+#[derive(Deserialize, Default)]
+pub struct SchemaStats {
+    #[serde(default)]
+    pub achievements: Vec<SchemaAchievement>,
+}
+
+#[derive(Deserialize, Default)]
+pub struct SchemaAchievement {
+    /// The `apiname` of the player's list
+    #[serde(default)]
+    pub name: String,
+    #[serde(default, rename = "displayName")]
+    pub display_name: String,
+    #[serde(default)]
+    pub description: String,
+    /// Address of the unlocked icon
+    #[serde(default)]
+    pub icon: String,
+}
+
+/// Longest achievement description kept
+const MAX_DESCRIPTION: usize = 200;
+
+/// The unlocked achievements of one game, with names and icons from its
+/// schema when there is one. Times become days.
+pub fn unlocked_of(
+    appid: u32,
+    answer: &AchievementsAnswer,
+    schema: Option<&SchemaAnswer>,
+) -> Vec<(i64, LinkedAchievement)> {
+    let find = |apiname: &str| {
+        schema.and_then(|schema| {
+            schema
+                .game
+                .stats
+                .achievements
+                .iter()
+                .find(|entry| entry.name == apiname)
+        })
+    };
+    answer
+        .playerstats
+        .achievements
+        .iter()
+        .filter(|a| a.achieved == 1 && a.unlocktime > 0)
+        .filter_map(|a| {
+            let entry = find(&a.apiname);
+            let name = clean_name(
+                entry
+                    .map(|e| e.display_name.as_str())
+                    .filter(|n| !n.trim().is_empty())
+                    .or(Some(a.name.as_str()).filter(|n| !n.trim().is_empty()))
+                    .unwrap_or(&a.apiname),
+            );
+            if name.is_empty() {
+                return None;
+            }
+            let description: String = entry
+                .map(|e| e.description.as_str())
+                .filter(|d| !d.trim().is_empty())
+                .unwrap_or(&a.description)
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(MAX_DESCRIPTION)
+                .collect::<String>()
+                .trim()
+                .to_string();
+            Some((
+                a.unlocktime,
+                LinkedAchievement {
+                    appid,
+                    name,
+                    description,
+                    icon: entry.and_then(|e| image_hash_of_url(&e.icon)),
+                    unlocked_on: day_of(a.unlocktime),
+                },
+            ))
+        })
+        .collect()
+}
+
+/// The newest achievements across games, at most [LINKED_LATEST_ACHIEVEMENTS]
+pub fn latest(mut all: Vec<(i64, LinkedAchievement)>) -> Vec<LinkedAchievement> {
+    all.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then(a.1.appid.cmp(&b.1.appid))
+            .then(a.1.name.cmp(&b.1.name))
+    });
+    all.truncate(LINKED_LATEST_ACHIEVEMENTS);
+    all.into_iter().map(|(_, achievement)| achievement).collect()
 }
 
 /// A game name as shown: one line, at most [MAX_NAME] characters
@@ -291,8 +455,10 @@ pub fn snapshot_of(summary: Option<Summary>, owned: OwnedAnswer) -> SteamSnapsho
                 hours: (game.playtime_forever / 60).min(u32::MAX as u64) as u32,
                 achievements_unlocked: None,
                 achievements_total: None,
+                icon: image_hash(&game.img_icon_url),
             })
             .collect(),
+        achievements: vec![],
     }
 }
 
@@ -365,21 +531,42 @@ pub async fn fetch(config: &ApiConnectionSteam, steam_id: &str) -> Result<SteamS
         .unwrap_or_default();
 
         let mut snapshot = snapshot_of(summary, owned);
+        let mut unlocked = vec![];
         for game in snapshot.games.iter_mut() {
             let appid = game.appid.to_string();
             // a game without achievements answers 400: that is no failure
             let answer: Option<AchievementsAnswer> = get_json(
                 config,
                 "ISteamUserStats/GetPlayerAchievements/v1/",
-                &[("steamid", steam_id), ("appid", appid.as_str())],
+                &[
+                    ("steamid", steam_id),
+                    ("appid", appid.as_str()),
+                    ("l", "english"),
+                ],
             )
             .await
             .unwrap_or(None);
-            if let Some((unlocked, total)) = answer.and_then(achievement_counts) {
-                game.achievements_unlocked = Some(unlocked);
+            let Some(answer) = answer else { continue };
+            // names and icons only for a game where something was unlocked
+            let schema: Option<SchemaAnswer> =
+                if answer.playerstats.achievements.iter().any(|a| a.achieved == 1) {
+                    get_json(
+                        config,
+                        "ISteamUserStats/GetSchemaForGame/v2/",
+                        &[("appid", appid.as_str()), ("l", "english")],
+                    )
+                    .await
+                    .unwrap_or(None)
+                } else {
+                    None
+                };
+            unlocked.extend(unlocked_of(game.appid, &answer, schema.as_ref()));
+            if let Some((count, total)) = achievement_counts(answer) {
+                game.achievements_unlocked = Some(count);
                 game.achievements_total = Some(total);
             }
         }
+        snapshot.achievements = latest(unlocked);
         Ok(snapshot)
     }
 }
@@ -410,9 +597,9 @@ pub mod test_steam {
             response: OwnedList {
                 game_count: Some(3),
                 games: vec![
-                    OwnedGame { appid: 620, name: "Portal 2".into(), playtime_forever: 600 },
-                    OwnedGame { appid: 570, name: "Dota 2".into(), playtime_forever: 6000 },
-                    OwnedGame { appid: 440, name: "Unplayed".into(), playtime_forever: 0 },
+                    OwnedGame { appid: 620, name: "Portal 2".into(), playtime_forever: 600, ..Default::default() },
+                    OwnedGame { appid: 570, name: "Dota 2".into(), playtime_forever: 6000, img_icon_url: "0bbb630d63262dd66d2fdd0f7d37e8661a410075".into() },
+                    OwnedGame { appid: 440, name: "Unplayed".into(), playtime_forever: 0, ..Default::default() },
                 ],
             },
         };
@@ -420,6 +607,33 @@ pub mod test_steam {
         if let Some(first) = snapshot.games.first_mut() {
             first.achievements_unlocked = Some(12);
             first.achievements_total = Some(30);
+        }
+        let icon = |n: u8| format!("{:040x}", n);
+        snapshot.achievements = vec![
+            LinkedAchievement {
+                appid: 570,
+                name: "First blood".into(),
+                description: "Win your first match".into(),
+                icon: Some(icon(1)),
+                unlocked_on: "2026-11-12".into(),
+            },
+            LinkedAchievement {
+                appid: 620,
+                name: "Wake up call".into(),
+                description: "Survive the manual override".into(),
+                icon: Some(icon(2)),
+                unlocked_on: "2026-11-09".into(),
+            },
+        ];
+        if steam_id == OTHER {
+            // text the platform word list catches
+            snapshot.achievements.push(LinkedAchievement {
+                appid: 570,
+                name: "kys".into(),
+                description: String::new(),
+                icon: None,
+                unlocked_on: "2026-11-01".into(),
+            });
         }
         snapshot
     }
@@ -568,7 +782,7 @@ mod tests {
     #[test]
     fn at_most_ten_games() {
         let games = (1..=25)
-            .map(|appid| OwnedGame { appid, name: format!("G{appid}"), playtime_forever: 60 * appid as u64 })
+            .map(|appid| OwnedGame { appid, name: format!("G{appid}"), playtime_forever: 60 * appid as u64, ..Default::default() })
             .collect();
         let snapshot = snapshot_of(
             Some(Summary { communityvisibilitystate: 3, ..Default::default() }),
@@ -601,6 +815,85 @@ mod tests {
         assert_eq!(clean_profile_url("https://steamcommunity.com/id/x/"), "https://steamcommunity.com/id/x/");
         assert_eq!(clean_profile_url("https://evil.example/"), "");
         assert_eq!(clean_profile_url("javascript:alert(1)"), "");
+    }
+
+    #[test]
+    fn days_never_carry_a_time() {
+        assert_eq!(day_of(0), "1970-01-01");
+        assert_eq!(day_of(86_399), "1970-01-01");
+        assert_eq!(day_of(1_763_078_399), "2025-11-13");
+        assert_eq!(day_of(1_763_078_400), "2025-11-14");
+        assert_eq!(day_of(951_782_400), "2000-02-29");
+        assert_eq!(day_of(-1), "1969-12-31");
+    }
+
+    #[test]
+    fn only_plain_image_names() {
+        let hash = "0bbb630d63262dd66d2fdd0f7d37e8661a410075";
+        assert_eq!(image_hash(hash).as_deref(), Some(hash));
+        assert_eq!(image_hash(&hash.to_uppercase()).as_deref(), Some(hash));
+        assert_eq!(
+            image_hash_of_url(&format!("https://steamcdn-a.akamaihd.net/steamcommunity/public/images/apps/570/{hash}.jpg")).as_deref(),
+            Some(hash)
+        );
+        for bad in ["", "../etc", "0bbb630d63262dd66d2fdd0f7d37e8661a41007", "0bbb630d63262dd66d2fdd0f7d37e8661a41007z", "https://evil.example/x.jpg"] {
+            assert_eq!(image_hash_of_url(bad), None, "{bad}");
+        }
+        assert_eq!(icon_url(570, hash), format!("https://media.steampowered.com/steamcommunity/public/images/apps/570/{hash}.jpg"));
+        assert_eq!(header_url(570), "https://cdn.cloudflare.steamstatic.com/steam/apps/570/header.jpg");
+        assert_eq!(store_url(570), "https://store.steampowered.com/app/570/");
+    }
+
+    #[test]
+    fn unlocked_achievements_take_schema_names_and_days() {
+        let hash = "0bbb630d63262dd66d2fdd0f7d37e8661a410075";
+        let player: AchievementsAnswer = serde_json::from_str(
+            r#"{"playerstats":{"success":true,"achievements":[
+            {"apiname":"WIN_1","achieved":1,"unlocktime":1763078500,"name":"Win one","description":"player text"},
+            {"apiname":"WIN_2","achieved":0,"unlocktime":0},
+            {"apiname":"OLD","achieved":1,"unlocktime":0}]}}"#,
+        )
+        .unwrap();
+        let schema: SchemaAnswer = serde_json::from_str(&format!(
+            r#"{{"game":{{"availableGameStats":{{"achievements":[
+            {{"name":"WIN_1","displayName":"Winner","description":"Win a match","icon":"https://steamcdn-a.akamaihd.net/steamcommunity/public/images/apps/570/{hash}.jpg","icongray":"x"}}]}}}}}}"#
+        ))
+        .unwrap();
+        let got = unlocked_of(570, &player, Some(&schema));
+        assert_eq!(got.len(), 1, "locked ones and ones without a time are left out");
+        let (time, a) = &got[0];
+        assert_eq!(*time, 1_763_078_500);
+        assert_eq!(a.name, "Winner");
+        assert_eq!(a.description, "Win a match");
+        assert_eq!(a.icon.as_deref(), Some(hash));
+        assert_eq!(a.unlocked_on, "2025-11-14");
+
+        // without a schema, the player's own text and no icon
+        let plain = unlocked_of(570, &player, None);
+        assert_eq!(plain[0].1.name, "Win one");
+        assert_eq!(plain[0].1.icon, None);
+    }
+
+    #[test]
+    fn latest_keeps_the_newest_sixty() {
+        let all = (0..80)
+            .map(|n| {
+                (
+                    n as i64 * 1000,
+                    LinkedAchievement {
+                        appid: 1,
+                        name: format!("A{n}"),
+                        description: String::new(),
+                        icon: None,
+                        unlocked_on: day_of(n as i64 * 1000),
+                    },
+                )
+            })
+            .collect();
+        let kept = latest(all);
+        assert_eq!(kept.len(), LINKED_LATEST_ACHIEVEMENTS);
+        assert_eq!(kept[0].name, "A79");
+        assert_eq!(kept.last().unwrap().name, "A20");
     }
 
     #[test]

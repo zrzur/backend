@@ -8,7 +8,7 @@
 use iso8601_timestamp::Timestamp;
 use redis_kiss::{get_connection, AsyncCommands};
 use revolt_config::{config, ApiConnectionSteam};
-use revolt_database::{Database, LinkedAccount, User};
+use revolt_database::{Database, LinkedAccount, User, LINKED_CONSENT_VERSION};
 use revolt_models::v0;
 use revolt_result::{create_error, Result};
 use rocket::{serde::json::Json, State};
@@ -58,8 +58,9 @@ fn no_bots(user: &User) -> Result<()> {
     }
 }
 
-/// The link as its owner sees it
-pub fn owner_view(account: LinkedAccount) -> v0::LinkedAccount {
+/// The link as its owner sees it: everything copied, hidden games included
+pub fn owner_view(account: LinkedAccount, blocked: &[u32]) -> v0::LinkedAccount {
+    let current = account.consent >= LINKED_CONSENT_VERSION;
     v0::LinkedAccount {
         service: account.service,
         display_name: account.display_name,
@@ -68,16 +69,27 @@ pub fn owner_view(account: LinkedAccount) -> v0::LinkedAccount {
         private: account.private,
         game_count: account.game_count,
         total_hours: account.total_hours,
-        games: account.games.into_iter().map(game_view).collect(),
+        achievements: achievements_view(&account.games, account.achievements, &[], true, blocked),
+        games: account.games.into_iter().map(|g| game_view(g, true, blocked)).collect(),
         hidden_titles: account.hidden_titles,
         linked_at: account.linked_at,
         refreshed_at: account.refreshed_at,
         refresh_after: account.refreshed_at + REFRESH_COOLDOWN_MS,
+        consent_current: current,
     }
 }
 
-fn game_view(game: revolt_database::LinkedGame) -> v0::LinkedGame {
+/// One game; `pictures` only when the person agreed to the text naming them
+fn game_view(game: revolt_database::LinkedGame, pictures: bool, blocked: &[u32]) -> v0::LinkedGame {
+    let pictures = pictures && !blocked.contains(&game.appid);
     v0::LinkedGame {
+        icon_url: game
+            .icon
+            .as_deref()
+            .filter(|_| pictures)
+            .map(|hash| steam::icon_url(game.appid, hash)),
+        header_url: pictures.then(|| steam::header_url(game.appid)),
+        store_url: steam::store_url(game.appid),
         appid: game.appid,
         name: game.name,
         hours: game.hours,
@@ -86,13 +98,52 @@ fn game_view(game: revolt_database::LinkedGame) -> v0::LinkedGame {
     }
 }
 
+/// Achievements with their game's name, leaving out hidden games. `icons`
+/// is false for a viewer who did not declare they are an adult: Steam has
+/// no age rating for achievement icons.
+fn achievements_view(
+    games: &[revolt_database::LinkedGame],
+    achievements: Vec<revolt_database::LinkedAchievement>,
+    hidden: &[u32],
+    icons: bool,
+    blocked: &[u32],
+) -> Vec<v0::LinkedAchievement> {
+    achievements
+        .into_iter()
+        .filter(|a| !hidden.contains(&a.appid))
+        .filter_map(|a| {
+            // an achievement of a game no longer in the list is dropped
+            let game = games.iter().find(|g| g.appid == a.appid)?;
+            Some(v0::LinkedAchievement {
+                icon_url: a
+                    .icon
+                    .as_deref()
+                    .filter(|_| icons && !blocked.contains(&a.appid))
+                    .map(|hash| steam::icon_url(a.appid, hash)),
+                game: game.name.clone(),
+                appid: a.appid,
+                name: a.name,
+                description: a.description,
+                unlocked_on: a.unlocked_on,
+            })
+        })
+        .collect()
+}
+
 /// The games section as another person sees it: only what the owner shows,
-/// without hidden titles, and without name or link while it is private there
-pub fn profile_view(account: LinkedAccount) -> Option<v0::ProfileGames> {
+/// without hidden titles, and without name or link while it is private
+/// there. A link made under the first consent text shows no pictures and no
+/// achievements until the person agrees to the current one.
+pub fn profile_view(
+    account: LinkedAccount,
+    adult_viewer: bool,
+    blocked: &[u32],
+) -> Option<v0::ProfileGames> {
     if !account.shown {
         return None;
     }
     let hidden = account.hidden_titles;
+    let current = account.consent >= LINKED_CONSENT_VERSION;
     Some(if account.private {
         v0::ProfileGames {
             service: account.service,
@@ -102,6 +153,7 @@ pub fn profile_view(account: LinkedAccount) -> Option<v0::ProfileGames> {
             game_count: None,
             total_hours: None,
             games: vec![],
+            achievements: vec![],
         }
     } else {
         v0::ProfileGames {
@@ -111,22 +163,50 @@ pub fn profile_view(account: LinkedAccount) -> Option<v0::ProfileGames> {
             private: false,
             game_count: account.game_count,
             total_hours: account.total_hours,
+            achievements: if current {
+                achievements_view(&account.games, account.achievements, &hidden, adult_viewer, blocked)
+            } else {
+                vec![]
+            },
             games: account
                 .games
                 .into_iter()
                 .filter(|game| !hidden.contains(&game.appid))
-                .map(game_view)
+                .map(|game| game_view(game, current, blocked))
                 .collect(),
         }
     })
 }
 
 /// The games section of this profile for this viewer, if any
-pub async fn profile_games(db: &Database, user_id: &str) -> Result<Option<v0::ProfileGames>> {
-    Ok(db
-        .fetch_linked_account(user_id, SERVICE)
-        .await?
-        .and_then(profile_view))
+pub async fn profile_games(
+    db: &Database,
+    user_id: &str,
+    viewer: &User,
+) -> Result<Option<v0::ProfileGames>> {
+    let Some(account) = db.fetch_linked_account(user_id, SERVICE).await? else {
+        return Ok(None);
+    };
+    let adult = revolt_database::util::age::owner_band(db, viewer).await
+        == v0::AgeBand::AdultDeclared;
+    Ok(profile_view(account, adult, &steam_config().await.no_picture_appids))
+}
+
+/// Steam's text goes through the platform word list like profile text: a
+/// game or achievement whose text it matches is left out, and a name it
+/// matches is not shown
+async fn filter_words(db: &Database, snapshot: &mut steam::SteamSnapshot) -> Result<()> {
+    let words = db.fetch_platform_words().await?;
+    let hit = |text: &str| revolt_database::match_platform_words(text, &words).is_some();
+    if hit(&snapshot.display_name) {
+        snapshot.display_name = String::new();
+    }
+    snapshot.games.retain(|game| !hit(&game.name));
+    let games = &snapshot.games;
+    snapshot.achievements.retain(|a| {
+        games.iter().any(|g| g.appid == a.appid) && !hit(&a.name) && !hit(&a.description)
+    });
+    Ok(())
 }
 
 fn apply(account: &mut LinkedAccount, snapshot: steam::SteamSnapshot) {
@@ -136,6 +216,7 @@ fn apply(account: &mut LinkedAccount, snapshot: steam::SteamSnapshot) {
     account.game_count = snapshot.game_count;
     account.total_hours = snapshot.total_hours;
     account.games = snapshot.games;
+    account.achievements = snapshot.achievements;
     account.refreshed_at = now_ms();
 }
 
@@ -146,13 +227,15 @@ fn apply(account: &mut LinkedAccount, snapshot: steam::SteamSnapshot) {
 #[get("/@me/connections")]
 pub async fn list(db: &State<Database>, user: User) -> Result<Json<v0::LinkedAccounts>> {
     no_bots(&user)?;
+    let steam = steam_config().await;
+    let blocked = steam.no_picture_appids.clone();
     Ok(Json(v0::LinkedAccounts {
         steam: v0::SteamConnection {
-            available: steam_config().await.enabled(),
+            available: steam.enabled(),
             account: db
                 .fetch_linked_account(&user.id, SERVICE)
                 .await?
-                .map(owner_view),
+                .map(|account| owner_view(account, &blocked)),
         },
     }))
 }
@@ -242,7 +325,8 @@ pub async fn steam_finish(
         }
     }
 
-    let snapshot = steam::fetch(&steam, &steam_id).await?;
+    let mut snapshot = steam::fetch(&steam, &steam_id).await?;
+    filter_words(db, &mut snapshot).await?;
     let previous = db.fetch_linked_account(&user.id, SERVICE).await?;
     let now = now_ms();
     let mut account = LinkedAccount {
@@ -258,16 +342,19 @@ pub async fn steam_finish(
         game_count: None,
         total_hours: None,
         games: vec![],
+        achievements: vec![],
         hidden_titles: previous
             .filter(|previous| previous.external_id == steam_id)
             .map(|previous| previous.hidden_titles)
             .unwrap_or_default(),
+        // the consent dialog the app shows before Steam is the current one
+        consent: LINKED_CONSENT_VERSION,
         linked_at: now,
         refreshed_at: now,
     };
     apply(&mut account, snapshot);
     db.save_linked_account(&account).await?;
-    Ok(Json(owner_view(account)))
+    Ok(Json(owner_view(account, &steam_config().await.no_picture_appids)))
 }
 
 /// # Edit Linked Steam Account
@@ -292,6 +379,12 @@ pub async fn steam_edit(
     if let Some(shown) = data.shown {
         account.shown = shown;
     }
+    if let Some(version) = data.consent {
+        if version != LINKED_CONSENT_VERSION {
+            return Err(create_error!(InvalidOperation));
+        }
+        account.consent = version;
+    }
     if let Some(mut hidden) = data.hidden_titles {
         hidden.sort_unstable();
         hidden.dedup();
@@ -299,7 +392,7 @@ pub async fn steam_edit(
         account.hidden_titles = hidden;
     }
     db.save_linked_account(&account).await?;
-    Ok(Json(owner_view(account)))
+    Ok(Json(owner_view(account, &steam_config().await.no_picture_appids)))
 }
 
 /// # Refresh Linked Steam Account
@@ -325,10 +418,11 @@ pub async fn steam_refresh(
         }));
     }
 
-    let snapshot = steam::fetch(&steam, &account.external_id).await?;
+    let mut snapshot = steam::fetch(&steam, &account.external_id).await?;
+    filter_words(db, &mut snapshot).await?;
     apply(&mut account, snapshot);
     db.save_linked_account(&account).await?;
-    Ok(Json(owner_view(account)))
+    Ok(Json(owner_view(account, &steam_config().await.no_picture_appids)))
 }
 
 /// # Disconnect Steam

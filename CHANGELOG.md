@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Steam details: pictures, latest achievements, unlock days (2026-11-14)
+
+- Linked Steam accounts keep each game's icon file name and up to 60 latest unlocked achievements across the 10 kept games (name and description in English from `GetPlayerAchievements` + `GetSchemaForGame`, icon file name, and the UTC day it was unlocked; the time of day is dropped on arrival). Each Refresh replaces the list. About 20 Steam calls per link or Refresh, never on viewing.
+- The API hands out Steam picture addresses built only from app ids and checked 40-hex file names (`icon_url`, `header_url`, `store_url`); clients load them through the media proxy only.
+- Consent versions: `LinkedAccount.consent` (missing = 1). A link made under the first text shows no pictures and no achievements until the person agrees (`PATCH /users/@me/connections/steam { "consent": 2 }`); `consent_current` in the owner view.
+- Achievement icons are left out for viewers who have not declared they are adults; names, descriptions and days stay.
+- `[api.connections.steam] no_picture_appids`: games whose makers asked; their pictures are never handed out.
+- Steam text goes through the platform word list (a matching game or achievement is dropped). Reports on a profile carry the shown Steam games and achievements in the evidence.
+
 ### Linked Steam accounts (2026-11-14)
 
 - A person links Steam by signing in on Steam's own page (OpenID 2.0). `POST /users/@me/connections/steam/start` returns Steam's sign-in address and remembers the request for 10 minutes (Redis, one use, bound to the person); `POST /users/@me/connections/steam/finish` checks the fields Steam sent back (return address, endpoint, signed field list, SteamID form) and has Steam confirm them (`check_authentication`). Steam gives no token, so none is kept.

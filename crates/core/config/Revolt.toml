@@ -136,6 +136,9 @@ return_origins = []
 # Steam's own addresses. Only a test stack points these at a mock.
 openid_endpoint = "https://steamcommunity.com/openid/login"
 api_base = "https://api.steampowered.com"
+# Steam app ids whose pictures are never shown, after a maker asks (act
+# within 7 days). Names and hours still show.
+no_picture_appids = []
 
 [api.sessions]
 # Most sessions one account keeps. A sign-in over this closes the least

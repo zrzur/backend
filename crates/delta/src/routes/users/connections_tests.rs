@@ -144,6 +144,15 @@ async fn steam_links_through_steam_and_shows_after_the_preview() {
     assert_eq!(names, vec!["Dota 2", "Portal 2"], "unplayed games are left out");
     assert_eq!(linked.games[0].achievements_unlocked, Some(12));
     assert_eq!(linked.games[0].achievements_total, Some(30));
+    assert_eq!(
+        linked.games[0].icon_url.as_deref(),
+        Some("https://media.steampowered.com/steamcommunity/public/images/apps/570/0bbb630d63262dd66d2fdd0f7d37e8661a410075.jpg")
+    );
+    assert_eq!(linked.games[1].icon_url, None, "no icon name, no icon");
+    assert_eq!(linked.games[0].header_url.as_deref(), Some("https://cdn.cloudflare.steamstatic.com/steam/apps/570/header.jpg"));
+    assert_eq!(linked.games[0].store_url, "https://store.steampowered.com/app/570/");
+    let latest: Vec<_> = linked.achievements.iter().map(|a| (a.name.as_str(), a.game.as_str(), a.unlocked_on.as_str())).collect();
+    assert_eq!(latest, vec![("First blood", "Dota 2", "2026-11-12"), ("Wake up call", "Portal 2", "2026-11-09")]);
 
     // not shown yet: the viewer gets nothing
     assert!(profile(&harness, &viewer_session, &owner.id).await.games.is_none());
@@ -157,11 +166,14 @@ async fn steam_links_through_steam_and_shows_after_the_preview() {
     assert!(games.profile_url.starts_with("https://steamcommunity.com/"));
     let names: Vec<_> = games.games.iter().map(|g| g.name.as_str()).collect();
     assert_eq!(names, vec!["Dota 2"], "hidden games never reach viewers");
+    let latest: Vec<_> = games.achievements.iter().map(|a| a.name.as_str()).collect();
+    assert_eq!(latest, vec!["First blood"], "nor their achievements");
+    assert!(games.achievements[0].icon_url.as_deref().unwrap().starts_with("https://media.steampowered.com/"));
 
     // the raw profile carries no stored id fields, times or hidden list (the
     // SteamID shows only inside Steam's own profile link, which is public)
     let (_, raw) = call(&harness, Method::Get, &viewer_session, &format!("/users/{}/profile", owner.id), None).await;
-    for field in ["external_id", "hidden_titles", "linked_at", "refreshed_at", "Portal 2"] {
+    for field in ["external_id", "hidden_titles", "linked_at", "refreshed_at", "Portal 2", "Wake up call"] {
         assert!(!raw.contains(field), "{field} in {raw}");
     }
 
@@ -295,6 +307,7 @@ async fn a_private_steam_account_shows_one_plain_line() {
     assert!(games.private);
     assert!(games.display_name.is_empty() && games.profile_url.is_empty());
     assert!(games.games.is_empty() && games.game_count.is_none());
+    assert!(games.achievements.is_empty());
 }
 
 #[rocket::async_test]
@@ -325,4 +338,88 @@ async fn refresh_waits_and_disconnect_removes_everything() {
     link(&harness, &session, test_steam::PUBLIC).await;
     account.mark_deleted(&harness.db).await.unwrap();
     assert!(harness.db.fetch_linked_accounts(&user.id).await.unwrap().is_empty());
+}
+
+#[rocket::async_test]
+async fn achievement_icons_only_for_adult_viewers() {
+    let harness = TestHarness::new().await;
+    let (_, owner_session, mut owner) = person(&harness, 30).await;
+    let (_, adult_session, adult) = person(&harness, 30).await;
+    let (_, minor_session, mut minor) = person(&harness, 16).await;
+    share(&harness, &owner, &adult).await;
+    befriend(&harness, &mut owner, &mut minor).await;
+    link(&harness, &owner_session, test_steam::PUBLIC).await;
+    show(&harness, &owner_session, serde_json::json!({ "shown": true })).await;
+
+    let seen = profile(&harness, &adult_session, &owner.id).await.games.unwrap();
+    // 570's icon shows; 620 is on the makers' list in the test config
+    assert!(seen.achievements.iter().find(|a| a.appid == 570).unwrap().icon_url.is_some());
+
+    let seen = profile(&harness, &minor_session, &owner.id).await.games.unwrap();
+    assert!(!seen.achievements.is_empty(), "names still show");
+    assert!(seen.achievements.iter().all(|a| a.icon_url.is_none()), "icons do not");
+    assert!(seen.games[0].icon_url.is_some(), "game pictures carry Steam's age rule");
+}
+
+#[rocket::async_test]
+async fn a_link_under_the_first_consent_shows_no_pictures_until_agreed() {
+    let harness = TestHarness::new().await;
+    let (_, owner_session, owner) = person(&harness, 30).await;
+    let (_, viewer_session, viewer) = person(&harness, 30).await;
+    share(&harness, &owner, &viewer).await;
+    let linked = link(&harness, &owner_session, test_steam::PUBLIC).await;
+    assert!(linked.consent_current);
+    show(&harness, &owner_session, serde_json::json!({ "shown": true })).await;
+
+    // as stored by the first version
+    let mut stored = harness.db.fetch_linked_account(&owner.id, "steam").await.unwrap().unwrap();
+    stored.consent = 1;
+    harness.db.save_linked_account(&stored).await.unwrap();
+
+    let (_, body) = call(&harness, Method::Get, &owner_session, "/users/@me/connections", None).await;
+    let list: v0::LinkedAccounts = serde_json::from_str(&body).unwrap();
+    assert!(!list.steam.account.unwrap().consent_current);
+
+    let seen = profile(&harness, &viewer_session, &owner.id).await.games.unwrap();
+    assert!(seen.achievements.is_empty());
+    assert!(seen.games.iter().all(|g| g.icon_url.is_none() && g.header_url.is_none()));
+    assert_eq!(seen.games.len(), 2, "what the first text named still shows");
+
+    let (status, _) = call(&harness, Method::Patch, &owner_session, "/users/@me/connections/steam",
+        Some(serde_json::json!({ "consent": 7 }))).await;
+    assert_eq!(status, Status::BadRequest);
+    let agreed = show(&harness, &owner_session, serde_json::json!({ "consent": 2 })).await;
+    assert!(agreed.consent_current);
+    let seen = profile(&harness, &viewer_session, &owner.id).await.games.unwrap();
+    assert_eq!(seen.achievements.len(), 2);
+    assert!(seen.games[0].header_url.is_some());
+}
+
+#[rocket::async_test]
+async fn steam_text_goes_through_the_word_list() {
+    let harness = TestHarness::new().await;
+    let (_, session, _) = person(&harness, 30).await;
+    if harness.db.fetch_platform_words().await.unwrap().is_empty() {
+        for word in revolt_database::platform_word_seed(0).expect("the starter file reads") {
+            harness.db.insert_platform_word(&word).await.unwrap();
+        }
+    }
+    let linked = link(&harness, &session, test_steam::OTHER).await;
+    let names: Vec<_> = linked.achievements.iter().map(|a| a.name.as_str()).collect();
+    assert_eq!(names, vec!["First blood", "Wake up call"]);
+}
+
+#[rocket::async_test]
+async fn a_game_on_the_makers_list_shows_without_pictures() {
+    let harness = TestHarness::new().await;
+    let (_, session, _) = person(&harness, 30).await;
+    // Revolt.test.toml lists 620 (Portal 2)
+    let linked = link(&harness, &session, test_steam::PUBLIC).await;
+    let portal = linked.games.iter().find(|g| g.appid == 620).unwrap();
+    assert!(portal.icon_url.is_none() && portal.header_url.is_none());
+    assert_eq!(portal.name, "Portal 2", "the name still shows");
+    let wake = linked.achievements.iter().find(|a| a.appid == 620).unwrap();
+    assert!(wake.icon_url.is_none());
+    let dota = linked.games.iter().find(|g| g.appid == 570).unwrap();
+    assert!(dota.header_url.is_some());
 }

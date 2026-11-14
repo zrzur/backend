@@ -294,6 +294,9 @@ pub struct ApiConnectionSteam {
     pub openid_endpoint: String,
     /// Base address of the Steam Web API. Changed only for a test stack's mock.
     pub api_base: String,
+    /// Steam app ids whose pictures are never shown (a maker asked for it);
+    /// their names and hours still show
+    pub no_picture_appids: Vec<u32>,
 }
 
 impl Default for ApiConnectionSteam {
@@ -303,6 +306,7 @@ impl Default for ApiConnectionSteam {
             return_origins: vec![],
             openid_endpoint: "https://steamcommunity.com/openid/login".into(),
             api_base: "https://api.steampowered.com".into(),
+            no_picture_appids: vec![],
         }
     }
 }
