@@ -18,7 +18,7 @@ jobs:
           python3 - <<'PY'
           import json, pathlib
           release = json.loads(pathlib.Path('RELEASE.json').read_text())
-          assert release['version'] == '26.0.0'
+          assert release['version'] == '26.1.0-beta.1'
           assert release['component'] == 'backend'
           assert release['releaseReady'] is True
           assert pathlib.Path('LICENSE').exists()

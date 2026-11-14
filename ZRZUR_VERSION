@@ -4,4 +4,4 @@
 #   27.x.y  →  2027 release line
 # Zrzur ships its own releases; this is not an upstream Stoat/Revolt version.
 # Do not duplicate elsewhere without updating this file.
-26.0.0
+26.1.0-beta.1
