@@ -5,6 +5,9 @@ mod add_friend;
 mod block_user;
 mod change_username;
 pub(crate) mod connections;
+pub(crate) mod connections_oauth;
+#[cfg(test)]
+mod connections_oauth_tests;
 #[cfg(test)]
 mod connections_tests;
 pub(crate) mod change_requests;
@@ -48,6 +51,11 @@ pub fn routes() -> (Vec<Route>, OpenApi) {
         connections::steam_edit,
         connections::steam_refresh,
         connections::steam_disconnect,
+        connections_oauth::service_start,
+        connections_oauth::service_finish,
+        connections_oauth::service_edit,
+        connections_oauth::service_refresh,
+        connections_oauth::service_disconnect,
         // Direct Messaging
         fetch_dms::direct_messages,
         open_dm::open_dm,

@@ -33,9 +33,15 @@ pub async fn profile(
         } else {
             None
         };
+        let connections = if user.bot.is_none() {
+            super::connections_oauth::profile_connections(db, &user.id).await?
+        } else {
+            vec![]
+        };
         return Ok(Json(v0::UserProfile {
             creator,
             games,
+            connections,
             ..user
                 .profile
                 .unwrap_or_default()
@@ -64,9 +70,17 @@ pub async fn profile(
     } else {
         None
     };
+    // Twitch, GitHub, Battle.net: the same rule, under their own section
+    let connections =
+        if personal && target.bot.is_none() && target.shows_section("connections") {
+            super::connections_oauth::profile_connections(db, &target.id).await?
+        } else {
+            vec![]
+        };
     Ok(Json(v0::UserProfile {
         creator,
         games,
+        connections,
         ..target
             .profile
             .unwrap_or_default()

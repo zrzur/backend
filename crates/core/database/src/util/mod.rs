@@ -13,6 +13,7 @@ pub mod mail_limit;
 pub mod signup_limit;
 pub mod mfa_limit;
 pub mod ip;
+pub mod linked_crypto;
 pub mod login_limit;
 pub mod masquerade;
 pub mod password;

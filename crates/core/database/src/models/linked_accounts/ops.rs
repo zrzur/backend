@@ -32,6 +32,16 @@ pub trait AbstractLinkedAccounts: Sync + Send {
     /// Remove one link and its copy
     async fn delete_linked_account(&self, user_id: &str, service: &str) -> Result<()>;
 
+    /// Every link to one service (the hourly upkeep job)
+    async fn fetch_linked_accounts_of_service(&self, service: &str) -> Result<Vec<LinkedAccount>>;
+
+    /// The link to this account on that service, if anyone has it
+    async fn fetch_linked_account_by_external(
+        &self,
+        service: &str,
+        external_id: &str,
+    ) -> Result<Option<LinkedAccount>>;
+
     /// Remove every link of this person (account deletion)
     async fn delete_linked_accounts(&self, user_id: &str) -> Result<()>;
 }

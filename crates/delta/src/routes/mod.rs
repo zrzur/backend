@@ -8,6 +8,7 @@ mod applications;
 mod badges;
 mod billing;
 mod bots;
+mod connections;
 pub(crate) mod channels;
 mod customisation;
 mod community;
@@ -26,7 +27,7 @@ mod soundboard_library;
 mod staff;
 mod support;
 mod sync;
-mod users;
+pub(crate) mod users;
 mod webhooks;
 mod account;
 mod session;
@@ -73,7 +74,8 @@ pub fn mount(config: Settings, mut rocket: Rocket<Build>) -> Rocket<Build> {
             "/push" => push::routes(),
             "/support" => support::routes(),
             "/sync" => sync::routes(),
-            "/webhooks" => webhooks::routes()
+            "/webhooks" => webhooks::routes(),
+            "/connections" => connections::routes()
         };
     } else {
         mount_endpoints_and_merged_docs! {
@@ -106,7 +108,8 @@ pub fn mount(config: Settings, mut rocket: Rocket<Build>) -> Rocket<Build> {
             "/policy" => policy::routes(),
             "/push" => push::routes(),
             "/support" => support::routes(),
-            "/sync" => sync::routes()
+            "/sync" => sync::routes(),
+            "/connections" => connections::routes()
         };
     }
 

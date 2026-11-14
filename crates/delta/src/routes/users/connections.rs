@@ -15,7 +15,7 @@ use rocket::{serde::json::Json, State};
 use rocket_empty::EmptyResponse;
 use validator::Validate;
 
-use crate::util::steam;
+use crate::util::{oauth_link::Service, steam};
 
 const SERVICE: &str = "steam";
 /// How long a started sign-in may take
@@ -222,7 +222,7 @@ fn apply(account: &mut LinkedAccount, snapshot: steam::SteamSnapshot) {
 
 /// # Fetch Linked Accounts
 ///
-/// Your linked accounts, and whether Steam can be linked on this server.
+/// Your linked accounts, and which services can be linked on this server.
 #[openapi(tag = "User Information")]
 #[get("/@me/connections")]
 pub async fn list(db: &State<Database>, user: User) -> Result<Json<v0::LinkedAccounts>> {
@@ -237,6 +237,9 @@ pub async fn list(db: &State<Database>, user: User) -> Result<Json<v0::LinkedAcc
                 .await?
                 .map(|account| owner_view(account, &blocked)),
         },
+        twitch: super::connections_oauth::connection(db, &user.id, Service::Twitch).await?,
+        github: super::connections_oauth::connection(db, &user.id, Service::Github).await?,
+        battlenet: super::connections_oauth::connection(db, &user.id, Service::Battlenet).await?,
     }))
 }
 
@@ -351,6 +354,7 @@ pub async fn steam_finish(
         consent: LINKED_CONSENT_VERSION,
         linked_at: now,
         refreshed_at: now,
+        ..Default::default()
     };
     apply(&mut account, snapshot);
     db.save_linked_account(&account).await?;

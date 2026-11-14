@@ -87,6 +87,8 @@ pub async fn web() -> Rocket<Build> {
 
     // Launch background task workers
     revolt_database::tasks::start_workers(db.clone(), amqp.clone());
+    // linked accounts: Twitch names, Battle.net copies (services' terms)
+    tokio::spawn(util::linked_upkeep::run(db.clone()));
 
     // Configure Rocket
     let rocket = rocket::build();

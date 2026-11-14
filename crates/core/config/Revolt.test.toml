@@ -31,6 +31,25 @@ return_origins = ["http://localhost:5173"]
 # a maker asked: Portal 2 shows without pictures
 no_picture_appids = [620]
 
+# Twitch, GitHub and Battle.net on: the tests answer for them in-process
+# (delta util/oauth_link.rs). Not real ids or secrets.
+[api.connections.twitch]
+client_id = "test-twitch-client"
+client_secret = "test-twitch-secret"
+return_origins = ["http://localhost:5173"]
+eventsub_secret = "test-eventsub-secret-0123456789"
+eventsub_callback = "https://api.test.invalid/connections/twitch/events"
+
+[api.connections.github]
+client_id = "test-github-client"
+client_secret = "test-github-secret"
+return_origins = ["http://localhost:5173"]
+
+[api.connections.battlenet]
+client_id = "test-battlenet-client"
+client_secret = "test-battlenet-secret"
+return_origins = ["http://localhost:5173"]
+
 # The tests talk to a bot endpoint on 127.0.0.1
 [api.interactions]
 signing_key = "test-signing-key-of-at-least-32-bytes"

@@ -1778,12 +1778,15 @@ impl crate::UserProfile {
                     sections: Some(sections),
                     hidden_sections: self.hidden_sections,
                     games: None,
+                    connections: vec![],
                 };
             }
             ProfileViewer::Other { personal } => personal,
         };
         if !personal {
-            sections.retain(|id| !matches!(id.as_str(), "links" | "interests" | "games"));
+            sections.retain(|id| {
+                !matches!(id.as_str(), "links" | "interests" | "games" | "connections")
+            });
         }
         let shows = |sections: &[String], id: &str| sections.iter().any(|section| section == id);
         let content = self.public_content().map(str::to_string);
@@ -1808,6 +1811,7 @@ impl crate::UserProfile {
             sections: Some(sections),
             hidden_sections: vec![],
             games: None,
+            connections: vec![],
         }
     }
 }

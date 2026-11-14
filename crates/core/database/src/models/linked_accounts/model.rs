@@ -32,10 +32,26 @@ auto_derived!(
         pub unlocked_on: String,
     }
 
+    /// One public repository on a linked GitHub account
+    #[derive(Default)]
+    pub struct LinkedRepo {
+        /// GitHub's repository id
+        pub id: u64,
+        pub name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub description: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub language: Option<String>,
+        pub stars: u32,
+        /// `https://github.com/<owner>/<name>`
+        pub url: String,
+    }
+
     /// An account on another service that a person linked to their profile
     /// (`linked_accounts`). Only the fields below are ever stored: no token,
     /// no password, no real name, country, avatar, friends or times of day
     /// (an achievement keeps the day it was unlocked, nothing finer).
+    #[derive(Default)]
     pub struct LinkedAccount {
         /// `<user id>/<service>`: one account per service per person
         #[serde(rename = "_id")]
@@ -78,6 +94,29 @@ auto_derived!(
         /// Milliseconds since the epoch
         pub linked_at: i64,
         pub refreshed_at: i64,
+        /// Twitch: live now, as Twitch last told us
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub live: Option<bool>,
+        /// Twitch: title of the stream while live
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub live_title: Option<String>,
+        /// Twitch: when the live flag was last set, milliseconds since the epoch
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub live_at: Option<i64>,
+        /// Twitch: ids of the live/offline subscriptions at Twitch, so
+        /// Disconnect can end them
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub subscriptions: Vec<String>,
+        /// GitHub: most starred public repositories, most stars first
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub repos: Vec<LinkedRepo>,
+        /// GitHub: repositories the person chose to show
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub shown_repos: Vec<u64>,
+        /// Battle.net: the copy may show until then; the service allows a
+        /// copy for 30 days. Milliseconds since the epoch.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub expires_at: Option<i64>,
     }
 );
 
@@ -91,7 +130,7 @@ fn first_consent() -> u32 {
 pub const LINKED_CONSENT_VERSION: u32 = 2;
 
 /// Services a person can link
-pub const LINKED_SERVICES: &[&str] = &["steam"];
+pub const LINKED_SERVICES: &[&str] = &["steam", "twitch", "github", "battlenet"];
 
 /// Most games kept per linked account
 pub const LINKED_TOP_GAMES: usize = 10;
@@ -105,3 +144,9 @@ impl LinkedAccount {
         format!("{user_id}/{service}")
     }
 }
+
+/// Most repositories kept per linked GitHub account
+pub const LINKED_TOP_REPOS: usize = 12;
+
+/// Most repositories a person can show
+pub const LINKED_MAX_SHOWN_REPOS: usize = 6;

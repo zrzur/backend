@@ -35,6 +35,23 @@ impl AbstractLinkedAccounts for MongoDb {
         Ok(found.map(|account| account.user_id))
     }
 
+    async fn fetch_linked_accounts_of_service(&self, service: &str) -> Result<Vec<LinkedAccount>> {
+        query!(self, find, COL, doc! { "service": service })
+    }
+
+    async fn fetch_linked_account_by_external(
+        &self,
+        service: &str,
+        external_id: &str,
+    ) -> Result<Option<LinkedAccount>> {
+        query!(
+            self,
+            find_one,
+            COL,
+            doc! { "service": service, "external_id": external_id }
+        )
+    }
+
     async fn save_linked_account(&self, account: &LinkedAccount) -> Result<()> {
         // the unique index on (service, external_id) is the real guard; this
         // check only gives the clear error in the common case

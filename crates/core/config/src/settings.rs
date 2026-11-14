@@ -277,6 +277,69 @@ pub struct Api {
 pub struct ApiConnections {
     #[serde(default)]
     pub steam: ApiConnectionSteam,
+    #[serde(default)]
+    pub twitch: ApiConnectionOAuth,
+    #[serde(default)]
+    pub github: ApiConnectionOAuth,
+    #[serde(default)]
+    pub battlenet: ApiConnectionOAuth,
+}
+
+/// A service a person links by signing in on its own OAuth page (Twitch,
+/// GitHub, Battle.net). Off while the client id, secret or return origins
+/// are missing. The client id and secret live only in the server's config,
+/// never in git.
+#[derive(Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct ApiConnectionOAuth {
+    /// Client id from the service's developer console
+    pub client_id: String,
+    /// Client secret from the service's developer console
+    pub client_secret: String,
+    /// Web app origins the service may send people back to, for example
+    /// `https://app.zrzur.com`. Each one's `/connections/<service>/return`
+    /// must also be registered at the service.
+    pub return_origins: Vec<String>,
+    /// Address of the service's sign-in pages. Empty: the service's own.
+    /// Changed only for a test stack's mock.
+    pub auth_base: String,
+    /// Address of the service's API. Empty: the service's own. Changed only
+    /// for a test stack's mock.
+    pub api_base: String,
+    /// Twitch only: secret Twitch signs its live/offline messages with
+    /// (10 to 100 characters, made by the server tool). Empty: no live status.
+    pub eventsub_secret: String,
+    /// Twitch only: public HTTPS address of `/connections/twitch/events` on
+    /// this API, port 443. Empty: no live status.
+    pub eventsub_callback: String,
+}
+
+impl ApiConnectionOAuth {
+    /// The service can be linked on this server
+    pub fn enabled(&self) -> bool {
+        !self.client_id.trim().is_empty()
+            && !self.client_secret.trim().is_empty()
+            && !self.return_origins.is_empty()
+    }
+
+    /// Twitch live status can be received on this server
+    pub fn live_enabled(&self) -> bool {
+        self.enabled()
+            && (10..=100).contains(&self.eventsub_secret.len())
+            && self.eventsub_callback.starts_with("https://")
+    }
+
+    /// The configured base, or the service's own when empty
+    pub fn auth_base_or<'a>(&'a self, official: &'a str) -> &'a str {
+        let base = self.auth_base.trim_end_matches('/');
+        if base.is_empty() { official } else { base }
+    }
+
+    /// The configured API base, or the service's own when empty
+    pub fn api_base_or<'a>(&'a self, official: &'a str) -> &'a str {
+        let base = self.api_base.trim_end_matches('/');
+        if base.is_empty() { official } else { base }
+    }
 }
 
 /// Steam: sign-in through Steam's OpenID 2.0, then the Steam Web API

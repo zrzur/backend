@@ -4,7 +4,7 @@ use iso8601_timestamp::Timestamp;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
-use super::{File, ProfileGames};
+use super::{File, ProfileConnection, ProfileGames};
 
 #[cfg(feature = "validator")]
 use validator::Validate;
@@ -231,6 +231,11 @@ auto_derived!(
         /// personal sections. Filled by the profile route, not stored here.
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
         pub games: Option<ProfileGames>,
+        /// Linked Twitch, GitHub and Battle.net accounts the person shows.
+        /// Same rule as `games`, under the `connections` section. Filled by
+        /// the profile route, not stored here.
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Vec::is_empty", default))]
+        pub connections: Vec<ProfileConnection>,
     }
 
     /// User badge bitfield
@@ -600,6 +605,7 @@ pub const PROFILE_SECTIONS: &[&str] = &[
     "wearing",
     "member_since",
     "interests",
+    "connections",
     "games",
 ];
 

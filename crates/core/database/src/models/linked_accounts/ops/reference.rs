@@ -46,6 +46,33 @@ impl AbstractLinkedAccounts for ReferenceDb {
             .map(|account| account.user_id.clone()))
     }
 
+    async fn fetch_linked_accounts_of_service(&self, service: &str) -> Result<Vec<LinkedAccount>> {
+        let mut list: Vec<_> = self
+            .linked_accounts
+            .lock()
+            .await
+            .values()
+            .filter(|account| account.service == service)
+            .cloned()
+            .collect();
+        list.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(list)
+    }
+
+    async fn fetch_linked_account_by_external(
+        &self,
+        service: &str,
+        external_id: &str,
+    ) -> Result<Option<LinkedAccount>> {
+        Ok(self
+            .linked_accounts
+            .lock()
+            .await
+            .values()
+            .find(|account| account.service == service && account.external_id == external_id)
+            .cloned())
+    }
+
     async fn save_linked_account(&self, account: &LinkedAccount) -> Result<()> {
         let mut accounts = self.linked_accounts.lock().await;
         if accounts.values().any(|other| {

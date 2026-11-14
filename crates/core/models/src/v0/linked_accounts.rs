@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 
+use super::ServiceConnection;
+
 #[cfg(feature = "validator")]
 use validator::Validate;
 
@@ -108,6 +110,12 @@ auto_derived!(
     /// The person's linked accounts
     pub struct LinkedAccounts {
         pub steam: SteamConnection,
+        #[cfg_attr(feature = "serde", serde(default))]
+        pub twitch: ServiceConnection,
+        #[cfg_attr(feature = "serde", serde(default))]
+        pub github: ServiceConnection,
+        #[cfg_attr(feature = "serde", serde(default))]
+        pub battlenet: ServiceConnection,
     }
 
     /// Start linking Steam

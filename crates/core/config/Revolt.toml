@@ -140,6 +140,30 @@ api_base = "https://api.steampowered.com"
 # within 7 days). Names and hours still show.
 no_picture_appids = []
 
+# Twitch, GitHub and Battle.net: sign-in on the service's own OAuth page.
+# Each is off until client_id, client_secret and return_origins are set.
+# Production writes them from /etc/zrzur/<service>.json (enter-connection.py);
+# never put a real id or secret in this file or in git. auth_base and
+# api_base stay empty (the service's own) except on a test stack's mock.
+[api.connections.twitch]
+client_id = ""
+client_secret = ""
+return_origins = []
+# Live status: Twitch posts live/offline to eventsub_callback, signed with
+# eventsub_secret (10-100 characters). Empty: linking works, no live status.
+eventsub_secret = ""
+eventsub_callback = ""
+
+[api.connections.github]
+client_id = ""
+client_secret = ""
+return_origins = []
+
+[api.connections.battlenet]
+client_id = ""
+client_secret = ""
+return_origins = []
+
 [api.sessions]
 # Most sessions one account keeps. A sign-in over this closes the least
 # recently used one. Only a test stack, where parallel tests share one
