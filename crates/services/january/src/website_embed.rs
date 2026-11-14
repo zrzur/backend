@@ -224,6 +224,41 @@ pub fn site_player(url: &str) -> Option<Special> {
             r"^(?:https?://)?(?:listen\.)?tidal\.com/(?:browse/)?(track|album|playlist|video)/([A-Za-z0-9-]+)(?:[/?#]|$)"
         )
         .unwrap();
+        static ref RE_LOOM: Regex =
+            Regex::new(r"^(?:https?://)?(?:www\.)?loom\.com/(?:share|embed)/([0-9a-f]{32})(?:[/?#]|$)")
+                .unwrap();
+        static ref RE_BILIBILI: Regex = Regex::new(
+            r"^(?:https?://)?(?:(?:www|m)\.)?bilibili\.com/video/(BV[A-Za-z0-9]{10})(?:[/?#]|$)"
+        )
+        .unwrap();
+        static ref RE_TED: Regex =
+            Regex::new(r"^(?:https?://)?(?:www\.)?ted\.com/talks/([a-z0-9_]{3,120})(?:[/?#]|$)")
+                .unwrap();
+        static ref RE_COUB: Regex =
+            Regex::new(r"^(?:https?://)?(?:www\.)?coub\.com/view/([a-z0-9]{3,16})(?:[/?#]|$)")
+                .unwrap();
+        static ref RE_STEAM_STORE: Regex =
+            Regex::new(r"^(?:https?://)?store\.steampowered\.com/app/(\d{1,10})(?:[/?#]|$)")
+                .unwrap();
+        static ref RE_CODEPEN: Regex = Regex::new(
+            r"^(?:https?://)?codepen\.io/([A-Za-z0-9_-]{1,64})/(?:pen|full|details)/([A-Za-z0-9]{3,16})/?(?:[?#]|$)"
+        )
+        .unwrap();
+        static ref RE_CODESANDBOX: Regex = Regex::new(
+            r"^(?:https?://)?codesandbox\.io/(?:s|embed|p/sandbox|p/devbox)/([A-Za-z0-9-]{3,100})/?(?:[?#]|$)"
+        )
+        .unwrap();
+        static ref RE_STACKBLITZ: Regex =
+            Regex::new(r"^(?:https?://)?stackblitz\.com/edit/([A-Za-z0-9_-]{3,100})/?(?:[?#]|$)")
+                .unwrap();
+        static ref RE_JSFIDDLE: Regex = Regex::new(
+            r"^(?:https?://)?jsfiddle\.net/([A-Za-z0-9_-]{1,64})/([A-Za-z0-9]{3,16})(?:/(\d{1,4}))?/?(?:[?#]|$)"
+        )
+        .unwrap();
+        static ref RE_FACEBOOK_VIDEO: Regex = Regex::new(
+            r"^(?:https?://)?(?:(?:www|m|web)\.)?facebook\.com/(?:([A-Za-z0-9.]{1,80})/videos/(?:[A-Za-z0-9.-]{1,80}/)?(\d{5,25})|watch/?\?v=(\d{5,25}))(?:[/?&#]|$)"
+        )
+        .unwrap();
     }
 
     let player = |provider: &str, embed_url: String, width: u32, height: u32| {
@@ -344,6 +379,113 @@ pub fn site_player(url: &str) -> Option<Special> {
             );
         }
     }
+    if let Some(c) = RE_LOOM.captures(url) {
+        return player(
+            "Loom",
+            format!("https://www.loom.com/embed/{}", &c[1]),
+            1280,
+            720,
+        );
+    }
+    if let Some(c) = RE_BILIBILI.captures(url) {
+        return player(
+            "Bilibili",
+            format!(
+                "https://player.bilibili.com/player.html?bvid={}&autoplay=0",
+                &c[1]
+            ),
+            1280,
+            720,
+        );
+    }
+    if let Some(c) = RE_TED.captures(url) {
+        return player(
+            "TED",
+            format!("https://embed.ted.com/talks/{}", &c[1]),
+            1280,
+            720,
+        );
+    }
+    if let Some(c) = RE_COUB.captures(url) {
+        return player(
+            "Coub",
+            format!("https://coub.com/embed/{}", &c[1]),
+            1280,
+            720,
+        );
+    }
+    if let Some(c) = RE_STEAM_STORE.captures(url) {
+        return player(
+            "Steam",
+            format!("https://store.steampowered.com/widget/{}/", &c[1]),
+            646,
+            190,
+        );
+    }
+    if let Some(c) = RE_CODEPEN.captures(url) {
+        return player(
+            "CodePen",
+            format!(
+                "https://codepen.io/{}/embed/{}?default-tab=result",
+                &c[1], &c[2]
+            ),
+            800,
+            450,
+        );
+    }
+    if let Some(c) = RE_CODESANDBOX.captures(url) {
+        return player(
+            "CodeSandbox",
+            format!("https://codesandbox.io/embed/{}", &c[1]),
+            800,
+            500,
+        );
+    }
+    if let Some(c) = RE_STACKBLITZ.captures(url) {
+        return player(
+            "StackBlitz",
+            format!("https://stackblitz.com/edit/{}?embed=1", &c[1]),
+            800,
+            500,
+        );
+    }
+    if let Some(c) = RE_JSFIDDLE.captures(url) {
+        let version = c
+            .get(3)
+            .map(|v| format!("{}/", v.as_str()))
+            .unwrap_or_default();
+        return player(
+            "JSFiddle",
+            format!(
+                "https://jsfiddle.net/{}/{}/{version}embedded/result,js,html,css/",
+                &c[1], &c[2]
+            ),
+            800,
+            450,
+        );
+    }
+    if let Some(c) = RE_FACEBOOK_VIDEO.captures(url) {
+        // the plugin takes the video's own address, rebuilt here from its
+        // parts (letters, digits and dots only, so this encoding is complete)
+        let video = match (c.get(1), c.get(2), c.get(3)) {
+            (Some(page), Some(id), _) => format!(
+                "https%3A%2F%2Fwww.facebook.com%2F{}%2Fvideos%2F{}%2F",
+                page.as_str(),
+                id.as_str()
+            ),
+            (_, _, Some(id)) => format!(
+                "https%3A%2F%2Fwww.facebook.com%2Fwatch%2F%3Fv%3D{}",
+                id.as_str()
+            ),
+            _ => return None,
+        };
+        return player(
+            "Facebook",
+            format!("https://www.facebook.com/plugins/video.php?href={video}&show_text=false"),
+            1280,
+            720,
+        );
+    }
     None
 }
 
@@ -421,6 +563,19 @@ mod site_player_tests {
                 "Kick",
                 "https://player.kick.com/somechannel",
             ),
+            ("https://www.loom.com/share/ae4bdcb7209f4769b5e5e43194a2b76d?sid=1", "Loom", "https://www.loom.com/embed/ae4bdcb7209f4769b5e5e43194a2b76d"),
+            ("https://www.bilibili.com/video/BV1MRWV6jEuy/?spm_id_from=x", "Bilibili", "https://player.bilibili.com/player.html?bvid=BV1MRWV6jEuy&autoplay=0"),
+            ("https://www.ted.com/talks/ken_robinson_do_schools_kill_creativity?language=ar", "TED", "https://embed.ted.com/talks/ken_robinson_do_schools_kill_creativity"),
+            ("https://coub.com/view/2pc24rpb", "Coub", "https://coub.com/embed/2pc24rpb"),
+            ("https://store.steampowered.com/app/730/CounterStrike_2/", "Steam", "https://store.steampowered.com/widget/730/"),
+            ("https://codepen.io/team/pen/PNaGbb", "CodePen", "https://codepen.io/team/embed/PNaGbb?default-tab=result"),
+            ("https://codesandbox.io/s/react-editor-js-example-m9e49", "CodeSandbox", "https://codesandbox.io/embed/react-editor-js-example-m9e49"),
+            ("https://codesandbox.io/p/sandbox/abc-123", "CodeSandbox", "https://codesandbox.io/embed/abc-123"),
+            ("https://stackblitz.com/edit/angular?file=src%2Fmain.ts", "StackBlitz", "https://stackblitz.com/edit/angular?embed=1"),
+            ("https://jsfiddle.net/zalun/NmudS/", "JSFiddle", "https://jsfiddle.net/zalun/NmudS/embedded/result,js,html,css/"),
+            ("https://jsfiddle.net/zalun/NmudS/3/", "JSFiddle", "https://jsfiddle.net/zalun/NmudS/3/embedded/result,js,html,css/"),
+            ("https://www.facebook.com/facebook/videos/10153231379946729/", "Facebook", "https://www.facebook.com/plugins/video.php?href=https%3A%2F%2Fwww.facebook.com%2Ffacebook%2Fvideos%2F10153231379946729%2F&show_text=false"),
+            ("https://www.facebook.com/watch/?v=10153231379946729", "Facebook", "https://www.facebook.com/plugins/video.php?href=https%3A%2F%2Fwww.facebook.com%2Fwatch%2F%3Fv%3D10153231379946729&show_text=false"),
         ];
         for (url, provider, player) in cases {
             assert_eq!(
@@ -442,6 +597,13 @@ mod site_player_tests {
             "https://vimeo.com.evil.example/123",
             "https://www.deezer.com/en/profile/123",
             "https://zrzur.com/blog",
+            "https://www.loom.com/share/not-an-id",
+            "https://store.steampowered.com/search/?term=x",
+            "https://codepen.io/team",
+            "https://www.facebook.com/someone",
+            "https://www.facebook.com/someone/videos/",
+            "https://www.ted.com/talks",
+            "https://evil.example/loom.com/share/ae4bdcb7209f4769b5e5e43194a2b76d",
         ] {
             assert_eq!(embed(url), None, "{url}");
         }
@@ -450,15 +612,15 @@ mod site_player_tests {
 
 pub async fn populate_special(original_url: String, metadata: &mut WebsiteMetadata) {
     lazy_static! {
-        static ref RE_YOUTUBE: Regex = Regex::new("^(?:(?:https?:)?//)?(?:(?:www|m)\\.)?(?:(?:youtube\\.com|youtu.be))(?:/(?:[\\w\\-]+\\?v=|embed/|v/|shorts/)?)([\\w\\-]+)(?:\\S+)?$").unwrap();
+        static ref RE_YOUTUBE: Regex = Regex::new("^(?:(?:https?:)?//)?(?:(?:www|m|music)\\.)?(?:(?:youtube\\.com|youtu.be))(?:/(?:[\\w\\-]+\\?v=|embed/|v/|shorts/|live/)?)([\\w\\-]+)(?:\\S+)?$").unwrap();
 
         static ref RE_LIGHTSPEED: Regex = Regex::new("^(?:https?://)?(?:[\\w]+\\.)?lightspeed\\.tv/([a-z0-9_]{4,25})").unwrap();
 
         static ref RE_TWITCH: Regex = Regex::new("^(?:https?://)?(?:www\\.|go\\.)?twitch\\.tv/([a-z0-9_]+)($|\\?)").unwrap();
         static ref RE_TWITCH_VOD: Regex = Regex::new("^(?:https?://)?(?:www\\.|go\\.)?twitch\\.tv/videos/([0-9]+)($|\\?)").unwrap();
-        static ref RE_TWITCH_CLIP: Regex = Regex::new("^(?:https?://)?(?:www\\.|go\\.)?twitch\\.tv/(?:[a-z0-9_]+)/clip/([A-z0-9_-]+)($|\\?)").unwrap();
+        static ref RE_TWITCH_CLIP: Regex = Regex::new("^(?:https?://)?(?:(?:www\\.|go\\.)?twitch\\.tv/(?:[a-z0-9_]+)/clip|clips\\.twitch\\.tv)/([A-z0-9_-]+)($|\\?)").unwrap();
 
-        static ref RE_SPOTIFY: Regex = Regex::new("^(?:https?://)?open.spotify.com/(track|user|artist|album|playlist)/([A-z0-9]+)").unwrap();
+        static ref RE_SPOTIFY: Regex = Regex::new("^(?:https?://)?open.spotify.com/(?:intl-[a-z]{2}/)?(track|user|artist|album|playlist|episode|show)/([A-z0-9]+)").unwrap();
         static ref RE_SOUNDCLOUD: Regex = Regex::new("^(?:https?://)?soundcloud.com/([a-zA-Z0-9-]+)/([A-z0-9-]+)").unwrap();
         static ref RE_BANDCAMP: Regex = Regex::new("^(?:https?://)?(?:[A-z0-9_-]+).bandcamp.com/(track|album)/([A-z0-9_-]+)").unwrap();
         static ref RE_APPLE_MUSIC: Regex = Regex::new("^(?:https?://)?music\\.apple\\.com/(?:[a-z]{2}/)?album/(?:[a-zA-Z0-9-]+)/(\\d+)(?:\\?i=(\\d+))?").unwrap();
