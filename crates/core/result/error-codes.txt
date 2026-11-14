@@ -75,6 +75,10 @@ IsBot
 IsElevated
 IsNotBot
 LabelMe
+LinkedAccountTaken
+LinkedRefreshTooSoon
+LinkedServiceFailed
+LinkedSignInFailed
 LiveKitUnavailable
 LockedOut
 MasqueradeNameTaken

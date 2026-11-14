@@ -740,6 +740,12 @@ async fn reported_message(harness: &TestHarness) -> (String, User) {
 
 #[rocket::async_test]
 async fn trust_and_safety_follows_staff_roles() {
+    // one very long scenario is one very large future: on the heap, not on
+    // the test thread's 2 MB stack (it overflowed once Steam's routes came)
+    Box::pin(trust_and_safety_follows_staff_roles_body()).await
+}
+
+async fn trust_and_safety_follows_staff_roles_body() {
     use rocket::http::Method::{Get, Post};
     let harness = TestHarness::new().await;
     let (case_id, author) = reported_message(&harness).await;

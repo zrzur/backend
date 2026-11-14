@@ -616,7 +616,9 @@ pub(crate) async fn take_with_statement(
 
     let public_reason = clean_text(&data.public_reason);
     let (subject, expires_at) =
-        enforce(db, user, &before, data.kind, data.duration_days, &public_reason).await?;
+        // boxed: every action is one big future, and on the stack it overflowed
+        // the 2 MB of a test thread once account deletion grew (linked accounts)
+        Box::pin(enforce(db, user, &before, data.kind, data.duration_days, &public_reason)).await?;
 
     let now = safety_now();
     let basis = if before.subcategory.as_deref() == Some("staff") {
