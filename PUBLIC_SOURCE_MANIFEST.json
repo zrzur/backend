@@ -6598,8 +6598,8 @@
     },
     {
       "path": "crates/services/january/src/website_embed.rs",
-      "sha256": "c692ffae49a0d4392f2311d2e24a1b6c2e4932c8400d52786efa37b9fd123368",
-      "bytes": 20309,
+      "sha256": "92f99038781437686eebbecdb6c0f893fdad3bad610e8bd9771ebebf99d12de4",
+      "bytes": 27611,
       "category": "product-source-or-build-manifest"
     },
     {
