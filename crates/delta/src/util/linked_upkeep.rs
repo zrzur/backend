@@ -9,8 +9,9 @@
 //!   it is missing, and live/offline subscriptions for channels nobody links
 //!   any more (account deleted) are ended.
 //! - Twitch links agreed under an older consent text (before it named the US
-//!   transfer) are not read at Twitch until the person agrees again; their
-//!   copy is still blanked after 24 hours.
+//!   transfer) send nothing to Twitch until the person agrees again: not read,
+//!   and their live-status subscriptions are ended (Consent sets them up
+//!   again). Their copy is still blanked after 24 hours.
 //!
 //! Runs inside delta; running twice at once does no harm.
 
@@ -77,6 +78,14 @@ pub async fn run_once(db: &Database, now: i64) -> Result<()> {
     // gets older than 24 hours
     for mut account in waiting {
         let mut changed = false;
+        // no live-status messages either: the subscriptions end, and Consent
+        // in Settings sets them up again. Removing Zrzur at Twitch can't
+        // unlink such a link meanwhile; it is hidden and blanked anyway.
+        if !account.subscriptions.is_empty() {
+            twitch::unsubscribe(&config, &account.subscriptions).await;
+            account.subscriptions.clear();
+            changed = true;
+        }
         if now - account.refreshed_at >= TWITCH_FRESH_MS && !account.display_name.is_empty() {
             blank(&mut account);
             changed = true;

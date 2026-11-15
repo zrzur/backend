@@ -161,9 +161,9 @@ pub fn profile_view(account: LinkedAccount, now: i64) -> Option<v0::ProfileConne
         return None;
     }
     match account.service.as_str() {
-        // linked before the card named the US transfer: Twitch is read
-        // every day, so it waits for the person's agreement
-        "twitch" if !consent_current(&account) => return None,
+        // linked before the card named the US transfer and what the copy
+        // may reveal (Art. 9): waits for the person's agreement
+        "twitch" | "github" if !consent_current(&account) => return None,
         // the 30 days Battle.net allows are over
         "battlenet" if account.expires_at.map_or(true, |at| now >= at) => return None,
         // the daily name check has not run for too long
@@ -452,6 +452,21 @@ pub async fn service_edit(
             return Err(create_error!(InvalidOperation));
         }
         account.consent = version;
+        // Twitch: the upkeep ended the live-status subscriptions while the
+        // link waited for this agreement; set them up again (best effort,
+        // like a new link)
+        if service == Service::Twitch && account.subscriptions.is_empty() {
+            let config = service.config().await;
+            if usable(service, &config) {
+                match twitch::subscribe(&config, &account.external_id).await {
+                    Ok(ids) => account.subscriptions = ids,
+                    Err(_) => log::warn!("Twitch live status could not be set up again after consent"),
+                }
+                if twitch::subscribe_revocations(&config).await.is_err() {
+                    log::warn!("Twitch revocation messages could not be set up; the hourly upkeep tries again");
+                }
+            }
+        }
     }
     if let Some(wanted) = data.shown_repos {
         if service != Service::Github {

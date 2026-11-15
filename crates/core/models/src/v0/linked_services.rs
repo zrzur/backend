@@ -69,8 +69,9 @@ auto_derived!(
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
         pub game: Option<String>,
         /// The person agreed to the consent text in use. When false, Twitch
-        /// does not show on the profile and is not read again, and GitHub
-        /// Refresh waits, until they agree (`consent` in Edit).
+        /// and GitHub do not show on the profile, nothing goes to Twitch
+        /// (no name read, no live status) and GitHub Refresh waits, until
+        /// they agree (`consent` in Edit).
         #[cfg_attr(feature = "serde", serde(default))]
         pub consent_current: bool,
     }

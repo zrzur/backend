@@ -547,6 +547,10 @@ async fn twitch_links_from_before_the_transfer_text_wait_for_agreement() {
     assert_eq!(kept.display_name, format!("Streamer{id}"));
     assert_eq!(kept.live_title.as_deref(), Some("Old"));
     assert_eq!(kept.refreshed_at, old);
+    // and no live-status messages: the subscriptions at Twitch end
+    assert!(kept.subscriptions.is_empty());
+    assert!(test_twitch::called(&format!("unsubscribe sub-online-{id}")));
+    assert!(test_twitch::called(&format!("unsubscribe sub-offline-{id}")));
 
     // still nothing asked of Twitch once it is a day old, but nothing kept
     // over 24 hours
@@ -577,6 +581,12 @@ async fn twitch_links_from_before_the_transfer_text_wait_for_agreement() {
     assert_eq!(status, Status::Ok, "{body}");
     let agreed: v0::ServiceAccount = serde_json::from_str(&body).unwrap();
     assert!(agreed.consent_current);
+    // agreeing sets up the live-status subscriptions again
+    let stored = harness.db.fetch_linked_account(&owner.id, "twitch").await.unwrap().unwrap();
+    assert_eq!(
+        stored.subscriptions,
+        vec![format!("sub-online-{id}"), format!("sub-offline-{id}")]
+    );
 
     // the next round reads it again, and it shows again
     crate::util::linked_upkeep::run_once(&harness.db, super::connections_oauth::now_ms())
@@ -608,8 +618,8 @@ async fn new_links_store_the_current_consent_and_old_github_links_agree_before_r
     stored.refreshed_at -= super::connections_oauth::REFRESH_COOLDOWN_MS + 1;
     harness.db.save_linked_account(&stored).await.unwrap();
     assert!(!list(&harness, &session).await.github.account.unwrap().consent_current);
-    // GitHub is read only when the person acts: it still shows
-    assert_eq!(profile(&harness, &viewer_session, &owner.id).await.connections.len(), 1);
+    // the old text had no Art. 9 line: hidden from others until agreed
+    assert!(profile(&harness, &viewer_session, &owner.id).await.connections.is_empty());
 
     // Refresh waits for the new text
     let (status, body) = call(&harness, Method::Post, &session, "/users/@me/connections/github/refresh", None).await;
@@ -624,6 +634,7 @@ async fn new_links_store_the_current_consent_and_old_github_links_agree_before_r
     )
     .await;
     assert_eq!(status, Status::Ok, "{body}");
+    assert_eq!(profile(&harness, &viewer_session, &owner.id).await.connections.len(), 1);
     let (status, body) = call(&harness, Method::Post, &session, "/users/@me/connections/github/refresh", None).await;
     assert_eq!(status, Status::Ok, "{body}");
 
