@@ -34,8 +34,8 @@
     },
     {
       "path": ".github/dependabot.yml",
-      "sha256": "446545e8d438543cb5cb6788c8d121d1287a81d12cf0729d4a1c46c4f23de17e",
-      "bytes": 447,
+      "sha256": "ce096ba9a118742f159788c37814b3fa23b082bdeab6fe1b3fe805ae11725d6b",
+      "bytes": 837,
       "category": "reviewed-build-and-ci"
     },
     {
@@ -4168,8 +4168,8 @@
     },
     {
       "path": "crates/delta/Cargo.toml",
-      "sha256": "028e6c9861e3d6f515469b0f61a110de3b007a2bc031634adb7e4ff700e7dab5",
-      "bytes": 2513,
+      "sha256": "7983197991e6df7a3aa6dcf6f85a18d18e0c7935e38a4e6705100054ab74009a",
+      "bytes": 2522,
       "category": "product-source-or-build-manifest"
     },
     {
