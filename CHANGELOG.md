@@ -9,6 +9,7 @@
 - `call_started` system messages get `missed` (true when nobody but the caller joined).
 - Web push for calls: the end of a ring replaces the "is calling you" notification (same tag) and says why, instead of sending "is calling you" again when the call ended; the push opens the conversation. The blanket end push to everyone in the DM is now sent only to people still being rung.
 - voice-ingress listens on `ZRZUR_VOICE_INGRESS_PORT` when set (default 8500).
+- Fixed: a call started again right after one ended sometimes did not ring. The voice server could still list the caller's previous session, which counted as a second person; only other people count now.
 - Fixed: people looking at a voice channel from outside the call never saw who was muted or deafened. LiveKit sends no webhook for a mute, so the `track_muted` branch of voice-ingress never ran. New `PATCH /channels/{id}/voice_state` `{ muted, deafened }`: the client reports its own choice, the channel gets `UserVoiceStateUpdate`.
 
 ### Linked accounts: consent that names the US transfer (2026-11-15)

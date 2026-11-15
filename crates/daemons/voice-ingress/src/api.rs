@@ -193,11 +193,18 @@ pub async fn ingress(
             }
 
             let participants = voice_client.get_room_participants(node, channel_id).await?;
+            // other people in the room: the voice server may still list this
+            // user's previous session for a moment (a call started again
+            // right after one ended), which is not someone else
+            let others = participants
+                .iter()
+                .filter(|participant| participant.identity != *user_id)
+                .count();
 
             // Someone joined a DM or group call that already had people in it:
             // the call is answered, and if they were being rung, that ends
             // (also on their other devices). Best effort: never fail the join.
-            if participants.len() > 1
+            if others > 0
                 && matches!(channel, Channel::DirectMessage { .. } | Channel::Group { .. })
             {
                 if let Err(error) = mark_call_answered(channel_id).await {
@@ -215,7 +222,7 @@ pub async fn ingress(
                 }
             }
 
-            if participants.len() == 1 {
+            if others == 0 {
                 let user = Reference::from_unchecked(user_id).as_user(db).await?;
                 let message_id = Ulid::from_datetime(
                     Timestamp::UNIX_EPOCH
