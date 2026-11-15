@@ -663,8 +663,16 @@ impl From<crate::SystemMessage> for SystemMessage {
             crate::SystemMessage::UserRemove { id, by } => Self::UserRemove { id, by },
             crate::SystemMessage::MessagePinned { id, by } => Self::MessagePinned { id, by },
             crate::SystemMessage::MessageUnpinned { id, by } => Self::MessageUnpinned { id, by },
-            crate::SystemMessage::CallStarted { by, finished_at } => {
-                Self::CallStarted { by, finished_at }
+            crate::SystemMessage::CallStarted {
+                by,
+                finished_at,
+                missed,
+            } => {
+                Self::CallStarted {
+                    by,
+                    finished_at,
+                    missed,
+                }
             }
             crate::SystemMessage::RaidAlert { joins, minutes } => Self::RaidAlert { joins, minutes },
             crate::SystemMessage::PollEnded {

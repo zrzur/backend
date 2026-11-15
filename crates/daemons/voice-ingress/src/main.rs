@@ -37,7 +37,7 @@ async fn main() -> Result<(), rocket::Error> {
         .manage(amqp)
         .mount("/", routes![revolt_voice_ingress::api::ingress])
         .configure(Config {
-            port: 8500,
+            port: listen_port(),
             address: Ipv4Addr::new(0, 0, 0, 0).into(),
             ..Default::default()
         })
@@ -47,4 +47,17 @@ async fn main() -> Result<(), rocket::Error> {
         .await?;
 
     Ok(())
+}
+
+/// 8500, or ZRZUR_VOICE_INGRESS_PORT (a second voice-ingress beside the dev
+/// stack's, e.g. for a branch's own LiveKit); a value that is no port is
+/// ignored with a warning
+fn listen_port() -> u16 {
+    match std::env::var("ZRZUR_VOICE_INGRESS_PORT") {
+        Ok(port) => port.parse().unwrap_or_else(|_| {
+            log::warn!("ZRZUR_VOICE_INGRESS_PORT={port:?} is not a port; listening on 8500");
+            8500
+        }),
+        Err(_) => 8500,
+    }
 }

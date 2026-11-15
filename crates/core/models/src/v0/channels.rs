@@ -570,6 +570,14 @@ auto_derived!(
         pub previous_session: Option<String>,
     }
 
+    /// How you are shown in the voice channel you are in
+    pub struct DataUpdateOwnVoiceState {
+        /// You muted (true) or unmuted (false) your microphone
+        pub muted: Option<bool>,
+        /// You deafened (true) or undeafened (false) yourself
+        pub deafened: Option<bool>,
+    }
+
     pub struct ChannelSlowmode {
         pub channel_id: String,
         pub duration: u64,

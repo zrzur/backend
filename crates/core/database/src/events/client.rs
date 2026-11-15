@@ -52,6 +52,22 @@ impl Default for ReadyPayloadFields {
     }
 }
 
+/// Why someone stopped being rung in a DM or group call
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "rocket-impl", derive(schemars::JsonSchema))]
+pub enum RingEndReason {
+    /// They declined
+    Declined,
+    /// They joined the call (on any device)
+    Answered,
+    /// Nobody answered: the ring timed out, or the caller hung up first
+    Missed,
+    /// The caller stopped ringing them
+    Stopped,
+    /// The call ended
+    Ended,
+}
+
 /// Protocol Events
 ///
 /// `GET /gateway/schema` publishes these as JSON Schema; variants marked
@@ -506,6 +522,14 @@ pub enum EventV1 {
         channel_id: String,
         started_at: Option<Timestamp>,
         ended: bool,
+    },
+
+    /// One person stopped being rung in a DM or group call (sent to the
+    /// channel, so the caller and that person's other devices both hear it)
+    VoiceRingEnd {
+        channel_id: String,
+        user: String,
+        reason: RingEndReason,
     },
 
     /// A user used one of this bot's commands (sent to the bot only)

@@ -128,31 +128,22 @@ impl Consumer for VapidOutboundConsumer {
             PayloadKind::Generic(alert) => serde_json::to_string(&alert)?,
             PayloadKind::MessageNotification(alert) => serde_json::to_string(&alert)?,
             PayloadKind::DmCallStartEnd(alert) => {
-                let initiator_name = if let Some(server_id) =
-                    self.db.fetch_channel(&alert.channel_id).await?.server()
-                {
-                    format_display_name(&self.db, &alert.initiator_id, Some(server_id)).await
-                } else {
-                    format_display_name(&self.db, &alert.initiator_id, None).await
-                }?;
-
                 let channel = self.db.fetch_channel(&alert.channel_id).await?;
-                let mut body = HashMap::new();
-
-                match channel {
-                    revolt_database::Channel::DirectMessage { .. } => {
-                        body.insert("body", format!("{} is calling you", initiator_name));
-                    }
-                    revolt_database::Channel::Group { name, .. } => {
-                        body.insert(
-                            "body",
-                            format!("{} is calling your group, {}", initiator_name, name),
-                        );
-                    }
+                let initiator_name =
+                    format_display_name(&self.db, &alert.initiator_id, channel.server()).await?;
+                let group = match &channel {
+                    revolt_database::Channel::DirectMessage { .. } => None,
+                    revolt_database::Channel::Group { name, .. } => Some(name.clone()),
                     _ => bail!("Invalid DmCallStart/End channel type"),
-                }
+                };
 
-                serde_json::to_string(&body)?
+                call_push_payload(
+                    &initiator_name,
+                    group.as_deref(),
+                    &alert.channel_id,
+                    alert.ended,
+                    alert.reason,
+                )?
             }
             PayloadKind::BadgeUpdate(_) => {
                 bail!("Vapid cannot handle badge updates and they should not be sent here.");
@@ -188,5 +179,87 @@ impl Consumer for VapidOutboundConsumer {
         };
 
         Ok(())
+    }
+}
+
+/// The web push for a DM or group call. Ringing and its end share a tag, so
+/// the end replaces the "is calling you" notification instead of adding a
+/// second one (it used to repeat "is calling you" when the call ended).
+fn call_push_payload(
+    initiator_name: &str,
+    group: Option<&str>,
+    channel_id: &str,
+    ended: bool,
+    reason: Option<revolt_database::events::client::RingEndReason>,
+) -> Result<String> {
+    use revolt_database::events::client::RingEndReason;
+
+    let body = match (ended, reason, group) {
+        (false, _, None) => format!("{initiator_name} is calling you"),
+        (false, _, Some(group)) => format!("{initiator_name} is calling your group, {group}"),
+        (true, Some(RingEndReason::Missed), _) => format!("Missed call from {initiator_name}"),
+        (true, Some(RingEndReason::Declined), _) => {
+            format!("You declined the call from {initiator_name}")
+        }
+        (true, Some(RingEndReason::Answered), _) => {
+            format!("Call with {initiator_name} answered on another device")
+        }
+        (true, _, _) => format!("The call from {initiator_name} ended"),
+    };
+
+    let mut payload = serde_json::Map::new();
+    payload.insert("title".into(), group.unwrap_or(initiator_name).into());
+    payload.insert("body".into(), body.into());
+    payload.insert("tag".into(), format!("call-{channel_id}").into());
+    payload.insert("url".into(), format!("/channel/{channel_id}").into());
+    payload.insert(
+        "call".into(),
+        if ended { "ended" } else { "ringing" }.into(),
+    );
+    Ok(serde_json::to_string(&payload)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::call_push_payload;
+    use revolt_database::events::client::RingEndReason;
+
+    fn payload(ended: bool, reason: Option<RingEndReason>, group: Option<&str>) -> serde_json::Value {
+        serde_json::from_str(&call_push_payload("Lina", group, "C1", ended, reason).unwrap())
+            .unwrap()
+    }
+
+    #[test]
+    fn ringing_and_its_end_share_one_notification() {
+        let ringing = payload(false, None, None);
+        assert_eq!(ringing["body"], "Lina is calling you");
+        assert_eq!(ringing["call"], "ringing");
+        let ended = payload(true, Some(RingEndReason::Missed), None);
+        assert_eq!(ended["tag"], ringing["tag"]);
+        assert_eq!(ended["url"], "/channel/C1");
+        assert_eq!(ended["call"], "ended");
+    }
+
+    #[test]
+    fn the_end_never_says_calling_again() {
+        for reason in [
+            None,
+            Some(RingEndReason::Missed),
+            Some(RingEndReason::Declined),
+            Some(RingEndReason::Answered),
+            Some(RingEndReason::Stopped),
+            Some(RingEndReason::Ended),
+        ] {
+            let body = payload(true, reason, Some("Team"))["body"].to_string();
+            assert!(!body.contains("calling"), "{reason:?}: {body}");
+        }
+        assert_eq!(payload(true, Some(RingEndReason::Missed), None)["body"], "Missed call from Lina");
+    }
+
+    #[test]
+    fn a_group_call_names_the_group() {
+        let ringing = payload(false, None, Some("Team"));
+        assert_eq!(ringing["title"], "Team");
+        assert_eq!(ringing["body"], "Lina is calling your group, Team");
     }
 }

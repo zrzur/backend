@@ -43,6 +43,10 @@ pub struct DmCallPayload {
     pub channel_id: String,
     pub started_at: Option<String>,
     pub ended: bool,
+    /// Why ringing ended for the recipients (only with `ended`); absent from
+    /// older senders
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<crate::events::client::RingEndReason>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
