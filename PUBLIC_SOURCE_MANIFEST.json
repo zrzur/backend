@@ -202,8 +202,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "a7f8b66ee6063eaeae1fd1d866a87da7483e7f97132e83cb4b4a8ccb47f80b42",
-      "bytes": 91945,
+      "sha256": "0d46aede3b1e169ee0e355412e9df052b100aee93d0911c70b955f3fe93705cc",
+      "bytes": 93647,
       "category": "public-documentation"
     },
     {
@@ -1936,8 +1936,8 @@
     },
     {
       "path": "crates/core/database/src/models/community_items/logic.rs",
-      "sha256": "283a21e8440bbe0b282fc6daad196db250ad0bd1b31465012be1488dcce59980",
-      "bytes": 33781,
+      "sha256": "b49872e1029b873ef974501ae8c74d32b178c56d233a1f83c11e8ed4360fbc77",
+      "bytes": 34318,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -1948,8 +1948,8 @@
     },
     {
       "path": "crates/core/database/src/models/community_items/model.rs",
-      "sha256": "49daac82497efa401d8c1922bb1c149c060b7ed841c52105b4c89ae381797c8c",
-      "bytes": 9722,
+      "sha256": "a256e3d3f9bdd9143f69bef908fffb37efe3334336147bb2ff08256e0a0b0e9d",
+      "bytes": 9803,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4390,8 +4390,8 @@
     },
     {
       "path": "crates/delta/src/routes/badges/test.rs",
-      "sha256": "c7a82f29fcac67a4ddac7ba7855968dd1ba46443afa48484472369db389447ff",
-      "bytes": 33624,
+      "sha256": "7ab6daa61bf282ef77cc4b64f80556d516af3add14ea57201907b7cde2d6f805",
+      "bytes": 33771,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4858,14 +4858,14 @@
     },
     {
       "path": "crates/delta/src/routes/community/mod.rs",
-      "sha256": "0606c84fc29ddf1fa8a5b05a2f84794df1ec1646f9f6996d214d6d54d01accc0",
-      "bytes": 50621,
+      "sha256": "43fd9295e12601a1ec380175a33fc1c320d16a071476fb1f068d2b89dfe07c6b",
+      "bytes": 54369,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/delta/src/routes/community/test.rs",
-      "sha256": "3c19affa76b6c591d8956bb97ad901f14d2f7b945f1e16e66661da1eab36c6c6",
-      "bytes": 75189,
+      "sha256": "87acd1c03b6c776fd0f1ed484813174762e6df0b0b3a16cc816b3a0fe937ac22",
+      "bytes": 84715,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6436,8 +6436,8 @@
     },
     {
       "path": "crates/services/autumn/src/api.rs",
-      "sha256": "10dfcf8950fc533040bc01221a8392beeacd381c7330d6d40dadc4b687efc87c",
-      "bytes": 44056,
+      "sha256": "349952e8e90d01952980125f7f6b95e3cf03e4a33671b42cf2c6e5b09c01c275",
+      "bytes": 44174,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6478,8 +6478,8 @@
     },
     {
       "path": "crates/services/autumn/src/main.rs",
-      "sha256": "abb0718aba057150378582e5c1c788ba7702d24121f8f654a094e4e7f31ff967",
-      "bytes": 3937,
+      "sha256": "d0da55224bb66dacadab18328610b5c615bad2f4532d28aa29472efb17d88311",
+      "bytes": 4362,
       "category": "product-source-or-build-manifest"
     },
     {
