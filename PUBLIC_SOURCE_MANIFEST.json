@@ -244,8 +244,8 @@
     },
     {
       "path": "LICENSE",
-      "sha256": "54b8d5d9b12cd2b52fb190579b677c3f48970ac01d663ccf5d86b17b0425b181",
-      "bytes": 34569,
+      "sha256": "19f347e3d9805bcb4376cc2865a9d225977a0a990efa4dd6b424efb8f542a44b",
+      "bytes": 34436,
       "category": "license-and-attribution"
     },
     {
@@ -256,8 +256,8 @@
     },
     {
       "path": "NOTICE",
-      "sha256": "0f4df8237f850b37912656fb2949785b0356ffa206b571f2990f8502511b72b7",
-      "bytes": 1068,
+      "sha256": "560dc580e196ab57ea62d3c450e1f88bccd57c79d781dd578fd83ea465cb9e80",
+      "bytes": 1316,
       "category": "license-and-attribution"
     },
     {
