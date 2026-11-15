@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Calls ring, decline and miss (2026-11-15)
+
+- DM and group calls ring for 45 seconds (`RING_TIMEOUT_SECS`). New gateway event `VoiceRingEnd { channel_id, user, reason }` (`Declined`, `Answered`, `Missed`, `Stopped`, `Ended`) to the channel when one person stops being rung. voice-ingress starts the ring with the call, ends it when the person joins (on any device), when the call ends, and when the time is up.
+- `PUT /channels/{id}/end_ring/{user}`: the person being rung may end their own ring (decline) without being in the call; people outside the DM or group get `NotFound`; the route also sends `VoiceRingEnd`.
+- `call_started` system messages get `missed` (true when nobody but the caller joined).
+- Web push for calls: the end of a ring replaces the "is calling you" notification (same tag) and says why, instead of sending "is calling you" again when the call ended; the push opens the conversation. The blanket end push to everyone in the DM is now sent only to people still being rung.
+- voice-ingress listens on `ZRZUR_VOICE_INGRESS_PORT` when set (default 8500).
+- Fixed: people looking at a voice channel from outside the call never saw who was muted or deafened. LiveKit sends no webhook for a mute, so the `track_muted` branch of voice-ingress never ran. New `PATCH /channels/{id}/voice_state` `{ muted, deafened }`: the client reports its own choice, the channel gets `UserVoiceStateUpdate`.
+
 ### Linked accounts: consent that names the US transfer (2026-11-15)
 
 - Consent version 3 for all four services (`LINKED_CONSENT_VERSION`): the card now names the transfer to the company in the United States (GDPR Art. 49(1)(a); GitHub: Art. 45) and what the copy may reveal (Art. 9(2)(a)). New links of Steam, Twitch, GitHub and Battle.net store it; Twitch, GitHub and Battle.net links made before stored 0.

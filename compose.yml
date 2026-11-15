@@ -130,7 +130,7 @@ services:
 
   # LiveKit
   livekit:
-    image: docker.io/livekit/livekit-server:v1.9.12
+    image: docker.io/livekit/livekit-server:v1.13.10
     command: --config /etc/livekit.yml
     network_mode: "host"
     volumes:
@@ -139,7 +139,7 @@ services:
   # LiveKit for the voice tests (Revolt.test.toml, node "voicetest"): dev
   # mode with its built-in local key, only on 127.0.0.1
   livekit-test:
-    image: docker.io/livekit/livekit-server:v1.9.12
+    image: docker.io/livekit/livekit-server:v1.13.10
     mem_limit: 256m
     cpus: 1
     command: --dev --bind 0.0.0.0 --node-ip 127.0.0.1
