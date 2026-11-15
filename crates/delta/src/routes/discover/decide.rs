@@ -140,18 +140,7 @@ mod test {
         drop(response);
 
         let (_, mod_session, moderator) = harness.new_user().await;
-        harness
-            .db
-            .update_user(
-                &moderator.id,
-                &revolt_database::PartialUser {
-                    privileged: Some(true),
-                    ..Default::default()
-                },
-                vec![],
-            )
-            .await
-            .expect("Failed to make user privileged");
+        harness.make_privileged(&moderator.id).await;
 
         let response = TestHarness::with_session(
             mod_session,

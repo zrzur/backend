@@ -73,6 +73,37 @@ pub async fn record_platform_audit(
     Err(create_database_error!("insert_one", "platform_audit"))
 }
 
+/// Whether the `privileged` flag of `user_id` may count on a request made
+/// with the ordinary session `session_id`.
+///
+/// `privileged` overrides every server and channel permission and opens
+/// the old admin routes (other people's profiles and flags, server flags,
+/// Discover decisions, billing admin). An ordinary session alone must not
+/// carry that: a stolen app token would be the whole platform. So the flag
+/// counts only while the account holds an active Owner staff grant and has
+/// an open, not idle staff session opened (with a TOTP code) from this same
+/// ordinary session. The everyday app session never has one; the admin
+/// console signs in with its own.
+pub async fn privileged_in_effect(db: &Database, user_id: &str, session_id: &str) -> bool {
+    let now = staff_now();
+    match db.fetch_staff_grant(user_id).await {
+        Ok(Some(grant)) if grant.is_owner(now) => {}
+        _ => return false,
+    }
+    db.fetch_staff_sessions_for_user(user_id, now)
+        .await
+        .map(|sessions| {
+            sessions.iter().any(|staff| {
+                staff.session_id == session_id
+                    && staff.user_id == user_id
+                    && staff.revoked_at.is_none()
+                    && now < staff.expires_at
+                    && now - staff.last_seen_at < STAFF_SESSION_IDLE_MS
+            })
+        })
+        .unwrap_or(false)
+}
+
 /// In-memory store used by the reference driver
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlatformStaffStore {

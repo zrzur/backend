@@ -246,8 +246,45 @@ async fn totp_secret(db: &Database, user_id: &str) -> Result<String> {
     }
 }
 
+/// Wrong staff codes an account may send in [`CODE_FAILURE_WINDOW_MS`]
+const CODE_FAILURES_MAX: usize = 5;
+/// Window for [`CODE_FAILURES_MAX`]; the lock lifts once the oldest of
+/// those failures is older than this
+const CODE_FAILURE_WINDOW_MS: i64 = 15 * 60 * 1000;
+
+/// Whether this account sent too many wrong staff codes lately. The
+/// request limit counts per address only, so someone holding a stolen
+/// session could spread guesses over many addresses; this counts per
+/// account, from the denied records already in the audit log.
+async fn too_many_code_failures(db: &Database, user_id: &str) -> Result<bool> {
+    let since = staff_now() - CODE_FAILURE_WINDOW_MS;
+    let recent = db
+        .fetch_platform_audit(PlatformAuditQuery {
+            before_seq: None,
+            actor_id: Some(user_id.to_string()),
+            target_id: None,
+            limit: 50,
+        })
+        .await?;
+    let failures = recent
+        .iter()
+        .take_while(|entry| entry.created_at >= since)
+        .filter(|entry| {
+            matches!(entry.outcome, AuditOutcome::Denied)
+                && matches!(
+                    entry.action.as_str(),
+                    "staff.session.create" | "staff.session.step_up"
+                )
+        })
+        .count();
+    Ok(failures >= CODE_FAILURES_MAX)
+}
+
 /// Check a TOTP code for a staff member and use it up
 async fn check_code(db: &Database, grant: &StaffGrant, code: &str) -> Result<()> {
+    if too_many_code_failures(db, &grant.id).await? {
+        return Err(create_error!(LockedOut));
+    }
     let secret = totp_secret(db, &grant.id).await?;
     let step = verify_staff_totp(&secret, code, now_secs(), grant.last_totp_step)
         .ok_or_else(|| create_error!(InvalidCredentials))?;

@@ -2468,3 +2468,142 @@ async fn nobody_decides_on_their_own_design() {
     let item = harness.db.fetch_community_item(&id).await.unwrap();
     assert_eq!(item.status, revolt_database::CommunityItemStatus::PendingReview);
 }
+
+// ---- admin security review, 2026-11-14 ----
+
+/// Status of GET /discover/requests (a `privileged`-only route)
+async fn discover_queue(harness: &TestHarness, session: &Session) -> Status {
+    harness
+        .client
+        .get("/discover/requests")
+        .header(Header::new("x-session-token", session.token.clone()))
+        .dispatch()
+        .await
+        .status()
+}
+
+async fn make_privileged(harness: &TestHarness, user: &User) {
+    harness
+        .db
+        .update_user(
+            &user.id,
+            &revolt_database::PartialUser {
+                privileged: Some(true),
+                ..Default::default()
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
+}
+
+/// A stolen app token of a `privileged` account must not carry platform
+/// power: the flag counts only with an open Owner staff session (opened
+/// with a TOTP code) from the same sign-in.
+#[rocket::async_test]
+async fn privileged_needs_an_owner_staff_session_from_the_same_sign_in() {
+    let harness = TestHarness::new().await;
+    let owner = member(&harness, vec![StaffRole::Owner]).await;
+    make_privileged(&harness, &owner.user).await;
+    let (_, _, target) = harness.new_user().await;
+
+    // the ordinary session alone: no god mode, no editing other people
+    assert_eq!(discover_queue(&harness, &owner.session).await, Status::Forbidden);
+    let edit = |session: Session| {
+        let harness = &harness;
+        let target = target.id.clone();
+        async move {
+            harness
+                .client
+                .patch(format!("/users/{target}"))
+                .header(Header::new("x-session-token", session.token.clone()))
+                .header(ContentType::JSON)
+                .body(json!({ "display_name": "Taken Over" }).to_string())
+                .dispatch()
+                .await
+                .status()
+        }
+    };
+    assert_eq!(edit(owner.session.clone()).await, Status::Forbidden);
+    assert_ne!(
+        harness.db.fetch_user(&target.id).await.unwrap().display_name.as_deref(),
+        Some("Taken Over")
+    );
+
+    // with an Owner staff session opened from this sign-in, it counts
+    let token = sign_in(&harness, &owner, 0).await;
+    assert_eq!(discover_queue(&harness, &owner.session).await, Status::Ok);
+    assert_eq!(edit(owner.session.clone()).await, Status::Ok);
+
+    // closed again: gone again
+    let res = harness
+        .client
+        .delete("/staff/session")
+        .header(Header::new("x-session-token", owner.session.token.clone()))
+        .header(Header::new("x-staff-session", token))
+        .dispatch()
+        .await;
+    assert!(res.status().code < 300, "{}", res.status());
+    assert_eq!(discover_queue(&harness, &owner.session).await, Status::Forbidden);
+}
+
+/// `privileged` with a lower staff role (not Owner) never counts
+#[rocket::async_test]
+async fn privileged_without_the_owner_role_does_not_count() {
+    let harness = TestHarness::new().await;
+    let support = member(&harness, vec![StaffRole::Support]).await;
+    make_privileged(&harness, &support.user).await;
+    let _token = sign_in(&harness, &support, 0).await;
+    assert_eq!(discover_queue(&harness, &support.session).await, Status::Forbidden);
+}
+
+/// Wrong staff codes are counted per account, not only per address: after
+/// five in a quarter of an hour even the right code is refused.
+#[rocket::async_test]
+async fn wrong_staff_codes_lock_the_account() {
+    let harness = TestHarness::new().await;
+    let m = member(&harness, vec![StaffRole::Support]).await;
+    let denied = || revolt_database::AuditRecord {
+        actor_id: m.user.id.clone(),
+        action: "staff.session.create".to_string(),
+        summary: Some("second factor missing or wrong".to_string()),
+        ..Default::default()
+    };
+    for _ in 0..5 {
+        revolt_database::record_platform_audit(
+            &harness.db,
+            denied(),
+            revolt_database::AuditOutcome::Denied,
+        )
+        .await
+        .unwrap();
+    }
+    let (status, body) = open(&harness, &m.session, &code(0)).await;
+    assert_ne!(status, Status::Ok, "{body}");
+    assert_eq!(body["type"], "LockedOut", "{body}");
+
+    // a different account is not affected
+    let other = member(&harness, vec![StaffRole::Support]).await;
+    let _ = sign_in(&harness, &other, 0).await;
+}
+
+/// Four recent failures still let the right code through
+#[rocket::async_test]
+async fn a_few_wrong_staff_codes_do_not_lock() {
+    let harness = TestHarness::new().await;
+    let m = member(&harness, vec![StaffRole::Support]).await;
+    for _ in 0..4 {
+        revolt_database::record_platform_audit(
+            &harness.db,
+            revolt_database::AuditRecord {
+                actor_id: m.user.id.clone(),
+                action: "staff.session.step_up".to_string(),
+                ..Default::default()
+            },
+            revolt_database::AuditOutcome::Denied,
+        )
+        .await
+        .unwrap();
+    }
+    let _ = sign_in(&harness, &m, 0).await;
+}

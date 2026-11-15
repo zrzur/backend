@@ -520,18 +520,7 @@ async fn deliveries(harness: &TestHarness, order_id: &str) -> usize {
 
 async fn staff_session(harness: &TestHarness) -> (revolt_database::Session, User, String) {
     let (_, session, user) = harness.new_user().await;
-    harness
-        .db
-        .update_user(
-            &user.id,
-            &revolt_database::PartialUser {
-                privileged: Some(true),
-                ..Default::default()
-            },
-            vec![],
-        )
-        .await
-        .unwrap();
+    harness.make_privileged(&user.id).await;
     let ticket = MFATicket::new(user.id.clone(), true);
     ticket.save(&harness.db).await.unwrap();
     (session, user, ticket.token)

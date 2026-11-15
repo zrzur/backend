@@ -29,18 +29,7 @@ async fn set_role(
 }
 
 async fn make_privileged(harness: &TestHarness, user: &User) {
-    harness
-        .db
-        .update_user(
-            &user.id,
-            &PartialUser {
-                privileged: Some(true),
-                ..Default::default()
-            },
-            vec![],
-        )
-        .await
-        .unwrap();
+    harness.make_privileged(&user.id).await;
 }
 
 async fn staff(harness: &TestHarness, permissions: Vec<PlatformPermission>) -> (Session, User) {

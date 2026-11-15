@@ -30,15 +30,22 @@ impl<'r> FromRequest<'r> for User {
                     if crate::bot_suspended(&bot) {
                         return Err(create_error!(InvalidSession));
                     }
-                    db.fetch_user(&bot.id)
+                    let user = db
+                        .fetch_user(&bot.id)
                         .await
-                        .map_err(User::token_lookup_error)
+                        .map_err(User::token_lookup_error)?;
+                    Ok(user.confirm_privileged(db, None).await)
                 } else {
                     match request.guard::<Session>().await {
-                        Outcome::Success(session) => db
-                            .fetch_user(&session.user_id)
-                            .await
-                            .map_err(User::token_lookup_error),
+                        // `privileged` needs an open staff session from this
+                        // sign-in, not only the ordinary token
+                        Outcome::Success(session) => {
+                            let user = db
+                                .fetch_user(&session.user_id)
+                                .await
+                                .map_err(User::token_lookup_error)?;
+                            Ok(user.confirm_privileged(db, Some(&session.id)).await)
+                        }
                         Outcome::Error((_, error)) => Err(error),
                         Outcome::Forward(_) => Err(create_error!(InvalidSession)),
                     }
