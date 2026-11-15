@@ -102,7 +102,7 @@ async fn create_design(
         .post("/community/decorations")
         .header(ContentType::JSON)
         .header(Header::new("x-session-token", session.token.clone()))
-        .body(json!({ "name": name, "file": file, "submit": submit }).to_string())
+        .body(json!({ "name": name, "file": file, "submit": submit, "rights": promise() }).to_string())
         .dispatch()
         .await;
     let status = res.status();
@@ -463,6 +463,9 @@ async fn edits_go_live_when_published() {
     assert_eq!(public.file.id, item.file.id);
     assert_eq!(public.name, "Glow");
 
+    // the new image came without a promise: it does not go out by the button
+    assert_eq!(act(&harness, &session, &item.id, "submit", None).await, Status::BadRequest);
+    assert_eq!(edit(json!({ "rights": promise() })).await.status(), Status::Ok);
     // published: live at once, and people wearing it get the new image
     assert_eq!(act(&harness, &session, &item.id, "submit", None).await, Status::Ok);
     let page = public_list(&harness, &rs).await;
@@ -476,7 +479,12 @@ async fn edits_go_live_when_published() {
 
     // edit and publish in one step
     let newer = upload(&harness, &user).await;
-    assert_eq!(edit(json!({ "file": newer, "submit": true })).await.status(), Status::Ok);
+    // a new image without a new promise stays where it is
+    assert_eq!(edit(json!({ "file": newer, "submit": true })).await.status(), Status::BadRequest);
+    assert_eq!(
+        edit(json!({ "file": newer, "submit": true, "rights": promise() })).await.status(),
+        Status::Ok
+    );
     let page = public_list(&harness, &rs).await;
     let public = page.items.iter().find(|i| i.id == item.id).unwrap();
     assert_eq!(public.file.id, newer);
@@ -1250,12 +1258,186 @@ async fn five_reports_hide_an_effect_for_now_and_say_it_was_automatic() {
 }
 
 #[rocket::async_test]
-async fn decorations_still_go_live_at_once_and_ask_for_no_promise() {
+async fn decorations_still_go_live_at_once_with_the_promise() {
     let harness = TestHarness::new().await;
     let (session, user) = creator(&harness).await;
     let (status, item) = submit_design(&harness, &session, &user, "Official ring").await;
     assert_eq!(status, Status::Ok);
-    assert_eq!(item.unwrap().status, v0::CommunityItemStatus::Published);
+    let item = item.unwrap();
+    assert_eq!(item.status, v0::CommunityItemStatus::Published);
+    assert_eq!(item.rights.unwrap().terms_version, TERMS);
+}
+
+async fn post_design(harness: &TestHarness, session: &Session, kind: &str, body: serde_json::Value) -> Status {
+    harness
+        .client
+        .post(format!("/community/{kind}"))
+        .header(ContentType::JSON)
+        .header(Header::new("x-session-token", session.token.clone()))
+        .body(body.to_string())
+        .dispatch()
+        .await
+        .status()
+}
+
+/// Every kind is published with the creator's promise, not only effects
+/// (Creator Terms: accepted before the first submission; parts by others and
+/// AI parts are named in the submission)
+#[rocket::async_test]
+async fn no_design_is_published_without_the_promise() {
+    let harness = TestHarness::new().await;
+    let (session, user) = creator(&harness).await;
+
+    for kind in ["decorations", "nameplates"] {
+        // publishing in one step
+        let file = upload(&harness, &user).await;
+        let body = json!({ "name": "Ring", "file": file, "submit": true });
+        assert_eq!(post_design(&harness, &session, kind, body).await, Status::BadRequest);
+        // an old version of the terms, or an unticked box, is no promise
+        for rights in [
+            json!({ "confirmed": false, "terms_version": TERMS }),
+            json!({ "confirmed": true, "terms_version": "2020-01-01" }),
+        ] {
+            let body = json!({ "name": "Ring", "file": file, "submit": true, "rights": rights });
+            assert_eq!(post_design(&harness, &session, kind, body).await, Status::BadRequest);
+        }
+        // the refused upload is still usable: a draft needs no promise yet
+        let body = json!({ "name": "Ring", "file": file });
+        assert_eq!(post_design(&harness, &session, kind, body).await, Status::Ok);
+    }
+
+    // a draft without the promise does not publish by the button either
+    let mine = harness.db.fetch_community_items(revolt_database::CommunityItemQuery {
+        creator_id: Some(&user.id),
+        limit: 10,
+        ..Default::default()
+    });
+    let draft = mine.await.unwrap().pop().unwrap();
+    assert!(draft.rights.is_none());
+    assert_eq!(act(&harness, &session, &draft.id, "submit", None).await, Status::BadRequest);
+    // given with an edit, it publishes
+    let sent = json!({ "rights": promise(), "submit": true });
+    assert_eq!(edit_design(&harness, &session, &draft.id, sent).await, Status::Ok);
+    let stored = harness.db.fetch_community_item(&draft.id).await.unwrap();
+    assert_eq!(stored.status, revolt_database::CommunityItemStatus::Published);
+    assert!(stored.rights.is_some());
+}
+
+/// A design published before the promise was asked of every kind stays up,
+/// and a reviewer can still reinstate it; its next version needs the promise
+#[rocket::async_test]
+async fn a_design_from_before_the_promise_stays_but_its_next_version_needs_one() {
+    let harness = TestHarness::new().await;
+    let (session, user) = creator(&harness).await;
+    let (rs, _) = reviewer(&harness).await;
+    let (_, live) = submit_design(&harness, &session, &user, "Old ring").await;
+    let live = live.unwrap();
+    let mut stored = harness.db.fetch_community_item(&live.id).await.unwrap();
+    let version = stored.version;
+    stored.rights = None;
+    stored.version += 1;
+    assert!(harness.db.update_community_item(&stored, version, false).await.unwrap());
+
+    assert_eq!(act(&harness, &rs, &live.id, "suspend", Some("looking")).await, Status::Ok);
+    assert_eq!(act(&harness, &rs, &live.id, "approve", None).await, Status::Ok);
+
+    // a promise given under older terms does not publish a draft either (L-42)
+    let (_, draft) = create_design(&harness, &session, &user, "Under old terms", false).await;
+    let draft = draft.unwrap();
+    let mut old = harness.db.fetch_community_item(&draft.id).await.unwrap();
+    let version = old.version;
+    old.rights.as_mut().unwrap().terms_version = "2020-01-01".to_string();
+    old.version += 1;
+    assert!(harness.db.update_community_item(&old, version, false).await.unwrap());
+    assert_eq!(act(&harness, &session, &draft.id, "submit", None).await, Status::BadRequest);
+    let again = json!({ "submit": true });
+    assert_eq!(edit_design(&harness, &session, &draft.id, again).await, Status::BadRequest);
+    let promised = json!({ "submit": true, "rights": promise() });
+    assert_eq!(edit_design(&harness, &session, &draft.id, promised).await, Status::Ok);
+
+    let renamed = json!({ "name": "Old ring 2", "submit": true });
+    assert_eq!(edit_design(&harness, &session, &live.id, renamed.clone()).await, Status::BadRequest);
+    let mut with_promise = renamed;
+    with_promise["rights"] = promise();
+    assert_eq!(edit_design(&harness, &session, &live.id, with_promise).await, Status::Ok);
+}
+
+/// A withdrawn design comes back as a draft with everything it had, and is
+/// published again like any draft (Creator Terms: "so you can publish it
+/// again"). Nobody else can take it back, and nothing else is restored.
+#[rocket::async_test]
+async fn a_creator_takes_a_withdrawn_design_back() {
+    let harness = TestHarness::new().await;
+    let (session, user) = creator(&harness).await;
+    let (other_session, _) = creator(&harness).await;
+    let (rs, _) = reviewer(&harness).await;
+    let (_, live) = submit_design(&harness, &session, &user, "Ring").await;
+    let live = live.unwrap();
+
+    // only a withdrawn design
+    assert_eq!(act(&harness, &session, &live.id, "restore", None).await, Status::BadRequest);
+    assert_eq!(act(&harness, &session, &live.id, "archive", None).await, Status::Ok);
+    assert_eq!(act(&harness, &other_session, &live.id, "restore", None).await, Status::NotFound);
+
+    assert_eq!(act(&harness, &session, &live.id, "restore", None).await, Status::Ok);
+    let stored = harness.db.fetch_community_item(&live.id).await.unwrap();
+    assert_eq!(stored.status, revolt_database::CommunityItemStatus::Draft);
+    assert_eq!(stored.name, "Ring");
+    assert_eq!(stored.file.id, live.file.id);
+    // a draft: not in the gallery
+    assert!(public_list(&harness, &rs).await.items.iter().all(|i| i.id != live.id));
+    // and it is published again like any draft
+    assert_eq!(act(&harness, &session, &live.id, "submit", None).await, Status::Ok);
+    assert!(public_list(&harness, &rs).await.items.iter().any(|i| i.id == live.id));
+
+    // a design a reviewer took down is not the creator's to bring back
+    assert_eq!(act(&harness, &rs, &live.id, "suspend", Some("reported")).await, Status::Ok);
+    assert_eq!(act(&harness, &session, &live.id, "restore", None).await, Status::BadRequest);
+
+    // a design staff withdrew is a takedown: the creator cannot bring it back
+    let (admin_session, admin) = creator(&harness).await;
+    set_role(&harness, &admin, vec![PlatformPermission::CosmeticsManageAll], None).await;
+    let (_, pulled) = submit_design(&harness, &session, &user, "Pulled").await;
+    let pulled = pulled.unwrap();
+    assert_eq!(act(&harness, &admin_session, &pulled.id, "archive", None).await, Status::Ok);
+    assert_eq!(act(&harness, &session, &pulled.id, "restore", None).await, Status::BadRequest);
+    let stored = harness.db.fetch_community_item(&pulled.id).await.unwrap();
+    assert_eq!(stored.status, revolt_database::CommunityItemStatus::Archived);
+
+    // staff withdrawing a draft nobody saw is a decision too: the creator
+    // gets a statement with the reason and can appeal (D-49)
+    let (_, sketch) = create_design(&harness, &session, &user, "Sketch", false).await;
+    let sketch = sketch.unwrap();
+    assert_eq!(
+        act(&harness, &admin_session, &sketch.id, "archive", Some("copied artwork")).await,
+        Status::Ok
+    );
+    let actions = harness.db.fetch_safety_actions_for_user(&user.id).await.unwrap();
+    let statement = actions.iter().find(|a| a.target.id == sketch.id).expect("a statement");
+    assert_eq!(statement.public_reason, "copied artwork");
+    assert!(statement.appealable);
+
+    // the creator reads what happened in the history, not who of staff did
+    // it; their own entries keep their id (P-89)
+    let res = harness
+        .client
+        .get(format!("/community/items/{}", pulled.id))
+        .header(Header::new("x-session-token", session.token.clone()))
+        .dispatch()
+        .await;
+    let details = res.into_json::<v0::CommunityItemDetails>().await.unwrap();
+    let by = |action: &str| {
+        details.history.iter().find(|entry| entry.action == action).map(|entry| entry.actor_id.clone())
+    };
+    assert_eq!(by("Publish").as_deref(), Some(user.id.as_str()));
+    assert_eq!(by("Archive").as_deref(), Some(""));
+
+    // nothing changes while the creator is suspended
+    let (_, gone) = submit_design(&harness, &session, &user, "Gone").await;
+    let gone = gone.unwrap();
+    assert_eq!(act(&harness, &session, &gone.id, "archive", None).await, Status::Ok);
+    change_creator(&harness, &user, "suspend", Some("stolen art")).await;
+    assert_eq!(act(&harness, &session, &gone.id, "restore", None).await, Status::Forbidden);
 }
 
 #[rocket::async_test]
@@ -1661,7 +1843,7 @@ async fn post_kind(harness: &TestHarness, session: &Session, user: &User, kind: 
         .post(format!("/community/{kind}"))
         .header(ContentType::JSON)
         .header(Header::new("x-session-token", session.token.clone()))
-        .body(json!({ "name": "Frame", "file": file, "submit": true }).to_string())
+        .body(json!({ "name": "Frame", "file": file, "submit": true, "rights": promise() }).to_string())
         .dispatch()
         .await;
     assert_eq!(res.status(), Status::Ok);

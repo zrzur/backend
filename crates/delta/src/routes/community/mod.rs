@@ -57,6 +57,7 @@ pub fn routes() -> (Vec<Route>, OpenApi) {
         request_changes,
         suspend,
         archive,
+        restore,
         delete_item,
         override_review,
         favourite,
@@ -140,14 +141,39 @@ fn rights_of(data: Option<v0::DataCommunityRights>) -> Result<Option<CommunityRi
     }))
 }
 
-/// An effect only goes to reviewers with the creator's promise on it
+/// Nothing a creator publishes goes out without their promise on it: own
+/// work, parts by others, parts made with AI tools, and the Creator Terms in
+/// force (Creator Terms, "What these terms cover" and "Only original work")
 fn require_rights(item: &CommunityItem) -> Result<()> {
-    if item.kind == CommunityItemKind::Effect && item.rights.is_none() {
-        return Err(revolt_result::failed_validation(vec![
-            revolt_result::ValidationProblem::new("rights", "required"),
-        ]));
+    if !promise_stands(item) {
+        return Err(rights_required());
     }
     Ok(())
+}
+
+/// The promise on a design counts for a new publication only if it was given
+/// under the Creator Terms in force; after new terms the creator is asked
+/// again (L-42). What is already public is not touched.
+fn promise_stands(item: &CommunityItem) -> bool {
+    item.rights
+        .as_ref()
+        .is_some_and(|rights| rights.terms_version == CREATOR_TERMS_VERSION)
+}
+
+/// A reviewer's approval: an effect needs the promise. A decoration or
+/// nameplate published before the promise was asked of every design can
+/// still be kept or reinstated.
+fn require_rights_to_approve(item: &CommunityItem) -> Result<()> {
+    if item.kind == CommunityItemKind::Effect && item.rights.is_none() {
+        return Err(rights_required());
+    }
+    Ok(())
+}
+
+fn rights_required() -> revolt_result::Error {
+    revolt_result::failed_validation(vec![revolt_result::ValidationProblem::new(
+        "rights", "required",
+    )])
 }
 
 fn validated<T: Validate>(data: T) -> Result<T> {
@@ -218,8 +244,8 @@ fn publish(after: &mut CommunityItem, from: &CommunityItemStatus) -> Result<()> 
     let published = community_transition(from, &CommunityReviewAction::Publish)
         .ok_or_else(|| create_error!(InvalidOperation))?;
     after.review_note = None;
+    require_rights(after)?;
     if after.kind == CommunityItemKind::Effect {
-        require_rights(after)?;
         after.status = CommunityItemStatus::PendingReview;
         return Ok(());
     }
@@ -556,10 +582,8 @@ pub async fn create(
     let description = clean_description(data.description);
     check_effect_words(&kind, Some(&name), description.as_deref(), Some(&tags))?;
     let rights = rights_of(data.rights)?;
-    if submit && kind == CommunityItemKind::Effect && rights.is_none() {
-        return Err(revolt_result::failed_validation(vec![
-            revolt_result::ValidationProblem::new("rights", "required"),
-        ]));
+    if submit && rights.is_none() {
+        return Err(rights_required());
     }
 
     let max = config().await.features.community.max_items_per_creator;
@@ -828,7 +852,15 @@ pub async fn details(
             .into_iter()
             // creators don't see who reported them
             .filter(|r| access.reviewer || r.action != CommunityReviewAction::Report)
-            .map(Into::into)
+            .map(|mut r| {
+                // ...nor which member of staff decided: their own entries keep
+                // their id, every other one goes without (P-89)
+                let own = user.as_ref().is_some_and(|user| user.id == r.actor_id);
+                if !access.reviewer && !own {
+                    r.actor_id.clear();
+                }
+                r.into()
+            })
             .collect()
     } else {
         vec![]
@@ -982,14 +1014,8 @@ pub async fn edit(
     )?;
     let rights = rights_of(data.rights)?;
     // before the file is claimed: a refused change leaves the upload usable
-    if submit
-        && before.kind == CommunityItemKind::Effect
-        && rights.is_none()
-        && (data.file.is_some() || before.rights.is_none())
-    {
-        return Err(revolt_result::failed_validation(vec![
-            revolt_result::ValidationProblem::new("rights", "required"),
-        ]));
+    if submit && rights.is_none() && (data.file.is_some() || !promise_stands(&before)) {
+        return Err(rights_required());
     }
     let file = match &data.file {
         Some(file) => Some(claim_file(db, file, &before.kind, id, &user).await?),
@@ -1062,6 +1088,7 @@ pub async fn edit(
                     ..revision
                 });
             } else if submit {
+                require_rights(&after)?;
                 after.pending = None;
                 after.review_note = None;
                 new_file = apply_revision(&mut after, revision);
@@ -1112,6 +1139,7 @@ pub async fn submit(db: &State<Database>, user: User, id: &str) -> Result<Json<v
             });
         }
         (CommunityItemStatus::Published, Some(revision)) => {
+            require_rights(&after)?;
             after.review_note = None;
             new_file = apply_revision(&mut after, revision);
         }
@@ -1182,7 +1210,7 @@ pub(crate) async fn decide_as(
         return Err(create_error!(CommunityItemConflict));
     }
     if action == CommunityReviewAction::Approve {
-        require_rights(&before)?;
+        require_rights_to_approve(&before)?;
     }
 
     let mut after = before.clone();
@@ -1302,10 +1330,22 @@ pub async fn suspend(
 /// # Archive
 ///
 /// The creator (or an admin) withdraws a design. It leaves the gallery and
-/// everyone wearing it. The image is kept.
+/// everyone wearing it. The image is kept. A withdrawal by an admin is a
+/// takedown: it may carry a `reason`, and the creator gets a statement of
+/// reasons and can appeal, whether the design was public or not.
 #[openapi(tag = "Community")]
-#[post("/items/<id>/archive")]
-pub async fn archive(db: &State<Database>, user: User, id: &str) -> Result<Json<v0::CommunityItem>> {
+#[post("/items/<id>/archive", data = "<data>")]
+pub async fn archive(
+    db: &State<Database>,
+    user: User,
+    id: &str,
+    data: Option<Json<v0::DataCommunityDecision>>,
+) -> Result<Json<v0::CommunityItem>> {
+    // staff may say why; the creator reads it with the statement of reasons
+    let reason = match data {
+        Some(data) => clean_description(validated(data.into_inner())?.reason),
+        None => None,
+    };
     let before = db.fetch_community_item(id).await?;
     let (access, perms) = access(db, &user, &before).await?;
     if !access.own && !perms.has(PlatformPermission::CosmeticsManageAll) {
@@ -1326,12 +1366,63 @@ pub async fn archive(db: &State<Database>, user: User, id: &str) -> Result<Json<
         .ok_or_else(|| create_error!(InvalidOperation))?;
     after.pending = None;
     let after = save(db, &before, after, false).await?;
-    if after.creator_id != user.id && before.status == CommunityItemStatus::Published {
-        took_down(db, &user.id, &after, "Withdrawn by Zrzur staff", false).await?;
+    let by_staff = after.creator_id != user.id;
+    if by_staff {
+        // published or not: the creator gets a statement and can appeal (D-49)
+        let said = reason.as_deref().unwrap_or("Withdrawn by Zrzur staff");
+        took_down(db, &user.id, &after, said, false).await?;
     } else {
         db.unset_community_item_from_users(id).await?;
     }
-    log(db, &after, &user.id, CommunityReviewAction::Archive, None).await?;
+    let logged = if by_staff { reason } else { None };
+    log(db, &after, &user.id, CommunityReviewAction::Archive, logged).await?;
+    Ok(Json(after.into_v0(true, false)))
+}
+
+/// # Restore
+///
+/// The creator takes a withdrawn design back. It becomes a draft again, with
+/// its image, name and tags; nobody sees it until it is published like any
+/// other draft. It counts against the creator's limit again. A design that
+/// staff withdrew is not the creator's to take back.
+#[openapi(tag = "Community")]
+#[post("/items/<id>/restore")]
+pub async fn restore(db: &State<Database>, user: User, id: &str) -> Result<Json<v0::CommunityItem>> {
+    let perms = platform_permissions(db, &user).await?;
+    require(&perms, PlatformPermission::CosmeticsSubmit)?;
+    let before = db.fetch_community_item(id).await?;
+    if before.creator_id != user.id {
+        return Err(create_error!(NotFound));
+    }
+    effects_open(&before.kind).await?;
+    let mut after = before.clone();
+    after.status = community_transition(&before.status, &CommunityReviewAction::Restore)
+        .ok_or_else(|| create_error!(InvalidOperation))?;
+    // only what the creator withdrew themself: a design staff withdrew is a
+    // takedown, and comes back through an appeal, never by this button. With
+    // no record of who withdrew it, it stays where it is.
+    let withdrawn_by = db
+        .fetch_community_reviews(id)
+        .await?
+        .into_iter()
+        .filter(|entry| entry.action == CommunityReviewAction::Archive)
+        .max_by_key(|entry| entry.created_at)
+        .map(|entry| entry.actor_id);
+    if withdrawn_by.as_deref() != Some(user.id.as_str()) {
+        return Err(create_error!(InvalidOperation));
+    }
+    let max = config().await.features.community.max_items_per_creator;
+    if db
+        .count_community_items_by_creator(&user.id, &ACTIVE_STATUSES)
+        .await?
+        >= max
+    {
+        return Err(create_error!(TooManyCommunityItems { max }));
+    }
+    after.review_note = None;
+    after.pending = None;
+    let after = save(db, &before, after, false).await?;
+    log(db, &after, &user.id, CommunityReviewAction::Restore, None).await?;
     Ok(Json(after.into_v0(true, false)))
 }
 

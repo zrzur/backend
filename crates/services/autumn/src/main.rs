@@ -115,7 +115,16 @@ async fn main() -> Result<(), std::io::Error> {
         .layer(from_fn(stoat_otel::middleware::axum::wide_events))
         .with_state(state);
 
-    let address = SocketAddr::from((Ipv4Addr::UNSPECIFIED, 14704));
+    // ZRZUR_AUTUMN_PORT: a second media server beside the first one (a
+    // stream's own build next to the dev stack); anything else is 14704
+    let port = match std::env::var("ZRZUR_AUTUMN_PORT") {
+        Ok(value) => value.parse::<u16>().unwrap_or_else(|_| {
+            tracing::warn!("ZRZUR_AUTUMN_PORT={value:?} is not a port; autumn listens on 14704");
+            14704
+        }),
+        Err(_) => 14704,
+    };
+    let address = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
     let listener = TcpListener::bind(&address).await?;
     info!(address = %listener.local_addr()?, "Listening for requests 🍂");
 

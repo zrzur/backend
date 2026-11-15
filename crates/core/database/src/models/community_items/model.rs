@@ -147,6 +147,8 @@ auto_derived!(
         RequestChanges,
         Suspend,
         Archive,
+        /// The creator took a withdrawn design back as a draft
+        Restore,
         Report,
         /// An admin changed a decision someone else made
         Override,
