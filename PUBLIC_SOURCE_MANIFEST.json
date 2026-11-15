@@ -202,8 +202,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "03895c21bd2b329574695c194476b29828ccbcab430cc2a43140ffaee8c0e885",
-      "bytes": 91741,
+      "sha256": "a7f8b66ee6063eaeae1fd1d866a87da7483e7f97132e83cb4b4a8ccb47f80b42",
+      "bytes": 91945,
       "category": "public-documentation"
     },
     {
@@ -4144,8 +4144,8 @@
     },
     {
       "path": "crates/daemons/voice-ingress/src/api.rs",
-      "sha256": "f782fbe9374b6624fcd3d18d3c6d9acbef284dc83b683ddc4f34088b8bcdd129",
-      "bytes": 24282,
+      "sha256": "c5c8fdf16fea2155b11813c9197e58efd6a18bf00e6f7a03c3083e11ce368c84",
+      "bytes": 24635,
       "category": "product-source-or-build-manifest"
     },
     {
