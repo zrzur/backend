@@ -630,6 +630,18 @@ pub const USER_STYLE_EFFECTS: &[&str] = &[
     "kites", "aurora", "starfall", "lanterns", "sakura", "embers", "planes", "butterflies",
     "ink", "shards", "comet", "glass-rain", "dust", "sunrays", "moons", "bloom", "waves",
     "burst", "feathers", "dandelions", "hearts",
+    // design pack 2026-11 (generated)
+    "rank-up", "hit-markers", "coin-rush", "level-rise", "victory", "arcane", "slipstream",
+    "liftoff", "boo", "cash-rain", "doubloons", "light-trails", "key-rain", "nuts-bolts", "saucers",
+    "loot-drop", "laser-run", "paw-hop", "snack-rain", "reef-swim", "dino-dash", "night-traffic",
+    "coast-cruise", "photo-finish", "button-mash", "tyre-smoke", "goal-bounce", "shield-wall",
+    "blade-flight", "jasmine-fall", "rose-fall", "olive-rain", "sand-wind", "fanous-glow", "qahwa",
+    "blizzard", "school", "wildfire", "spring-day", "umbrellas", "bamboo-fall", "camp-embers",
+    "citrus-splash", "lavender-drift", "jelly-rise", "tropic-fall", "edelweiss-drift",
+    "balloon-rise", "kickoff", "melody", "sugar-rush", "gambit", "lucky-roll", "swish", "rewind",
+    "gift-drop", "molecules", "loose-pages", "sweet-scoops", "snapshots", "clockwork-fall",
+    "snack-fall", "sky-bursts", "soft-orbs", "glass-light", "crane-flight", "pulse-beat",
+    "flock-sweep",
 ];
 
 /// Built-in avatar decorations (drawn by the client)
@@ -638,6 +650,33 @@ pub const USER_STYLE_DECORATIONS: &[&str] = &[
     "lightning", "moon-halo", "sun-rays", "star-orbit", "sakura-branch", "geometric-hex",
     "neon", "wings", "feathers", "gear", "circuit", "waves", "leaves", "snow", "hearts",
     "music-notes", "shield-frame",
+    // design pack 2026-11 (generated)
+    "rank-bronze", "rank-silver", "rank-gold", "rank-platinum", "rank-diamond", "rank-master",
+    "hud-crosshair", "hud-vitals", "hud-radar", "cat-ears-black", "cat-ears-ginger",
+    "cat-ears-snow", "pointed-fox-ears", "lop-bunny-ears", "teddy-ears", "headphones-midnight",
+    "headphones-pink", "headphones-cloud", "gamer-headset", "tilted-crown", "floating-halo",
+    "silver-tiara", "flower-crown", "heart-orbit", "typing-bubble", "sleepy-moon", "note-orbit",
+    "pixel-frame", "health-bar", "pad-ring", "xp-ring", "arena-hud", "winners-cup",
+    "crossed-blades", "rune-circle", "tyre-ring", "rev-gauge", "planet-rings", "astro-helmet",
+    "ghost-pals", "bat-night", "palm-sunset", "siren-ring", "helm-wheel", "anchor-rope",
+    "racing-wheel", "tail-lights", "headset", "light-ring", "robo-head", "cog-ring", "saucer-beam",
+    "antennae", "quest-frame", "loot-ring", "star-fighter", "warp-ring", "pet-parade", "paw-ring",
+    "snack-frame", "picnic-ring", "reef-frame", "bubble-ring", "dino-frame", "egg-ring",
+    "city-frame", "ring-road", "coast-frame", "neon-flicker", "checker-ring", "race-track",
+    "joystick-ring", "marquee-bulbs", "drift-tyre", "speedometer", "pitch-ring", "scarf-ring",
+    "round-shield", "crossed-axes", "blade-ring", "smoke-ring", "jasmine-ring", "ablaq-arch",
+    "water-wheel", "damask-rose", "olive-wreath", "stitch-ring", "dune-moon", "caravan",
+    "lantern-pair", "crescent-seat", "sadu-ring", "snow-cap", "reef-ring", "life-ring",
+    "magma-ring", "tulip-crown", "daisy-chain", "storm-cloud", "bamboo-ring", "koi-pond",
+    "campfire-ring", "compass-ring", "sunflower", "citrus-slice", "lavender-wreath", "jelly-bell",
+    "plankton-ring", "big-leaves", "hibiscus-ring", "snow-peaks", "edelweiss-ring", "rainbow-arc",
+    "cloud-ring", "ball-ring", "goal-frame", "vinyl-ring", "sound-ring", "cute-cat-ears",
+    "donut-ring", "check-crown", "pawn-circle", "dice-ring", "card-hand", "ball-band", "rim-net",
+    "old-tv", "tape-reel", "ribbon-bow", "fairy-lights", "atom-orbits", "flask-ring", "open-book",
+    "spine-ring", "drip-ring", "scoop-crown", "lens-ring", "film-ring", "pocket-watch",
+    "moon-phases", "bunny-ears", "bear-ears", "fox-ears", "burst-ring", "sparkler-ring",
+    "soft-halo", "duo-arcs", "pane-ring", "glass-rose", "paper-cranes", "pinwheel", "pulse-ring",
+    "zrzur-crest", "murmuration", "perch",
 ];
 
 /// Built-in nameplates (files in the client): countries, themes, zodiac signs
@@ -673,6 +712,21 @@ pub const USER_STYLE_NAMEPLATES: &[&str] = &[
     "zodiac-taurus", "zodiac-gemini", "zodiac-cancer", "zodiac-leo", "zodiac-virgo",
     "zodiac-libra", "zodiac-scorpio", "zodiac-sagittarius", "zodiac-capricorn",
     "zodiac-aquarius", "zodiac-pisces",
+    // design pack 2026-11 (generated)
+    "rank-gold-plate", "rank-diamond-plate", "rank-master-plate", "hud-overlay", "arcade-night",
+    "level-up", "arena-lights", "castle-moon", "start-grid", "far-orbit", "haunted-hill",
+    "coast-drive", "neon-sign", "treasure-map", "night-road", "desk-setup", "robot-works",
+    "saucer-night", "dungeon-hall", "pixel-orbit", "pixel-meadow", "pixel-diner", "pixel-reef",
+    "pixel-valley", "pixel-skyline", "sunset-boulevard", "grand-prix", "arcade-row", "drift-night",
+    "goal-net", "moon-roofs", "damascus-night", "ablaq-stone", "citadel-night", "columns-dusk",
+    "old-walls", "scarf-weave", "desert-night", "fanous-night", "majlis-night", "sadu-weave",
+    "frost-pines", "deep-blue", "magma-flow", "spring-meadow", "rain-street", "bamboo-mist",
+    "camp-night", "beach-day", "lavender-field", "deep-glow", "jungle-dusk", "alpine-lake",
+    "balloon-sky", "pitch-night", "oud-night", "sound-bars", "paw-trail", "chess-board",
+    "game-night", "court-wood", "cassette-tape", "colour-bars", "gift-wrap", "lab-bench",
+    "book-shelf", "parlour", "camera-shelf", "clockwork", "forest-friends", "festive-city",
+    "haze-peach", "haze-lagoon", "tall-windows", "paper-water", "midnight-pulse", "pulse-wave",
+    "dusk-flock",
 ];
 
 /// Decorations that are no longer offered. Saved profiles may still hold one:
@@ -816,6 +870,29 @@ mod style_tests {
         s.name_font = Some("kufi".into());
         s.effect = Some("glass-rain".into());
         assert!(s.validate_style().is_ok());
+    }
+
+    #[test]
+    fn accepts_the_design_pack() {
+        let mut s = style();
+        s.decoration = Some("rank-gold".into());
+        s.nameplate = Some("arcade-night".into());
+        s.effect = Some("coin-rush".into());
+        assert!(s.validate_style().is_ok());
+    }
+
+    #[test]
+    fn no_design_is_listed_twice() {
+        for list in [
+            super::USER_STYLE_DECORATIONS,
+            super::USER_STYLE_NAMEPLATES,
+            super::USER_STYLE_EFFECTS,
+        ] {
+            let mut seen = std::collections::HashSet::new();
+            for id in list {
+                assert!(seen.insert(*id), "{id} is listed twice");
+            }
+        }
     }
 
     #[test]
