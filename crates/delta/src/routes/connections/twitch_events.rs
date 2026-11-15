@@ -215,15 +215,19 @@ async fn handle(
             let online = subscription.kind == "stream.online";
             account.live = Some(online);
             account.live_at = Some(now_ms());
-            account.live_title = if online {
-                twitch::live_streams(config, &[broadcaster.clone()])
+            account.live_title = None;
+            if online {
+                if let Some(now) = twitch::live_streams(config, &[broadcaster.clone()])
                     .await
                     .ok()
                     .and_then(|mut live| live.remove(&broadcaster))
-                    .filter(|title| !title.is_empty())
-            } else {
-                None
-            };
+                {
+                    account.live_title = Some(now.title).filter(|title| !title.is_empty());
+                    if !now.game.is_empty() {
+                        account.game = Some(now.game);
+                    }
+                }
+            }
             db.save_linked_account(&account).await
         }
         // someone removed Zrzur in their Twitch settings: the link goes

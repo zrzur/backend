@@ -194,17 +194,32 @@ struct Stream {
     user_id: String,
     #[serde(default)]
     title: String,
+    #[serde(default)]
+    game_name: String,
 }
 
-/// Which of these channels are live now, with their titles (up to 100 ids)
-pub async fn live_streams(config: &ApiConnectionOAuth, ids: &[String]) -> Result<HashMap<String, String>> {
+/// A stream that is live now
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveNow {
+    pub title: String,
+    /// The category Twitch shows, such as a game; empty when none
+    pub game: String,
+}
+
+/// Which of these channels are live now, with title and category (up to 100 ids)
+pub async fn live_streams(config: &ApiConnectionOAuth, ids: &[String]) -> Result<HashMap<String, LiveNow>> {
     #[cfg(test)]
     {
         let _ = config;
         return Ok(ids
             .iter()
             .filter(|id| !id.ends_with('0'))
-            .map(|id| (id.clone(), format!("Live title {id}")))
+            .map(|id| {
+                (
+                    id.clone(),
+                    LiveNow { title: format!("Live title {id}"), game: "Rust".into() },
+                )
+            })
             .collect());
     }
 
@@ -224,7 +239,54 @@ pub async fn live_streams(config: &ApiConnectionOAuth, ids: &[String]) -> Result
         Ok(streams
             .data
             .into_iter()
-            .map(|stream| (stream.user_id, clean_text(&stream.title, MAX_TITLE)))
+            .map(|stream| {
+                (
+                    stream.user_id,
+                    LiveNow {
+                        title: clean_text(&stream.title, MAX_TITLE),
+                        game: clean_text(&stream.game_name, 80),
+                    },
+                )
+            })
+            .collect())
+    }
+}
+
+#[derive(Deserialize)]
+struct Channels {
+    data: Vec<Channel>,
+}
+
+#[derive(Deserialize)]
+struct Channel {
+    broadcaster_id: String,
+    #[serde(default)]
+    game_name: String,
+}
+
+/// The category each channel last streamed in (up to 100 ids); channels that
+/// never streamed are left out
+pub async fn channel_games(config: &ApiConnectionOAuth, ids: &[String]) -> Result<HashMap<String, String>> {
+    #[cfg(test)]
+    {
+        let _ = config;
+        return Ok(ids.iter().map(|id| (id.clone(), "Rust".to_string())).collect());
+    }
+
+    #[allow(unreachable_code)]
+    {
+        if ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let query: Vec<(&str, &str)> =
+            ids.iter().take(100).map(|id| ("broadcaster_id", id.as_str())).collect();
+        let channels: Channels =
+            get_json(helix(config, reqwest::Method::GET, "channels").await?.query(&query)).await?;
+        Ok(channels
+            .data
+            .into_iter()
+            .map(|channel| (channel.broadcaster_id, clean_text(&channel.game_name, 80)))
+            .filter(|(_, game)| !game.is_empty())
             .collect())
     }
 }
@@ -252,6 +314,9 @@ pub async fn users(config: &ApiConnectionOAuth, ids: &[String]) -> Result<Vec<Id
                     id: id.clone(),
                     login: format!("renamed_{id}"),
                     display_name: format!("Renamed{id}"),
+                    profile_image_url: format!("https://static-cdn.jtvnw.net/jtv_user_pictures/new-{id}.png"),
+                    description: "New bio".into(),
+                    broadcaster_type: "affiliate".into(),
                 })
                 .ok()
             })

@@ -41,6 +41,10 @@ fn blank(account: &mut LinkedAccount) {
     account.profile_url = String::new();
     account.live = Some(false);
     account.live_title = None;
+    account.avatar_url = None;
+    account.bio = None;
+    account.kind = None;
+    account.game = None;
 }
 
 /// One round, at time `now`
@@ -71,11 +75,20 @@ pub async fn run_once(db: &Database, now: i64) -> Result<()> {
         let ids: Vec<String> = batch.iter().map(|a| a.external_id.clone()).collect();
         match twitch::users(&config, &ids).await {
             Ok(found) => {
+                // the category of each channel's last stream, also kept to 24 hours
+                let games = twitch::channel_games(&config, &ids).await.ok();
                 for mut account in batch.iter().cloned() {
                     match found.iter().find(|identity| identity.external_id == account.external_id) {
                         Some(identity) => {
                             account.display_name = identity.display_name.clone();
                             account.profile_url = identity.profile_url.clone();
+                            crate::routes::users::connections_oauth::apply_details(
+                                &mut account,
+                                identity.details.clone(),
+                            );
+                            account.game = games
+                                .as_ref()
+                                .and_then(|games| games.get(&account.external_id).cloned());
                             account.refreshed_at = now;
                             db.save_linked_account(&account).await?;
                         }
@@ -114,9 +127,14 @@ pub async fn run_once(db: &Database, now: i64) -> Result<()> {
         for mut account in batch.iter().cloned() {
             match &live {
                 Some(live) => {
-                    let title = live.get(&account.external_id).cloned();
-                    account.live = Some(title.is_some());
-                    account.live_title = title.filter(|t| !t.is_empty());
+                    let stream = live.get(&account.external_id).cloned();
+                    account.live = Some(stream.is_some());
+                    if let Some(stream) = &stream {
+                        if !stream.game.is_empty() {
+                            account.game = Some(stream.game.clone());
+                        }
+                    }
+                    account.live_title = stream.map(|s| s.title).filter(|t| !t.is_empty());
                     account.live_at = Some(now);
                 }
                 None if account.live_at.map_or(true, |at| now - at >= TWITCH_FRESH_MS) => {

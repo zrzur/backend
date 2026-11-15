@@ -511,3 +511,60 @@ async fn refresh_waits_and_disconnect_deletes_everything() {
     harness.db.delete_linked_accounts(&owner.id).await.unwrap();
     assert!(harness.db.fetch_linked_accounts(&owner.id).await.unwrap().is_empty());
 }
+
+#[rocket::async_test]
+async fn tabs_get_picture_bio_counts_and_game() {
+    let harness = TestHarness::new().await;
+    let (_, session, owner) = person(&harness, 30).await;
+    let (_, viewer_session, viewer) = person(&harness, 30).await;
+    share(&harness, &owner, &viewer).await;
+
+    let twitch_id = fresh_id();
+    let twitch = link(&harness, &session, "twitch", &twitch_id).await;
+    assert_eq!(
+        twitch.avatar_url.as_deref(),
+        Some(format!("https://static-cdn.jtvnw.net/jtv_user_pictures/{twitch_id}.png").as_str())
+    );
+    // control characters are gone
+    assert_eq!(twitch.bio.as_deref(), Some("Ranked nights"));
+    assert_eq!(twitch.kind.as_deref(), Some("partner"));
+    assert_eq!(twitch.game.as_deref(), Some("Rust"));
+
+    let github_id = fresh_id();
+    let github = link(&harness, &session, "github", &github_id).await;
+    assert_eq!(github.followers, Some(128));
+    assert_eq!(github.public_repos, Some(42));
+    assert_eq!(github.real_name.as_deref(), Some("Dev Person"));
+    assert!(github.avatar_url.unwrap().starts_with("https://avatars.githubusercontent.com/"));
+
+    for service in ["twitch", "github"] {
+        edit(&harness, &session, service, serde_json::json!({ "shown": true })).await;
+    }
+    let seen = profile(&harness, &viewer_session, &owner.id).await.connections;
+    assert_eq!(seen[0].kind.as_deref(), Some("partner"));
+    assert_eq!(seen[0].game.as_deref(), Some("Rust"));
+    assert_eq!(seen[1].followers, Some(128));
+    assert!(seen[1].avatar_url.is_some());
+
+    // GitHub Refresh reads the counts again
+    let mut stored = harness.db.fetch_linked_account(&owner.id, "github").await.unwrap().unwrap();
+    stored.refreshed_at -= super::connections_oauth::REFRESH_COOLDOWN_MS + 1;
+    harness.db.save_linked_account(&stored).await.unwrap();
+    let (status, body) = call(&harness, Method::Post, &session, "/users/@me/connections/github/refresh", None).await;
+    assert_eq!(status, Status::Ok, "{body}");
+    let refreshed: v0::ServiceAccount = serde_json::from_str(&body).unwrap();
+    assert_eq!(refreshed.followers, Some(130));
+    assert_eq!(refreshed.public_repos, Some(43));
+
+    // the daily Twitch check renews picture, bio and kind
+    let mut stored = harness.db.fetch_linked_account(&owner.id, "twitch").await.unwrap().unwrap();
+    stored.refreshed_at = 0;
+    harness.db.save_linked_account(&stored).await.unwrap();
+    crate::util::linked_upkeep::run_once(&harness.db, super::connections_oauth::now_ms())
+        .await
+        .unwrap();
+    let renewed = harness.db.fetch_linked_account(&owner.id, "twitch").await.unwrap().unwrap();
+    assert_eq!(renewed.kind.as_deref(), Some("affiliate"));
+    assert_eq!(renewed.bio.as_deref(), Some("New bio"));
+    assert!(renewed.avatar_url.unwrap().contains("/new-"));
+}

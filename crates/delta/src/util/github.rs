@@ -6,7 +6,9 @@ use revolt_database::{LinkedRepo, LINKED_TOP_REPOS};
 use revolt_result::Result;
 use serde::Deserialize;
 
-use super::oauth_link::{clean_text, client, get_json, valid_github_login, GITHUB_API};
+use super::oauth_link::{
+    clean_text, client, get_json, github_identity, valid_github_login, GithubUser, Identity, GITHUB_API,
+};
 
 #[derive(Deserialize, Default)]
 pub struct RepoAnswer {
@@ -90,18 +92,13 @@ pub async fn repos(config: &ApiConnectionOAuth, login: &str, token: Option<&str>
     }
 }
 
-#[derive(Deserialize)]
-struct UserById {
-    login: String,
-}
-
-/// The login of this GitHub account id now, with the app's own id and
-/// secret. `None` when GitHub no longer has the account.
-pub async fn login_of(config: &ApiConnectionOAuth, id: &str) -> Result<Option<String>> {
+/// Who this GitHub account id is now (login, picture, counts), with the
+/// app's own id and secret. `None` when GitHub no longer has the account.
+pub async fn user_of(config: &ApiConnectionOAuth, id: &str) -> Result<Option<Identity>> {
     #[cfg(test)]
     {
         let _ = config;
-        return Ok(test_github::login_of(id));
+        return Ok(test_github::user_of(id));
     }
 
     #[allow(unreachable_code)]
@@ -123,11 +120,11 @@ pub async fn login_of(config: &ApiConnectionOAuth, id: &str) -> Result<Option<St
         if !answer.status().is_success() {
             return Err(revolt_result::create_error!(LinkedServiceFailed));
         }
-        let user: UserById = answer
+        let user: GithubUser = answer
             .json()
             .await
             .map_err(|_| revolt_result::create_error!(LinkedServiceFailed))?;
-        Ok(valid_github_login(&user.login).then_some(user.login))
+        Ok(github_identity(user).ok())
     }
 }
 
@@ -162,14 +159,21 @@ pub mod test_github {
     use super::RepoAnswer;
 
     /// Ids ending in 404 are gone; ids ending in 7 were renamed
-    pub fn login_of(id: &str) -> Option<String> {
+    pub fn user_of(id: &str) -> Option<super::Identity> {
         if id.ends_with("404") {
-            None
-        } else if id.ends_with('7') {
-            Some(format!("renamed-{id}"))
-        } else {
-            Some(format!("dev-{id}"))
+            return None;
         }
+        let login = if id.ends_with('7') { format!("renamed-{id}") } else { format!("dev-{id}") };
+        super::github_identity(super::GithubUser {
+            id: id.parse().unwrap_or_default(),
+            login,
+            avatar_url: Some(format!("https://avatars.githubusercontent.com/u/{id}?v=5")),
+            name: Some("Dev Person".into()),
+            bio: Some("Still building".into()),
+            followers: Some(130),
+            public_repos: Some(43),
+        })
+        .ok()
     }
 
     pub fn repos(_login: &str) -> Vec<RepoAnswer> {

@@ -158,6 +158,25 @@ pub fn clean_text(text: &str, max: usize) -> String {
         .to_string()
 }
 
+/// What a service shows publicly about the account, beyond the name.
+/// Pictures are kept only when they are on the service's own image host.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Details {
+    /// Profile picture (Twitch: static-cdn.jtvnw.net, GitHub:
+    /// avatars.githubusercontent.com); shown through Zrzur's media proxy
+    pub avatar_url: Option<String>,
+    /// GitHub: the person's own name, when they set one
+    pub real_name: Option<String>,
+    /// Twitch description, GitHub bio
+    pub bio: Option<String>,
+    /// GitHub followers
+    pub followers: Option<u32>,
+    /// GitHub public repositories
+    pub public_repos: Option<u32>,
+    /// Twitch: `partner` or `affiliate`
+    pub kind: Option<String>,
+}
+
 /// Who the person is on the service
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Identity {
@@ -169,6 +188,24 @@ pub struct Identity {
     pub login: String,
     /// Public page, built by us from the login; empty for Battle.net
     pub profile_url: String,
+    pub details: Details,
+}
+
+/// A picture address only when it is https on exactly this host
+pub fn image_on(url: &str, host: &str) -> Option<String> {
+    let parsed = url::Url::parse(url).ok()?;
+    (parsed.scheme() == "https"
+        && parsed.host_str() == Some(host)
+        && parsed.port().is_none()
+        && parsed.username().is_empty()
+        && parsed.password().is_none()
+        && url.len() <= 512)
+        .then(|| parsed.to_string())
+}
+
+/// Optional text from a service: cleaned, `None` when empty
+pub fn clean_opt(text: Option<String>, max: usize) -> Option<String> {
+    text.map(|text| clean_text(&text, max)).filter(|text| !text.is_empty())
 }
 
 /// A Twitch login: 1-25 of `a-z`, `0-9`, `_`
@@ -278,18 +315,58 @@ struct TwitchUsers {
     data: Vec<TwitchUser>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 pub struct TwitchUser {
     pub id: String,
     pub login: String,
     #[serde(default)]
     pub display_name: String,
+    #[serde(default)]
+    pub profile_image_url: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub broadcaster_type: String,
 }
 
-#[derive(Deserialize)]
-struct GithubUser {
-    id: u64,
-    login: String,
+#[derive(Deserialize, Default)]
+pub struct GithubUser {
+    pub id: u64,
+    pub login: String,
+    #[serde(default)]
+    pub avatar_url: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub bio: Option<String>,
+    #[serde(default)]
+    pub followers: Option<u32>,
+    #[serde(default)]
+    pub public_repos: Option<u32>,
+}
+
+/// Turn what GitHub says into an identity, or refuse it
+pub fn github_identity(user: GithubUser) -> Result<Identity> {
+    if !valid_github_login(&user.login) {
+        return Err(create_error!(LinkedServiceFailed));
+    }
+    Ok(Identity {
+        external_id: user.id.to_string(),
+        display_name: user.login.clone(),
+        profile_url: format!("https://github.com/{}", user.login),
+        login: user.login,
+        details: Details {
+            avatar_url: user
+                .avatar_url
+                .as_deref()
+                .and_then(|url| image_on(url, "avatars.githubusercontent.com")),
+            real_name: clean_opt(user.name, 64),
+            bio: clean_opt(user.bio, 160),
+            followers: user.followers,
+            public_repos: user.public_repos,
+            kind: None,
+        },
+    })
 }
 
 #[derive(Deserialize)]
@@ -308,11 +385,21 @@ pub fn twitch_identity(user: TwitchUser) -> Result<Identity> {
     if display_name.is_empty() {
         display_name = login.clone();
     }
+    let kind = match user.broadcaster_type.as_str() {
+        "partner" | "affiliate" => Some(user.broadcaster_type.clone()),
+        _ => None,
+    };
     Ok(Identity {
         external_id: user.id,
         profile_url: format!("https://www.twitch.tv/{login}"),
         display_name,
         login,
+        details: Details {
+            avatar_url: image_on(&user.profile_image_url, "static-cdn.jtvnw.net"),
+            bio: clean_opt(Some(user.description), 300),
+            kind,
+            ..Default::default()
+        },
     })
 }
 
@@ -350,15 +437,7 @@ pub async fn identify(service: Service, config: &ApiConnectionOAuth, token: &str
                     .bearer_auth(token),
             )
             .await?;
-            if !valid_github_login(&user.login) {
-                return Err(create_error!(LinkedServiceFailed));
-            }
-            Ok(Identity {
-                external_id: user.id.to_string(),
-                display_name: user.login.clone(),
-                profile_url: format!("https://github.com/{}", user.login),
-                login: user.login,
-            })
+            github_identity(user)
         }
         Service::Battlenet => {
             let user: BattlenetUser = get_json(
@@ -376,6 +455,7 @@ pub async fn identify(service: Service, config: &ApiConnectionOAuth, token: &str
                 display_name: tag,
                 login: String::new(),
                 profile_url: String::new(),
+                details: Details::default(),
             })
         }
     }
@@ -426,18 +506,25 @@ pub mod test_services {
                 id: id.to_string(),
                 login: format!("streamer_{id}"),
                 display_name: format!("Streamer{id}"),
+                profile_image_url: format!("https://static-cdn.jtvnw.net/jtv_user_pictures/{id}.png"),
+                description: "Ranked nights\u{0007}".into(),
+                broadcaster_type: "partner".into(),
             })?,
-            Service::Github => Identity {
-                external_id: id.to_string(),
-                display_name: format!("dev-{id}"),
+            Service::Github => github_identity(GithubUser {
+                id: id.parse().unwrap_or_default(),
                 login: format!("dev-{id}"),
-                profile_url: format!("https://github.com/dev-{id}"),
-            },
+                avatar_url: Some(format!("https://avatars.githubusercontent.com/u/{id}?v=4")),
+                name: Some("Dev Person".into()),
+                bio: Some("Builds things".into()),
+                followers: Some(128),
+                public_repos: Some(42),
+            })?,
             Service::Battlenet => Identity {
                 external_id: id.to_string(),
                 display_name: format!("Player#{id}"),
                 login: String::new(),
                 profile_url: String::new(),
+                details: Details::default(),
             },
         })
     }
@@ -520,6 +607,8 @@ mod tests {
             id: "99".into(),
             login: "MaherLive".into(),
             display_name: "Maher\u{202e}Live\n".into(),
+            profile_image_url: "https://evil.example/x.png".into(),
+            ..Default::default()
         })
         .unwrap();
         assert_eq!(id.profile_url, "https://www.twitch.tv/maherlive");
@@ -527,9 +616,29 @@ mod tests {
         assert!(twitch_identity(TwitchUser {
             id: "99".into(),
             login: "evil.com/x".into(),
-            display_name: String::new(),
+            ..Default::default()
         })
         .is_err());
+    }
+
+    #[test]
+    fn pictures_only_from_the_services_own_host() {
+        assert!(image_on("https://static-cdn.jtvnw.net/jtv_user_pictures/a.png", "static-cdn.jtvnw.net").is_some());
+        assert!(image_on("http://static-cdn.jtvnw.net/a.png", "static-cdn.jtvnw.net").is_none());
+        assert!(image_on("https://static-cdn.jtvnw.net.evil.example/a.png", "static-cdn.jtvnw.net").is_none());
+        assert!(image_on("https://user@static-cdn.jtvnw.net/a.png", "static-cdn.jtvnw.net").is_none());
+        assert!(image_on("https://static-cdn.jtvnw.net:8443/a.png", "static-cdn.jtvnw.net").is_none());
+        assert!(image_on("not a url", "static-cdn.jtvnw.net").is_none());
+        let id = github_identity(GithubUser {
+            id: 5,
+            login: "dev".into(),
+            avatar_url: Some("https://evil.example/a.png".into()),
+            name: Some("  ".into()),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(id.details.avatar_url, None);
+        assert_eq!(id.details.real_name, None);
     }
 
     #[test]

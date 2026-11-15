@@ -47,6 +47,27 @@ auto_derived!(
         pub refreshed_at: i64,
         /// Earliest time Refresh works again (GitHub), milliseconds since the epoch
         pub refresh_after: i64,
+        /// Twitch, GitHub: profile picture on the service's own image host
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub avatar_url: Option<String>,
+        /// GitHub: the person's own name there
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub real_name: Option<String>,
+        /// Twitch description, GitHub bio
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub bio: Option<String>,
+        /// GitHub followers
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub followers: Option<u32>,
+        /// GitHub public repositories
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub public_repos: Option<u32>,
+        /// Twitch: `partner` or `affiliate`
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub kind: Option<String>,
+        /// Twitch: the category of the live stream, or of the last one
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub game: Option<String>,
     }
 
     /// One service on this server, and the person's link if any
@@ -75,6 +96,27 @@ auto_derived!(
         /// GitHub: the repositories the person chose to show
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Vec::is_empty", default))]
         pub repos: Vec<LinkedRepo>,
+        /// Twitch, GitHub: profile picture on the service's own image host
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub avatar_url: Option<String>,
+        /// GitHub: the person's own name there
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub real_name: Option<String>,
+        /// Twitch description, GitHub bio
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub bio: Option<String>,
+        /// GitHub followers
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub followers: Option<u32>,
+        /// GitHub public repositories
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub public_repos: Option<u32>,
+        /// Twitch: `partner` or `affiliate`
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub kind: Option<String>,
+        /// Twitch: the category of the live stream, or of the last one
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub game: Option<String>,
     }
 
     /// Start linking a service

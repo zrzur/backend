@@ -117,6 +117,27 @@ auto_derived!(
         /// copy for 30 days. Milliseconds since the epoch.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub expires_at: Option<i64>,
+        /// Twitch, GitHub: profile picture on the service's own image host
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub avatar_url: Option<String>,
+        /// GitHub: the person's own name there
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub real_name: Option<String>,
+        /// Twitch description, GitHub bio
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub bio: Option<String>,
+        /// GitHub followers
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub followers: Option<u32>,
+        /// GitHub public repositories
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub public_repos: Option<u32>,
+        /// Twitch: `partner` or `affiliate`
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub kind: Option<String>,
+        /// Twitch: the category of the live stream, or of the last one
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub game: Option<String>,
     }
 );
 

@@ -106,6 +106,17 @@ fn live_now(account: &LinkedAccount, now: i64) -> (Option<bool>, Option<String>)
     }
 }
 
+/// Copy what the service shows publicly about the account (picture, bio,
+/// counts) onto the link
+pub fn apply_details(account: &mut LinkedAccount, details: oauth_link::Details) {
+    account.avatar_url = details.avatar_url;
+    account.real_name = details.real_name;
+    account.bio = details.bio;
+    account.followers = details.followers;
+    account.public_repos = details.public_repos;
+    account.kind = details.kind;
+}
+
 /// The link as its owner sees it
 pub fn owner_view(account: LinkedAccount) -> v0::ServiceAccount {
     let (live, live_title) = live_now(&account, now_ms());
@@ -126,6 +137,13 @@ pub fn owner_view(account: LinkedAccount) -> v0::ServiceAccount {
         expires_at: account.expires_at,
         linked_at: account.linked_at,
         refreshed_at: account.refreshed_at,
+        avatar_url: account.avatar_url,
+        real_name: account.real_name,
+        bio: account.bio,
+        followers: account.followers,
+        public_repos: account.public_repos,
+        kind: account.kind,
+        game: account.game,
     }
 }
 
@@ -155,6 +173,13 @@ pub fn profile_view(account: LinkedAccount, now: i64) -> Option<v0::ProfileConne
             .filter_map(|id| account.repos.iter().find(|repo| repo.id == *id).cloned())
             .map(repo_view)
             .collect(),
+        avatar_url: account.avatar_url,
+        real_name: account.real_name,
+        bio: account.bio,
+        followers: account.followers,
+        public_repos: account.public_repos,
+        kind: account.kind,
+        game: account.game,
     })
 }
 
@@ -332,8 +357,15 @@ pub async fn service_finish(
         ..Default::default()
     };
 
+    apply_details(&mut account, identity.details.clone());
+
     match service {
         Service::Twitch => {
+            // the category of the last stream (best effort: the link works without it)
+            account.game = twitch::channel_games(&config, &[identity.external_id.clone()])
+                .await
+                .ok()
+                .and_then(|mut games| games.remove(&identity.external_id));
             account.live = Some(false);
             account.live_at = Some(now);
             if let Some(previous) = same {
@@ -448,12 +480,14 @@ pub async fn service_refresh(
 
     // the login can change, and an old one can go to someone else: ask
     // GitHub who this id is now
-    let Some(login) = github::login_of(&config, &account.external_id).await? else {
+    let Some(identity) = github::user_of(&config, &account.external_id).await? else {
         db.delete_linked_account(&user.id, service.id()).await?;
         return Err(create_error!(NotFound));
     };
-    account.display_name = login.clone();
-    account.profile_url = format!("https://github.com/{login}");
+    let login = identity.login.clone();
+    account.display_name = identity.display_name;
+    account.profile_url = identity.profile_url;
+    apply_details(&mut account, identity.details);
     let repos = github::repos(&config, &login, None).await?;
     account
         .shown_repos
