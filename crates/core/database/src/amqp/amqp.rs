@@ -382,6 +382,7 @@ impl AMQP {
                 channel_id: channel_id.to_string(),
                 started_at: started_at.map(|f| f.to_string()),
                 ended,
+                reason: None,
             },
             recipients,
         };
@@ -392,6 +393,49 @@ impl AMQP {
             config.pushd.get_dm_call_routing_key(),
             payload
         );
+
+        self.dm_call_updated
+            .basic_publish(
+                config.pushd.exchange.clone().into(),
+                config.pushd.get_dm_call_routing_key().into(),
+                BasicPublishOptions::default(),
+                payload.as_bytes(),
+                AMQPProperties::default()
+                    .with_content_type("application/json".into())
+                    .with_delivery_mode(2),
+            )
+            .await?;
+
+        Ok(())
+    }
+
+    /// # Ringing ended for these people (declined, answered, missed, …)
+    ///
+    /// Their call notification is replaced by one that says why, instead of
+    /// a second "is calling you".
+    pub async fn dm_call_ring_ended(
+        &self,
+        initiator_id: &str,
+        channel_id: &str,
+        reason: crate::events::client::RingEndReason,
+        recipients: Vec<String>,
+    ) -> Result<(), AMQPError> {
+        if recipients.is_empty() {
+            return Ok(());
+        }
+        let config = revolt_config::config().await;
+
+        let payload = to_string(&InternalDmCallPayload {
+            payload: DmCallPayload {
+                initiator_id: initiator_id.to_string(),
+                channel_id: channel_id.to_string(),
+                started_at: None,
+                ended: true,
+                reason: Some(reason),
+            },
+            recipients: Some(recipients),
+        })
+        .unwrap();
 
         self.dm_call_updated
             .basic_publish(

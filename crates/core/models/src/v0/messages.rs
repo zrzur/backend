@@ -148,6 +148,10 @@ auto_derived!(
         CallStarted {
             by: String,
             finished_at: Option<Timestamp>,
+            /// Nobody but the caller joined before the call ended (DMs and
+            /// groups): a missed call
+            #[serde(default, skip_serializing_if = "crate::if_false")]
+            missed: bool,
         },
         /// Many people joined in a short time (members with Manage Server
         /// are offered to pause invites)

@@ -1,7 +1,7 @@
 use livekit_api::{access_token::TokenVerifier, webhooks::WebhookReceiver};
 use livekit_protocol::TrackType;
 use revolt_database::{
-    events::client::EventV1,
+    events::client::{EventV1, RingEndReason},
     iso8601_timestamp::{Duration, Timestamp},
     util::reference::Reference,
     voice::{
@@ -11,7 +11,8 @@ use revolt_database::{
         is_stale_voice_session, is_voice_reentry_revoked, leave_other_voice_channels,
         set_channel_call_started_system_message, set_voice_session, sync_user_voice_permissions,
         take_channel_call_started_system_message, update_voice_state_tracks, RoomMetadata,
-        UserVoiceChannel, VoiceClient,
+        UserVoiceChannel, VoiceClient, announce_ring_end, is_current_ring, mark_call_answered,
+        start_ringing, stop_ringing, take_call_answered, take_ringing, RING_TIMEOUT_SECS,
     },
     Channel, Database, PartialMessage, SystemMessage, AMQP,
 };
@@ -193,6 +194,27 @@ pub async fn ingress(
 
             let participants = voice_client.get_room_participants(node, channel_id).await?;
 
+            // Someone joined a DM or group call that already had people in it:
+            // the call is answered, and if they were being rung, that ends
+            // (also on their other devices). Best effort: never fail the join.
+            if participants.len() > 1
+                && matches!(channel, Channel::DirectMessage { .. } | Channel::Group { .. })
+            {
+                if let Err(error) = mark_call_answered(channel_id).await {
+                    log::warn!("could not mark {channel_id} answered: {error:?}");
+                }
+                if stop_ringing(channel_id, user_id).await.unwrap_or(false) {
+                    announce_ring_end(
+                        Some(amqp.inner()),
+                        channel_id,
+                        None,
+                        vec![user_id.clone()],
+                        RingEndReason::Answered,
+                    )
+                    .await;
+                }
+            }
+
             if participants.len() == 1 {
                 let user = Reference::from_unchecked(user_id).as_user(db).await?;
                 let message_id = Ulid::from_datetime(
@@ -206,6 +228,7 @@ pub async fn ingress(
                 let mut call_started_message = SystemMessage::CallStarted {
                     by: user_id.to_string(),
                     finished_at: None,
+                    missed: false,
                 }
                 .into_message(channel_id.clone());
 
@@ -250,6 +273,36 @@ pub async fn ingress(
                                 .filter(|user_id| user_id != &user.id)
                                 .collect()
                         };
+
+                        // ring them until they answer or decline, the call
+                        // ends, or the ring times out
+                        let ring_id = call_started_message.id.clone();
+                        match start_ringing(channel_id, &ring_id, &user.id, &call_recipients).await {
+                            Ok(()) => {
+                                let amqp = amqp.inner().clone();
+                                let channel_id = channel_id.clone();
+                                let initiator = user.id.clone();
+                                rocket::tokio::spawn(async move {
+                                    rocket::tokio::time::sleep(std::time::Duration::from_secs(
+                                        RING_TIMEOUT_SECS,
+                                    ))
+                                    .await;
+                                    if !is_current_ring(&channel_id, &ring_id).await.unwrap_or(false) {
+                                        return;
+                                    }
+                                    let users = take_ringing(&channel_id).await.unwrap_or_default();
+                                    announce_ring_end(
+                                        Some(&amqp),
+                                        &channel_id,
+                                        Some(&initiator),
+                                        users,
+                                        RingEndReason::Missed,
+                                    )
+                                    .await;
+                                });
+                            }
+                            Err(error) => log::warn!("could not ring in {channel_id}: {error:?}"),
+                        }
 
                         EventV1::VoiceCallUpdate {
                             initiator_id: user.id.clone(),
@@ -318,7 +371,11 @@ pub async fn ingress(
             if members.is_none_or(|m| m.is_empty()) {
                 let channel = Reference::from_unchecked(channel_id).as_channel(db).await?;
 
-                // The channel is empty so send out an "end" notification for ringing
+                // The call is over: nobody is rung any more. A call nobody
+                // answered is a missed call (its message says so, and the
+                // people still being rung get "missed call" instead of a
+                // second "is calling you").
+                let mut missed = false;
                 if matches!(
                     channel,
                     Channel::DirectMessage { .. } | Channel::Group { .. }
@@ -332,12 +389,21 @@ pub async fn ingress(
                     .p(channel_id.clone())
                     .await;
 
-                    if let Err(e) = amqp
-                        .dm_call_updated(user_id, channel_id, None, true, None)
-                        .await
-                    {
-                        revolt_config::capture_internal_error!(&e);
-                    }
+                    let answered = take_call_answered(channel_id).await.unwrap_or(true);
+                    missed = !answered;
+                    let still_ringing = take_ringing(channel_id).await.unwrap_or_default();
+                    announce_ring_end(
+                        Some(amqp.inner()),
+                        channel_id,
+                        None,
+                        still_ringing,
+                        if answered {
+                            RingEndReason::Ended
+                        } else {
+                            RingEndReason::Missed
+                        },
+                    )
+                    .await;
                 }
 
                 if let Some(system_message_id) =
@@ -348,10 +414,14 @@ pub async fn ingress(
                         .as_message(db)
                         .await
                     {
-                        if let Some(SystemMessage::CallStarted { finished_at, .. }) =
-                            &mut message.system
+                        if let Some(SystemMessage::CallStarted {
+                            finished_at,
+                            missed: message_missed,
+                            ..
+                        }) = &mut message.system
                         {
                             *finished_at = Some(Timestamp::now_utc());
+                            *message_missed = missed;
 
                             message
                                 .update(

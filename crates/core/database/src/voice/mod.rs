@@ -19,9 +19,11 @@ use revolt_permissions::{calculate_channel_permissions, ChannelPermission, Permi
 use revolt_result::{create_error, Result, ToRevoltError};
 
 mod preview;
+mod ring;
 mod stage;
 mod voice_client;
 pub use preview::*;
+pub use ring::*;
 pub use stage::*;
 pub use voice_client::VoiceClient;
 
@@ -521,8 +523,11 @@ pub async fn update_voice_state_tracks(
             ..Default::default()
         },
         /* TrackSource::Microphone */
+        // a microphone the person muted stays shown as muted, also when the
+        // voice server's late "published" arrives after the mute (the
+        // server reports no mute itself)
         2 => PartialUserVoiceState {
-            is_publishing: Some(added),
+            is_publishing: Some(added && !is_self_muted(channel, user_id).await?),
             ..Default::default()
         },
         /* TrackSource::ScreenShare | TrackSource::ScreenShareAudio */
@@ -988,4 +993,32 @@ impl FromRedisValue for UserVoiceChannel {
     fn from_redis_value(v: &Value) -> Result<Self, RedisError> {
         String::from_redis_value(v).map(UserVoiceChannel::from_string)
     }
+}
+
+fn self_muted_key(channel: &UserVoiceChannel, user_id: &str) -> String {
+    format!("self_muted:{}:{user_id}", channel.id)
+}
+
+/// The person's own mute in a voice channel (PATCH voice_state), kept for a
+/// day at most: a stale one only ever shows a mute that ended with the call
+pub async fn set_self_muted(channel: &UserVoiceChannel, user_id: &str, muted: bool) -> Result<()> {
+    let mut conn = get_connection().await?;
+    if muted {
+        conn.set_ex::<_, _, ()>(self_muted_key(channel, user_id), 1, 60 * 60 * 24)
+            .await
+            .to_internal_error()
+    } else {
+        conn.del::<_, ()>(self_muted_key(channel, user_id))
+            .await
+            .to_internal_error()
+    }
+}
+
+/// Whether the person muted themselves in this voice channel
+pub async fn is_self_muted(channel: &UserVoiceChannel, user_id: &str) -> Result<bool> {
+    get_connection()
+        .await?
+        .exists(self_muted_key(channel, user_id))
+        .await
+        .to_internal_error()
 }
