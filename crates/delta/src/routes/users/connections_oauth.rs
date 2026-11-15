@@ -14,7 +14,8 @@ use iso8601_timestamp::Timestamp;
 use redis_kiss::{get_connection, AsyncCommands};
 use revolt_config::ApiConnectionOAuth;
 use revolt_database::{
-    util::linked_crypto::pkce_challenge, Database, LinkedAccount, User, LINKED_MAX_SHOWN_REPOS,
+    util::linked_crypto::pkce_challenge, Database, LinkedAccount, User, LINKED_CONSENT_VERSION,
+    LINKED_MAX_SHOWN_REPOS,
 };
 use revolt_models::v0;
 use revolt_result::{create_error, Result};
@@ -121,6 +122,7 @@ pub fn apply_details(account: &mut LinkedAccount, details: oauth_link::Details) 
 pub fn owner_view(account: LinkedAccount) -> v0::ServiceAccount {
     let (live, live_title) = live_now(&account, now_ms());
     v0::ServiceAccount {
+        consent_current: consent_current(&account),
         refresh_after: if account.service == "github" {
             account.refreshed_at + REFRESH_COOLDOWN_MS
         } else {
@@ -147,12 +149,21 @@ pub fn owner_view(account: LinkedAccount) -> v0::ServiceAccount {
     }
 }
 
+/// The person agreed to the consent text in use, which names the transfer
+/// to the company in the United States
+pub fn consent_current(account: &LinkedAccount) -> bool {
+    account.consent >= LINKED_CONSENT_VERSION
+}
+
 /// The link as another person sees it, if it shows at all
 pub fn profile_view(account: LinkedAccount, now: i64) -> Option<v0::ProfileConnection> {
     if !account.shown || account.display_name.is_empty() {
         return None;
     }
     match account.service.as_str() {
+        // linked before the card named the US transfer: Twitch is read
+        // every day, so it waits for the person's agreement
+        "twitch" if !consent_current(&account) => return None,
         // the 30 days Battle.net allows are over
         "battlenet" if account.expires_at.map_or(true, |at| now >= at) => return None,
         // the daily name check has not run for too long
@@ -354,6 +365,9 @@ pub async fn service_finish(
         shown: same.is_some_and(|previous| previous.shown),
         linked_at: same.map_or(now, |previous| previous.linked_at),
         refreshed_at: now,
+        // the consent card the app shows before the service is the current
+        // one (Battle.net's "Confirm" goes through it again too)
+        consent: LINKED_CONSENT_VERSION,
         ..Default::default()
     };
 
@@ -411,6 +425,7 @@ pub async fn service_finish(
 /// # Edit Linked Service Account
 ///
 /// Show or hide it on your profile; for GitHub, choose the repositories.
+/// `consent` agrees to the consent text in use (its exact version number).
 #[openapi(tag = "User Information")]
 #[patch("/@me/connections/<service>", data = "<data>")]
 pub async fn service_edit(
@@ -431,6 +446,12 @@ pub async fn service_edit(
 
     if let Some(shown) = data.shown {
         account.shown = shown;
+    }
+    if let Some(version) = data.consent {
+        if version != LINKED_CONSENT_VERSION {
+            return Err(create_error!(InvalidOperation));
+        }
+        account.consent = version;
     }
     if let Some(wanted) = data.shown_repos {
         if service != Service::Github {
@@ -453,6 +474,8 @@ pub async fn service_edit(
 ///
 /// GitHub only: read the public repositories again. Once every 10 minutes.
 /// (Twitch updates by itself; Battle.net is confirmed by signing in again.)
+/// A link agreed under an older consent text must agree to the current one
+/// first (`consent` in Edit).
 #[openapi(tag = "User Information")]
 #[post("/@me/connections/<service>/refresh")]
 pub async fn service_refresh(
@@ -470,6 +493,9 @@ pub async fn service_refresh(
         .fetch_linked_account(&user.id, service.id())
         .await?
         .ok_or_else(|| create_error!(NotFound))?;
+    if !consent_current(&account) {
+        return Err(create_error!(InvalidOperation));
+    }
 
     let wait = account.refreshed_at + REFRESH_COOLDOWN_MS - now_ms();
     if wait > 0 {

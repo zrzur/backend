@@ -513,6 +513,131 @@ async fn refresh_waits_and_disconnect_deletes_everything() {
 }
 
 #[rocket::async_test]
+async fn twitch_links_from_before_the_transfer_text_wait_for_agreement() {
+    let harness = TestHarness::new().await;
+    let (_, session, owner) = person(&harness, 30).await;
+    let (_, viewer_session, viewer) = person(&harness, 30).await;
+    share(&harness, &owner, &viewer).await;
+    let id = fresh_id();
+    let linked = link(&harness, &session, "twitch", &id).await;
+    assert!(linked.consent_current);
+    edit(&harness, &session, "twitch", serde_json::json!({ "shown": true })).await;
+    assert_eq!(profile(&harness, &viewer_session, &owner.id).await.connections.len(), 1);
+
+    // as stored before the card named the US transfer, 23 hours old: a
+    // current link would be read at Twitch in this round
+    let now = super::connections_oauth::now_ms();
+    let old = now - 23 * 60 * 60 * 1000 - 60_000;
+    let mut stored = harness.db.fetch_linked_account(&owner.id, "twitch").await.unwrap().unwrap();
+    assert_eq!(stored.consent, revolt_database::LINKED_CONSENT_VERSION);
+    stored.consent = 0;
+    stored.refreshed_at = old;
+    stored.live = Some(true);
+    stored.live_title = Some("Old".into());
+    stored.live_at = Some(old);
+    harness.db.save_linked_account(&stored).await.unwrap();
+
+    // hidden from other people, and the owner is asked
+    assert!(profile(&harness, &viewer_session, &owner.id).await.connections.is_empty());
+    assert!(!list(&harness, &session).await.twitch.account.unwrap().consent_current);
+
+    // the daily read skips it: no new name, no live check
+    crate::util::linked_upkeep::run_once(&harness.db, now).await.unwrap();
+    let kept = harness.db.fetch_linked_account(&owner.id, "twitch").await.unwrap().unwrap();
+    assert_eq!(kept.display_name, format!("Streamer{id}"));
+    assert_eq!(kept.live_title.as_deref(), Some("Old"));
+    assert_eq!(kept.refreshed_at, old);
+
+    // still nothing asked of Twitch once it is a day old, but nothing kept
+    // over 24 hours
+    let older = now - super::connections_oauth::TWITCH_FRESH_MS - 1;
+    let mut stored = kept;
+    stored.refreshed_at = older;
+    stored.live_at = Some(older);
+    harness.db.save_linked_account(&stored).await.unwrap();
+    crate::util::linked_upkeep::run_once(&harness.db, now).await.unwrap();
+    let kept = harness.db.fetch_linked_account(&owner.id, "twitch").await.unwrap().unwrap();
+    assert_eq!(kept.external_id, id);
+    assert_eq!(kept.display_name, "");
+    assert_eq!(kept.live, Some(false));
+    assert_eq!(kept.live_title, None);
+
+    // only the exact version in use counts
+    for wrong in [0, 2, 99] {
+        let (status, _) = edit(&harness, &session, "twitch", serde_json::json!({ "consent": wrong })).await;
+        assert_eq!(status, Status::BadRequest, "consent {wrong}");
+    }
+    let (status, body) = edit(
+        &harness,
+        &session,
+        "twitch",
+        serde_json::json!({ "consent": revolt_database::LINKED_CONSENT_VERSION }),
+    )
+    .await;
+    assert_eq!(status, Status::Ok, "{body}");
+    let agreed: v0::ServiceAccount = serde_json::from_str(&body).unwrap();
+    assert!(agreed.consent_current);
+
+    // the next round reads it again, and it shows again
+    crate::util::linked_upkeep::run_once(&harness.db, super::connections_oauth::now_ms())
+        .await
+        .unwrap();
+    let seen = profile(&harness, &viewer_session, &owner.id).await.connections;
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].display_name, format!("Renamed{id}"));
+}
+
+#[rocket::async_test]
+async fn new_links_store_the_current_consent_and_old_github_links_agree_before_refresh() {
+    let harness = TestHarness::new().await;
+    let (_, session, owner) = person(&harness, 30).await;
+    let (_, viewer_session, viewer) = person(&harness, 30).await;
+    share(&harness, &owner, &viewer).await;
+    let (github_id, bnet_id) = (fresh_id(), fresh_id());
+    assert!(link(&harness, &session, "github", &github_id).await.consent_current);
+    assert!(link(&harness, &session, "battlenet", &bnet_id).await.consent_current);
+    for service in ["github", "battlenet"] {
+        let stored = harness.db.fetch_linked_account(&owner.id, service).await.unwrap().unwrap();
+        assert_eq!(stored.consent, revolt_database::LINKED_CONSENT_VERSION, "{service}");
+    }
+    edit(&harness, &session, "github", serde_json::json!({ "shown": true })).await;
+
+    // GitHub linked before the new text
+    let mut stored = harness.db.fetch_linked_account(&owner.id, "github").await.unwrap().unwrap();
+    stored.consent = 0;
+    stored.refreshed_at -= super::connections_oauth::REFRESH_COOLDOWN_MS + 1;
+    harness.db.save_linked_account(&stored).await.unwrap();
+    assert!(!list(&harness, &session).await.github.account.unwrap().consent_current);
+    // GitHub is read only when the person acts: it still shows
+    assert_eq!(profile(&harness, &viewer_session, &owner.id).await.connections.len(), 1);
+
+    // Refresh waits for the new text
+    let (status, body) = call(&harness, Method::Post, &session, "/users/@me/connections/github/refresh", None).await;
+    assert_eq!(status, Status::BadRequest, "{body}");
+    let (status, _) = edit(&harness, &session, "github", serde_json::json!({ "consent": 99 })).await;
+    assert_eq!(status, Status::BadRequest);
+    let (status, body) = edit(
+        &harness,
+        &session,
+        "github",
+        serde_json::json!({ "consent": revolt_database::LINKED_CONSENT_VERSION }),
+    )
+    .await;
+    assert_eq!(status, Status::Ok, "{body}");
+    let (status, body) = call(&harness, Method::Post, &session, "/users/@me/connections/github/refresh", None).await;
+    assert_eq!(status, Status::Ok, "{body}");
+
+    // Battle.net: "Confirm on Battle.net" stores the text in use
+    let mut stored = harness.db.fetch_linked_account(&owner.id, "battlenet").await.unwrap().unwrap();
+    stored.consent = 0;
+    harness.db.save_linked_account(&stored).await.unwrap();
+    assert!(!list(&harness, &session).await.battlenet.account.unwrap().consent_current);
+    assert!(link(&harness, &session, "battlenet", &bnet_id).await.consent_current);
+    let stored = harness.db.fetch_linked_account(&owner.id, "battlenet").await.unwrap().unwrap();
+    assert_eq!(stored.consent, revolt_database::LINKED_CONSENT_VERSION);
+}
+
+#[rocket::async_test]
 async fn tabs_get_picture_bio_counts_and_game() {
     let harness = TestHarness::new().await;
     let (_, session, owner) = person(&harness, 30).await;

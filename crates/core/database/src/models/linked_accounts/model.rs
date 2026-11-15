@@ -146,9 +146,18 @@ fn first_consent() -> u32 {
     1
 }
 
-/// The consent text in use: adds pictures, latest achievements and the days
-/// they were unlocked
-pub const LINKED_CONSENT_VERSION: u32 = 2;
+/// Steam: the consent text that added pictures, latest achievements and the
+/// days they were unlocked. A Steam link agreed at this version or later
+/// shows them to others.
+pub const LINKED_CONSENT_PICTURES: u32 = 2;
+
+/// The consent text in use, for all four services: also names the transfer
+/// to the company in the United States and what the copy may reveal (beliefs,
+/// health, sexuality). Twitch links under an older text are hidden and not
+/// read again until the person agrees; Steam and GitHub Refresh wait for it.
+/// Links made before this text by Twitch, GitHub and Battle.net were stored
+/// with 0.
+pub const LINKED_CONSENT_VERSION: u32 = 3;
 
 /// Services a person can link
 pub const LINKED_SERVICES: &[&str] = &["steam", "twitch", "github", "battlenet"];

@@ -8,7 +8,9 @@
 use iso8601_timestamp::Timestamp;
 use redis_kiss::{get_connection, AsyncCommands};
 use revolt_config::{config, ApiConnectionSteam};
-use revolt_database::{Database, LinkedAccount, User, LINKED_CONSENT_VERSION};
+use revolt_database::{
+    Database, LinkedAccount, User, LINKED_CONSENT_PICTURES, LINKED_CONSENT_VERSION,
+};
 use revolt_models::v0;
 use revolt_result::{create_error, Result};
 use rocket::{serde::json::Json, State};
@@ -133,7 +135,7 @@ fn achievements_view(
 /// The games section as another person sees it: only what the owner shows,
 /// without hidden titles, and without name or link while it is private
 /// there. A link made under the first consent text shows no pictures and no
-/// achievements until the person agrees to the current one.
+/// achievements until the person agrees to a text that names them.
 pub fn profile_view(
     account: LinkedAccount,
     adult_viewer: bool,
@@ -143,7 +145,7 @@ pub fn profile_view(
         return None;
     }
     let hidden = account.hidden_titles;
-    let current = account.consent >= LINKED_CONSENT_VERSION;
+    let current = account.consent >= LINKED_CONSENT_PICTURES;
     Some(if account.private {
         v0::ProfileGames {
             service: account.service,
@@ -402,6 +404,8 @@ pub async fn steam_edit(
 /// # Refresh Linked Steam Account
 ///
 /// Copy again what the Steam account shows publicly. Once every 10 minutes.
+/// A link agreed under an older consent text must agree to the current one
+/// first (`consent` in Edit): Refresh sends the Steam id to Valve in the US.
 #[openapi(tag = "User Information")]
 #[post("/@me/connections/steam/refresh")]
 pub async fn steam_refresh(
@@ -414,6 +418,9 @@ pub async fn steam_refresh(
         .fetch_linked_account(&user.id, SERVICE)
         .await?
         .ok_or_else(|| create_error!(NotFound))?;
+    if account.consent < LINKED_CONSENT_VERSION {
+        return Err(create_error!(InvalidOperation));
+    }
 
     let wait = account.refreshed_at + REFRESH_COOLDOWN_MS - now_ms();
     if wait > 0 {

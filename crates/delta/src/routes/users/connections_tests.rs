@@ -388,11 +388,62 @@ async fn a_link_under_the_first_consent_shows_no_pictures_until_agreed() {
     let (status, _) = call(&harness, Method::Patch, &owner_session, "/users/@me/connections/steam",
         Some(serde_json::json!({ "consent": 7 }))).await;
     assert_eq!(status, Status::BadRequest);
-    let agreed = show(&harness, &owner_session, serde_json::json!({ "consent": 2 })).await;
+    // an older version is not the text in use either
+    let (status, _) = call(&harness, Method::Patch, &owner_session, "/users/@me/connections/steam",
+        Some(serde_json::json!({ "consent": 2 }))).await;
+    assert_eq!(status, Status::BadRequest);
+    let agreed = show(
+        &harness,
+        &owner_session,
+        serde_json::json!({ "consent": revolt_database::LINKED_CONSENT_VERSION }),
+    )
+    .await;
     assert!(agreed.consent_current);
     let seen = profile(&harness, &viewer_session, &owner.id).await.games.unwrap();
     assert_eq!(seen.achievements.len(), 2);
     assert!(seen.games[0].header_url.is_some());
+}
+
+#[rocket::async_test]
+async fn a_steam_link_before_the_transfer_text_keeps_its_pictures_but_refresh_waits() {
+    let harness = TestHarness::new().await;
+    let (_, owner_session, owner) = person(&harness, 30).await;
+    let (_, viewer_session, viewer) = person(&harness, 30).await;
+    share(&harness, &owner, &viewer).await;
+    link(&harness, &owner_session, test_steam::PUBLIC).await;
+    show(&harness, &owner_session, serde_json::json!({ "shown": true })).await;
+
+    // a new link stores the text in use
+    let mut stored = harness.db.fetch_linked_account(&owner.id, "steam").await.unwrap().unwrap();
+    assert_eq!(stored.consent, revolt_database::LINKED_CONSENT_VERSION);
+
+    // as stored under the pictures text, before it named the US transfer
+    stored.consent = revolt_database::LINKED_CONSENT_PICTURES;
+    stored.refreshed_at -= super::connections::REFRESH_COOLDOWN_MS + 1;
+    harness.db.save_linked_account(&stored).await.unwrap();
+
+    let (_, body) = call(&harness, Method::Get, &owner_session, "/users/@me/connections", None).await;
+    let list: v0::LinkedAccounts = serde_json::from_str(&body).unwrap();
+    assert!(!list.steam.account.unwrap().consent_current, "the new text is asked for");
+
+    // today's rule: what that text named still shows
+    let seen = profile(&harness, &viewer_session, &owner.id).await.games.unwrap();
+    assert_eq!(seen.achievements.len(), 2);
+    assert!(seen.games[0].header_url.is_some());
+
+    // Refresh sends the id to Valve: it waits for the new text
+    let (status, body) = call(&harness, Method::Post, &owner_session, "/users/@me/connections/steam/refresh", None).await;
+    assert_eq!(status, Status::BadRequest, "{body}");
+
+    let agreed = show(
+        &harness,
+        &owner_session,
+        serde_json::json!({ "consent": revolt_database::LINKED_CONSENT_VERSION }),
+    )
+    .await;
+    assert!(agreed.consent_current);
+    let (status, body) = call(&harness, Method::Post, &owner_session, "/users/@me/connections/steam/refresh", None).await;
+    assert_eq!(status, Status::Ok, "{body}");
 }
 
 #[rocket::async_test]

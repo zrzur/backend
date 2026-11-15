@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Linked accounts: consent that names the US transfer (2026-11-15)
+
+- Consent version 3 for all four services (`LINKED_CONSENT_VERSION`): the card now names the transfer to the company in the United States (GDPR Art. 49(1)(a); GitHub: Art. 45) and what the copy may reveal (Art. 9(2)(a)). New links of Steam, Twitch, GitHub and Battle.net store it; Twitch, GitHub and Battle.net links made before stored 0.
+- Twitch links under an older version are hidden from other people, and the hourly upkeep sends nothing about them to Twitch (no name read, no live check) until the person agrees; their copy is still blanked after 24 hours.
+- `PATCH /users/@me/connections/{twitch|github|battlenet}` accepts `consent` (exactly the version in use, else 400), like Steam. `ServiceAccount.consent_current` (additive).
+- Steam and GitHub Refresh answer 400 until a link agreed under an older version agrees to the current one. Steam keeps its picture rule: a link agreed at version 2 or later still shows pictures and achievements (`LINKED_CONSENT_PICTURES`). Battle.net's "Confirm" re-link stores the new version.
+
 ### Steam details: pictures, latest achievements, unlock days (2026-11-14)
 
 - Linked Steam accounts keep each game's icon file name and up to 60 latest unlocked achievements across the 10 kept games (name and description in English from `GetPlayerAchievements` + `GetSchemaForGame`, icon file name, and the UTC day it was unlocked; the time of day is dropped on arrival). Each Refresh replaces the list. About 20 Steam calls per link or Refresh, never on viewing.

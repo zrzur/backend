@@ -73,8 +73,9 @@ auto_derived!(
         pub refreshed_at: i64,
         /// Earliest time Refresh works again, milliseconds since the epoch
         pub refresh_after: i64,
-        /// The person agreed to the consent text in use. When false, only
-        /// what the earlier text named shows to others until they agree.
+        /// The person agreed to the consent text in use. When false, Refresh
+        /// waits until they agree, and only what the text they agreed to
+        /// named shows to others.
         pub consent_current: bool,
     }
 

@@ -68,6 +68,11 @@ auto_derived!(
         /// Twitch: the category of the live stream, or of the last one
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
         pub game: Option<String>,
+        /// The person agreed to the consent text in use. When false, Twitch
+        /// does not show on the profile and is not read again, and GitHub
+        /// Refresh waits, until they agree (`consent` in Edit).
+        #[cfg_attr(feature = "serde", serde(default))]
+        pub consent_current: bool,
     }
 
     /// One service on this server, and the person's link if any
@@ -155,5 +160,8 @@ auto_derived!(
         #[cfg_attr(feature = "validator", validate(length(max = 6)))]
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
         pub shown_repos: Option<Vec<u64>>,
+        /// Agree to the consent text in use; must be its version number
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub consent: Option<u32>,
     }
 );

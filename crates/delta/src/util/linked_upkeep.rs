@@ -8,6 +8,9 @@
 //! - Twitch: the app-wide "removed at Twitch" subscription is made again if
 //!   it is missing, and live/offline subscriptions for channels nobody links
 //!   any more (account deleted) are ended.
+//! - Twitch links agreed under an older consent text (before it named the US
+//!   transfer) are not read at Twitch until the person agrees again; their
+//!   copy is still blanked after 24 hours.
 //!
 //! Runs inside delta; running twice at once does no harm.
 
@@ -17,7 +20,7 @@ use revolt_database::{Database, LinkedAccount};
 use revolt_result::Result;
 
 use crate::{
-    routes::users::connections_oauth::{now_ms, TWITCH_FRESH_MS},
+    routes::users::connections_oauth::{consent_current, now_ms, TWITCH_FRESH_MS},
     util::{oauth_link::Service, twitch},
 };
 
@@ -63,7 +66,32 @@ pub async fn run_once(db: &Database, now: i64) -> Result<()> {
     if twitch::subscribe_revocations(&config).await.is_err() {
         log::warn!("Twitch revocation messages are not set up; trying again next hour");
     }
-    let accounts = db.fetch_linked_accounts_of_service("twitch").await?;
+    let (accounts, waiting): (Vec<_>, Vec<_>) = db
+        .fetch_linked_accounts_of_service("twitch")
+        .await?
+        .into_iter()
+        .partition(consent_current);
+
+    // linked before the consent card named the US transfer: nothing goes to
+    // Twitch for them until the person agrees in Settings, and nothing kept
+    // gets older than 24 hours
+    for mut account in waiting {
+        let mut changed = false;
+        if now - account.refreshed_at >= TWITCH_FRESH_MS && !account.display_name.is_empty() {
+            blank(&mut account);
+            changed = true;
+        }
+        if account.live == Some(true)
+            && account.live_at.map_or(true, |at| now - at >= TWITCH_FRESH_MS)
+        {
+            account.live = Some(false);
+            account.live_title = None;
+            changed = true;
+        }
+        if changed {
+            db.save_linked_account(&account).await?;
+        }
+    }
 
     // names
     let stale: Vec<_> = accounts
@@ -116,7 +144,8 @@ pub async fn run_once(db: &Database, now: i64) -> Result<()> {
     let old_live: Vec<_> = linked
         .iter()
         .filter(|account| {
-            account.live == Some(true)
+            consent_current(account)
+                && account.live == Some(true)
                 && account.live_at.map_or(true, |at| now - at >= RENAME_AFTER_MS)
         })
         .cloned()
