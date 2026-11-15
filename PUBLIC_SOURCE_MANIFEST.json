@@ -46,20 +46,20 @@
     },
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "3f5b9af411434e8660892c74ca34eef8cb4c8d2684084b7f0f654095e228a5bf",
-      "bytes": 5884,
+      "sha256": "64a49a70df922c9cfff78e7e5e90ffe22d6015fda0136a6c8a98f08db2ad9586",
+      "bytes": 6432,
       "category": "reviewed-build-and-ci"
     },
     {
       "path": ".github/workflows/images.yml",
-      "sha256": "2b24c97849a5187147a6340eec2d44c645157cd4904774f52092545de026001f",
-      "bytes": 4101,
+      "sha256": "72ad9be289f3e844c9b925cdf9c92a63c575164830900bd49f2be7785ad88a7f",
+      "bytes": 4232,
       "category": "reviewed-build-and-ci"
     },
     {
       "path": ".github/workflows/source-check.yml",
-      "sha256": "a1913fc37d1e0f962dace2dd304b5ccd26511581f83d570632ffcc67d926bcee",
-      "bytes": 916,
+      "sha256": "2171e079d8ac809b245c21107c260d2f31a0b8e4fa1e7c66ba4044d608437556",
+      "bytes": 959,
       "category": "reviewed-build-and-ci"
     },
     {
@@ -232,8 +232,8 @@
     },
     {
       "path": "Dockerfile",
-      "sha256": "f8d3ff41a41d848b99bf96c2b4f9d274768792a0c65e8d230bb0c57aaedc47c0",
-      "bytes": 2100,
+      "sha256": "d99844c8ee3f859f6c744a82ebdd60323c5d241b90df47ec78498b8d0f54f087",
+      "bytes": 2317,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6924,6 +6924,18 @@
       "path": "scripts/build-zrzur-images.sh",
       "sha256": "eee710bd7c721c8e0ff3044ad0fd42cf2530aa33f181ede3178c11f366dd3138",
       "bytes": 1375,
+      "category": "reviewed-build-and-ci"
+    },
+    {
+      "path": "scripts/check-version-selftest.sh",
+      "sha256": "c95456d24520168b65acddb2a4954e10ec08b03a0489ddb0e9ae77e4af7fab8c",
+      "bytes": 822,
+      "category": "reviewed-build-and-ci"
+    },
+    {
+      "path": "scripts/check-version.sh",
+      "sha256": "46322d595baf55073b6a9c982f7570c27c67e4f6bec2f56b2c4de4cbce59e530",
+      "bytes": 962,
       "category": "reviewed-build-and-ci"
     },
     {
