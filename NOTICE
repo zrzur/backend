@@ -9,6 +9,10 @@ with, endorsed by, or sponsored by Stoat or Revolt Platforms Ltd.
 Upstream source (forked on 2026-10-19):
   stoatchat/stoatchat @ 483c1779ee1cf6079b9ff294a8607fae4af633e8
   Licence: AGPL-3.0-or-later; some crates MIT (see each LICENSE)
+  The AGPL-3.0 text in LICENSE applies to all source code of this project,
+  except crates that carry their own LICENSE file. (This sentence stood at
+  the top of LICENSE upstream; it moved here so tools read LICENSE as the
+  plain AGPL-3.0 text.)
 
 Original authors: Paul (Pawel) Makles and the Stoat/Revolt contributors.
 All upstream copyright notices are retained in the files concerned.
