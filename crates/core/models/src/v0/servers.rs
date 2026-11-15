@@ -418,6 +418,15 @@ auto_derived!(
         pub title: String,
         /// Channels in this category
         pub channels: Vec<String>,
+        /// A short note about this category. Set through the category's own
+        /// edit route; a category list sent through server edit keeps the
+        /// stored note
+        #[cfg_attr(
+            feature = "serde",
+            serde(skip_serializing_if = "Option::is_none", default)
+        )]
+        #[cfg_attr(feature = "validator", validate(length(min = 0, max = 120)))]
+        pub description: Option<String>,
         /// Default permissions for the channels synced with this category
         #[cfg_attr(
             feature = "serde",
@@ -683,6 +692,17 @@ auto_derived!(
             server: Server,
             channels: Vec<Channel>,
         },
+    }
+
+    /// New category information
+    #[cfg_attr(feature = "validator", derive(Validate))]
+    pub struct DataEditCategory {
+        /// Title for this category
+        #[cfg_attr(feature = "validator", validate(length(min = 1, max = 32)))]
+        pub title: Option<String>,
+        /// A short note about this category; an empty one removes it
+        #[cfg_attr(feature = "validator", validate(length(min = 0, max = 120)))]
+        pub description: Option<String>,
     }
 
     /// New server information

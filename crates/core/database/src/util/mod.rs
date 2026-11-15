@@ -4,6 +4,7 @@ pub mod age;
 pub mod bridge;
 pub mod bulk_permissions;
 pub mod captcha;
+pub mod category_view;
 pub mod cdn_purge;
 pub mod chunked;
 pub mod email;

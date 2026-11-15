@@ -171,6 +171,9 @@ auto_derived!(
         pub title: String,
         /// Channels in this category
         pub channels: Vec<String>,
+        /// A short note about this category
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        pub description: Option<String>,
         /// Default permissions for the channels synced with this category
         #[serde(skip_serializing_if = "Option::is_none", default)]
         pub default_permissions: Option<OverrideField>,
@@ -375,6 +378,7 @@ impl Server {
                 id: Ulid::new().to_string(),
                 title: category.title.clone(),
                 channels: rooms.iter().map(|c| c.id().to_string()).collect(),
+                description: None,
                 default_permissions: None,
                 role_permissions: HashMap::new(),
             });

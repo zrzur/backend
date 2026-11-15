@@ -69,7 +69,7 @@ pub async fn set_role_permission(
             ..Default::default()
         },
     }
-    .insert(db, server.id.clone(), reason, user.id, None)
+    .insert(db, server.id.clone(), reason, user.id.clone(), None)
     .await;
 
     for channel_id in &server.channels {
@@ -78,5 +78,5 @@ pub async fn set_role_permission(
         sync_voice_permissions(db, voice_client, &channel, Some(&server), Some(&role_id)).await?;
     }
 
-    Ok(Json(server.into(db).await))
+    Ok(Json(server.into_for(db, &user).await))
 }

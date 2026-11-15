@@ -671,6 +671,77 @@ impl Channel {
         .await
     }
 
+    /// Called when this channel's place in the server's categories changes
+    /// (moved, or its category deleted), before the server is saved:
+    /// `server` is the server as stored, `destination` the category the
+    /// channel lands in. Moving never changes who can see a channel. When
+    /// the destination says exactly what applies to the channel now, the
+    /// channel follows it; otherwise a channel that followed its old
+    /// category keeps a copy of what it had and stops following.
+    pub async fn settle_permissions(
+        &mut self,
+        db: &Database,
+        server: &Server,
+        destination: Option<&Category>,
+    ) -> Result<()> {
+        fn tidy(
+            default: Option<OverrideField>,
+            roles: &HashMap<String, OverrideField>,
+        ) -> (Option<OverrideField>, HashMap<String, OverrideField>) {
+            (
+                default.filter(|value| value.a != 0 || value.d != 0),
+                roles
+                    .iter()
+                    .filter(|(_, value)| value.a != 0 || value.d != 0)
+                    .map(|(id, value)| (id.clone(), *value))
+                    .collect(),
+            )
+        }
+
+        let Channel::TextChannel {
+            permissions_synced, ..
+        } = self
+        else {
+            return Ok(());
+        };
+        let synced = *permissions_synced;
+        let Some((default, roles)) = self.effective_overrides(Some(server)) else {
+            return Ok(());
+        };
+        let current = tidy(default, roles);
+
+        if let Some(category) = destination {
+            if tidy(category.default_permissions, &category.role_permissions) == current {
+                return if synced {
+                    Ok(())
+                } else {
+                    self.sync_permissions(db).await
+                };
+            }
+        }
+        if !synced {
+            return Ok(());
+        }
+
+        let (default_permissions, role_permissions) = current;
+        let remove = if default_permissions.is_none() {
+            vec![FieldsChannel::DefaultPermissions]
+        } else {
+            vec![]
+        };
+        self.update(
+            db,
+            PartialChannel {
+                permissions_synced: Some(false),
+                default_permissions,
+                role_permissions: Some(role_permissions),
+                ..Default::default()
+            },
+            remove,
+        )
+        .await
+    }
+
     /// Follow the category's permissions again; the channel's own default
     /// and role overrides are cleared (per-member overrides stay)
     pub async fn sync_permissions(&mut self, db: &Database) -> Result<()> {
