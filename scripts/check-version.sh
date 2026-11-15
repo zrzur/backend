@@ -13,4 +13,8 @@ fi
 if [ "$product" != "$release" ] || [ "$release" != "$target" ]; then
   echo "version mismatch: ZRZUR_VERSION=$product RELEASE.json version=$release targetVersion=$target"; exit 1
 fi
-echo "version $product: ZRZUR_VERSION and RELEASE.json agree"
+workflow="$root/.github/workflows/source-check.yml"
+if [ -f "$workflow" ] && ! grep -qF "assert release['version'] == '$product'" "$workflow"; then
+  echo "source-check.yml expects another version than $product"; exit 1
+fi
+echo "version $product: ZRZUR_VERSION, RELEASE.json and source-check.yml agree"
