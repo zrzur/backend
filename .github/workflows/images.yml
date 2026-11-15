@@ -19,7 +19,7 @@ jobs:
     env:
       REGISTRY: ghcr.io/zrzur
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
       - name: Verify reviewed public source files
@@ -38,7 +38,7 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
           df -h /
       - name: Build backend base from reviewed source
-        run: docker build --build-arg CARGO_BUILD_JOBS=2 --build-arg CARGO_PROFILE_RELEASE_LTO=thin -t zrzur/base:local -f Dockerfile .
+        run: docker build --build-arg CARGO_BUILD_JOBS=2 --build-arg CARGO_PROFILE_RELEASE_LTO=thin --build-arg "ZRZUR_GIT_COMMIT=${GITHUB_SHA}" -t zrzur/base:local -f Dockerfile .
       - name: Image tags from ZRZUR_VERSION
         # 26.0.0 -> 26.0.0, 26, stable; 26.1.0-beta.1 -> 26.1.0-beta.1, beta;
         # anything else (26.0.0-dev) -> only its version
@@ -75,7 +75,7 @@ jobs:
           pushd crates/daemons/pushd/Dockerfile
           voice-ingress crates/daemons/voice-ingress/Dockerfile
           EOF
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

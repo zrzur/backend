@@ -47,6 +47,10 @@ RUN sh /tmp/build-image-layer.sh deps
 
 # Build all apps
 # Authoritative product version for API root `zrzur` field (see crates/delta/build.rs).
+# The image has no .git, so the commit comes in as a build arg: the API root
+# then names the exact source of this build (AGPL section 13, audit ZR-003).
+ARG ZRZUR_GIT_COMMIT=
+ENV ZRZUR_GIT_COMMIT=${ZRZUR_GIT_COMMIT}
 COPY ZRZUR_VERSION ./ZRZUR_VERSION
 COPY crates ./crates
 RUN sh /tmp/build-image-layer.sh apps

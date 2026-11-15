@@ -34,8 +34,8 @@
     },
     {
       "path": ".github/dependabot.yml",
-      "sha256": "446545e8d438543cb5cb6788c8d121d1287a81d12cf0729d4a1c46c4f23de17e",
-      "bytes": 447,
+      "sha256": "ce096ba9a118742f159788c37814b3fa23b082bdeab6fe1b3fe805ae11725d6b",
+      "bytes": 837,
       "category": "reviewed-build-and-ci"
     },
     {
@@ -46,20 +46,20 @@
     },
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "3f5b9af411434e8660892c74ca34eef8cb4c8d2684084b7f0f654095e228a5bf",
-      "bytes": 5884,
+      "sha256": "64a49a70df922c9cfff78e7e5e90ffe22d6015fda0136a6c8a98f08db2ad9586",
+      "bytes": 6432,
       "category": "reviewed-build-and-ci"
     },
     {
       "path": ".github/workflows/images.yml",
-      "sha256": "2b24c97849a5187147a6340eec2d44c645157cd4904774f52092545de026001f",
-      "bytes": 4101,
+      "sha256": "72ad9be289f3e844c9b925cdf9c92a63c575164830900bd49f2be7785ad88a7f",
+      "bytes": 4232,
       "category": "reviewed-build-and-ci"
     },
     {
       "path": ".github/workflows/source-check.yml",
-      "sha256": "a1913fc37d1e0f962dace2dd304b5ccd26511581f83d570632ffcc67d926bcee",
-      "bytes": 916,
+      "sha256": "2171e079d8ac809b245c21107c260d2f31a0b8e4fa1e7c66ba4044d608437556",
+      "bytes": 959,
       "category": "reviewed-build-and-ci"
     },
     {
@@ -232,8 +232,8 @@
     },
     {
       "path": "Dockerfile",
-      "sha256": "f8d3ff41a41d848b99bf96c2b4f9d274768792a0c65e8d230bb0c57aaedc47c0",
-      "bytes": 2100,
+      "sha256": "d99844c8ee3f859f6c744a82ebdd60323c5d241b90df47ec78498b8d0f54f087",
+      "bytes": 2317,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -1492,7 +1492,7 @@
     },
     {
       "path": "crates/core/database/src/models/accounts/model.rs",
-      "sha256": "ef683ac9cf83bb512b927b1a8960c76e17fa39fcc8d5dfc38ca84bdc9e710677",
+      "sha256": "52fe7d71a19625bfdddae41927df2d5a8bb46b86d1a39688f8ae13ddc378e482",
       "bytes": 36517,
       "category": "product-source-or-build-manifest"
     },
@@ -1948,7 +1948,7 @@
     },
     {
       "path": "crates/core/database/src/models/community_items/model.rs",
-      "sha256": "99a7ddde4f0fd5420d30e19982f2e285a49d1ac476445e2232b9c890c6ca5f70",
+      "sha256": "49daac82497efa401d8c1922bb1c149c060b7ed841c52105b4c89ae381797c8c",
       "bytes": 9722,
       "category": "product-source-or-build-manifest"
     },
@@ -4168,8 +4168,8 @@
     },
     {
       "path": "crates/delta/Cargo.toml",
-      "sha256": "028e6c9861e3d6f515469b0f61a110de3b007a2bc031634adb7e4ff700e7dab5",
-      "bytes": 2513,
+      "sha256": "7983197991e6df7a3aa6dcf6f85a18d18e0c7935e38a4e6705100054ab74009a",
+      "bytes": 2522,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4186,20 +4186,20 @@
     },
     {
       "path": "crates/delta/assets/official/ar.json",
-      "sha256": "58e2e98403df221a5eb9d4b015112a1f01f602de535b62824e19a0f025a6f25b",
-      "bytes": 20167,
+      "sha256": "8be4a5fb5f2d3358b684679d4516ab613033fedd29d55f0966ed541a6b36e32a",
+      "bytes": 20401,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/delta/assets/official/de.json",
-      "sha256": "8669a8ccea993fa6bc5caa6576b59b8f9ebaa36166b5b7f91e450709f68822a2",
-      "bytes": 18497,
+      "sha256": "abb65bea041b6223c76eb07d3e5ca6692d59ead02bf57335057455ab15696b61",
+      "bytes": 18684,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/delta/assets/official/en.json",
-      "sha256": "eb38d742af594e40d3dd3dbfe347c5b4ebb06e5a07226bf976c30a0b2a17312b",
-      "bytes": 17044,
+      "sha256": "fef82626defe286ce2c7175db6e93401d707d9e6811f1161ed26d11ac9306efe",
+      "bytes": 17177,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6924,6 +6924,18 @@
       "path": "scripts/build-zrzur-images.sh",
       "sha256": "eee710bd7c721c8e0ff3044ad0fd42cf2530aa33f181ede3178c11f366dd3138",
       "bytes": 1375,
+      "category": "reviewed-build-and-ci"
+    },
+    {
+      "path": "scripts/check-version-selftest.sh",
+      "sha256": "c95456d24520168b65acddb2a4954e10ec08b03a0489ddb0e9ae77e4af7fab8c",
+      "bytes": 822,
+      "category": "reviewed-build-and-ci"
+    },
+    {
+      "path": "scripts/check-version.sh",
+      "sha256": "46322d595baf55073b6a9c982f7570c27c67e4f6bec2f56b2c4de4cbce59e530",
+      "bytes": 962,
       "category": "reviewed-build-and-ci"
     },
     {

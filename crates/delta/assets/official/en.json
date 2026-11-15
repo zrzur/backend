@@ -393,7 +393,7 @@
   },
   "statement.out_of_court": {
     "title": "",
-    "body": "Out-of-court settlement: you can also take this decision to a certified out-of-court dispute settlement body of your choice (Article 21 of the Digital Services Act). The European Commission publishes the list of certified bodies on its website. This does not affect your right to go to court."
+    "body": "Out-of-court settlement: you can also turn to a certified out-of-court dispute settlement body of your choice; the European Commission publishes the list on its website. Where the Digital Services Act obliges us to take part (Article 21), we do; while Zrzur is a micro or small enterprise, it does not (Article 19). This does not affect your right to go to court."
   },
   "statement.contact": {
     "title": "",
@@ -473,7 +473,7 @@
   },
   "reporter.redress": {
     "title": "",
-    "body": "If you disagree, write to {contact} within 6 months and give the reference {reference}; a person will review it. You can also take the dispute to a certified out-of-court dispute settlement body (Article 21 of the Digital Services Act); the European Commission publishes the list. This does not affect your right to go to court."
+    "body": "If you disagree, write to {contact} within 6 months and give the reference {reference}; a person will review it. You can also turn to a certified out-of-court dispute settlement body; the European Commission publishes the list. While Zrzur is a micro or small enterprise, the Digital Services Act does not oblige us to take part (Article 19). This does not affect your right to go to court."
   },
   "reporter.what.warning": {
     "title": "",

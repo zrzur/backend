@@ -43,7 +43,7 @@ iso8601-timestamp = { workspace = true }
 futures = { workspace = true }
 chrono = { workspace = true }
 async-channel = { workspace = true }
-reqwest = { workspace = true, features = ["json"] }
+reqwest = { workspace = true, features = ["json", "query"] }
 tokio = { workspace = true }
 
 # internal util

@@ -393,7 +393,7 @@
   },
   "statement.out_of_court": {
     "title": "",
-    "body": "Außergerichtliche Streitbeilegung: Du kannst diese Entscheidung auch einer zertifizierten außergerichtlichen Streitbeilegungsstelle deiner Wahl vorlegen (Artikel 21 des Digital Services Act). Die Europäische Kommission veröffentlicht die Liste der zertifizierten Stellen auf ihrer Website. Dein Recht, ein Gericht anzurufen, bleibt unberührt."
+    "body": "Außergerichtliche Streitbeilegung: Du kannst dich auch an eine zertifizierte außergerichtliche Streitbeilegungsstelle deiner Wahl wenden; die Europäische Kommission veröffentlicht die Liste auf ihrer Website. Wo uns der Digital Services Act zur Teilnahme verpflichtet (Artikel 21), nehmen wir teil; solange Zrzur ein Kleinst- oder Kleinunternehmen ist, verpflichtet er uns nicht (Artikel 19). Dein Recht, ein Gericht anzurufen, bleibt unberührt."
   },
   "statement.contact": {
     "title": "",
@@ -473,7 +473,7 @@
   },
   "reporter.redress": {
     "title": "",
-    "body": "Wenn du nicht einverstanden bist, schreib innerhalb von 6 Monaten an {contact} und nenne das Aktenzeichen {reference}; ein Mensch prüft das erneut. Du kannst den Streit auch einer zertifizierten außergerichtlichen Streitbeilegungsstelle vorlegen (Artikel 21 des Digital Services Act); die Europäische Kommission veröffentlicht die Liste. Dein Recht, ein Gericht anzurufen, bleibt unberührt."
+    "body": "Wenn du nicht einverstanden bist, schreib innerhalb von 6 Monaten an {contact} und nenne das Aktenzeichen {reference}; ein Mensch prüft das erneut. Du kannst dich auch an eine zertifizierte außergerichtliche Streitbeilegungsstelle wenden; die Europäische Kommission veröffentlicht die Liste. Solange Zrzur ein Kleinst- oder Kleinunternehmen ist, verpflichtet uns der Digital Services Act nicht zur Teilnahme (Artikel 19). Dein Recht, ein Gericht anzurufen, bleibt unberührt."
   },
   "reporter.what.warning": {
     "title": "",
