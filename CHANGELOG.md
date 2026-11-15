@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Category settings (2026-11-15)
+
+- New `PATCH /servers/{target}/categories/{category_id}` (`DataEditCategory`: `title`, `description`; Manage Channels): changes a category's title and its note (one line, up to 120 characters; an empty one removes it). `Category.description` is new. A category list sent through `PATCH /servers/{target}` keeps the stored note, as it keeps the stored permissions.
+- **A private category is not told to people outside it.** A category with permissions of its own is sent only to people who can view it, who can view a channel inside it, or who can manage channels or permissions in the server (owner and administrators included). This holds for `GET /servers/{target}`, every route that answers with the server, the invite join answer, `Ready`, `ServerCreate` and `ServerUpdate`. A category without permissions of its own is sent to every member, as before.
+- Being given or losing a role, a role or default permission change and a channel coming into or going out of sight send `ServerUpdate` with the category list as that person may now know it.
+- **Moving a channel or deleting a category no longer changes who can see a channel.** A channel that followed its category keeps a copy of the category's permissions and stops following; when the category it lands in says the same as what applied before, it follows that one. Before, a channel in a deleted private category became visible to everyone.
+
 ### Creator Studio (2026-11-15)
 
 - **Every design is published with the creator's promise**, not only effects: `POST /community/{kind}` with `submit`, `PATCH /community/items/{id}` with `submit` and `POST /community/items/{id}/submit` answer `FailedValidation` (`rights: required`) for a decoration or nameplate without `rights` (Creator Terms: accepted before the first submission; parts by others and AI parts named in the submission). A new image still needs a new promise. Designs published before this stay up and a reviewer can still keep or reinstate them; their next version needs the promise.
