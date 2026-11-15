@@ -32,6 +32,9 @@ pub fn community_transition(
         // a reviewer keeps a reported design: it stays published
         (Published, A::Approve) => Some(Published),
         (Archived, A::Archive) => None,
+        // a creator takes a withdrawn design back; it is a draft again and
+        // goes through publishing like any other
+        (Archived, A::Restore) => Some(Draft),
         (_, A::Archive) => Some(Archived),
         // an admin can reopen any decision; it goes back to the queue
         (Published | Rejected | Suspended | Archived, A::Override) => Some(PendingReview),
@@ -794,6 +797,11 @@ mod tests {
         assert_eq!(community_transition(&Published, &A::Suspend), Some(Suspended));
         assert_eq!(community_transition(&Suspended, &A::Approve), Some(Published));
         assert_eq!(community_transition(&Suspended, &A::Publish), None);
+        // only a withdrawn design comes back, and only as a draft
+        assert_eq!(community_transition(&Archived, &A::Restore), Some(Draft));
+        assert_eq!(community_transition(&Archived, &A::Publish), None);
+        assert_eq!(community_transition(&Suspended, &A::Restore), None);
+        assert_eq!(community_transition(&Published, &A::Restore), None);
         assert_eq!(community_transition(&Published, &A::Publish), None);
         assert_eq!(community_transition(&Archived, &A::Publish), None);
         assert_eq!(community_transition(&Archived, &A::Archive), None);

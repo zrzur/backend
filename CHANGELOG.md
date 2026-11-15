@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Creator Studio (2026-11-15)
+
+- **Every design is published with the creator's promise**, not only effects: `POST /community/{kind}` with `submit`, `PATCH /community/items/{id}` with `submit` and `POST /community/items/{id}/submit` answer `FailedValidation` (`rights: required`) for a decoration or nameplate without `rights` (Creator Terms: accepted before the first submission; parts by others and AI parts named in the submission). A new image still needs a new promise. Designs published before this stay up and a reviewer can still keep or reinstate them; their next version needs the promise.
+- New `POST /community/items/{id}/restore`: the creator takes back a design they withdrew (Archived to Draft; logged as `Restore`). It counts against the creator's limit again. A design that staff withdrew, a suspended design, and anything while the creator is suspended are refused.
+- Hidden data (EXIF, text chunks, XMP, colour profiles) is now removed from decoration and nameplate uploads as well; it was removed from effects only. Frames are not touched.
+- The promise counts for a new publication only if it was given under the Creator Terms version in force; after new terms the creator is asked again. What is already public is not touched.
+- `POST /community/items/{id}/archive` takes an optional `{ reason }`. A withdrawal by staff is a takedown whether the design was public or not: the creator gets a statement of reasons (with the reason given) and can appeal.
+- `GET /community/items/{id}`: for the creator, history entries by anyone else come with an empty `actor_id`; their own keep it. Reviewers still see every id.
+- autumn listens on `ZRZUR_AUTUMN_PORT` when set (default 14704).
+
 ### Calls ring, decline and miss (2026-11-15)
 
 - DM and group calls ring for 45 seconds (`RING_TIMEOUT_SECS`). New gateway event `VoiceRingEnd { channel_id, user, reason }` (`Declined`, `Answered`, `Missed`, `Stopped`, `Ended`) to the channel when one person stops being rung. voice-ingress starts the ring with the call, ends it when the person joins (on any device), when the call ends, and when the time is up.

@@ -129,7 +129,12 @@ async fn publish_design(harness: &TestHarness, session: &Session, user: &User, n
         harness,
         session,
         "/community/decorations",
-        json!({ "name": name, "file": file, "submit": true }),
+        json!({
+            "name": name,
+            "file": file,
+            "submit": true,
+            "rights": { "confirmed": true, "terms_version": revolt_database::CREATOR_TERMS_VERSION },
+        }),
     )
     .await;
     assert_eq!(res.status(), Status::Ok);

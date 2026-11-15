@@ -472,10 +472,11 @@ async fn store_upload(
         return Err(create_error!(FileTooLarge { max: size_limit }));
     }
 
-    // Effects go to everyone who opens a profile: data hidden in the file
-    // leaves before anything else sees it, also before the hash, so the file
-    // can't be matched to an earlier copy that still has it
-    if matches!(tag, Tag::effects) {
+    // Designs go to everyone who opens a profile or a member list: data
+    // hidden in the file (EXIF, text chunks, XMP) leaves before anything else
+    // sees it, also before the hash, so the file can't be matched to an
+    // earlier copy that still has it. Bytes are copied, so animation stays.
+    if matches!(tag, Tag::effects | Tag::decorations) {
         buf = strip_hidden_data(&buf).ok_or_else(|| create_error!(FileTypeNotAllowed))?;
     }
 
@@ -661,8 +662,8 @@ async fn store_upload(
         false
     };
 
-    // Strip metadata. Decoration PNGs are kept byte for byte: re-encoding
-    // would flatten animated PNGs (APNG) into a single frame.
+    // Strip metadata. Designs are not re-encoded: that would flatten animated
+    // PNGs (APNG) into a single frame. Their hidden data left above.
     let (buf, metadata) = if matches!(tag, Tag::decorations | Tag::effects)
         && mime_type.starts_with("image/")
     {
