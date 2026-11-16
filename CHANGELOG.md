@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Design pack (2026-11-16)
+
+- The user style allow-lists accept the design pack: 190 decorations, 98 nameplates and 84 effects added to `USER_STYLE_DECORATIONS`, `USER_STYLE_NAMEPLATES` and `USER_STYLE_EFFECTS`, in the same order as the web client. No route, event or data shape changes.
+
 ### Creator Studio (2026-11-15)
 
 - **Every design is published with the creator's promise**, not only effects: `POST /community/{kind}` with `submit`, `PATCH /community/items/{id}` with `submit` and `POST /community/items/{id}/submit` answer `FailedValidation` (`rights: required`) for a decoration or nameplate without `rights` (Creator Terms: accepted before the first submission; parts by others and AI parts named in the submission). A new image still needs a new promise. Designs published before this stay up and a reviewer can still keep or reinstate them; their next version needs the promise.
