@@ -116,7 +116,7 @@ pub async fn join(
 
             Ok(Json(InviteJoinResponse::Server {
                 channels: channels.into_iter().map(|c| c.into()).collect(),
-                server: server.into(db).await,
+                server: server.into_for(db, &user).await,
             }))
         }
         Invite::Group {

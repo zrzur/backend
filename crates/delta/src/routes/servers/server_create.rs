@@ -151,7 +151,7 @@ pub async fn create_server(
     };
 
     Ok(Json(v0::CreateServerLegacyResponse {
-        server: server.into(db).await,
+        server: server.into_for(db, &user).await,
         channels: channels.into_iter().map(|channel| channel.into()).collect(),
     }))
 }

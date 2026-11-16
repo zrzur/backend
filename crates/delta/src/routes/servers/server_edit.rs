@@ -61,7 +61,7 @@ pub async fn edit(
         if !query.are_we_a_member().await {
             return Err(create_error!(NotFound));
         }
-        return Ok(Json(server.into(db).await));
+        return Ok(Json(server.into_for(db, &user).await));
     } else if data.name.is_some()
         || data.description.is_some()
         || data.icon.is_some()
@@ -246,14 +246,40 @@ pub async fn edit(
                 .retain(|item| server.channels.contains(item));
 
             // a category's permissions change only through its permission
-            // routes (Manage Permissions and override checks); here they
-            // keep their stored value, and a new category starts with none
+            // routes (Manage Permissions and override checks), its note
+            // through its own edit route; here they keep their stored
+            // value, and a new category starts with none
             let stored = server
                 .categories
                 .as_ref()
                 .and_then(|stored| stored.iter().find(|c| c.id == category.id));
+            category.description = stored.and_then(|c| c.description.clone());
             category.default_permissions = stored.and_then(|c| c.default_permissions);
             category.role_permissions = stored.map(|c| c.role_permissions.clone()).unwrap_or_default();
+        }
+    }
+
+    // Moving a channel or deleting a category never changes who can see a
+    // channel (see Channel::settle_permissions)
+    if let Some(next) = &partial.categories {
+        let home = |list: &[revolt_database::Category], id: &str| {
+            list.iter()
+                .position(|category| category.channels.iter().any(|channel| channel == id))
+        };
+        let stored = server.categories.clone().unwrap_or_default();
+        let moved: Vec<String> = server
+            .channels
+            .iter()
+            .filter(|id| {
+                home(&stored, id).map(|at| &stored[at].id) != home(next, id).map(|at| &next[at].id)
+            })
+            .cloned()
+            .collect();
+        if !moved.is_empty() {
+            for mut channel in db.fetch_channels(&moved).await? {
+                let destination = home(next, channel.id()).map(|at| &next[at]);
+                channel.settle_permissions(db, &server, destination).await?;
+            }
         }
     }
 
@@ -321,10 +347,10 @@ pub async fn edit(
         before,
         after: partial,
     }
-    .insert(db, server.id.clone(), reason, user.id, None)
+    .insert(db, server.id.clone(), reason, user.id.clone(), None)
     .await;
 
-    Ok(Json(server.into(db).await))
+    Ok(Json(server.into_for(db, &user).await))
 }
 
 /// Drop channels and roles that the stored lobby used and that were deleted since,

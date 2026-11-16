@@ -58,8 +58,8 @@ pub async fn pause(
         before,
         after: partial,
     }
-    .insert(db, server.id.clone(), reason, user.id, None)
+    .insert(db, server.id.clone(), reason, user.id.clone(), None)
     .await;
 
-    Ok(Json(server.into(db).await))
+    Ok(Json(server.into_for(db, &user).await))
 }

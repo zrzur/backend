@@ -1448,3 +1448,113 @@ async fn someone_outside_the_emoji_server_gets_the_status_without_it() {
         _ => unreachable!(),
     }
 }
+
+// Categories: a private one is not told to people outside it
+
+/// "Team" denies View Channel to everyone and lets the staff role in;
+/// "Open" has no permissions of its own
+fn categories() -> Vec<v0::Category> {
+    serde_json::from_value(serde_json::json!([
+        {
+            "id": "team",
+            "title": "Team",
+            "channels": [],
+            "default_permissions": { "a": 0, "d": view() },
+            "role_permissions": { STAFF: { "a": view(), "d": 0 } }
+        },
+        { "id": "open", "title": "Open", "channels": [] }
+    ]))
+    .expect("valid categories")
+}
+
+fn categories_update() -> EventV1 {
+    EventV1::ServerUpdate {
+        id: SERVER.to_string(),
+        data: v0::PartialServer {
+            categories: Some(categories()),
+            ..Default::default()
+        },
+        clear: vec![],
+    }
+}
+
+/// The category titles an event tells its receiver, wherever they sit in it
+fn told(event: &EventV1) -> Option<Vec<String>> {
+    match event {
+        EventV1::ServerUpdate { data, .. } => data
+            .categories
+            .as_ref()
+            .map(|list| list.iter().map(|c| c.title.clone()).collect()),
+        EventV1::Bulk { v } => v.iter().find_map(told),
+        _ => None,
+    }
+}
+
+#[tokio::test]
+async fn private_category_is_left_out_for_a_member() {
+    let db = db().await;
+    let mut state = state("member", &server(false), &[]).await;
+    let mut event = categories_update();
+
+    assert!(state.handle_incoming_event_v1(&db, &mut event, SERVER).await);
+    assert_eq!(told(&event), Some(vec!["Open".to_string()]));
+    // the connection itself keeps the whole list, to work permissions out
+    assert_eq!(
+        state.cache.servers[SERVER].categories.as_ref().map(Vec::len),
+        Some(2)
+    );
+}
+
+#[tokio::test]
+async fn private_category_reaches_its_role_and_the_owner() {
+    let db = db().await;
+    for (user, roles) in [("staff-member", vec![STAFF]), (OWNER, vec![])] {
+        let mut state = state(user, &server(false), &roles).await;
+        let mut event = categories_update();
+
+        assert!(state.handle_incoming_event_v1(&db, &mut event, SERVER).await);
+        assert_eq!(
+            told(&event),
+            Some(vec!["Team".to_string(), "Open".to_string()]),
+            "{user}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn being_given_the_role_shows_the_category_at_once() {
+    let db = db().await;
+    let mut state = state("member", &server(false), &[]).await;
+    let mut event = categories_update();
+    state.handle_incoming_event_v1(&db, &mut event, SERVER).await;
+
+    let key = MemberCompositeKey {
+        server: SERVER.to_string(),
+        user: "member".to_string(),
+    };
+    let mut event = EventV1::ServerMemberUpdate {
+        id: key.clone().into(),
+        data: v0::PartialMember {
+            roles: Some(vec![STAFF.to_string()]),
+            ..Default::default()
+        },
+        clear: vec![],
+    };
+    assert!(state.handle_incoming_event_v1(&db, &mut event, SERVER).await);
+    assert_eq!(
+        told(&event),
+        Some(vec!["Team".to_string(), "Open".to_string()])
+    );
+
+    // and losing it takes the category away again
+    let mut event = EventV1::ServerMemberUpdate {
+        id: key.into(),
+        data: v0::PartialMember {
+            roles: Some(vec![]),
+            ..Default::default()
+        },
+        clear: vec![],
+    };
+    assert!(state.handle_incoming_event_v1(&db, &mut event, SERVER).await);
+    assert_eq!(told(&event), Some(vec!["Open".to_string()]));
+}

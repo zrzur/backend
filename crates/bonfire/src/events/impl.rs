@@ -47,6 +47,38 @@ impl Cache {
             .has_channel_permission(ChannelPermission::ManageWebhooks)
     }
 
+    /// The categories of a cached server as this user is told about them
+    /// (a private category is left out for people outside it); `None` when
+    /// the server is not cached
+    pub async fn categories_for(
+        &self,
+        db: &Database,
+        server_id: &str,
+    ) -> Option<Option<Vec<v0::Category>>> {
+        let server = self.servers.get(server_id)?;
+        let user = self.users.get(&self.user_id)?;
+        Some(
+            revolt_database::util::category_view::categories_for(
+                db,
+                user,
+                server,
+                self.members.get(server_id),
+            )
+            .await
+            .map(|categories| categories.into_iter().map(Into::into).collect()),
+        )
+    }
+
+    /// Whether a cached server has a category that is hidden from somebody
+    fn has_restricted_categories(&self, server_id: &str) -> bool {
+        self.servers.get(server_id).is_some_and(|server| {
+            server
+                .categories
+                .as_ref()
+                .is_some_and(|categories| categories.iter().any(|c| c.has_overrides()))
+        })
+    }
+
     /// As can_view_channel; a thread's parent may be passed when known
     pub async fn can_view_channel_in(
         &self,
@@ -449,7 +481,18 @@ impl State {
         let mut ready = EventV1::Ready {
             users: if fields.users { Some(users) } else { None },
             servers: if fields.servers {
-                Some(join_all(servers.into_iter().map(|server| server.into(db))).await)
+                let cache = &self.cache;
+                Some(
+                    join_all(servers.into_iter().map(|server| async move {
+                        let categories = cache.categories_for(db, &server.id).await;
+                        let mut server = server.into(db).await;
+                        if let Some(categories) = categories {
+                            server.categories = categories;
+                        }
+                        server
+                    }))
+                    .await,
+                )
             } else {
                 None
             },
@@ -598,6 +641,53 @@ impl State {
         }
     }
 
+    /// Tell this user the server's categories as they may know them, in or
+    /// after the event being handled
+    async fn send_categories(&mut self, db: &Database, id: &str, event: &mut EventV1) {
+        let Some(categories) = self.cache.categories_for(db, id).await else {
+            return;
+        };
+        // a server with no category list left: its field is cleared
+        let (categories, clear) = match categories {
+            Some(categories) => (Some(categories), vec![]),
+            None => (None, vec![v0::FieldsServer::Categories]),
+        };
+
+        // the update being handled carries them itself
+        if let EventV1::ServerUpdate {
+            id: updated,
+            data,
+            clear: cleared,
+        } = event
+        {
+            if updated == id {
+                data.categories = categories;
+                cleared.extend(clear);
+                return;
+            }
+        }
+
+        let update = EventV1::ServerUpdate {
+            id: id.to_string(),
+            data: v0::PartialServer {
+                categories,
+                ..Default::default()
+            },
+            clear,
+        };
+        if let EventV1::Bulk { v } = event {
+            // recalculate_server put the original event last
+            v.push(update);
+        } else {
+            let mut bulk = EventV1::Bulk { v: vec![] };
+            std::mem::swap(&mut bulk, event);
+            if let EventV1::Bulk { v } = event {
+                v.push(bulk);
+                v.push(update);
+            }
+        }
+    }
+
     /// Push presence change to the user and all associated server topics
     pub async fn broadcast_presence_change(&self, target: bool) {
         let config = revolt_config::config().await;
@@ -722,6 +812,8 @@ impl State {
         // An event may trigger recalculation of an entire server's permission.
         // Keep track of whether we need to do anything.
         let mut queue_server = None;
+        // a server whose category list this user must get anew
+        let mut refresh_categories: Option<String> = None;
 
         // It may also need to sub or unsub a single value.
         let mut queue_add = None;
@@ -774,6 +866,13 @@ impl State {
                 if let Some(channel) = self.cache.channels.get(id) {
                     let can_view = self.cache.can_view_channel(db, channel).await;
                     if could_view != can_view {
+                        // a channel coming into or going out of sight can
+                        // take its category's heading with it
+                        if let Some(server) = channel.server() {
+                            if self.cache.has_restricted_categories(server) {
+                                refresh_categories = Some(server.to_string());
+                            }
+                        }
                         if can_view {
                             queue_add = Some(id.clone());
                             *event = EventV1::ChannelCreate(channel.clone().into());
@@ -844,10 +943,16 @@ impl State {
                 };
                 self.cache.members.insert(id.clone(), member);
 
-                for channel in channels {
+                for channel in channels.iter() {
                     self.cache
                         .channels
                         .insert(channel.id().to_string(), channel.clone().into());
+                }
+
+                // the cache keeps the whole server; this user gets the
+                // categories they are told about
+                if let Some(categories) = self.cache.categories_for(db, id).await {
+                    server.categories = categories;
                 }
 
                 queue_server = Some(id.clone());
@@ -866,6 +971,11 @@ impl State {
                 // category permissions decide what synced channels show
                 if data.default_permissions.is_some() || data.categories.is_some() {
                     queue_server = Some(id.clone());
+                }
+                if data.categories.is_some() {
+                    // sent as this user is told about them, at the end
+                    data.categories = None;
+                    refresh_categories = Some(id.clone());
                 }
             }
             EventV1::ServerMemberJoin { .. } => {
@@ -1013,6 +1123,14 @@ impl State {
         // Calculate server permissions if requested.
         if let Some(server_id) = queue_server {
             self.recalculate_server(db, &server_id, event).await;
+            // roles and permissions also decide which categories show
+            if refresh_categories.is_none() && self.cache.has_restricted_categories(&server_id) {
+                refresh_categories = Some(server_id);
+            }
+        }
+
+        if let Some(server_id) = refresh_categories {
+            self.send_categories(db, &server_id, event).await;
         }
 
         // Sub / unsub accordingly.

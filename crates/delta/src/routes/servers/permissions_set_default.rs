@@ -57,7 +57,7 @@ pub async fn set_default_server_permissions(
         before,
         after: partial,
     }
-    .insert(db, server.id.clone(), reason, user.id, None)
+    .insert(db, server.id.clone(), reason, user.id.clone(), None)
     .await;
 
     for channel_id in &server.channels {
@@ -66,5 +66,5 @@ pub async fn set_default_server_permissions(
         sync_voice_permissions(db, voice_client, &channel, Some(&server), None).await?;
     }
 
-    Ok(Json(server.into(db).await))
+    Ok(Json(server.into_for(db, &user).await))
 }

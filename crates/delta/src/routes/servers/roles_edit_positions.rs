@@ -79,7 +79,7 @@ pub async fn edit_role_ranks(
         before: existing_order,
         after: new_order,
     }
-    .insert(db, server.id.clone(), reason, user.id, None)
+    .insert(db, server.id.clone(), reason, user.id.clone(), None)
     .await;
 
     for channel_id in &server.channels {
@@ -88,7 +88,7 @@ pub async fn edit_role_ranks(
         sync_voice_permissions(db, voice_client, &channel, Some(&server), None).await?;
     }
 
-    Ok(Json(server.into(db).await))
+    Ok(Json(server.into_for(db, &user).await))
 }
 
 #[cfg(test)]

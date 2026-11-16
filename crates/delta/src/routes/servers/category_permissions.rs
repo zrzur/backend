@@ -88,7 +88,7 @@ async fn set(
     server.update(db, after.clone(), vec![]).await?;
 
     AuditLogEntryAction::ServerEdit { before, after }
-        .insert(db, server.id.clone(), reason, user.id, None)
+        .insert(db, server.id.clone(), reason, user.id.clone(), None)
         .await;
 
     // voice rooms synced with the category pick up the change
@@ -105,7 +105,7 @@ async fn set(
         }
     }
 
-    Ok(Json(server.into(db).await))
+    Ok(Json(server.into_for(db, &user).await))
 }
 
 /// # Set Category Role Permission
