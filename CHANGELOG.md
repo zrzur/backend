@@ -4,7 +4,8 @@
 
 ### Design pack (2026-11-16)
 
-- The user style allow-lists accept the design pack: 190 decorations, 98 nameplates and 84 effects added to `USER_STYLE_DECORATIONS`, `USER_STYLE_NAMEPLATES` and `USER_STYLE_EFFECTS`, in the same order as the web client. No route, event or data shape changes.
+- The user style allow-lists accept the design pack: 125 decorations, 67 nameplates and 58 effects added to `USER_STYLE_DECORATIONS`, `USER_STYLE_NAMEPLATES` and `USER_STYLE_EFFECTS`, in the same order as the web client. No route, event or data shape changes.
+
 ### Category settings (2026-11-15)
 
 - New `PATCH /servers/{target}/categories/{category_id}` (`DataEditCategory`: `title`, `description`; Manage Channels): changes a category's title and its note (one line, up to 120 characters; an empty one removes it). `Category.description` is new. A category list sent through `PATCH /servers/{target}` keeps the stored note, as it keeps the stored permissions.
