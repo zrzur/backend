@@ -90,6 +90,18 @@ impl AbstractUsers for ReferenceDb {
             .collect())
     }
 
+    /// The same, for people only: bots with that name are left out
+    async fn fetch_discriminators_of_people(&self, username: &str) -> Result<Vec<String>> {
+        let users = self.users.lock().await;
+        let lowercase = username.to_lowercase();
+        Ok(users
+            .values()
+            .filter(|user| user.bot.is_none() && user.username.to_lowercase() == lowercase)
+            .map(|user| &user.discriminator)
+            .cloned()
+            .collect())
+    }
+
     /// Fetch ids of users that both users are friends with
     async fn fetch_mutual_user_ids(&self, user_a: &str, user_b: &str) -> Result<Vec<String>> {
         let is_friend = |user: &User, other: &str| {

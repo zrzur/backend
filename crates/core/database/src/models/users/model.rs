@@ -209,10 +209,12 @@ auto_derived!(
     }
 );
 
-/// The tag of an account whose username is its own: no other account holds
-/// that name (upper and lower case count as the same), so the name alone
-/// finds it and the apps show no tag. Accounts made before unique usernames
-/// keep the four-digit tag they had until their owner picks a name.
+/// The tag of a person's account whose username is its own: no other person
+/// holds that name (upper and lower case count as the same), so the name
+/// alone finds it and the apps show no tag. Accounts made before unique
+/// usernames keep the four-digit tag they had until their owner picks a
+/// name. Bots are not part of this: a bot always has a four-digit tag and may
+/// share its name with other bots and with a person.
 pub const UNIQUE_DISCRIMINATOR: &str = "0000";
 
 pub static DISCRIMINATOR_SEARCH_SPACE: Lazy<HashSet<String>> = Lazy::new(|| {
@@ -289,15 +291,24 @@ impl User {
         let new_username = User::sanitise_username(&username).await?;
         User::validate_username(&new_username)?;
 
+        // a person owns their username; a bot gets a number tag as before
+        let data: Option<PartialUser> = data.into();
+        let is_bot = data.as_ref().is_some_and(|data| data.bot.is_some());
+        let discriminator = if is_bot {
+            User::find_discriminator(db, &new_username, None).await?
+        } else {
+            User::claim_username(db, &new_username, None).await?
+        };
+
         let mut user = User {
             id: account_id.into().unwrap_or_else(|| Ulid::new().to_string()),
-            discriminator: User::claim_username(db, &new_username, None).await?,
+            discriminator,
             username: new_username.clone(),
             last_acknowledged_policy_change: Timestamp::now_utc(),
             ..Default::default()
         };
 
-        if let Some(data) = data.into() {
+        if let Some(data) = data {
             user.apply_options(data);
         }
 
@@ -700,9 +711,11 @@ impl User {
     /// Take a username as one's own and return the tag that goes with it
     /// ([`UNIQUE_DISCRIMINATOR`]). Upper and lower case count as the same.
     ///
-    /// * A name another account already owns is taken.
+    /// Only people count; a bot with the same name is no obstacle.
+    ///
+    /// * A name another person already owns is taken.
     /// * A new account, or an account moving to a different name, cannot take
-    ///   a name any other account still holds with an old tag: that name is
+    ///   a name any other person still holds with an old tag: that name is
     ///   theirs to keep.
     /// * An account keeping its own name may take it while nobody else owns
     ///   it, also when others share it with old tags (the first one wins).
@@ -711,7 +724,7 @@ impl User {
         username: &str,
         claimant: Option<&User>,
     ) -> Result<String> {
-        let mut held_by_others = db.fetch_discriminators_in_use(username).await?;
+        let mut held_by_others = db.fetch_discriminators_of_people(username).await?;
         let keeps_own_name = claimant
             .is_some_and(|user| user.username.to_lowercase() == username.to_lowercase());
 
@@ -743,6 +756,32 @@ impl User {
     pub async fn update_username(&mut self, db: &Database, username: String) -> Result<()> {
         let new_username = User::sanitise_username(&username).await?;
         User::validate_username(&new_username)?;
+
+        // a bot keeps the number tag: same tag if it is free under the new
+        // name, another one if not
+        if self.bot.is_some() {
+            let discriminator = if self.username.to_lowercase() == new_username.to_lowercase() {
+                self.discriminator.clone()
+            } else {
+                User::find_discriminator(
+                    db,
+                    &new_username,
+                    Some((self.discriminator.to_string(), self.id.clone())),
+                )
+                .await?
+            };
+            return self
+                .update(
+                    db,
+                    PartialUser {
+                        discriminator: Some(discriminator),
+                        username: Some(new_username),
+                        ..Default::default()
+                    },
+                    vec![],
+                )
+                .await;
+        }
 
         let discriminator = User::claim_username(db, &new_username, Some(self)).await?;
 
@@ -1518,6 +1557,54 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(old_b.id, found.id);
+        });
+    }
+
+    #[tokio::test]
+    async fn bots_keep_number_tags() {
+        use crate::{BotInformation, PartialUser, UNIQUE_DISCRIMINATOR};
+
+        database_test!(|db| async move {
+            let bot_data = || PartialUser {
+                bot: Some(BotInformation {
+                    owner: "owner".to_string(),
+                    verified: false,
+                }),
+                ..Default::default()
+            };
+
+            // two bots share a name, each with its own number tag
+            let mut bot_a = User::create(&db, "Helper".to_string(), None, bot_data())
+                .await
+                .unwrap();
+            let bot_b = User::create(&db, "helper".to_string(), None, bot_data())
+                .await
+                .unwrap();
+            assert_ne!(UNIQUE_DISCRIMINATOR, bot_a.discriminator);
+            assert_ne!(UNIQUE_DISCRIMINATOR, bot_b.discriminator);
+            assert_ne!(bot_a.discriminator, bot_b.discriminator);
+
+            // a person may own the name bots carry, and a bot may be made after
+            let person = User::create(&db, "Helper".to_string(), None, None)
+                .await
+                .unwrap();
+            assert_eq!(UNIQUE_DISCRIMINATOR, person.discriminator);
+            let bot_c = User::create(&db, "Helper".to_string(), None, bot_data())
+                .await
+                .unwrap();
+            assert_ne!(UNIQUE_DISCRIMINATOR, bot_c.discriminator);
+
+            // a renamed bot still has a number tag, also under a person's name
+            let mut owner_of_name = User::create(&db, "Taken".to_string(), None, None)
+                .await
+                .unwrap();
+            bot_a.update_username(&db, "Taken".to_string()).await.unwrap();
+            assert_eq!("Taken", bot_a.username);
+            assert_ne!(UNIQUE_DISCRIMINATOR, bot_a.discriminator);
+
+            // and the person's name stays theirs
+            owner_of_name.update_username(&db, "TAKEN".to_string()).await.unwrap();
+            assert_eq!(UNIQUE_DISCRIMINATOR, owner_of_name.discriminator);
         });
     }
 
