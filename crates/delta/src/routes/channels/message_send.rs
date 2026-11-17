@@ -467,6 +467,7 @@ mod test {
             permissions_synced: None,
             thread: None,
             forum: None,
+            ticket: None,
         };
         locked_channel
             .update(&harness.db, partial, vec![])

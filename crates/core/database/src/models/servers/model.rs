@@ -105,6 +105,9 @@ auto_derived_partial!(
         /// Welcome page shown before the channels
         #[serde(skip_serializing_if = "Option::is_none", default)]
         pub lobby: Option<v0::ServerLobby>,
+        /// Tickets: members open a private channel with the staff
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        pub tickets: Option<v0::ServerTickets>,
 
         /// Threads are switched off on this server: nothing new, the
         /// threads it has stay readable
@@ -213,6 +216,7 @@ auto_derived!(
         Stats,
         Lobby,
         VanityInvite,
+        Tickets,
     }
 
     /// Optional fields on server object
@@ -278,6 +282,7 @@ impl Server {
             rules_channel: None,
             stats: None,
             lobby: None,
+            tickets: None,
             threads_disabled: false,
             forums_disabled: false,
             events_enabled: false,
@@ -483,6 +488,7 @@ impl Server {
             FieldsServer::RulesScreening => self.rules_screening_since = None,
             FieldsServer::Stats => self.stats = None,
             FieldsServer::Lobby => self.lobby = None,
+            FieldsServer::Tickets => self.tickets = None,
             FieldsServer::VanityInvite => self.vanity_invite = None,
         }
     }
@@ -509,6 +515,7 @@ impl Server {
                 (FieldsServer::RulesChannel) rules_channel,
                 (FieldsServer::Stats) stats,
                 (FieldsServer::Lobby) lobby,
+                (FieldsServer::Tickets) tickets,
                 threads_disabled,
                 forums_disabled,
                 events_enabled,

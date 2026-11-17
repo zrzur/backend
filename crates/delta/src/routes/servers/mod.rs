@@ -15,6 +15,7 @@ mod insights;
 mod invites_fetch;
 mod join_requests;
 mod lobby_answer;
+mod tickets;
 mod vanity;
 mod vanity_reserved;
 mod member_edit;
@@ -108,6 +109,11 @@ pub fn routes() -> (Vec<Route>, OpenApi) {
         rules_accept::accept,
         automod::fetch,
         automod::set,
+        tickets::open,
+        tickets::close,
+        tickets::reopen,
+        tickets::claim,
+        tickets::unclaim,
         lobby_answer::answer,
         lobby_answer::remove,
         vanity::claim,

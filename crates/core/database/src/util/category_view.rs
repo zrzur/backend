@@ -49,6 +49,7 @@ impl Category {
             parent: None,
             thread: None,
             forum: None,
+            ticket: None,
         }
     }
 }

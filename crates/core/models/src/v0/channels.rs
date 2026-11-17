@@ -153,6 +153,9 @@ auto_derived!(
             /// Forum settings, when this channel is a forum (posts are threads)
             #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
             forum: Option<ForumInformation>,
+            /// Ticket state, when this channel is a member's ticket
+            #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+            ticket: Option<TicketInformation>,
         },
     }
 
@@ -176,6 +179,66 @@ auto_derived!(
         /// Messages sent in it
         #[cfg_attr(feature = "serde", serde(default))]
         pub message_count: u32,
+    }
+
+    /// State of a ticket: a private channel between one member and the
+    /// server's ticket staff
+    #[derive(Default)]
+    pub struct TicketInformation {
+        /// The member who opened it
+        pub opener: String,
+        /// Its number in this server, from 1
+        pub number: u32,
+        /// Closed: the member no longer sees it; the staff can reopen it
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "crate::if_false", default))]
+        pub closed: bool,
+        /// Name of the ticket type it was opened as, when the server has types
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub kind: Option<String>,
+        /// The staff member who took it
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub claimed_by: Option<String>,
+        /// What its opener gave the help, 1 to 5, when they closed it
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub rating: Option<u8>,
+    }
+
+    /// Close a ticket
+    #[derive(Default)]
+    #[cfg_attr(feature = "validator", derive(validator::Validate))]
+    pub struct DataCloseTicket {
+        /// 1 to 5: how the opener found the help (kept only from the opener)
+        #[cfg_attr(feature = "validator", validate(range(min = 1, max = 5)))]
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub rating: Option<u8>,
+    }
+
+    /// Change a temporary room (its member, or someone who manages
+    /// permissions there)
+    #[derive(Default)]
+    pub struct DataEditRoom {
+        /// Locked: only the people already let in can join
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub locked: Option<bool>,
+        /// Hidden: only the people already let in can see it
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub hidden: Option<bool>,
+        /// Hand the room to someone who is in it
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub owner: Option<String>,
+    }
+
+    /// Open a ticket
+    #[derive(Default)]
+    #[cfg_attr(feature = "validator", derive(validator::Validate))]
+    pub struct DataOpenServerTicket {
+        /// What it is about (1-100 characters), shown as the channel's description
+        #[cfg_attr(feature = "validator", validate(length(min = 1, max = 100)))]
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub subject: Option<String>,
+        /// Id of one of the server's ticket types
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub kind: Option<String>,
     }
 
     /// Settings of a forum channel
@@ -264,6 +327,31 @@ auto_derived!(
             serde(skip_serializing_if = "crate::if_false", default)
         )]
         pub stage: bool,
+        /// Room maker: a member who asks for a room here
+        /// (`POST /channels/{target}/rooms`) gets a voice channel of their
+        /// own next to it
+        #[cfg_attr(
+            feature = "serde",
+            serde(skip_serializing_if = "crate::if_false", default)
+        )]
+        pub maker: bool,
+        /// Temporary room: the member it was made for. It is removed when
+        /// the last person leaves it. Set by the server only
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub temporary: Option<String>,
+        /// Temporary room: locked, only the people let in can join. Set
+        /// through `PATCH /channels/{target}/room`
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "crate::if_false", default))]
+        pub locked: bool,
+        /// Temporary room: hidden, only the people let in can see it. Set
+        /// through `PATCH /channels/{target}/room`
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "crate::if_false", default))]
+        pub hidden: bool,
+        /// Room maker: how its rooms are named; `{name}` stands for the
+        /// member (at most 32 characters; none: the member's name alone)
+        #[cfg_attr(feature = "validator", validate(length(max = 32)))]
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub room_name: Option<String>,
     }
 
     /// Change of a voice channel's voice information
@@ -278,6 +366,15 @@ auto_derived!(
         /// nobody is in the call)
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
         pub stage: Option<bool>,
+        /// Make it a room maker, or a plain voice channel again (not for a
+        /// stage or a temporary room)
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub maker: Option<bool>,
+        /// Room maker: how its rooms are named, `{name}` stands for the
+        /// member; an empty text goes back to the member's name alone
+        #[cfg_attr(feature = "validator", validate(length(max = 32)))]
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub room_name: Option<String>,
     }
 
     /// What changed on a stage (sent as `StageUpdate`)
@@ -378,6 +475,8 @@ auto_derived!(
         pub thread: Option<ThreadInformation>,
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
         pub forum: Option<ForumInformation>,
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub ticket: Option<TicketInformation>,
     }
 
     /// Optional fields on channel object

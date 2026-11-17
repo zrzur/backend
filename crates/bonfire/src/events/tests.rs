@@ -67,6 +67,7 @@ fn channel(
         parent: None,
         thread: None,
         forum: None,
+        ticket: None,
     }
 }
 

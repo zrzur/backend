@@ -142,6 +142,9 @@ auto_derived!(
             /// Forum settings, when this channel is a forum (posts are threads)
             #[serde(skip_serializing_if = "Option::is_none", default)]
             forum: Option<ForumInformation>,
+            /// Ticket state, when this channel is a member's ticket
+            #[serde(skip_serializing_if = "Option::is_none", default)]
+            ticket: Option<TicketInformation>,
         },
     }
 
@@ -165,6 +168,27 @@ auto_derived!(
         /// Messages sent in it
         #[serde(default)]
         pub message_count: u32,
+    }
+
+    /// State of a ticket
+    #[derive(Default)]
+    pub struct TicketInformation {
+        /// The member who opened it
+        pub opener: String,
+        /// Its number in this server, from 1
+        pub number: u32,
+        /// Closed: the member no longer sees it; the staff can reopen it
+        #[serde(skip_serializing_if = "crate::if_false", default)]
+        pub closed: bool,
+        /// Name of the ticket type it was opened as
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        pub kind: Option<String>,
+        /// The staff member who took it
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        pub claimed_by: Option<String>,
+        /// What its opener gave the help, 1 to 5
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        pub rating: Option<u8>,
     }
 
     /// Settings of a forum channel
@@ -194,6 +218,21 @@ auto_derived!(
         /// Stage channel: speakers talk, the audience listens
         #[serde(skip_serializing_if = "crate::if_false", default)]
         pub stage: bool,
+        /// Room maker: asking for a room here makes a temporary room
+        #[serde(skip_serializing_if = "crate::if_false", default)]
+        pub maker: bool,
+        /// Temporary room: the member it was made for; removed when empty
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        pub temporary: Option<String>,
+        /// Temporary room: only the people let in can join
+        #[serde(skip_serializing_if = "crate::if_false", default)]
+        pub locked: bool,
+        /// Temporary room: only the people let in can see it
+        #[serde(skip_serializing_if = "crate::if_false", default)]
+        pub hidden: bool,
+        /// Room maker: how its rooms are named (`{name}` = the member)
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        pub room_name: Option<String>,
     }
 );
 
@@ -234,6 +273,8 @@ auto_derived!(
         pub thread: Option<ThreadInformation>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub forum: Option<ForumInformation>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub ticket: Option<TicketInformation>,
     }
 
     /// Optional fields on channel object
@@ -245,6 +286,23 @@ auto_derived!(
         Slowmode,
     }
 );
+
+/// Voice information as a client may set it: `temporary` is the server's to
+/// set, and a stage is never a room maker
+fn client_voice(voice: v0::VoiceInformation) -> VoiceInformation {
+    let mut voice: VoiceInformation = voice.into();
+    voice.temporary = None;
+    voice.locked = false;
+    voice.hidden = false;
+    if voice.stage {
+        voice.maker = false;
+    }
+    voice.room_name = voice
+        .room_name
+        .map(|name| name.trim().to_string())
+        .filter(|name| voice.maker && !name.is_empty());
+    voice
+}
 
 #[allow(clippy::disallowed_methods)]
 impl Channel {
@@ -288,13 +346,14 @@ impl Channel {
                 role_permissions: HashMap::new(),
                 member_permissions: HashMap::new(),
                 nsfw: data.nsfw.unwrap_or(false),
-                voice: data.voice.map(|voice| voice.into()),
+                voice: data.voice.map(client_voice),
                 slowmode: None,
                 announcement: data.announcement.unwrap_or(false),
                 permissions_synced,
                 parent: None,
                 thread: None,
                 forum: None,
+                ticket: None,
             },
             v0::LegacyServerChannelType::Voice => Channel::TextChannel {
                 id: id.clone(),
@@ -307,13 +366,14 @@ impl Channel {
                 role_permissions: HashMap::new(),
                 member_permissions: HashMap::new(),
                 nsfw: data.nsfw.unwrap_or(false),
-                voice: Some(data.voice.unwrap_or_default().into()),
+                voice: Some(client_voice(data.voice.unwrap_or_default())),
                 slowmode: None,
                 announcement: false,
                 permissions_synced,
                 parent: None,
                 thread: None,
                 forum: None,
+                ticket: None,
             },
             v0::LegacyServerChannelType::Forum => Channel::TextChannel {
                 id: id.clone(),
@@ -333,6 +393,7 @@ impl Channel {
                 parent: None,
                 thread: None,
                 forum: Some(ForumInformation::default()),
+                ticket: None,
             },
         }
     }
@@ -998,8 +1059,13 @@ impl Channel {
                 permissions_synced,
                 thread,
                 forum,
+                ticket,
                 ..
             } => {
+                if let Some(v) = partial.ticket {
+                    ticket.replace(v);
+                }
+
                 if let Some(v) = partial.permissions_synced {
                     *permissions_synced = v;
                 }

@@ -20,10 +20,12 @@ use revolt_result::{create_error, Result, ToRevoltError};
 
 mod preview;
 mod ring;
+mod rooms;
 mod stage;
 mod voice_client;
 pub use preview::*;
 pub use ring::*;
+pub use rooms::*;
 pub use stage::*;
 pub use voice_client::VoiceClient;
 
