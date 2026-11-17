@@ -74,6 +74,21 @@ pub fn check_settings(tickets: &mut v0::ServerTickets, server: &Server) -> Resul
         }));
     }
 
+    tickets.label = tickets
+        .label
+        .take()
+        .map(|label| label.trim().to_string())
+        .filter(|label| !label.is_empty());
+    if tickets
+        .label
+        .as_ref()
+        .is_some_and(|label| label.chars().count() > 32)
+    {
+        return Err(create_error!(FailedValidation {
+            error: "the name of the ticket entry is at most 32 characters".to_string()
+        }));
+    }
+
     if tickets.types.len() > 5 {
         return Err(create_error!(FailedValidation {
             error: "a server has at most 5 ticket types".to_string()
@@ -623,6 +638,51 @@ mod test {
         assert!(tickets.enabled);
         assert_eq!(tickets.message.as_deref(), Some("How can we help?"));
         assert_eq!(tickets.opened, 0);
+    }
+
+    #[rocket::async_test]
+    async fn the_entry_takes_a_name_of_the_servers_own() {
+        let s = setup().await;
+        let (status, body) = settings(&s, &s.owner, json!({ "enabled": true, "label": "  Ask the team  " })).await;
+        assert_eq!(status, Status::Ok, "{body}");
+        let stored = s.harness.db.fetch_server(&s.server.id).await.unwrap();
+        assert_eq!(stored.tickets.unwrap().label.as_deref(), Some("Ask the team"));
+
+        let (status, body) = settings(&s, &s.owner, json!({ "enabled": true, "label": "x".repeat(33) })).await;
+        assert_eq!(status, Status::BadRequest, "{body}");
+
+        // an empty name goes back to the app's own wording
+        let (status, body) = settings(&s, &s.owner, json!({ "enabled": true, "label": "   " })).await;
+        assert_eq!(status, Status::Ok, "{body}");
+        let stored = s.harness.db.fetch_server(&s.server.id).await.unwrap();
+        assert_eq!(stored.tickets.unwrap().label, None);
+    }
+
+    #[rocket::async_test]
+    async fn a_closed_ticket_is_deleted_by_a_manager_only() {
+        let s = setup().await;
+        switch_on(&s).await;
+        let ticket = open(&s, &s.member_session).await;
+        let (status, body) = post(&s, &s.member_session, &format!("/{}/close", ticket.id()), json!({})).await;
+        assert_eq!(status, Status::Ok, "{body}");
+
+        let delete = |session: &Session| {
+            s.harness
+                .client
+                .delete(format!("/channels/{}", ticket.id()))
+                .header(Header::new("x-session-token", session.token.to_string()))
+                .dispatch()
+        };
+        // answering tickets is not managing channels
+        assert_ne!(delete(&s.staff_session).await.status(), Status::NoContent);
+        assert_ne!(delete(&s.member_session).await.status(), Status::NoContent);
+        assert!(s.harness.db.fetch_channel(ticket.id()).await.is_ok());
+
+        assert_eq!(delete(&s.owner).await.status(), Status::NoContent);
+        assert!(s.harness.db.fetch_channel(ticket.id()).await.is_err());
+        let stored = s.harness.db.fetch_server(&s.server.id).await.unwrap();
+        assert!(!stored.channels.contains(&ticket.id().to_string()));
+        assert_eq!(stored.tickets.unwrap().opened, 1, "the count of tickets stays");
     }
 
     #[rocket::async_test]
