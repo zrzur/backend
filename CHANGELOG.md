@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Tickets: a name for the entry (2026-11-17)
+
+* `ServerTickets.label`: a server can name the "Open a ticket" entry its members see (at most 32 characters; empty goes back to the app's wording).
+* Tests: a closed ticket is deleted by whoever manages channels, not by the ticket staff or its opener, and the count of opened tickets stays.
+
 ### Temporary voice rooms and tickets (2026-11-17)
 
 - **Room maker.** `VoiceInformation.maker` marks a voice channel as a room maker (set with `PATCH /channels/{target}`, `voice.maker`; Manage Channel; not for a stage). New `POST /channels/{target}/rooms` (Connect in the room maker; not for bots) answers with a voice channel made for the member: placed right after the room maker, with its permissions and user limit, named after the member, who gets Manage Channel and Move Members in it. `VoiceInformation.temporary` holds that member's id and is set by the server only. A member has one room per server: asking again returns it. The room is removed when the last person leaves it (voice-ingress, `participant_left`), or a minute after it was made if nobody joined.
