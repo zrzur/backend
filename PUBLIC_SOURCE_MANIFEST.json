@@ -202,8 +202,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "d0841a1f2ece9aa8bd3da61a3c917f8304de5cf3a6e18598b885a940960abdcd",
-      "bytes": 97141,
+      "sha256": "317ee89870b89d415e5259ebf7ced395ed9a21afe45bc12a7e3e1ad4478a567f",
+      "bytes": 98395,
       "category": "public-documentation"
     },
     {
@@ -1912,8 +1912,8 @@
     },
     {
       "path": "crates/core/database/src/models/channels/model.rs",
-      "sha256": "83b8160132bdf7007970862f7e8b5c263f5ba0a2a11e4ec6cb6ab7315a66d57b",
-      "bytes": 49512,
+      "sha256": "ed7ccc34f96ddf08f17f2a599008c71fdbe2766c2a476ada61cbd56308cf6f64",
+      "bytes": 50650,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -3016,8 +3016,8 @@
     },
     {
       "path": "crates/core/database/src/util/bridge/v0.rs",
-      "sha256": "3a6f9cba72500ee901045039a9dc59b2065893cc5cdb4fbe8f2c1795fe44cd79",
-      "bytes": 87037,
+      "sha256": "caf49a871521632e90e722436dde1f5bf9c83fcf754f51b4813419ac143295a4",
+      "bytes": 87465,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -3214,8 +3214,8 @@
     },
     {
       "path": "crates/core/database/src/voice/rooms.rs",
-      "sha256": "bdc4ea42b111e50ee91d28356ad5c78a8941e5587dc032e467a2a4105edda7dd",
-      "bytes": 1688,
+      "sha256": "1e19bd2961e5f298f4aa0610ad70d71a9ab7a8ef626ecccf5b48a1a4149dfbcb",
+      "bytes": 4825,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -3544,8 +3544,8 @@
     },
     {
       "path": "crates/core/models/src/v0/channels.rs",
-      "sha256": "7a22dcd68429f2bc8e98aa354bd10cd20f7e96ea61459786c7ac97f2814b4db7",
-      "bytes": 27373,
+      "sha256": "dac487d85f47c67eac03db7f9a36ecd2e8620321231a096b98c2527f53f09065",
+      "bytes": 30495,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -3682,8 +3682,8 @@
     },
     {
       "path": "crates/core/models/src/v0/servers.rs",
-      "sha256": "e0e715abe513f4ed7752cb2f52c6ffa6073f3f8ad96acdcebc4f40515cfb3b2b",
-      "bytes": 35527,
+      "sha256": "b54dffc472c2b5843ed4cabd805921c00dfc595e1a6d683cce684f127c6b91c0",
+      "bytes": 36172,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4156,8 +4156,8 @@
     },
     {
       "path": "crates/daemons/voice-ingress/src/api.rs",
-      "sha256": "22b8f53f5625b0b3fe62db2f94d682a1d3672bf977b7b24cc675a2d7dcf4f96b",
-      "bytes": 25268,
+      "sha256": "371de04a6f761292e6f8177c6b4f3810314695e58be56e255e2779655f41d3f1",
+      "bytes": 25850,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4582,8 +4582,8 @@
     },
     {
       "path": "crates/delta/src/routes/channels/channel_edit.rs",
-      "sha256": "6b23ac95204e9a7f20d062e250b35480f6ea04db164acf20554c44eda21e0ea4",
-      "bytes": 18445,
+      "sha256": "4ba04afa5534fc8c205cc65929c29198dbb3ab93c9f5c5c0f87eaa7299c1c96b",
+      "bytes": 18828,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4738,8 +4738,8 @@
     },
     {
       "path": "crates/delta/src/routes/channels/mod.rs",
-      "sha256": "9478a1a11dceb236745fa5bcd1107c7f9623d8993dedc85d1b5297f3f5c68eda",
-      "bytes": 3158,
+      "sha256": "35dbef1e4ea84b566cf3a358b4a3ff87959075e6754fb42a2db4eac216c5dd9e",
+      "bytes": 3267,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4840,8 +4840,8 @@
     },
     {
       "path": "crates/delta/src/routes/channels/voice_rooms.rs",
-      "sha256": "b54584bf70c1e18757c50371ac347d560e96d208bee77fbc43eb60be9f04e67d",
-      "bytes": 16939,
+      "sha256": "0a8bba132e18b642569dce3d2434a2240d0431bb480e5ec20294e823224a9c33",
+      "bytes": 30745,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -5500,8 +5500,8 @@
     },
     {
       "path": "crates/delta/src/routes/servers/mod.rs",
-      "sha256": "6df77265dbe73cf0a4a38da508b63e4a75d8eeac235999f4d092453d017ef05e",
-      "bytes": 4156,
+      "sha256": "4253990049169487628b96cac480f9d1d7ffa2d7ead35a35019a689532a2cf1b",
+      "bytes": 4206,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -5620,8 +5620,8 @@
     },
     {
       "path": "crates/delta/src/routes/servers/tickets.rs",
-      "sha256": "c22f5ea81123fe36b67f2ee4a8006205127eb4e09aa5d4db1da5b46fe205bb7e",
-      "bytes": 23554,
+      "sha256": "3e5abfa271aa7c1315a8203f8df73b8fc4599fe092edc2415e652bdde875cfd0",
+      "bytes": 33502,
       "category": "product-source-or-build-manifest"
     },
     {
