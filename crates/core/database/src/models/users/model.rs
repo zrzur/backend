@@ -518,7 +518,14 @@ impl User {
             return Err(create_error!(InvalidUsername));
         }
 
-        let options = decancer::Options::default().retain_capitalization();
+        // Arabic stays Arabic: the cure would turn it into Latin lookalikes
+        // ("ليلى" came out as "sjsj"). The letters are kept in the order they
+        // were typed; control characters that reorder text are not letters
+        // and are refused by the name rule.
+        let options = decancer::Options::default()
+            .retain_capitalization()
+            .retain_arabic()
+            .disable_bidi();
         let mut username = decancer::cure(username, options)
             .map_err(|_| create_error!(InvalidUsername))?
             .to_string();
@@ -1621,6 +1628,46 @@ mod tests {
             person.update_username(&db, "Maher".to_string()).await.unwrap();
             assert_eq!("Maher", person.username);
             assert_eq!(UNIQUE_DISCRIMINATOR, person.discriminator);
+        });
+    }
+
+    #[tokio::test]
+    async fn arabic_usernames_work() {
+        use crate::UNIQUE_DISCRIMINATOR;
+        use revolt_result::ErrorType;
+
+        database_test!(|db| async move {
+            // kept letter for letter, each one its owner's
+            for name in ["ليلى", "عبدالله", "أحمد", "محمد_علي", "سارة99", "نور.الهدى", "خالد-1"] {
+                let user = User::create(&db, name.to_string(), None, None)
+                    .await
+                    .unwrap_or_else(|error| panic!("{name}: {error:?}"));
+                assert_eq!(name, user.username, "{name} was changed");
+                assert_eq!(UNIQUE_DISCRIMINATOR, user.discriminator);
+
+                // found by name alone
+                let found = db
+                    .fetch_user_by_username(name, UNIQUE_DISCRIMINATOR)
+                    .await
+                    .unwrap();
+                assert_eq!(user.id, found.id);
+
+                // and taken for everyone else
+                let taken = User::create(&db, name.to_string(), None, None).await;
+                assert!(
+                    matches!(taken.unwrap_err().error_type, ErrorType::UsernameTaken),
+                    "{name} twice"
+                );
+            }
+
+            // a rename between Arabic names, and a mixed one
+            let mut user = User::create(&db, "ريم".to_string(), None, None)
+                .await
+                .unwrap();
+            user.update_username(&db, "ريم_2001".to_string()).await.unwrap();
+            assert_eq!("ريم_2001", user.username);
+            user.update_username(&db, "Reemريم".to_string()).await.unwrap();
+            assert_eq!("Reemريم", user.username);
         });
     }
 
