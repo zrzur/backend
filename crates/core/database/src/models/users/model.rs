@@ -288,6 +288,9 @@ impl User {
         // a person owns their username; a bot gets a number tag as before
         let data: Option<PartialUser> = data.into();
         let is_bot = data.as_ref().is_some_and(|data| data.bot.is_some());
+        if crate::is_reserved_username(&new_username, is_bot) {
+            return Err(create_error!(InvalidUsername));
+        }
         let discriminator = if is_bot {
             User::find_discriminator(db, &new_username, None).await?
         } else {
@@ -748,6 +751,14 @@ impl User {
     pub async fn update_username(&mut self, db: &Database, username: String) -> Result<()> {
         let new_username = User::sanitise_username(&username).await?;
         User::validate_username(&new_username)?;
+
+        // a reserved name cannot be taken; an account that already carries
+        // one keeps it (and may change its capitals)
+        if self.username.to_lowercase() != new_username.to_lowercase()
+            && crate::is_reserved_username(&new_username, self.bot.is_some())
+        {
+            return Err(create_error!(InvalidUsername));
+        }
 
         // a bot keeps the number tag: same tag if it is free under the new
         // name, another one if not
@@ -1410,7 +1421,7 @@ mod tests {
 
     #[tokio::test]
     async fn username_sanitisation_clean() {
-        let username_clean = "Test";
+        let username_clean = "Tester";
 
         let username_clean_sanitised = User::sanitise_username(username_clean).await;
 
@@ -1444,25 +1455,25 @@ mod tests {
         use lapin::{ExchangeKind, options::ExchangeDeclareOptions, types::FieldTable};
 
         database_test!(|db| async move {
-            let mut created_clean = User::create(&db, "Test".to_string(), None, None)
+            let mut created_clean = User::create(&db, "Tester".to_string(), None, None)
                 .await
                 .unwrap();
 
-            assert_eq!("Test", created_clean.username);
+            assert_eq!("Tester", created_clean.username);
 
             created_clean
-                .update_username(&db, "Test2".to_string())
+                .update_username(&db, "Tester2".to_string())
                 .await
                 .unwrap();
 
-            assert_eq!("Test2", created_clean.username);
+            assert_eq!("Tester2", created_clean.username);
 
             let created_invalid_result: Result<_> =
                 User::create(&db, "stoat.chat".to_string(), None, None).await;
 
             assert!(created_invalid_result.is_err());
 
-            let mut updated_invalid = User::create(&db, "Test".to_string(), None, None)
+            let mut updated_invalid = User::create(&db, "Tester".to_string(), None, None)
                 .await
                 .unwrap();
 
@@ -1553,6 +1564,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn reserved_names_cannot_be_taken() {
+        use crate::{BotInformation, PartialUser, UNIQUE_DISCRIMINATOR};
+        use revolt_result::ErrorType;
+
+        database_test!(|db| async move {
+            let bot_data = || PartialUser {
+                bot: Some(BotInformation {
+                    owner: "owner".to_string(),
+                    verified: false,
+                }),
+                ..Default::default()
+            };
+
+            // Zrzur's names, the owner's and company names: nobody, in any spelling
+            for name in ["Maher", "ma.her", "Discord", "g_o_o_g_l_e", "support"] {
+                let refused = User::create(&db, name.to_string(), None, None).await;
+                assert!(
+                    matches!(refused.unwrap_err().error_type, ErrorType::InvalidUsername),
+                    "{name}"
+                );
+            }
+            for name in ["Maher", "Discord"] {
+                let refused = User::create(&db, name.to_string(), None, bot_data()).await;
+                assert!(
+                    matches!(refused.unwrap_err().error_type, ErrorType::InvalidUsername),
+                    "bot {name}"
+                );
+            }
+            // a site word is free for a bot
+            User::create(&db, "support".to_string(), None, bot_data())
+                .await
+                .unwrap();
+
+            // a rename to a reserved name is refused
+            let mut person = User::create(&db, "Salma".to_string(), None, None)
+                .await
+                .unwrap();
+            let refused = person.update_username(&db, "Steam".to_string()).await;
+            assert!(matches!(refused.unwrap_err().error_type, ErrorType::InvalidUsername));
+            assert_eq!("Salma", person.username);
+
+            // an account that carried the name before keeps it and can make it its own
+            person
+                .update(
+                    &db,
+                    PartialUser {
+                        username: Some("Maher".to_string()),
+                        discriminator: Some("0001".to_string()),
+                        ..Default::default()
+                    },
+                    vec![],
+                )
+                .await
+                .unwrap();
+            person.update_username(&db, "Maher".to_string()).await.unwrap();
+            assert_eq!("Maher", person.username);
+            assert_eq!(UNIQUE_DISCRIMINATOR, person.discriminator);
+        });
+    }
+
+    #[tokio::test]
     async fn bots_keep_number_tags() {
         use crate::{BotInformation, PartialUser, UNIQUE_DISCRIMINATOR};
 
@@ -1629,7 +1701,7 @@ mod tests {
         use lapin::{ExchangeKind, options::ExchangeDeclareOptions, types::FieldTable};
 
         database_test!(|db| async move {
-            let mut user = User::create(&db, "Test".to_string(), None, None)
+            let mut user = User::create(&db, "Tester".to_string(), None, None)
                 .await
                 .unwrap();
 

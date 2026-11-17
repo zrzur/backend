@@ -418,7 +418,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            let kickable_user = User::create(&db, "Member".to_string(), None, None)
+            let kickable_user = User::create(&db, "KickedOne".to_string(), None, None)
                 .await
                 .unwrap();
 

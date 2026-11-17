@@ -277,7 +277,7 @@ use crate::{Bot, FieldsBot, PartialBot, User};
     #[tokio::test]
     async fn crud() {
         database_test!(|db| async move {
-            let owner = User::create(&db, "Owner".to_string(), None, None)
+            let owner = User::create(&db, "BotOwner".to_string(), None, None)
                 .await
                 .unwrap();
 
@@ -341,7 +341,7 @@ use crate::{Bot, FieldsBot, PartialBot, User};
         use revolt_models::v0::GatewayIntents as I;
 
         database_test!(|db| async move {
-            let owner = User::create(&db, "Owner".to_string(), None, None)
+            let owner = User::create(&db, "BotOwner".to_string(), None, None)
                 .await
                 .unwrap();
             let (mut bot, user) = Bot::create(&db, "Bot-Name".to_string(), &owner, None)
@@ -411,7 +411,7 @@ use crate::{Bot, FieldsBot, PartialBot, User};
         use revolt_models::v0::GatewayIntents as I;
 
         database_test!(|db| async move {
-            let owner = User::create(&db, "Owner".to_string(), None, None)
+            let owner = User::create(&db, "BotOwner".to_string(), None, None)
                 .await
                 .unwrap();
             let (mut bot, reader) = Bot::create(&db, "Bot-Name".to_string(), &owner, None)

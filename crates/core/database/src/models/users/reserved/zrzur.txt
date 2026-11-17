@@ -1,0 +1,68 @@
+# Names nobody may take as a username or give to a bot: Zrzur's own names,
+# its owner's names, and names that read as a role on the platform.
+# One name a line, lower case. Dots, dashes and underscores in what a person
+# types are ignored when a name is compared with this list.
+
+# Zrzur
+zrzur
+zrzurapp
+zrzurteam
+zrzurofficial
+zrzursupport
+zrzursafety
+zrzurupdates
+zrzurstaff
+zrzuradmin
+zrzurmod
+zrzurbot
+zrzurhelp
+zrzurnews
+zrzurcc
+zrzurcom
+zrzurplus
+zrzurdev
+zrzurdevs
+zrzurgames
+zarzour
+zarzur
+zrzour
+زرزور
+gamehall
+modmail
+
+# the owner
+maher
+maherxs
+maherzahra
+ماهر
+
+# roles and system words
+official
+officiel
+staff
+team
+moderator
+moderators
+mod
+mods
+founder
+cofounder
+ceo
+developer
+developers
+system
+everyone
+here
+verified
+trustandsafety
+safety
+security
+updates
+announcements
+deleteduser
+unknownuser
+رسمي
+الدعم
+المشرف
+الادارة
+الإدارة
