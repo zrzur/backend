@@ -74,6 +74,34 @@ pub fn check_settings(tickets: &mut v0::ServerTickets, server: &Server) -> Resul
         }));
     }
 
+    if tickets.types.len() > 5 {
+        return Err(create_error!(FailedValidation {
+            error: "a server has at most 5 ticket types".to_string()
+        }));
+    }
+    let mut ids = HashSet::new();
+    for kind in &mut tickets.types {
+        kind.id = kind.id.trim().to_string();
+        kind.name = kind.name.trim().to_string();
+        let fits = |text: &str| (1..=32).contains(&text.chars().count());
+        if !fits(&kind.id) || !fits(&kind.name) || !ids.insert(kind.id.clone()) {
+            return Err(create_error!(FailedValidation {
+                error: "a ticket type needs an id of its own and a name, 1 to 32 characters each"
+                    .to_string()
+            }));
+        }
+        let mut seen = HashSet::new();
+        kind.staff_roles.retain(|role| seen.insert(role.clone()));
+        if kind.staff_roles.len() > 10 {
+            return Err(create_error!(FailedValidation {
+                error: "a ticket type has at most 10 staff roles".to_string()
+            }));
+        }
+        if kind.staff_roles.iter().any(|role| !server.roles.contains_key(role)) {
+            return Err(create_error!(InvalidRole));
+        }
+    }
+
     tickets.opened = server.tickets.as_ref().map_or(0, |stored| stored.opened);
     Ok(())
 }
@@ -155,6 +183,24 @@ pub async fn open(
         return Err(create_error!(TooManyChannels { max: limit }));
     }
 
+    // the kind of ticket, when the server has kinds: its own roles answer
+    let kind = match &data.kind {
+        Some(id) => Some(
+            settings
+                .types
+                .iter()
+                .find(|kind| &kind.id == id)
+                .cloned()
+                .ok_or_else(|| create_error!(InvalidOperation))?,
+        ),
+        None => None,
+    };
+    let staff_roles = kind
+        .as_ref()
+        .map(|kind| &kind.staff_roles)
+        .filter(|roles| !roles.is_empty())
+        .unwrap_or(&settings.staff_roles);
+
     let number = settings.opened + 1;
     let id = Ulid::new().to_string();
     let allow = OverrideField { a: TALK, d: 0 };
@@ -170,8 +216,7 @@ pub async fn open(
             a: 0,
             d: ChannelPermission::ViewChannel as i64,
         }),
-        role_permissions: settings
-            .staff_roles
+        role_permissions: staff_roles
             .iter()
             .filter(|role| server.roles.contains_key(*role))
             .map(|role| (role.clone(), allow))
@@ -189,6 +234,9 @@ pub async fn open(
             opener: user.id.clone(),
             number,
             closed: false,
+            kind: kind.as_ref().map(|kind| kind.name.clone()),
+            claimed_by: None,
+            rating: None,
         }),
     };
     db.insert_channel(&channel).await?;
@@ -288,20 +336,28 @@ async fn ticket_of(
 /// Closes a ticket: its opener no longer sees it, the staff keep it and can
 /// reopen or delete it. For the opener and the ticket staff.
 #[openapi(tag = "Server Information")]
-#[post("/<target>/tickets/<channel>/close")]
+#[post("/<target>/tickets/<channel>/close", data = "<data>")]
 pub async fn close(
     db: &State<Database>,
     user: User,
     target: Reference<'_>,
     channel: Reference<'_>,
+    data: Option<Json<v0::DataCloseTicket>>,
 ) -> Result<Json<v0::Channel>> {
+    let data = data.map(Json::into_inner).unwrap_or_default();
+    data.validate()
+        .map_err(|error| revolt_database::util::validation::validation_failed(&error))?;
     let server = target.as_server(db).await?;
-    let (mut channel, mut ticket, _) = ticket_of(db, &user, &server, channel).await?;
+    let (mut channel, mut ticket, opener) = ticket_of(db, &user, &server, channel).await?;
     if ticket.closed {
         return Ok(Json(channel.into()));
     }
 
     ticket.closed = true;
+    // how the opener found the help; nobody else rates a ticket
+    if opener {
+        ticket.rating = data.rating;
+    }
     channel
         .set_member_permission(db, &ticket.opener, OverrideField { a: 0, d: 0 })
         .await?;
@@ -353,6 +409,7 @@ pub async fn reopen(
     }
 
     ticket.closed = false;
+    ticket.rating = None;
     channel
         .set_member_permission(db, &ticket.opener, OverrideField { a: TALK, d: 0 })
         .await?;
@@ -368,6 +425,67 @@ pub async fn reopen(
         )
         .await?;
 
+    Ok(Json(channel.into()))
+}
+
+/// # Take a Ticket
+///
+/// Marks an open ticket as yours, so the others know someone is on it. For
+/// the ticket staff (anyone who sees the ticket except its opener).
+#[openapi(tag = "Server Information")]
+#[put("/<target>/tickets/<channel>/claim")]
+pub async fn claim(
+    db: &State<Database>,
+    user: User,
+    target: Reference<'_>,
+    channel: Reference<'_>,
+) -> Result<Json<v0::Channel>> {
+    let server = target.as_server(db).await?;
+    let (mut channel, mut ticket, opener) = ticket_of(db, &user, &server, channel).await?;
+    if opener || ticket.closed {
+        return Err(create_error!(InvalidOperation));
+    }
+    ticket.claimed_by = Some(user.id.clone());
+    channel
+        .update(
+            db,
+            PartialChannel {
+                ticket: Some(ticket),
+                ..Default::default()
+            },
+            vec![],
+        )
+        .await?;
+    Ok(Json(channel.into()))
+}
+
+/// # Give a Ticket Back
+///
+/// Takes the staff member off an open ticket. For the ticket staff.
+#[openapi(tag = "Server Information")]
+#[delete("/<target>/tickets/<channel>/claim")]
+pub async fn unclaim(
+    db: &State<Database>,
+    user: User,
+    target: Reference<'_>,
+    channel: Reference<'_>,
+) -> Result<Json<v0::Channel>> {
+    let server = target.as_server(db).await?;
+    let (mut channel, mut ticket, opener) = ticket_of(db, &user, &server, channel).await?;
+    if opener || ticket.closed {
+        return Err(create_error!(InvalidOperation));
+    }
+    ticket.claimed_by = None;
+    channel
+        .update(
+            db,
+            PartialChannel {
+                ticket: Some(ticket),
+                ..Default::default()
+            },
+            vec![],
+        )
+        .await?;
     Ok(Json(channel.into()))
 }
 
@@ -635,6 +753,131 @@ mod test {
         }
         let (status, body) = post(&s, &s.member_session, "", json!({})).await;
         assert_eq!(status, Status::TooManyRequests, "{body}");
+    }
+
+    async fn send(s: &Setup, session: &Session, method: rocket::http::Method, path: &str, body: serde_json::Value) -> (Status, String) {
+        let response = s
+            .harness
+            .client
+            .req(method, format!("/servers/{}/tickets{path}", s.server.id))
+            .header(ContentType::JSON)
+            .header(Header::new("x-session-token", session.token.to_string()))
+            .body(body.to_string())
+            .dispatch()
+            .await;
+        let status = response.status();
+        (status, response.into_string().await.unwrap_or_default())
+    }
+
+    async fn stored_ticket(s: &Setup, channel: &Channel) -> revolt_database::TicketInformation {
+        match s.harness.db.fetch_channel(channel.id()).await.unwrap() {
+            Channel::TextChannel { ticket: Some(ticket), .. } => ticket,
+            _ => panic!("not a ticket"),
+        }
+    }
+
+    #[rocket::async_test]
+    async fn the_staff_take_a_ticket_and_give_it_back() {
+        use rocket::http::Method;
+        let s = setup().await;
+        switch_on(&s).await;
+        let ticket = open(&s, &s.member_session).await;
+        let path = format!("/{}/claim", ticket.id());
+
+        // not its opener, not someone who cannot see it
+        let (status, body) = send(&s, &s.member_session, Method::Put, &path, json!({})).await;
+        assert_eq!(status, Status::BadRequest, "{body}");
+        let (status, body) = send(&s, &s.other_session, Method::Put, &path, json!({})).await;
+        assert_eq!(status, Status::NotFound, "{body}");
+
+        let (status, body) = send(&s, &s.staff_session, Method::Put, &path, json!({})).await;
+        assert_eq!(status, Status::Ok, "{body}");
+        assert_eq!(stored_ticket(&s, &ticket).await.claimed_by.as_deref(), Some(s.staff.id.as_str()));
+
+        let (status, body) = send(&s, &s.staff_session, Method::Delete, &path, json!({})).await;
+        assert_eq!(status, Status::Ok, "{body}");
+        assert_eq!(stored_ticket(&s, &ticket).await.claimed_by, None);
+    }
+
+    #[rocket::async_test]
+    async fn the_opener_rates_the_help_when_closing() {
+        let s = setup().await;
+        switch_on(&s).await;
+        let ticket = open(&s, &s.member_session).await;
+        let close = format!("/{}/close", ticket.id());
+
+        // out of range
+        let (status, body) = post(&s, &s.member_session, &close, json!({ "rating": 9 })).await;
+        assert_eq!(status, Status::BadRequest, "{body}");
+
+        let (status, body) = post(&s, &s.member_session, &close, json!({ "rating": 4 })).await;
+        assert_eq!(status, Status::Ok, "{body}");
+        assert_eq!(stored_ticket(&s, &ticket).await.rating, Some(4));
+
+        // a reopened ticket starts without a rating, and the staff cannot give one
+        let (status, _) = post(&s, &s.staff_session, &format!("/{}/reopen", ticket.id()), json!({})).await;
+        assert_eq!(status, Status::Ok);
+        assert_eq!(stored_ticket(&s, &ticket).await.rating, None);
+        let (status, _) = post(&s, &s.staff_session, &close, json!({ "rating": 5 })).await;
+        assert_eq!(status, Status::Ok);
+        assert_eq!(stored_ticket(&s, &ticket).await.rating, None);
+    }
+
+    #[rocket::async_test]
+    async fn a_ticket_type_has_its_own_roles() {
+        let s = setup().await;
+        let billing = s.harness.new_role(&s.server, 1, None).await;
+        let (_, biller_session, biller) = s.harness.new_user().await;
+        let server = s.harness.db.fetch_server(&s.server.id).await.unwrap();
+        join(&s.harness, &server, &biller, Some(&billing)).await;
+
+        // ids are unique, names are not empty, roles are this server's
+        for types in [
+            json!([{ "id": "a", "name": "A" }, { "id": "a", "name": "B" }]),
+            json!([{ "id": "a", "name": "  " }]),
+        ] {
+            let (status, body) = settings(&s, &s.owner, json!({ "enabled": true, "types": types })).await;
+            assert_eq!(status, Status::BadRequest, "{body}");
+        }
+        let (status, body) = settings(&s, &s.owner, json!({ "enabled": true, "types": [{ "id": "a", "name": "A", "staff_roles": ["NOROLE"] }] })).await;
+        assert_ne!(status, Status::Ok, "{body}");
+
+        let (status, body) = settings(
+            &s,
+            &s.owner,
+            json!({
+                "enabled": true,
+                "staff_roles": [s.staff_role.id],
+                "types": [
+                    { "id": "billing", "name": "Billing", "staff_roles": [billing.id] },
+                    { "id": "other", "name": "Something else" },
+                ],
+            }),
+        )
+        .await;
+        assert_eq!(status, Status::Ok, "{body}");
+
+        // an unknown type is refused
+        let (status, body) = post(&s, &s.member_session, "", json!({ "kind": "nope" })).await;
+        assert_eq!(status, Status::BadRequest, "{body}");
+
+        // a billing ticket: its own role answers, the general staff do not see it
+        let (status, body) = post(&s, &s.member_session, "", json!({ "kind": "billing" })).await;
+        assert_eq!(status, Status::Ok, "{body}");
+        let ticket: v0::Channel = serde_json::from_str(&body).unwrap();
+        let ticket: Channel = ticket.into();
+        assert_eq!(stored_ticket(&s, &ticket).await.kind.as_deref(), Some("Billing"));
+        assert!(can(&s, &biller, &ticket, ChannelPermission::ViewChannel).await);
+        assert!(!can(&s, &s.staff, &ticket, ChannelPermission::ViewChannel).await);
+        let _ = biller_session;
+
+        // a type without roles of its own falls back to the general staff
+        let (status, body) = post(&s, &s.other_session, "", json!({ "kind": "other" })).await;
+        assert_eq!(status, Status::Ok, "{body}");
+        let ticket: v0::Channel = serde_json::from_str(&body).unwrap();
+        let ticket: Channel = ticket.into();
+        assert!(can(&s, &s.staff, &ticket, ChannelPermission::ViewChannel).await);
+        assert!(!can(&s, &biller, &ticket, ChannelPermission::ViewChannel).await);
     }
 
     #[rocket::async_test]

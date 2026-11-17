@@ -1890,6 +1890,9 @@ impl From<crate::TicketInformation> for TicketInformation {
             opener: value.opener,
             number: value.number,
             closed: value.closed,
+            kind: value.kind,
+            claimed_by: value.claimed_by,
+            rating: value.rating,
         }
     }
 }
@@ -1900,6 +1903,9 @@ impl From<TicketInformation> for crate::TicketInformation {
             opener: value.opener,
             number: value.number,
             closed: value.closed,
+            kind: value.kind,
+            claimed_by: value.claimed_by,
+            rating: value.rating,
         }
     }
 }
@@ -1911,6 +1917,9 @@ impl From<crate::VoiceInformation> for VoiceInformation {
             stage: value.stage,
             maker: value.maker,
             temporary: value.temporary,
+            locked: value.locked,
+            hidden: value.hidden,
+            room_name: value.room_name,
         }
     }
 }
@@ -1922,6 +1931,9 @@ impl From<VoiceInformation> for crate::VoiceInformation {
             stage: value.stage,
             maker: value.maker,
             temporary: value.temporary,
+            locked: value.locked,
+            hidden: value.hidden,
+            room_name: value.room_name,
         }
     }
 }

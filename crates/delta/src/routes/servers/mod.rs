@@ -112,6 +112,8 @@ pub fn routes() -> (Vec<Route>, OpenApi) {
         tickets::open,
         tickets::close,
         tickets::reopen,
+        tickets::claim,
+        tickets::unclaim,
         lobby_answer::answer,
         lobby_answer::remove,
         vanity::claim,

@@ -180,6 +180,15 @@ auto_derived!(
         /// Closed: the member no longer sees it; the staff can reopen it
         #[serde(skip_serializing_if = "crate::if_false", default)]
         pub closed: bool,
+        /// Name of the ticket type it was opened as
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        pub kind: Option<String>,
+        /// The staff member who took it
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        pub claimed_by: Option<String>,
+        /// What its opener gave the help, 1 to 5
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        pub rating: Option<u8>,
     }
 
     /// Settings of a forum channel
@@ -215,6 +224,15 @@ auto_derived!(
         /// Temporary room: the member it was made for; removed when empty
         #[serde(skip_serializing_if = "Option::is_none", default)]
         pub temporary: Option<String>,
+        /// Temporary room: only the people let in can join
+        #[serde(skip_serializing_if = "crate::if_false", default)]
+        pub locked: bool,
+        /// Temporary room: only the people let in can see it
+        #[serde(skip_serializing_if = "crate::if_false", default)]
+        pub hidden: bool,
+        /// Room maker: how its rooms are named (`{name}` = the member)
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        pub room_name: Option<String>,
     }
 );
 
@@ -274,9 +292,15 @@ auto_derived!(
 fn client_voice(voice: v0::VoiceInformation) -> VoiceInformation {
     let mut voice: VoiceInformation = voice.into();
     voice.temporary = None;
+    voice.locked = false;
+    voice.hidden = false;
     if voice.stage {
         voice.maker = false;
     }
+    voice.room_name = voice
+        .room_name
+        .map(|name| name.trim().to_string())
+        .filter(|name| voice.maker && !name.is_empty());
     voice
 }
 

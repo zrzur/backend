@@ -192,6 +192,40 @@ auto_derived!(
         /// Closed: the member no longer sees it; the staff can reopen it
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "crate::if_false", default))]
         pub closed: bool,
+        /// Name of the ticket type it was opened as, when the server has types
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub kind: Option<String>,
+        /// The staff member who took it
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub claimed_by: Option<String>,
+        /// What its opener gave the help, 1 to 5, when they closed it
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub rating: Option<u8>,
+    }
+
+    /// Close a ticket
+    #[derive(Default)]
+    #[cfg_attr(feature = "validator", derive(validator::Validate))]
+    pub struct DataCloseTicket {
+        /// 1 to 5: how the opener found the help (kept only from the opener)
+        #[cfg_attr(feature = "validator", validate(range(min = 1, max = 5)))]
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub rating: Option<u8>,
+    }
+
+    /// Change a temporary room (its member, or someone who manages
+    /// permissions there)
+    #[derive(Default)]
+    pub struct DataEditRoom {
+        /// Locked: only the people already let in can join
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub locked: Option<bool>,
+        /// Hidden: only the people already let in can see it
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub hidden: Option<bool>,
+        /// Hand the room to someone who is in it
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub owner: Option<String>,
     }
 
     /// Open a ticket
@@ -202,6 +236,9 @@ auto_derived!(
         #[cfg_attr(feature = "validator", validate(length(min = 1, max = 100)))]
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
         pub subject: Option<String>,
+        /// Id of one of the server's ticket types
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub kind: Option<String>,
     }
 
     /// Settings of a forum channel
@@ -302,6 +339,19 @@ auto_derived!(
         /// the last person leaves it. Set by the server only
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
         pub temporary: Option<String>,
+        /// Temporary room: locked, only the people let in can join. Set
+        /// through `PATCH /channels/{target}/room`
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "crate::if_false", default))]
+        pub locked: bool,
+        /// Temporary room: hidden, only the people let in can see it. Set
+        /// through `PATCH /channels/{target}/room`
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "crate::if_false", default))]
+        pub hidden: bool,
+        /// Room maker: how its rooms are named; `{name}` stands for the
+        /// member (at most 32 characters; none: the member's name alone)
+        #[cfg_attr(feature = "validator", validate(length(max = 32)))]
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub room_name: Option<String>,
     }
 
     /// Change of a voice channel's voice information
@@ -320,6 +370,11 @@ auto_derived!(
         /// stage or a temporary room)
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
         pub maker: Option<bool>,
+        /// Room maker: how its rooms are named, `{name}` stands for the
+        /// member; an empty text goes back to the member's name alone
+        #[cfg_attr(feature = "validator", validate(length(max = 32)))]
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub room_name: Option<String>,
     }
 
     /// What changed on a stage (sent as `StageUpdate`)

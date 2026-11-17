@@ -260,6 +260,21 @@ auto_derived!(
         /// Tickets opened so far. Set by the server only
         #[cfg_attr(feature = "serde", serde(default))]
         pub opened: u32,
+        /// Kinds of ticket a member chooses from (at most 5; none: one kind)
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Vec::is_empty", default))]
+        pub types: Vec<TicketType>,
+    }
+
+    /// A kind of ticket
+    #[derive(Default)]
+    pub struct TicketType {
+        /// Unique id within the server (1-32 characters)
+        pub id: String,
+        /// Shown name (1-32 characters)
+        pub name: String,
+        /// Roles that answer this kind; none: the server's ticket roles
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Vec::is_empty", default))]
+        pub staff_roles: Vec<String>,
     }
 
     /// A server's welcome page: what the server is about, where to start,

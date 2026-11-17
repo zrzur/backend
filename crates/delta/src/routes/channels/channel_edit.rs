@@ -309,6 +309,14 @@ pub async fn edit(
                 if let Some(maker) = edit.maker {
                     new_voice.maker = maker;
                 }
+                if let Some(room_name) = edit.room_name {
+                    let room_name = room_name.trim().to_string();
+                    new_voice.room_name = (!room_name.is_empty()).then_some(room_name);
+                }
+                // only a room maker names rooms
+                if !new_voice.maker {
+                    new_voice.room_name = None;
+                }
                 // a stage or a member's temporary room makes no rooms
                 if new_voice.maker && (new_voice.stage || new_voice.temporary.is_some()) {
                     return Err(create_error!(InvalidOperation));

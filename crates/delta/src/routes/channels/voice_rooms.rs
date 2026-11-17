@@ -5,10 +5,13 @@ use revolt_database::{
     events::client::EventV1,
     util::{permissions::perms, reference::Reference},
     voice::{
-        channel_older_than, remove_temporary_room_if_empty, temporary_room_owner,
+        channel_older_than, get_voice_channel_members, give_temporary_room,
+        remove_temporary_room_if_empty, sync_voice_permissions, temporary_room_owner,
+        UserVoiceChannel, VoiceClient, ROOM_GUEST_PERMISSIONS, ROOM_OWNER_PERMISSIONS,
         UNUSED_ROOM_SECS,
     },
-    Channel, Database, PartialServer, User, VoiceInformation,
+    Channel, Database, FieldsChannel, PartialChannel, PartialServer, Server, User,
+    VoiceInformation,
 };
 use revolt_models::v0;
 use revolt_permissions::{calculate_channel_permissions, ChannelPermission, OverrideField};
@@ -16,10 +19,8 @@ use revolt_result::{create_error, Result};
 use rocket::{serde::json::Json, State};
 use ulid::Ulid;
 
-/// What the member a room was made for may do in it, on top of their own
-/// permissions: rename it, set its user limit, remove it, and move people out
-const ROOM_OWNER: i64 =
-    ChannelPermission::ManageChannel as i64 | ChannelPermission::MoveMembers as i64;
+/// People a room's member can let into it while it is locked or hidden
+const MAX_GUESTS: usize = 25;
 
 /// # Make a Room
 ///
@@ -104,10 +105,16 @@ pub async fn make_room(
         .and_then(|member| member.nickname);
     let name: String = nickname
         .or_else(|| user.display_name.clone())
-        .unwrap_or_else(|| user.username.clone())
-        .chars()
-        .take(32)
-        .collect();
+        .unwrap_or_else(|| user.username.clone());
+    // the room maker's own wording, when it has one
+    let name: String = match &maker_voice.room_name {
+        Some(template) if template.contains("{name}") => template.replace("{name}", &name),
+        Some(template) => format!("{template} {name}"),
+        None => name,
+    }
+    .chars()
+    .take(32)
+    .collect();
 
     let id = Ulid::new().to_string();
     let room = Channel::TextChannel {
@@ -124,7 +131,7 @@ pub async fn make_room(
         member_permissions: HashMap::from([(
             user.id.clone(),
             OverrideField {
-                a: ROOM_OWNER,
+                a: ROOM_OWNER_PERMISSIONS,
                 d: 0,
             },
         )]),
@@ -134,6 +141,9 @@ pub async fn make_room(
             stage: false,
             maker: false,
             temporary: Some(user.id.clone()),
+            locked: false,
+            hidden: false,
+            room_name: None,
         }),
         slowmode: None,
         announcement: false,
@@ -193,14 +203,198 @@ pub async fn make_room(
     Ok(Json(room.into()))
 }
 
+/// A temporary room, for the member it was made for or someone who manages
+/// permissions in it
+async fn room_of(
+    db: &Database,
+    user: &User,
+    target: Reference<'_>,
+) -> Result<(Channel, VoiceInformation, Server)> {
+    let channel = target.as_channel(db).await?;
+    let Channel::TextChannel {
+        server,
+        voice: Some(voice),
+        ..
+    } = &channel
+    else {
+        return Err(create_error!(NotAVoiceChannel));
+    };
+    let Some(owner) = &voice.temporary else {
+        return Err(create_error!(InvalidOperation));
+    };
+    let voice = voice.clone();
+    if owner != &user.id {
+        let mut query = perms(db, user).channel(&channel);
+        calculate_channel_permissions(&mut query)
+            .await
+            .throw_if_lacking_channel_permission(ChannelPermission::ManagePermissions)?;
+    }
+    let server = db.fetch_server(server).await?;
+    Ok((channel, voice, server))
+}
+
+/// People in the call get the room's new permissions at once. Best effort:
+/// the change itself is stored, and the next join applies it anyway.
+async fn apply_in_call(db: &Database, voice_client: &VoiceClient, channel: &Channel, server: &Server) {
+    if let Err(error) = sync_voice_permissions(db, voice_client, channel, Some(server), None).await {
+        log::warn!("room {}: permissions not applied in the call: {error:?}", channel.id());
+    }
+}
+
+/// # Change a Room
+///
+/// Locks, hides or hands over a temporary room. Locked: only the people let
+/// in (`PUT /channels/{target}/room/guests/{member}`) can join; hidden: only
+/// they can see it. People already in the room stay. `owner` hands the room
+/// to someone who is in it. For the member the room was made for, or someone
+/// who manages permissions in it.
+#[openapi(tag = "Voice")]
+#[patch("/<target>/room", data = "<data>")]
+pub async fn edit_room(
+    db: &State<Database>,
+    voice_client: &State<VoiceClient>,
+    user: User,
+    target: Reference<'_>,
+    data: Json<v0::DataEditRoom>,
+) -> Result<Json<v0::Channel>> {
+    let data = data.into_inner();
+    let (mut channel, mut voice, server) = room_of(db, &user, target).await?;
+
+    if data.locked.is_some() || data.hidden.is_some() {
+        // the room stops following its category: the lock is its own
+        channel.unsync_permissions(db, &server).await?;
+        let Channel::TextChannel {
+            default_permissions,
+            ..
+        } = &channel
+        else {
+            return Err(create_error!(InvalidOperation));
+        };
+        let mut permissions = default_permissions.unwrap_or(OverrideField { a: 0, d: 0 });
+        let mut set = |on: bool, bit: i64| {
+            if on {
+                permissions.a &= !bit;
+                permissions.d |= bit;
+            } else {
+                permissions.d &= !bit;
+            }
+        };
+        if let Some(locked) = data.locked {
+            set(locked, ChannelPermission::Connect as i64);
+            voice.locked = locked;
+        }
+        if let Some(hidden) = data.hidden {
+            set(hidden, ChannelPermission::ViewChannel as i64);
+            voice.hidden = hidden;
+        }
+        let empty = permissions.a == 0 && permissions.d == 0;
+        channel
+            .update(
+                db,
+                PartialChannel {
+                    default_permissions: (!empty).then_some(permissions),
+                    voice: Some(voice.clone()),
+                    ..Default::default()
+                },
+                if empty {
+                    vec![FieldsChannel::DefaultPermissions]
+                } else {
+                    vec![]
+                },
+            )
+            .await?;
+    }
+
+    if let Some(owner) = data.owner {
+        // only to someone who is in the room right now
+        let inside = get_voice_channel_members(&UserVoiceChannel::from_channel(&channel))
+            .await?
+            .unwrap_or_default();
+        if !inside.contains(&owner) {
+            return Err(create_error!(InvalidOperation));
+        }
+        if db.fetch_user(&owner).await?.bot.is_some() {
+            return Err(create_error!(IsBot));
+        }
+        give_temporary_room(db, &mut channel, &owner).await?;
+    }
+
+    apply_in_call(db, voice_client, &channel, &server).await;
+    Ok(Json(channel.into()))
+}
+
+/// # Let Someone into a Room
+///
+/// Lets a member of the server see and join a temporary room while it is
+/// locked or hidden (at most 25 people).
+#[openapi(tag = "Voice")]
+#[put("/<target>/room/guests/<member>")]
+pub async fn add_room_guest(
+    db: &State<Database>,
+    voice_client: &State<VoiceClient>,
+    user: User,
+    target: Reference<'_>,
+    member: String,
+) -> Result<Json<v0::Channel>> {
+    let (mut channel, voice, server) = room_of(db, &user, target).await?;
+    db.fetch_member(&server.id, &member).await?;
+    if voice.temporary.as_deref() == Some(member.as_str()) {
+        return Ok(Json(channel.into()));
+    }
+    if let Channel::TextChannel {
+        member_permissions, ..
+    } = &channel
+    {
+        if !member_permissions.contains_key(&member) && member_permissions.len() > MAX_GUESTS {
+            return Err(create_error!(InvalidOperation));
+        }
+    }
+    channel
+        .set_member_permission(
+            db,
+            &member,
+            OverrideField {
+                a: ROOM_GUEST_PERMISSIONS,
+                d: 0,
+            },
+        )
+        .await?;
+    apply_in_call(db, voice_client, &channel, &server).await;
+    Ok(Json(channel.into()))
+}
+
+/// # Take Someone off a Room's Guests
+///
+/// Takes back what `PUT /channels/{target}/room/guests/{member}` gave. The
+/// member stays in the room if they are in it.
+#[openapi(tag = "Voice")]
+#[delete("/<target>/room/guests/<member>")]
+pub async fn remove_room_guest(
+    db: &State<Database>,
+    voice_client: &State<VoiceClient>,
+    user: User,
+    target: Reference<'_>,
+    member: String,
+) -> Result<Json<v0::Channel>> {
+    let (mut channel, voice, server) = room_of(db, &user, target).await?;
+    if voice.temporary.as_deref() == Some(member.as_str()) {
+        return Err(create_error!(InvalidOperation));
+    }
+    channel
+        .set_member_permission(db, &member, OverrideField { a: 0, d: 0 })
+        .await?;
+    apply_in_call(db, voice_client, &channel, &server).await;
+    Ok(Json(channel.into()))
+}
+
 #[cfg(test)]
 mod test {
     use crate::{rocket, util::test::TestHarness};
     use revolt_database::{
         iso8601_timestamp::Timestamp,
         voice::{
-            create_voice_state, delete_voice_state, remove_temporary_room_if_empty,
-            set_channel_node, UserVoiceChannel,
+            create_voice_state, delete_voice_state, hand_over_temporary_room,
+            remove_temporary_room_if_empty, set_channel_node, UserVoiceChannel,
         },
         util::permissions::DatabasePermissionQuery,
         Channel, Member, PartialChannel, Server, Session, User, VoiceInformation,
@@ -343,6 +537,147 @@ mod test {
         // the room maker itself is never removed
         assert!(!remove_temporary_room_if_empty(&harness.db, &maker).await.unwrap());
         assert!(harness.db.fetch_channel(maker.id()).await.is_ok());
+    }
+
+    async fn patch_room(
+        harness: &TestHarness,
+        session: &Session,
+        room: &Channel,
+        body: serde_json::Value,
+    ) -> (Status, String) {
+        let response = harness
+            .client
+            .patch(format!("/channels/{}/room", room.id()))
+            .header(ContentType::JSON)
+            .header(Header::new("x-session-token", session.token.to_string()))
+            .body(body.to_string())
+            .dispatch()
+            .await;
+        let status = response.status();
+        (status, response.into_string().await.unwrap_or_default())
+    }
+
+    #[rocket::async_test]
+    async fn a_locked_or_hidden_room_is_for_its_member_and_their_guests() {
+        let (harness, server, maker, owner_session, _, member_session, member) = setup().await;
+        let made = room(&harness, &member_session, &maker).await;
+        let (_, other_session, other) = harness.new_user().await;
+        let (_, _, guest) = harness.new_user().await;
+        for user in [&other, &guest] {
+            Member::create(&harness.db, &server, user, None).await.unwrap();
+        }
+
+        // someone else in the server has no say over the room
+        let (status, body) = patch_room(&harness, &other_session, &made, json!({ "locked": true })).await;
+        assert_eq!(status, Status::Forbidden, "{body}");
+
+        let (status, body) = patch_room(&harness, &member_session, &made, json!({ "locked": true })).await;
+        assert_eq!(status, Status::Ok, "{body}");
+        assert!(harness.db.fetch_channel(made.id()).await.unwrap().voice().unwrap().locked);
+        assert!(can(&harness, &other, &made, ChannelPermission::ViewChannel).await);
+        assert!(!can(&harness, &other, &made, ChannelPermission::Connect).await);
+        assert!(can(&harness, &member, &made, ChannelPermission::Connect).await);
+
+        // a guest is let in; the others stay out
+        let response = harness
+            .client
+            .put(format!("/channels/{}/room/guests/{}", made.id(), guest.id))
+            .header(Header::new("x-session-token", member_session.token.to_string()))
+            .dispatch()
+            .await;
+        assert_eq!(response.status(), Status::Ok);
+        assert!(can(&harness, &guest, &made, ChannelPermission::Connect).await);
+        assert!(!can(&harness, &other, &made, ChannelPermission::Connect).await);
+
+        // hidden as well: gone for the others, there for the guest
+        let (status, body) = patch_room(&harness, &member_session, &made, json!({ "hidden": true })).await;
+        assert_eq!(status, Status::Ok, "{body}");
+        assert!(!can(&harness, &other, &made, ChannelPermission::ViewChannel).await);
+        assert!(can(&harness, &guest, &made, ChannelPermission::ViewChannel).await);
+        assert!(can(&harness, &member, &made, ChannelPermission::ViewChannel).await);
+
+        // the guest is taken off again
+        let response = harness
+            .client
+            .delete(format!("/channels/{}/room/guests/{}", made.id(), guest.id))
+            .header(Header::new("x-session-token", member_session.token.to_string()))
+            .dispatch()
+            .await;
+        assert_eq!(response.status(), Status::Ok);
+        assert!(!can(&harness, &guest, &made, ChannelPermission::ViewChannel).await);
+
+        // open again: as it was, with nothing left on the channel
+        let (status, body) = patch_room(
+            &harness,
+            &member_session,
+            &made,
+            json!({ "locked": false, "hidden": false }),
+        )
+        .await;
+        assert_eq!(status, Status::Ok, "{body}");
+        assert!(can(&harness, &other, &made, ChannelPermission::Connect).await);
+        let stored = harness.db.fetch_channel(made.id()).await.unwrap();
+        let voice = stored.voice().unwrap().into_owned();
+        assert!(!voice.locked && !voice.hidden);
+
+        // the server's owner manages permissions, so they may lock it too;
+        // a plain channel or the room maker is no room
+        let (status, _) = patch_room(&harness, &owner_session, &made, json!({ "locked": true })).await;
+        assert_eq!(status, Status::Ok);
+        let (status, body) = patch_room(&harness, &owner_session, &maker, json!({ "locked": true })).await;
+        assert_eq!(status, Status::BadRequest, "{body}");
+    }
+
+    #[rocket::async_test]
+    async fn a_room_is_handed_over_by_its_member_or_when_they_leave() {
+        let (harness, server, maker, _, owner, member_session, member) = setup().await;
+        let made = room(&harness, &member_session, &maker).await;
+        let (_, _, late) = harness.new_user().await;
+        Member::create(&harness.db, &server, &late, None).await.unwrap();
+
+        // not to someone who is not in the room
+        let (status, body) = patch_room(&harness, &member_session, &made, json!({ "owner": owner.id })).await;
+        assert_eq!(status, Status::BadRequest, "{body}");
+
+        let seat = sit_in(&made, &member.id).await;
+        sit_in(&made, &owner.id).await;
+        let (status, body) = patch_room(&harness, &member_session, &made, json!({ "owner": owner.id })).await;
+        assert_eq!(status, Status::Ok, "{body}");
+        let stored = harness.db.fetch_channel(made.id()).await.unwrap();
+        assert_eq!(stored.voice().unwrap().temporary.as_deref(), Some(owner.id.as_str()));
+        // the member before no longer manages it
+        assert!(!can(&harness, &member, &made, ChannelPermission::ManageChannel).await);
+
+        // the new member leaves while others are inside: the one who has
+        // been there longest gets the room
+        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+        sit_in(&made, &late.id).await;
+        delete_voice_state(&seat, &owner.id).await.unwrap();
+        let next = hand_over_temporary_room(&harness.db, &stored, &owner.id).await.unwrap();
+        assert_eq!(next.as_deref(), Some(member.id.as_str()));
+        assert!(can(&harness, &member, &made, ChannelPermission::ManageChannel).await);
+
+        // someone else leaving changes nothing
+        let stored = harness.db.fetch_channel(made.id()).await.unwrap();
+        assert_eq!(hand_over_temporary_room(&harness.db, &stored, &late.id).await.unwrap(), None);
+    }
+
+    #[rocket::async_test]
+    async fn rooms_are_named_as_the_room_maker_says() {
+        let (harness, _, maker, owner_session, _, member_session, member) = setup().await;
+        let response = harness
+            .client
+            .patch(format!("/channels/{}", maker.id()))
+            .header(ContentType::JSON)
+            .header(Header::new("x-session-token", owner_session.token.to_string()))
+            .body(json!({ "voice": { "room_name": "Room of {name}" } }).to_string())
+            .dispatch()
+            .await;
+        assert_eq!(response.status(), Status::Ok);
+
+        let made = room(&harness, &member_session, &maker).await;
+        let expected: String = format!("Room of {}", member.username).chars().take(32).collect();
+        assert!(matches!(&made, Channel::TextChannel { name, .. } if name == &expected));
     }
 
     #[rocket::async_test]
