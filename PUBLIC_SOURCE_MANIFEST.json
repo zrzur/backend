@@ -2914,8 +2914,8 @@
     },
     {
       "path": "crates/core/database/src/models/users/model.rs",
-      "sha256": "6742367f69b58fe2cfdcf8eae1e2966147322afb6571dd06b8db141419415be9",
-      "bytes": 57843,
+      "sha256": "cb4540d39c3d4254b1e25cd2423964e3002a68a83ef17f4ee1b0cddc0cf1643b",
+      "bytes": 61376,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -2926,20 +2926,20 @@
     },
     {
       "path": "crates/core/database/src/models/users/ops.rs",
-      "sha256": "ceae2bdbb36f74dd4bbadd2eb7f5a98100699a8e392d5ebb6ef5176db8b130ea",
-      "bytes": 3016,
+      "sha256": "480b44d68ca17d7ecb16126024ca018c007b6fcba16663a399144f6759964dad",
+      "bytes": 3176,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/database/src/models/users/ops/mongodb.rs",
-      "sha256": "3ac9240a7cadd4f10439d4dbbfdda64c48a596d7db27ac58fa2f1390df3ea8ed",
-      "bytes": 15170,
+      "sha256": "7670333fd5ce114f4bff997fe7ff184e349eef509ebea8a24cfd962552125700",
+      "bytes": 16347,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/database/src/models/users/ops/reference.rs",
-      "sha256": "4ad4108e31e68008018b13c2f7bd9fa8a35ac60e56380409fa8d42b720a23970",
-      "bytes": 8892,
+      "sha256": "961b58cc07ae08fa7a9cb49c17f7213d16e17b1b31a0f05cf0dc47c815c64fc4",
+      "bytes": 9375,
       "category": "product-source-or-build-manifest"
     },
     {
