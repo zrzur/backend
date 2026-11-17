@@ -2914,8 +2914,8 @@
     },
     {
       "path": "crates/core/database/src/models/users/model.rs",
-      "sha256": "b5137dd48c20abfbd69fd4f19a6639d46b83767123818566e0358c8ae53c8ac4",
-      "bytes": 51129,
+      "sha256": "6742367f69b58fe2cfdcf8eae1e2966147322afb6571dd06b8db141419415be9",
+      "bytes": 57843,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6028,8 +6028,8 @@
     },
     {
       "path": "crates/delta/src/routes/users/send_friend_request.rs",
-      "sha256": "bf4a11b66b56f255f4a7277dbd9718caffcd01175bbb2bfe6c4303bf972ae0b6",
-      "bytes": 976,
+      "sha256": "f258ba922c182342c0b50b34ae866568e83d581cdd9f5a50637e1f0484dd885a",
+      "bytes": 1222,
       "category": "product-source-or-build-manifest"
     },
     {
