@@ -104,7 +104,7 @@ async fn names(db: &Database, mut ids: Vec<String>) -> Result<HashMap<String, St
         .fetch_users(&ids)
         .await?
         .into_iter()
-        .map(|u| (u.id, format!("{}#{}", u.username, u.discriminator)))
+        .map(|u| (u.id, revolt_models::v0::user_handle(&u.username, &u.discriminator)))
         .collect())
 }
 
@@ -522,7 +522,7 @@ pub async fn send(
         db.set_platform_notice_delivery(&notice.id, emailed, pushed).await?;
     }
     Ok(Json(StaffNotice {
-        user: subject.map(|u| format!("{}#{}", u.username, u.discriminator)),
+        user: subject.map(|u| revolt_models::v0::user_handle(&u.username, &u.discriminator)),
         live: true,
         notice: PlatformNotice { emailed, pushed, ..notice },
     }))

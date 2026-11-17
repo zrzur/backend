@@ -204,7 +204,12 @@ async fn main() {
             let (bot, user) = create_system_bot(&db, name, &owner)
                 .await
                 .unwrap_or_else(|e| fail(format!("{e:?}")));
-            println!("{} ({}#{}) token: {}", user.id, user.username, user.discriminator, bot.token);
+            println!(
+                "{} ({}) token: {}",
+                user.id,
+                revolt_models::v0::user_handle(&user.username, &user.discriminator),
+                bot.token
+            );
         }
         ("official-bot", Some(user)) | ("official-bot-off", Some(user)) => {
             let mark = command == "official-bot";

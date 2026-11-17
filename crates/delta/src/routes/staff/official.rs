@@ -64,7 +64,7 @@ fn status_of(request: &OfficialMarkRequest, now: i64) -> &'static str {
 }
 
 async fn name_of(db: &Database, id: &str) -> Option<String> {
-    db.fetch_user(id).await.ok().map(|user| format!("{}#{}", user.username, user.discriminator))
+    db.fetch_user(id).await.ok().map(|user| revolt_models::v0::user_handle(&user.username, &user.discriminator))
 }
 
 async fn view(db: &Database, request: &OfficialMarkRequest, now: i64) -> OfficialRequestView {

@@ -33,8 +33,9 @@ pub trait AbstractUsers: Sync + Send {
     /// Fetch all discriminators in use for a username
     async fn fetch_discriminators_in_use(&self, username: &str) -> Result<Vec<String>>;
 
-    /// The same, for people only: bots with that name are left out
-    async fn fetch_discriminators_of_people(&self, username: &str) -> Result<Vec<String>>;
+    /// The people (not bots) who hold a username in any capitals, as
+    /// `(id, discriminator)`
+    async fn fetch_people_with_username(&self, username: &str) -> Result<Vec<(String, String)>>;
 
     /// Fetch ids of users that both users are friends with
     async fn fetch_mutual_user_ids(&self, user_a: &str, user_b: &str) -> Result<Vec<String>>;

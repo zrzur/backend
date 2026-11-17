@@ -90,15 +90,14 @@ impl AbstractUsers for ReferenceDb {
             .collect())
     }
 
-    /// The same, for people only: bots with that name are left out
-    async fn fetch_discriminators_of_people(&self, username: &str) -> Result<Vec<String>> {
+    /// The people (not bots) who hold a username in any capitals
+    async fn fetch_people_with_username(&self, username: &str) -> Result<Vec<(String, String)>> {
         let users = self.users.lock().await;
         let lowercase = username.to_lowercase();
         Ok(users
             .values()
             .filter(|user| user.bot.is_none() && user.username.to_lowercase() == lowercase)
-            .map(|user| &user.discriminator)
-            .cloned()
+            .map(|user| (user.id.clone(), user.discriminator.clone()))
             .collect())
     }
 

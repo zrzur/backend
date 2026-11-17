@@ -209,13 +209,7 @@ auto_derived!(
     }
 );
 
-/// The tag of a person's account whose username is its own: no other person
-/// holds that name (upper and lower case count as the same), so the name
-/// alone finds it and the apps show no tag. Accounts made before unique
-/// usernames keep the four-digit tag they had until their owner picks a
-/// name. Bots are not part of this: a bot always has a four-digit tag and may
-/// share its name with other bots and with a person.
-pub const UNIQUE_DISCRIMINATOR: &str = "0000";
+pub use revolt_models::v0::UNIQUE_DISCRIMINATOR;
 
 pub static DISCRIMINATOR_SEARCH_SPACE: Lazy<HashSet<String>> = Lazy::new(|| {
     let mut set = (2..9999)
@@ -724,22 +718,20 @@ impl User {
         username: &str,
         claimant: Option<&User>,
     ) -> Result<String> {
-        let mut held_by_others = db.fetch_discriminators_of_people(username).await?;
-        let keeps_own_name = claimant
-            .is_some_and(|user| user.username.to_lowercase() == username.to_lowercase());
-
-        if let (true, Some(user)) = (keeps_own_name, claimant) {
-            if let Some(own) = held_by_others
-                .iter()
-                .position(|discriminator| discriminator == &user.discriminator)
-            {
-                held_by_others.swap_remove(own);
-            }
-        }
+        // the database decides which names are the same name, so the
+        // claimant is found among the holders by id, not by comparing text
+        let holders = db.fetch_people_with_username(username).await?;
+        let keeps_own_name =
+            claimant.is_some_and(|user| holders.iter().any(|(id, _)| id == &user.id));
+        let held_by_others: Vec<&String> = holders
+            .iter()
+            .filter(|(id, _)| claimant.is_none_or(|user| id != &user.id))
+            .map(|(_, discriminator)| discriminator)
+            .collect();
 
         let owned = held_by_others
             .iter()
-            .any(|discriminator| discriminator == UNIQUE_DISCRIMINATOR);
+            .any(|discriminator| discriminator.as_str() == UNIQUE_DISCRIMINATOR);
         if owned || (!keeps_own_name && !held_by_others.is_empty()) {
             return Err(create_error!(UsernameTaken));
         }

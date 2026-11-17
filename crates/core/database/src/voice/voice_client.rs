@@ -91,7 +91,7 @@ impl VoiceClient {
             && permissions.has_channel_permission(ChannelPermission::Listen);
 
         AccessToken::with_api_key(&room.node.key, &room.node.secret)
-            .with_name(&format!("{}#{}", user.username, user.discriminator))
+            .with_name(&revolt_models::v0::user_handle(&user.username, &user.discriminator))
             .with_identity(&user.id)
             .with_metadata(
                 &serde_json::to_string(&user.clone().into(db, None).await).to_internal_error()?,

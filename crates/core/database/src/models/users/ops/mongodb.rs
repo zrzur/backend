@@ -130,10 +130,12 @@ impl AbstractUsers for MongoDb {
             .collect::<Vec<String>>())
     }
 
-    /// The same, for people only: bots with that name are left out
-    async fn fetch_discriminators_of_people(&self, username: &str) -> Result<Vec<String>> {
+    /// The people (not bots) who hold a username in any capitals
+    async fn fetch_people_with_username(&self, username: &str) -> Result<Vec<(String, String)>> {
         #[derive(Deserialize)]
         struct UserDocument {
+            #[serde(rename = "_id")]
+            id: String,
             discriminator: String,
         }
 
@@ -151,7 +153,7 @@ impl AbstractUsers for MongoDb {
                             .strength(CollationStrength::Secondary)
                             .build(),
                     )
-                    .projection(doc! { "_id": 0, "discriminator": 1 })
+                    .projection(doc! { "_id": 1, "discriminator": 1 })
                     .build(),
             )
             .await
@@ -160,8 +162,8 @@ impl AbstractUsers for MongoDb {
             .collect::<Vec<UserDocument>>()
             .await
             .into_iter()
-            .map(|user| user.discriminator)
-            .collect::<Vec<String>>())
+            .map(|user| (user.id, user.discriminator))
+            .collect())
     }
 
     /// Fetch ids of users that both users are friends with

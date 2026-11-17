@@ -251,7 +251,7 @@ pub async fn message_evidence(db: &Database, message: &Message, now: i64) -> Res
 pub(crate) fn user_evidence(user: &User, facet: Option<SafetyProfileFacet>, now: i64) -> SafetyEvidence {
     let mut snap = evidence(SafetyTargetKind::User, &user.id, now);
     snap.author_id = Some(user.id.clone());
-    snap.title = Some(format!("{}#{}", user.username, user.discriminator));
+    snap.title = Some(revolt_models::v0::user_handle(&user.username, &user.discriminator));
     snap.content = user
         .profile
         .as_ref()

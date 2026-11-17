@@ -402,7 +402,7 @@ fn server_row(server: &Server, owners: &[User]) -> ServerRow {
         owner_username: owners
             .iter()
             .find(|u| u.id == server.owner)
-            .map(|u| format!("{}#{}", u.username, u.discriminator)),
+            .map(|u| revolt_models::v0::user_handle(&u.username, &u.discriminator)),
         created_at: created_at(&server.id),
         channels: server.channels.len(),
         roles: server.roles.len(),

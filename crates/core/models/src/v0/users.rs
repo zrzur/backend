@@ -921,3 +921,30 @@ mod nameplate_list_tests {
         assert!(!USER_STYLE_RETIRED_NAMEPLATES.contains(&"flag-il"));
     }
 }
+
+/// The tag of a person's account that owns its username: the name alone
+/// finds it and no tag is shown. Bots, and accounts from before unique
+/// usernames, carry a four-digit tag instead.
+pub const UNIQUE_DISCRIMINATOR: &str = "0000";
+
+/// What people type to find an account: `name`, or `name#1234` for an
+/// account that carries a number tag
+pub fn user_handle(username: &str, discriminator: &str) -> String {
+    if discriminator == UNIQUE_DISCRIMINATOR || discriminator.is_empty() {
+        username.to_string()
+    } else {
+        format!("{username}#{discriminator}")
+    }
+}
+
+#[cfg(test)]
+mod handle_tests {
+    use super::{user_handle, UNIQUE_DISCRIMINATOR};
+
+    #[test]
+    fn handle_shows_a_tag_only_when_there_is_one() {
+        assert_eq!("layla", user_handle("layla", UNIQUE_DISCRIMINATOR));
+        assert_eq!("omar#1151", user_handle("omar", "1151"));
+        assert_eq!("omar", user_handle("omar", ""));
+    }
+}

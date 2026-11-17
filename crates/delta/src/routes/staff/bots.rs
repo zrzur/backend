@@ -106,7 +106,7 @@ async fn rows(db: &Database, bots: Vec<revolt_database::Bot>) -> Result<Vec<BotR
             BotRow {
                 username: user.map(|u| u.username.clone()),
                 discriminator: user.map(|u| u.discriminator.clone()),
-                owner_username: find(&bot.owner).map(|u| format!("{}#{}", u.username, u.discriminator)),
+                owner_username: find(&bot.owner).map(|u| revolt_models::v0::user_handle(&u.username, &u.discriminator)),
                 owner_id: bot.owner,
                 public: bot.public,
                 discoverable: bot.discoverable,
