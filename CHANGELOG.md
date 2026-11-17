@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Temporary voice rooms and tickets (2026-11-17)
+
+- **Room maker.** `VoiceInformation.maker` marks a voice channel as a room maker (set with `PATCH /channels/{target}`, `voice.maker`; Manage Channel; not for a stage). New `POST /channels/{target}/rooms` (Connect in the room maker; not for bots) answers with a voice channel made for the member: placed right after the room maker, with its permissions and user limit, named after the member, who gets Manage Channel and Move Members in it. `VoiceInformation.temporary` holds that member's id and is set by the server only. A member has one room per server: asking again returns it. The room is removed when the last person leaves it (voice-ingress, `participant_left`), or a minute after it was made if nobody joined.
+- **Tickets.** `Server.tickets` (`ServerTickets`: `enabled`, `category`, `staff_roles` up to 10, `message` up to 500 characters, `opened`) is set through `PATCH /servers/{target}` (Manage Server; `opened` is the server's to keep; removed with `remove: ["Tickets"]`). New `POST /servers/{target}/tickets` (`DataOpenServerTicket`: `subject`; members only, not bots) opens a text channel `ticket-0001` hidden from everyone except its opener, the staff roles and the people who see every channel; `Channel.ticket` (`TicketInformation`: `opener`, `number`, `closed`) marks it. One open ticket per member (asking again returns it) and at most 3 an hour (`RateLimited`). New `POST /servers/{target}/tickets/{channel}/close` (the opener or anyone else who sees the ticket): the opener loses access and the channel is renamed `closed-0001`; `.../reopen` (staff) gives it back. A closed ticket is deleted like any channel.
+- No data migration: all new fields are optional and absent on stored documents.
+
 ### Design pack (2026-11-16)
 
 - The user style allow-lists accept the design pack: 125 decorations, 67 nameplates and 58 effects added to `USER_STYLE_DECORATIONS`, `USER_STYLE_NAMEPLATES` and `USER_STYLE_EFFECTS`, in the same order as the web client. No route, event or data shape changes.

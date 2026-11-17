@@ -220,6 +220,7 @@ impl IntoDocumentPath for FieldsServer {
             FieldsServer::RulesScreening => "rules_screening_since",
             FieldsServer::Stats => "stats",
             FieldsServer::Lobby => "lobby",
+            FieldsServer::Tickets => "tickets",
             FieldsServer::VanityInvite => "vanity_invite",
         })
     }

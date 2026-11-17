@@ -306,6 +306,13 @@ pub async fn edit(
                 if let Some(stage) = edit.stage {
                     new_voice.stage = stage;
                 }
+                if let Some(maker) = edit.maker {
+                    new_voice.maker = maker;
+                }
+                // a stage or a member's temporary room makes no rooms
+                if new_voice.maker && (new_voice.stage || new_voice.temporary.is_some()) {
+                    return Err(create_error!(InvalidOperation));
+                }
                 *voice = Some(new_voice.clone());
                 partial.voice = Some(new_voice);
             }

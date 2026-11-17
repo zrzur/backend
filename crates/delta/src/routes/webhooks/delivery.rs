@@ -301,6 +301,7 @@ async fn create_thread(
             ..Default::default()
         }),
         forum: None,
+        ticket: None,
     };
     db.insert_channel(&thread).await?;
     EventV1::ChannelCreate(thread.clone().into())

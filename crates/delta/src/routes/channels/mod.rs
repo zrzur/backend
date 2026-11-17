@@ -39,6 +39,7 @@ mod stage_tests;
 mod threads;
 mod typing;
 mod voice_join;
+mod voice_rooms;
 mod voice_state;
 mod voice_stop_ring;
 pub(crate) mod webhook_create;
@@ -86,6 +87,7 @@ pub fn routes() -> (Vec<Route>, OpenApi) {
         group_add_member::add_member,
         group_remove_member::remove_member,
         voice_join::call,
+        voice_rooms::make_room,
         voice_stop_ring::stop_ring,
         voice_state::update,
         soundboard_play::play_sound,

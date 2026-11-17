@@ -36,6 +36,7 @@ async fn voice_channel(harness: &TestHarness, server: &mut Server, stage: bool) 
             voice: Some(v0::VoiceInformation {
                 max_users: None,
                 stage,
+            ..Default::default()
             }),
             announcement: None,
             category: None,

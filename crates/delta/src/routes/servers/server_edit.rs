@@ -50,6 +50,7 @@ pub async fn edit(
         && data.rules_channel.is_none()
         && data.stats.is_none()
         && data.lobby.is_none()
+        && data.tickets.is_none()
         && data.threads_disabled.is_none()
         && data.forums_disabled.is_none()
         && data.events_enabled.is_none()
@@ -71,6 +72,7 @@ pub async fn edit(
         || data.rules_channel.is_some()
         || data.stats.is_some()
         || data.lobby.is_some()
+        || data.tickets.is_some()
         || data.threads_disabled.is_some()
         || data.forums_disabled.is_some()
         || data.events_enabled.is_some()
@@ -128,6 +130,7 @@ pub async fn edit(
         rules_channel,
         stats,
         lobby,
+        tickets,
         threads_disabled,
         forums_disabled,
         events_enabled,
@@ -160,6 +163,7 @@ pub async fn edit(
         rules_channel,
         stats,
         lobby,
+        tickets,
         threads_disabled,
         forums_disabled,
         events_enabled,
@@ -214,6 +218,12 @@ pub async fn edit(
         for option in lobby.onboarding.iter().flat_map(|q| &q.options) {
             super::lobby_answer::check_public_role(db, &server, &option.role).await?;
         }
+    }
+
+    // tickets point only at this server's category and roles; the count of
+    // opened tickets is the server's to keep
+    if let Some(tickets) = &mut partial.tickets {
+        super::tickets::check_settings(tickets, &server)?;
     }
 
     // each counter once, in the order given

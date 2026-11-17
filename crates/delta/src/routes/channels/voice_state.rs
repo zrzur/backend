@@ -92,6 +92,7 @@ mod test {
                 voice: Some(v0::VoiceInformation {
                     max_users: None,
                     stage: false,
+                ..Default::default()
                 }),
                 announcement: None,
                 category: None,

@@ -148,6 +148,7 @@ pub async fn create_thread(
             ..Default::default()
         }),
         forum: None,
+        ticket: None,
     };
     db.insert_channel(&thread).await?;
     // announced to the server; the gateway forwards it to those who can see

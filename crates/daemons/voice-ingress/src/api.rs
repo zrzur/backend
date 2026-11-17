@@ -9,6 +9,7 @@ use revolt_database::{
         get_call_notification_recipients, get_user_moved_from_voice, get_user_moved_to_voice,
         get_user_voice_channels, get_voice_channel_members, get_voice_state,
         is_stale_voice_session, is_voice_reentry_revoked, leave_other_voice_channels,
+        remove_temporary_room_if_empty,
         set_channel_call_started_system_message, set_voice_session, sync_user_voice_permissions,
         take_channel_call_started_system_message, update_voice_state_tracks, RoomMetadata,
         UserVoiceChannel, VoiceClient, announce_ring_end, is_current_ring, mark_call_answered,
@@ -445,6 +446,17 @@ pub async fn ingress(
                         }
                     };
                 };
+
+                // a member's temporary room goes when the last person leaves
+                // it. Best effort: a failure here must not hold back the
+                // room's other webhooks; the next room request clears it.
+                match remove_temporary_room_if_empty(db, &channel).await {
+                    Ok(true) => log::debug!("removed temporary room {channel_id}"),
+                    Ok(false) => {}
+                    Err(error) => {
+                        log::warn!("could not remove temporary room {channel_id}: {error:?}")
+                    }
+                }
             }
         }
         // Audio/video track was started/stopped/unmuted/muted

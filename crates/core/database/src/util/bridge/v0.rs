@@ -279,6 +279,7 @@ impl From<crate::Channel> for Channel {
                 parent,
                 thread,
                 forum,
+                ticket,
             } => Channel::TextChannel {
                 id,
                 server,
@@ -297,6 +298,7 @@ impl From<crate::Channel> for Channel {
                 parent,
                 thread: thread.map(Into::into),
                 forum: forum.map(Into::into),
+                ticket: ticket.map(Into::into),
             },
         }
     }
@@ -357,6 +359,7 @@ impl From<Channel> for crate::Channel {
                 parent,
                 thread,
                 forum,
+                ticket,
             } => crate::Channel::TextChannel {
                 id,
                 server,
@@ -375,6 +378,7 @@ impl From<Channel> for crate::Channel {
                 parent,
                 thread: thread.map(Into::into),
                 forum: forum.map(Into::into),
+                ticket: ticket.map(Into::into),
             },
         }
     }
@@ -400,6 +404,7 @@ impl From<crate::PartialChannel> for PartialChannel {
             permissions_synced: value.permissions_synced,
             thread: value.thread.map(Into::into),
             forum: value.forum.map(Into::into),
+            ticket: value.ticket.map(Into::into),
         }
     }
 }
@@ -424,6 +429,7 @@ impl From<PartialChannel> for crate::PartialChannel {
             permissions_synced: value.permissions_synced,
             thread: value.thread.map(Into::into),
             forum: value.forum.map(Into::into),
+            ticket: value.ticket.map(Into::into),
         }
     }
 }
@@ -949,6 +955,7 @@ impl crate::Server {
             rules_channel: self.rules_channel,
             stats: self.stats,
             lobby: self.lobby,
+            tickets: self.tickets,
             threads_disabled: self.threads_disabled,
             forums_disabled: self.forums_disabled,
             events_enabled: self.events_enabled,
@@ -993,6 +1000,7 @@ impl From<Server> for crate::Server {
             rules_channel: value.rules_channel,
             stats: value.stats,
             lobby: value.lobby,
+            tickets: value.tickets,
             threads_disabled: value.threads_disabled,
             forums_disabled: value.forums_disabled,
             events_enabled: value.events_enabled,
@@ -1033,6 +1041,7 @@ impl From<crate::PartialServer> for PartialServer {
             rules_channel: value.rules_channel,
             stats: value.stats,
             lobby: value.lobby,
+            tickets: value.tickets,
             threads_disabled: value.threads_disabled,
             forums_disabled: value.forums_disabled,
             events_enabled: value.events_enabled,
@@ -1075,6 +1084,7 @@ impl From<PartialServer> for crate::PartialServer {
             rules_channel: value.rules_channel,
             stats: value.stats,
             lobby: value.lobby,
+            tickets: value.tickets,
             threads_disabled: value.threads_disabled,
             forums_disabled: value.forums_disabled,
             events_enabled: value.events_enabled,
@@ -1094,6 +1104,7 @@ impl From<crate::FieldsServer> for FieldsServer {
             crate::FieldsServer::RulesScreening => FieldsServer::RulesScreening,
             crate::FieldsServer::Stats => FieldsServer::Stats,
             crate::FieldsServer::Lobby => FieldsServer::Lobby,
+            crate::FieldsServer::Tickets => FieldsServer::Tickets,
             crate::FieldsServer::VanityInvite => FieldsServer::VanityInvite,
         }
     }
@@ -1111,6 +1122,7 @@ impl From<FieldsServer> for crate::FieldsServer {
             FieldsServer::RulesScreening => crate::FieldsServer::RulesScreening,
             FieldsServer::Stats => crate::FieldsServer::Stats,
             FieldsServer::Lobby => crate::FieldsServer::Lobby,
+            FieldsServer::Tickets => crate::FieldsServer::Tickets,
             FieldsServer::VanityInvite => crate::FieldsServer::VanityInvite,
         }
     }
@@ -1872,11 +1884,33 @@ impl From<FieldsMessage> for crate::FieldsMessage {
     }
 }
 
+impl From<crate::TicketInformation> for TicketInformation {
+    fn from(value: crate::TicketInformation) -> Self {
+        TicketInformation {
+            opener: value.opener,
+            number: value.number,
+            closed: value.closed,
+        }
+    }
+}
+
+impl From<TicketInformation> for crate::TicketInformation {
+    fn from(value: TicketInformation) -> Self {
+        crate::TicketInformation {
+            opener: value.opener,
+            number: value.number,
+            closed: value.closed,
+        }
+    }
+}
+
 impl From<crate::VoiceInformation> for VoiceInformation {
     fn from(value: crate::VoiceInformation) -> Self {
         VoiceInformation {
             max_users: value.max_users,
             stage: value.stage,
+            maker: value.maker,
+            temporary: value.temporary,
         }
     }
 }
@@ -1886,6 +1920,8 @@ impl From<VoiceInformation> for crate::VoiceInformation {
         crate::VoiceInformation {
             max_users: value.max_users,
             stage: value.stage,
+            maker: value.maker,
+            temporary: value.temporary,
         }
     }
 }

@@ -148,6 +148,12 @@ auto_derived_partial!(
             serde(skip_serializing_if = "Option::is_none", default)
         )]
         pub lobby: Option<ServerLobby>,
+        /// Tickets: members open a private channel with the server's staff
+        #[cfg_attr(
+            feature = "serde",
+            serde(skip_serializing_if = "Option::is_none", default)
+        )]
+        pub tickets: Option<ServerTickets>,
 
         /// Threads are switched off on this server: nothing new, the
         /// threads it has stay readable. Missing = on
@@ -231,6 +237,29 @@ auto_derived!(
         Stats,
         Lobby,
         VanityInvite,
+        Tickets,
+    }
+
+    /// Tickets of a server: a member opens a private channel that only they
+    /// and the ticket staff can see
+    #[derive(Default)]
+    pub struct ServerTickets {
+        /// Members can open tickets
+        #[cfg_attr(feature = "serde", serde(default))]
+        pub enabled: bool,
+        /// Category new tickets are put in (none: outside the categories)
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub category: Option<String>,
+        /// Roles that see and answer tickets, besides the people who can
+        /// already see every channel (at most 10)
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Vec::is_empty", default))]
+        pub staff_roles: Vec<String>,
+        /// First message of every new ticket (at most 500 characters)
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub message: Option<String>,
+        /// Tickets opened so far. Set by the server only
+        #[cfg_attr(feature = "serde", serde(default))]
+        pub opened: u32,
     }
 
     /// A server's welcome page: what the server is about, where to start,
@@ -757,6 +786,8 @@ auto_derived!(
         pub stats: Option<Vec<ServerStat>>,
         /// Welcome page; replaces the whole lobby
         pub lobby: Option<ServerLobby>,
+        /// Ticket settings; replaces them all (`opened` keeps its value)
+        pub tickets: Option<ServerTickets>,
         /// Switch threads off (or back on) on this server
         pub threads_disabled: Option<bool>,
         /// Switch forums off (or back on) on this server
