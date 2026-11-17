@@ -3706,8 +3706,8 @@
     },
     {
       "path": "crates/core/models/src/v0/servers.rs",
-      "sha256": "b54dffc472c2b5843ed4cabd805921c00dfc595e1a6d683cce684f127c6b91c0",
-      "bytes": 36172,
+      "sha256": "d1d0de61f9ce97ae15a5f3f6edbf36811312f66afe94a5a4ae867d879eea375e",
+      "bytes": 36428,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -5644,8 +5644,8 @@
     },
     {
       "path": "crates/delta/src/routes/servers/tickets.rs",
-      "sha256": "3e5abfa271aa7c1315a8203f8df73b8fc4599fe092edc2415e652bdde875cfd0",
-      "bytes": 33502,
+      "sha256": "bcd50200dd693f53be8694b07b9f1a9bf73c136318d3a62fbf189a6802f086e6",
+      "bytes": 36202,
       "category": "product-source-or-build-manifest"
     },
     {
