@@ -97,10 +97,7 @@ impl Consumer for VapidOutboundConsumer {
                 let name = alert
                     .from_user
                     .display_name
-                    .or(Some(format!(
-                        "{}#{}",
-                        alert.from_user.username, alert.from_user.discriminator
-                    )))
+                    .or(Some(revolt_models::v0::user_handle(&alert.from_user.username, &alert.from_user.discriminator)))
                     .clone()
                     .ok_or_else(|| anyhow!("missing name"))?;
 
@@ -113,10 +110,7 @@ impl Consumer for VapidOutboundConsumer {
                 let name = alert
                     .accepted_user
                     .display_name
-                    .or(Some(format!(
-                        "{}#{}",
-                        alert.accepted_user.username, alert.accepted_user.discriminator
-                    )))
+                    .or(Some(revolt_models::v0::user_handle(&alert.accepted_user.username, &alert.accepted_user.discriminator)))
                     .clone()
                     .ok_or_else(|| anyhow!("missing name"))?;
 

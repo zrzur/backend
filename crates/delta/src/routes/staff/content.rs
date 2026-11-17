@@ -26,7 +26,7 @@ async fn usernames(db: &Database, ids: Vec<String>) -> Result<Vec<(String, Strin
         .fetch_users(&ids)
         .await?
         .into_iter()
-        .map(|u| (u.id, format!("{}#{}", u.username, u.discriminator)))
+        .map(|u| (u.id, revolt_models::v0::user_handle(&u.username, &u.discriminator)))
         .collect())
 }
 

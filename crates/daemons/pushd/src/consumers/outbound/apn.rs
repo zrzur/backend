@@ -185,10 +185,7 @@ impl Consumer for ApnsOutboundConsumer {
             PayloadKind::FRReceived(alert) => {
                 let loc_args = vec![Cow::from(
                     alert.from_user.display_name.clone().unwrap_or_else(|| {
-                        format!(
-                            "{}#{}",
-                            alert.from_user.username, alert.from_user.discriminator
-                        )
+                        revolt_models::v0::user_handle(&alert.from_user.username, &alert.from_user.discriminator)
                     }),
                 )];
 
@@ -228,10 +225,7 @@ impl Consumer for ApnsOutboundConsumer {
             PayloadKind::FRAccepted(alert) => {
                 let loc_args = vec![Cow::from(
                     alert.accepted_user.display_name.clone().unwrap_or_else(|| {
-                        format!(
-                            "{}#{}",
-                            alert.accepted_user.username, alert.accepted_user.discriminator
-                        )
+                        revolt_models::v0::user_handle(&alert.accepted_user.username, &alert.accepted_user.discriminator)
                     }),
                 )];
 

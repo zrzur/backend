@@ -130,6 +130,42 @@ impl AbstractUsers for MongoDb {
             .collect::<Vec<String>>())
     }
 
+    /// The people (not bots) who hold a username in any capitals
+    async fn fetch_people_with_username(&self, username: &str) -> Result<Vec<(String, String)>> {
+        #[derive(Deserialize)]
+        struct UserDocument {
+            #[serde(rename = "_id")]
+            id: String,
+            discriminator: String,
+        }
+
+        Ok(self
+            .col::<UserDocument>(COL)
+            .find(doc! {
+                "username": username,
+                "bot": { "$exists": false }
+            })
+            .with_options(
+                FindOptions::builder()
+                    .collation(
+                        Collation::builder()
+                            .locale("en")
+                            .strength(CollationStrength::Secondary)
+                            .build(),
+                    )
+                    .projection(doc! { "_id": 1, "discriminator": 1 })
+                    .build(),
+            )
+            .await
+            .map_err(|_| create_database_error!("find", COL))?
+            .filter_map(|s| async { s.ok() })
+            .collect::<Vec<UserDocument>>()
+            .await
+            .into_iter()
+            .map(|user| (user.id, user.discriminator))
+            .collect())
+    }
+
     /// Fetch ids of users that both users are friends with
     async fn fetch_mutual_user_ids(&self, user_a: &str, user_b: &str) -> Result<Vec<String>> {
         Ok(self

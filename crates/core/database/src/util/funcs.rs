@@ -20,5 +20,5 @@ pub async fn format_display_name(
     if let Some(display) = user.display_name {
         return Ok(display);
     }
-    Ok(format!("{}#{}", user.username, user.discriminator))
+    Ok(revolt_models::v0::user_handle(&user.username, &user.discriminator))
 }

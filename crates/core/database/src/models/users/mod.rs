@@ -11,3 +11,6 @@ mod schema;
 pub use model::*;
 pub use official::*;
 pub use ops::*;
+
+mod reserved;
+pub use reserved::is_reserved_username;

@@ -209,6 +209,8 @@ auto_derived!(
     }
 );
 
+pub use revolt_models::v0::UNIQUE_DISCRIMINATOR;
+
 pub static DISCRIMINATOR_SEARCH_SPACE: Lazy<HashSet<String>> = Lazy::new(|| {
     let mut set = (2..9999)
         .map(|v| format!("{:0>4}", v))
@@ -283,15 +285,27 @@ impl User {
         let new_username = User::sanitise_username(&username).await?;
         User::validate_username(&new_username)?;
 
+        // a person owns their username; a bot gets a number tag as before
+        let data: Option<PartialUser> = data.into();
+        let is_bot = data.as_ref().is_some_and(|data| data.bot.is_some());
+        if crate::is_reserved_username(&new_username, is_bot) {
+            return Err(create_error!(InvalidUsername));
+        }
+        let discriminator = if is_bot {
+            User::find_discriminator(db, &new_username, None).await?
+        } else {
+            User::claim_username(db, &new_username, None).await?
+        };
+
         let mut user = User {
             id: account_id.into().unwrap_or_else(|| Ulid::new().to_string()),
-            discriminator: User::find_discriminator(db, &new_username, None).await?,
+            discriminator,
             username: new_username.clone(),
             last_acknowledged_policy_change: Timestamp::now_utc(),
             ..Default::default()
         };
 
-        if let Some(data) = data.into() {
+        if let Some(data) = data {
             user.apply_options(data);
         }
 
@@ -504,7 +518,14 @@ impl User {
             return Err(create_error!(InvalidUsername));
         }
 
-        let options = decancer::Options::default().retain_capitalization();
+        // Arabic stays Arabic: the cure would turn it into Latin lookalikes
+        // ("ليلى" came out as "sjsj"). The letters are kept in the order they
+        // were typed; control characters that reorder text are not letters
+        // and are refused by the name rule.
+        let options = decancer::Options::default()
+            .retain_capitalization()
+            .retain_arabic()
+            .disable_bidi();
         let mut username = decancer::cure(username, options)
             .map_err(|_| create_error!(InvalidUsername))?
             .to_string();
@@ -691,40 +712,120 @@ impl User {
             .to_string())
     }
 
+    /// Take a username as one's own and return the tag that goes with it
+    /// ([`UNIQUE_DISCRIMINATOR`]). Upper and lower case count as the same.
+    ///
+    /// Only people count; a bot with the same name is no obstacle.
+    ///
+    /// * A name another person already owns is taken.
+    /// * A new account, or an account moving to a different name, cannot take
+    ///   a name any other person still holds with an old tag: that name is
+    ///   theirs to keep.
+    /// * An account keeping its own name may take it while nobody else owns
+    ///   it, also when others share it with old tags (the first one wins).
+    pub async fn claim_username(
+        db: &Database,
+        username: &str,
+        claimant: Option<&User>,
+    ) -> Result<String> {
+        // the database decides which names are the same name, so the
+        // claimant is found among the holders by id, not by comparing text
+        let holders = db.fetch_people_with_username(username).await?;
+        let keeps_own_name =
+            claimant.is_some_and(|user| holders.iter().any(|(id, _)| id == &user.id));
+        let held_by_others: Vec<&String> = holders
+            .iter()
+            .filter(|(id, _)| claimant.is_none_or(|user| id != &user.id))
+            .map(|(_, discriminator)| discriminator)
+            .collect();
+
+        let owned = held_by_others
+            .iter()
+            .any(|discriminator| discriminator.as_str() == UNIQUE_DISCRIMINATOR);
+        if owned || (!keeps_own_name && !held_by_others.is_empty()) {
+            return Err(create_error!(UsernameTaken));
+        }
+
+        Ok(UNIQUE_DISCRIMINATOR.to_string())
+    }
+
     /// Update a user's username
+    ///
+    /// The new name becomes the account's own ([`User::claim_username`]) and
+    /// the old four-digit tag goes. Moving to a different name is allowed
+    /// twice in 24 hours; taking one's own name, or changing its capitals,
+    /// is not counted.
     pub async fn update_username(&mut self, db: &Database, username: String) -> Result<()> {
         let new_username = User::sanitise_username(&username).await?;
         User::validate_username(&new_username)?;
 
-        if self.username.to_lowercase() == new_username.to_lowercase() {
-            self.update(
-                db,
-                PartialUser {
-                    username: Some(new_username),
-                    ..Default::default()
-                },
-                vec![],
-            )
-            .await
-        } else {
-            self.update(
-                db,
-                PartialUser {
-                    discriminator: Some(
-                        User::find_discriminator(
-                            db,
-                            &new_username,
-                            Some((self.discriminator.to_string(), self.id.clone())),
-                        )
-                        .await?,
-                    ),
-                    username: Some(new_username),
-                    ..Default::default()
-                },
-                vec![],
-            )
-            .await
+        // a reserved name cannot be taken; an account that already carries
+        // one keeps it (and may change its capitals)
+        if self.username.to_lowercase() != new_username.to_lowercase()
+            && crate::is_reserved_username(&new_username, self.bot.is_some())
+        {
+            return Err(create_error!(InvalidUsername));
         }
+
+        // a bot keeps the number tag: same tag if it is free under the new
+        // name, another one if not
+        if self.bot.is_some() {
+            let discriminator = if self.username.to_lowercase() == new_username.to_lowercase() {
+                self.discriminator.clone()
+            } else {
+                User::find_discriminator(
+                    db,
+                    &new_username,
+                    Some((self.discriminator.to_string(), self.id.clone())),
+                )
+                .await?
+            };
+            return self
+                .update(
+                    db,
+                    PartialUser {
+                        discriminator: Some(discriminator),
+                        username: Some(new_username),
+                        ..Default::default()
+                    },
+                    vec![],
+                )
+                .await;
+        }
+
+        let discriminator = User::claim_username(db, &new_username, Some(self)).await?;
+
+        if self.username.to_lowercase() != new_username.to_lowercase() {
+            if db
+                .has_ratelimited(
+                    &self.id,
+                    crate::RatelimitEventType::DiscriminatorChange,
+                    Duration::from_secs(60 * 60 * 24),
+                    2,
+                )
+                .await?
+            {
+                return Err(create_error!(DiscriminatorChangeRatelimited));
+            }
+
+            RatelimitEvent::create(
+                db,
+                self.id.clone(),
+                crate::RatelimitEventType::DiscriminatorChange,
+            )
+            .await?;
+        }
+
+        self.update(
+            db,
+            PartialUser {
+                discriminator: Some(discriminator),
+                username: Some(new_username),
+                ..Default::default()
+            },
+            vec![],
+        )
+        .await
     }
 
     /// Set a relationship to another user
@@ -1327,7 +1428,7 @@ mod tests {
 
     #[tokio::test]
     async fn username_sanitisation_clean() {
-        let username_clean = "Test";
+        let username_clean = "Tester";
 
         let username_clean_sanitised = User::sanitise_username(username_clean).await;
 
@@ -1361,25 +1462,25 @@ mod tests {
         use lapin::{ExchangeKind, options::ExchangeDeclareOptions, types::FieldTable};
 
         database_test!(|db| async move {
-            let mut created_clean = User::create(&db, "Test".to_string(), None, None)
+            let mut created_clean = User::create(&db, "Tester".to_string(), None, None)
                 .await
                 .unwrap();
 
-            assert_eq!("Test", created_clean.username);
+            assert_eq!("Tester", created_clean.username);
 
             created_clean
-                .update_username(&db, "Test2".to_string())
+                .update_username(&db, "Tester2".to_string())
                 .await
                 .unwrap();
 
-            assert_eq!("Test2", created_clean.username);
+            assert_eq!("Tester2", created_clean.username);
 
             let created_invalid_result: Result<_> =
                 User::create(&db, "stoat.chat".to_string(), None, None).await;
 
             assert!(created_invalid_result.is_err());
 
-            let mut updated_invalid = User::create(&db, "Test".to_string(), None, None)
+            let mut updated_invalid = User::create(&db, "Tester".to_string(), None, None)
                 .await
                 .unwrap();
 
@@ -1392,12 +1493,262 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn usernames_are_unique() {
+        use crate::{PartialUser, UNIQUE_DISCRIMINATOR};
+        use revolt_result::ErrorType;
+
+        database_test!(|db| async move {
+            // a new account owns its name: no tag
+            let mut first = User::create(&db, "Zaid".to_string(), None, None)
+                .await
+                .unwrap();
+            assert_eq!(UNIQUE_DISCRIMINATOR, first.discriminator);
+
+            // the same name in other capitals is taken, for a new account and for a rename
+            let taken = User::create(&db, "zaid".to_string(), None, None).await;
+            assert!(matches!(taken.unwrap_err().error_type, ErrorType::UsernameTaken));
+
+            let mut second = User::create(&db, "Layla".to_string(), None, None)
+                .await
+                .unwrap();
+            let taken = second.update_username(&db, "ZAID".to_string()).await;
+            assert!(matches!(taken.unwrap_err().error_type, ErrorType::UsernameTaken));
+            assert_eq!("Layla", second.username);
+
+            // changing the capitals of one's own name is allowed and keeps it one's own
+            first.update_username(&db, "ZAID".to_string()).await.unwrap();
+            assert_eq!("ZAID", first.username);
+            assert_eq!(UNIQUE_DISCRIMINATOR, first.discriminator);
+
+            // a freed name can be taken
+            first.update_username(&db, "Zaid2".to_string()).await.unwrap();
+            second.update_username(&db, "zaid".to_string()).await.unwrap();
+            assert_eq!("zaid", second.username);
+
+            // two accounts from before unique usernames share a name with old tags
+            let mut old_a = User::create(&db, "Shared1".to_string(), None, None)
+                .await
+                .unwrap();
+            let mut old_b = User::create(&db, "Shared2".to_string(), None, None)
+                .await
+                .unwrap();
+            for (user, tag) in [(&mut old_a, "1151"), (&mut old_b, "2406")] {
+                user.update(
+                    &db,
+                    PartialUser {
+                        username: Some("Omar".to_string()),
+                        discriminator: Some(tag.to_string()),
+                        ..Default::default()
+                    },
+                    vec![],
+                )
+                .await
+                .unwrap();
+            }
+
+            // nobody else may take a name they still hold
+            let taken = User::create(&db, "omar".to_string(), None, None).await;
+            assert!(matches!(taken.unwrap_err().error_type, ErrorType::UsernameTaken));
+            let taken = first.update_username(&db, "Omar".to_string()).await;
+            assert!(matches!(taken.unwrap_err().error_type, ErrorType::UsernameTaken));
+
+            // the first of them to take it owns it; the other keeps the old tag and must pick another
+            old_b.update_username(&db, "Omar".to_string()).await.unwrap();
+            assert_eq!(UNIQUE_DISCRIMINATOR, old_b.discriminator);
+            let taken = old_a.update_username(&db, "Omar".to_string()).await;
+            assert!(matches!(taken.unwrap_err().error_type, ErrorType::UsernameTaken));
+            assert_eq!("1151", old_a.discriminator);
+            old_a.update_username(&db, "Omar_K".to_string()).await.unwrap();
+            assert_eq!(UNIQUE_DISCRIMINATOR, old_a.discriminator);
+
+            // by name alone only the owner is found; the stored values agree
+            let found = db
+                .fetch_user_by_username("OMAR", UNIQUE_DISCRIMINATOR)
+                .await
+                .unwrap();
+            assert_eq!(old_b.id, found.id);
+        });
+    }
+
+    #[tokio::test]
+    async fn reserved_names_cannot_be_taken() {
+        use crate::{BotInformation, PartialUser, UNIQUE_DISCRIMINATOR};
+        use revolt_result::ErrorType;
+
+        database_test!(|db| async move {
+            let bot_data = || PartialUser {
+                bot: Some(BotInformation {
+                    owner: "owner".to_string(),
+                    verified: false,
+                }),
+                ..Default::default()
+            };
+
+            // Zrzur's names, the owner's and company names: nobody, in any spelling
+            for name in ["Maher", "ma.her", "Discord", "g_o_o_g_l_e", "support"] {
+                let refused = User::create(&db, name.to_string(), None, None).await;
+                assert!(
+                    matches!(refused.unwrap_err().error_type, ErrorType::InvalidUsername),
+                    "{name}"
+                );
+            }
+            for name in ["Maher", "Discord"] {
+                let refused = User::create(&db, name.to_string(), None, bot_data()).await;
+                assert!(
+                    matches!(refused.unwrap_err().error_type, ErrorType::InvalidUsername),
+                    "bot {name}"
+                );
+            }
+            // a site word is free for a bot
+            User::create(&db, "support".to_string(), None, bot_data())
+                .await
+                .unwrap();
+
+            // a rename to a reserved name is refused
+            let mut person = User::create(&db, "Salma".to_string(), None, None)
+                .await
+                .unwrap();
+            let refused = person.update_username(&db, "Steam".to_string()).await;
+            assert!(matches!(refused.unwrap_err().error_type, ErrorType::InvalidUsername));
+            assert_eq!("Salma", person.username);
+
+            // an account that carried the name before keeps it and can make it its own
+            person
+                .update(
+                    &db,
+                    PartialUser {
+                        username: Some("Maher".to_string()),
+                        discriminator: Some("0001".to_string()),
+                        ..Default::default()
+                    },
+                    vec![],
+                )
+                .await
+                .unwrap();
+            person.update_username(&db, "Maher".to_string()).await.unwrap();
+            assert_eq!("Maher", person.username);
+            assert_eq!(UNIQUE_DISCRIMINATOR, person.discriminator);
+        });
+    }
+
+    #[tokio::test]
+    async fn arabic_usernames_work() {
+        use crate::UNIQUE_DISCRIMINATOR;
+        use revolt_result::ErrorType;
+
+        database_test!(|db| async move {
+            // kept letter for letter, each one its owner's
+            for name in ["ليلى", "عبدالله", "أحمد", "محمد_علي", "سارة99", "نور.الهدى", "خالد-1"] {
+                let user = User::create(&db, name.to_string(), None, None)
+                    .await
+                    .unwrap_or_else(|error| panic!("{name}: {error:?}"));
+                assert_eq!(name, user.username, "{name} was changed");
+                assert_eq!(UNIQUE_DISCRIMINATOR, user.discriminator);
+
+                // found by name alone
+                let found = db
+                    .fetch_user_by_username(name, UNIQUE_DISCRIMINATOR)
+                    .await
+                    .unwrap();
+                assert_eq!(user.id, found.id);
+
+                // and taken for everyone else
+                let taken = User::create(&db, name.to_string(), None, None).await;
+                assert!(
+                    matches!(taken.unwrap_err().error_type, ErrorType::UsernameTaken),
+                    "{name} twice"
+                );
+            }
+
+            // a rename between Arabic names, and a mixed one
+            let mut user = User::create(&db, "ريم".to_string(), None, None)
+                .await
+                .unwrap();
+            user.update_username(&db, "ريم_2001".to_string()).await.unwrap();
+            assert_eq!("ريم_2001", user.username);
+            user.update_username(&db, "Reemريم".to_string()).await.unwrap();
+            assert_eq!("Reemريم", user.username);
+        });
+    }
+
+    #[tokio::test]
+    async fn bots_keep_number_tags() {
+        use crate::{BotInformation, PartialUser, UNIQUE_DISCRIMINATOR};
+
+        database_test!(|db| async move {
+            let bot_data = || PartialUser {
+                bot: Some(BotInformation {
+                    owner: "owner".to_string(),
+                    verified: false,
+                }),
+                ..Default::default()
+            };
+
+            // two bots share a name, each with its own number tag
+            let mut bot_a = User::create(&db, "Helper".to_string(), None, bot_data())
+                .await
+                .unwrap();
+            let bot_b = User::create(&db, "helper".to_string(), None, bot_data())
+                .await
+                .unwrap();
+            assert_ne!(UNIQUE_DISCRIMINATOR, bot_a.discriminator);
+            assert_ne!(UNIQUE_DISCRIMINATOR, bot_b.discriminator);
+            assert_ne!(bot_a.discriminator, bot_b.discriminator);
+
+            // a person may own the name bots carry, and a bot may be made after
+            let person = User::create(&db, "Helper".to_string(), None, None)
+                .await
+                .unwrap();
+            assert_eq!(UNIQUE_DISCRIMINATOR, person.discriminator);
+            let bot_c = User::create(&db, "Helper".to_string(), None, bot_data())
+                .await
+                .unwrap();
+            assert_ne!(UNIQUE_DISCRIMINATOR, bot_c.discriminator);
+
+            // a renamed bot still has a number tag, also under a person's name
+            let mut owner_of_name = User::create(&db, "Taken".to_string(), None, None)
+                .await
+                .unwrap();
+            bot_a.update_username(&db, "Taken".to_string()).await.unwrap();
+            assert_eq!("Taken", bot_a.username);
+            assert_ne!(UNIQUE_DISCRIMINATOR, bot_a.discriminator);
+
+            // and the person's name stays theirs
+            owner_of_name.update_username(&db, "TAKEN".to_string()).await.unwrap();
+            assert_eq!(UNIQUE_DISCRIMINATOR, owner_of_name.discriminator);
+        });
+    }
+
+    #[tokio::test]
+    async fn username_changes_are_limited() {
+        use revolt_result::ErrorType;
+
+        database_test!(|db| async move {
+            let mut user = User::create(&db, "Name0".to_string(), None, None)
+                .await
+                .unwrap();
+
+            user.update_username(&db, "Name1".to_string()).await.unwrap();
+            // capitals only: not counted
+            user.update_username(&db, "NAME1".to_string()).await.unwrap();
+            user.update_username(&db, "Name2".to_string()).await.unwrap();
+
+            let limited = user.update_username(&db, "Name3".to_string()).await;
+            assert!(matches!(
+                limited.unwrap_err().error_type,
+                ErrorType::DiscriminatorChangeRatelimited
+            ));
+            assert_eq!("Name2", user.username);
+        });
+    }
+
+    #[tokio::test]
     async fn remove_profile_background() {
         use crate::{FieldsUser, File, Metadata, PartialUser, UserProfile};
         use lapin::{ExchangeKind, options::ExchangeDeclareOptions, types::FieldTable};
 
         database_test!(|db| async move {
-            let mut user = User::create(&db, "Test".to_string(), None, None)
+            let mut user = User::create(&db, "Tester".to_string(), None, None)
                 .await
                 .unwrap();
 
