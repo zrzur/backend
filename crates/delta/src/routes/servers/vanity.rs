@@ -25,7 +25,7 @@ pub async fn claim(
     require_manage_server(db, &user, &server).await?;
     require_level(&server).await?;
 
-    let code = normalise_vanity(&data.code)?;
+    let code = normalise_vanity(&data.code, is_official(&server))?;
     let channel = revolt_database::landing_channel(db, &server, data.channel.as_deref()).await?;
     let previous = server.vanity_invite.clone();
     let same_name = previous.as_ref().is_some_and(|p| p.code == code);
@@ -92,14 +92,25 @@ pub async fn remove(
     Ok(EmptyResponse)
 }
 
-/// Lowercase a requested name and check it against the rules
-pub fn normalise_vanity(code: &str) -> Result<String> {
+/// `flags` value of a server run by the Zrzur team. No route sets it: the
+/// admin console can give the verified mark only, so only the project
+/// itself can make a server official.
+const FLAG_OFFICIAL: i32 = 1;
+
+fn is_official(server: &Server) -> bool {
+    server.flags == Some(FLAG_OFFICIAL)
+}
+
+/// Lowercase a requested name and check it against the rules. The names
+/// kept for Zrzur (zrzur.cc/zrzur) are kept for its official server: it may
+/// take them, nobody else can.
+pub fn normalise_vanity(code: &str, official: bool) -> Result<String> {
     let code = code.trim().to_ascii_lowercase();
     let valid = (3..=32).contains(&code.len())
         && code.split('-').all(|part| {
             !part.is_empty() && part.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
         });
-    if !valid || super::vanity_reserved::is_reserved(&code) {
+    if !valid || (!official && super::vanity_reserved::is_reserved(&code)) {
         return Err(create_error!(VanityReserved));
     }
     Ok(code)
@@ -188,11 +199,40 @@ mod tests {
 
     #[test]
     fn names_follow_the_rules() {
-        assert_eq!(normalise_vanity("Arab-Gamers").unwrap(), "arab-gamers");
-        assert_eq!(normalise_vanity("  team42 ").unwrap(), "team42");
+        assert_eq!(normalise_vanity("Arab-Gamers", false).unwrap(), "arab-gamers");
+        assert_eq!(normalise_vanity("  team42 ", false).unwrap(), "team42");
         for bad in ["ab", "-team", "team-", "te--am", "team_42", "تيم", "api", "invite", "zrzur", &"a".repeat(33)] {
-            assert!(normalise_vanity(bad).is_err(), "{bad}");
+            assert!(normalise_vanity(bad, false).is_err(), "{bad}");
         }
+        // the official server may take a kept name, never a malformed one
+        assert_eq!(normalise_vanity("Zrzur", true).unwrap(), "zrzur");
+        for bad in ["ab", "-team", "te--am", "team_42", "تيم"] {
+            assert!(normalise_vanity(bad, true).is_err(), "{bad}");
+        }
+    }
+
+    #[rocket::async_test]
+    async fn only_the_official_server_takes_the_brand_name() {
+        let h = harness().await;
+        // a verified community is not the official server
+        let (verified, verified_token, _) = server_at(&h, 3).await;
+        let mut verified = h.db.fetch_server(&verified.id).await.unwrap();
+        verified
+            .update(&h.db, PartialServer { flags: Some(2), ..Default::default() }, vec![])
+            .await
+            .unwrap();
+        assert_eq!(put(&h, &verified_token, &verified.id, "zrzur").await, Status::BadRequest);
+
+        let (official, official_token, _) = server_at(&h, 3).await;
+        let mut official = h.db.fetch_server(&official.id).await.unwrap();
+        official
+            .update(&h.db, PartialServer { flags: Some(1), ..Default::default() }, vec![])
+            .await
+            .unwrap();
+        assert_eq!(put(&h, &official_token, &official.id, "zrzur").await, Status::Ok);
+        assert_eq!(fetch_invite(&h, "zrzur").await, Status::Ok);
+        // and the name is then taken like any other
+        assert_eq!(put(&h, &verified_token, &verified.id, "zrzur").await, Status::BadRequest);
     }
 
     #[rocket::async_test]
