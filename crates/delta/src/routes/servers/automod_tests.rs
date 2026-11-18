@@ -202,11 +202,18 @@ async fn a_gif_from_the_picker_passes_a_link_rule_and_a_link_beside_it_does_not(
     assert!(setup.blocked(&setup.general, "https://static.klipy.com.evil.io/cat.gif").await);
     assert!(setup.blocked(&setup.general, "https://klipy.com/gifs/cat").await);
 
-    // a word rule still reads a GIF's address
+    // a word rule does not read a GIF's address: "klipy" alone spells
+    // «كلب» in Latin letters, and a server with that word refused every GIF
     setup
-        .rule(json!({ "type": "Keywords", "words": ["*cat*"] }), json!({ "block": true }))
+        .rule(
+            json!({ "type": "Keywords", "words": ["كلب", "*cat*"] }),
+            json!({ "block": true }),
+        )
         .await;
-    assert!(setup.blocked(&setup.general, gif).await);
+    assert!(!setup.blocked(&setup.general, gif).await);
+    // the words a person writes beside it are read as before
+    assert!(setup.blocked(&setup.general, &format!("{gif} ya kalb")).await);
+    assert!(setup.blocked(&setup.general, "cats").await);
 }
 
 #[rocket::async_test]

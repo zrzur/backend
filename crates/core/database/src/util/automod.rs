@@ -200,6 +200,8 @@ fn join_split_letters(text: &str) -> String {
 /// Whether a keyword rule matches: the text itself, with split letters
 /// joined, and Arabic keywords in their Arabizi spelling
 fn keywords_match(text: &str, patterns: &[Pattern], allow: &HashSet<String>) -> bool {
+    let text = words_to_judge(text);
+    let text = text.as_str();
     let joined = join_split_letters(text);
     let spelled = [text, joined.as_str()].into_iter().any(|view| {
         patterns
@@ -433,11 +435,23 @@ const GIF_MEDIA_HOST: &str = "static.klipy.com";
 /// A GIF is a picture a person chose in the app, not a link they posted; a
 /// server that keeps links out (from new members, or to all but a few
 /// domains) refused every GIF, and the app showed nothing (owner,
-/// 2026-11-18). Word rules still read the whole message.
+/// 2026-11-18).
 fn judged_link_hosts(content: &str) -> Vec<String> {
     let mut hosts = link_hosts(content);
     hosts.retain(|host| host != GIF_MEDIA_HOST);
     hosts
+}
+
+/// The text a word rule reads: the message without the addresses of GIFs
+/// from the picker. Such an address is not something a person wrote, and
+/// its host name alone spells an Arabic word in Latin letters ("klipy" has
+/// the consonants of «كلب»), so a server with that word on its list refused
+/// every GIF (owner, 2026-11-18). Everything else in the message is read.
+fn words_to_judge(text: &str) -> String {
+    let prefix = format!("https://{GIF_MEDIA_HOST}/");
+    text.split_inclusive(char::is_whitespace)
+        .filter(|token| !token.starts_with(&prefix))
+        .collect()
 }
 
 fn host_of(rest: &str) -> String {
@@ -812,6 +826,21 @@ mod tests {
             vec!["evil.io"]
         );
         assert_eq!(super::judged_link_hosts("https://klipy.com/gifs/x"), vec!["klipy.com"]);
+    }
+
+    #[test]
+    fn a_gif_address_is_not_read_as_words() {
+        // «كلب» is on many word lists, and "klipy" has its consonants
+        let list = vec![("كلب".to_string(), 1)];
+        let gif = "https://static.klipy.com/ii/935d7ab9d8c6202580a668421940ec81/5b/2d/GCm2stK8.gif";
+        assert_eq!(super::word_list_match(gif, &list, &[]), None);
+        // the word itself, in either script, is still found, beside a GIF too
+        assert_eq!(super::word_list_match("ya kalb", &list, &[]), Some(1));
+        assert_eq!(super::word_list_match(&format!("{gif} يا كلب"), &list, &[]), Some(1));
+        assert_eq!(super::word_list_match(&format!("kalb {gif}"), &list, &[]), Some(1));
+        // only the picker's own host is left out
+        assert_eq!(super::word_list_match("https://klipy.com/gifs/x", &list, &[]), Some(1));
+        assert_eq!(super::word_list_match("https://static.klipy.com.evil.io/kalb", &list, &[]), Some(1));
     }
 
     #[test]
