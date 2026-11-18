@@ -425,6 +425,21 @@ fn link_hosts(content: &str) -> Vec<String> {
     hosts
 }
 
+/// Where the GIFs of the app's own picker live (the gif service's
+/// `klipy::MEDIA_HOST`). A GIF is sent as a message that holds its address.
+const GIF_MEDIA_HOST: &str = "static.klipy.com";
+
+/// The links a link rule judges: every link except a GIF from the picker.
+/// A GIF is a picture a person chose in the app, not a link they posted; a
+/// server that keeps links out (from new members, or to all but a few
+/// domains) refused every GIF, and the app showed nothing (owner,
+/// 2026-11-18). Word rules still read the whole message.
+fn judged_link_hosts(content: &str) -> Vec<String> {
+    let mut hosts = link_hosts(content);
+    hosts.retain(|host| host != GIF_MEDIA_HOST);
+    hosts
+}
+
 fn host_of(rest: &str) -> String {
     let end = rest
         .find(|c: char| c.is_whitespace() || "/:?#>)'\"],;".contains(c))
@@ -544,7 +559,7 @@ async fn apply_rules(
                 },
                 _,
             ) => {
-                let hosts = link_hosts(content);
+                let hosts = judged_link_hosts(content);
                 !hosts.is_empty()
                     && ((!allowed_domains.is_empty()
                         && hosts.iter().any(|host| !domain_allowed(host, allowed_domains)))
@@ -776,6 +791,27 @@ mod tests {
         assert!(super::link_hosts("no links here.").is_empty());
         assert!(super::domain_allowed("cdn.zrzur.com", &["zrzur.com".to_string()]));
         assert!(!super::domain_allowed("zrzur.com.evil.io", &["zrzur.com".to_string()]));
+    }
+
+    #[test]
+    fn a_gif_from_the_picker_is_not_a_link_to_judge() {
+        // what the picker sends: the GIF's address and nothing else
+        assert!(super::judged_link_hosts("https://static.klipy.com/ii/a/b/c.gif").is_empty());
+        // a real link beside it is still judged
+        assert_eq!(
+            super::judged_link_hosts("https://static.klipy.com/ii/a.gif https://spam.io/x"),
+            vec!["spam.io"]
+        );
+        // a look-alike host is a link like any other
+        assert_eq!(
+            super::judged_link_hosts("https://static.klipy.com.evil.io/a.gif"),
+            vec!["static.klipy.com.evil.io"]
+        );
+        assert_eq!(
+            super::judged_link_hosts("https://evil.io/static.klipy.com/a.gif"),
+            vec!["evil.io"]
+        );
+        assert_eq!(super::judged_link_hosts("https://klipy.com/gifs/x"), vec!["klipy.com"]);
     }
 
     #[test]

@@ -12,6 +12,9 @@ const ZRZUR_ORIGINS: [&str; 9] = [
     "https://designs-beta.zrzur.com",
 ];
 
+/// The origin of the app's native shell on iOS (Capacitor's fixed scheme)
+pub const NATIVE_SHELL_IOS: &str = "capacitor://localhost";
+
 /// Local addresses as patterns, for libraries that take them
 pub const LOCAL_ORIGIN_PATTERNS: [&str; 2] = [
     r"^http://localhost(:\d+)?$",
@@ -23,6 +26,13 @@ pub const LOCAL_ORIGIN_PATTERNS: [&str; 2] = [
 /// (`api.security.staff_origins`), extra origins from `ZRZUR_CORS_ORIGINS`
 /// (comma separated), and localhost when the app is served over plain http
 /// (development).
+///
+/// The extra list also takes the origin of the app's own native shell on an
+/// iPhone, `capacitor://localhost` (Android's is `https://localhost`): a
+/// page inside the app on the person's own device. Neither is on the list
+/// unless the operator names it. Requests are signed in by a token the app
+/// sends itself, never by a cookie the browser adds, so naming them lets no
+/// website act for a signed-in person.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CorsOrigins {
     /// Allowed as written
@@ -44,7 +54,9 @@ impl CorsOrigins {
                 .unwrap_or_default()
                 .split(',')
                 .map(|o| o.trim().trim_end_matches('/'))
-                .filter(|o| o.starts_with("https://") || o.starts_with("http://"))
+                .filter(|o| {
+                    o.starts_with("https://") || o.starts_with("http://") || *o == NATIVE_SHELL_IOS
+                })
                 .map(String::from),
         );
         Self {
@@ -117,5 +129,22 @@ mod tests {
             assert!(origins.allows(origin), "{origin}");
         }
         assert!(!origins.allows("not-an-origin"));
+    }
+
+    #[test]
+    fn the_native_shells_count_only_when_the_operator_names_them() {
+        let production = CorsOrigins::new("https://app.zrzur.com", &[], None);
+        assert!(!production.allows("capacitor://localhost"));
+        assert!(!production.allows("https://localhost"));
+
+        let extra = "https://localhost, capacitor://localhost, capacitor://evil.example, ionic://localhost";
+        let named = CorsOrigins::new("https://app.zrzur.com", &[], Some(extra));
+        assert!(named.allows("capacitor://localhost"));
+        assert!(named.allows("https://localhost"));
+        // only the shell's own fixed origin, no other host or scheme
+        assert!(!named.allows("capacitor://evil.example"));
+        assert!(!named.allows("ionic://localhost"));
+        assert!(!named.allows("capacitor://localhost.evil.example"));
+        assert!(!named.allows("http://localhost"));
     }
 }

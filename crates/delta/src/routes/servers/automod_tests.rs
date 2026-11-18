@@ -174,6 +174,41 @@ async fn new_members_cannot_post_links_and_other_domains_are_refused() {
     assert!(setup.blocked(&setup.general, "see www.other.io").await);
 }
 
+/// Owner, 2026-11-18: with link protection on, no GIF could be sent. The
+/// picker sends a GIF as a message that holds the GIF's address.
+#[rocket::async_test]
+async fn a_gif_from_the_picker_passes_a_link_rule_and_a_link_beside_it_does_not() {
+    let gif = "https://static.klipy.com/ii/8ce8357c78ea940b9c2015daf05ce1a5/5c/9a/cat.gif";
+
+    // links kept from new members
+    let setup = setup().await;
+    setup
+        .rule(
+            json!({ "type": "LinkSpam", "new_member_minutes": 10 }),
+            json!({ "block": true }),
+        )
+        .await;
+    assert!(!setup.blocked(&setup.general, gif).await);
+    assert!(setup.blocked(&setup.general, &format!("{gif} https://spam.example")).await);
+
+    // links only to chosen domains
+    setup
+        .rule(
+            json!({ "type": "LinkSpam", "allowed_domains": ["zrzur.com"] }),
+            json!({ "block": true }),
+        )
+        .await;
+    assert!(!setup.blocked(&setup.general, gif).await);
+    assert!(setup.blocked(&setup.general, "https://static.klipy.com.evil.io/cat.gif").await);
+    assert!(setup.blocked(&setup.general, "https://klipy.com/gifs/cat").await);
+
+    // a word rule still reads a GIF's address
+    setup
+        .rule(json!({ "type": "Keywords", "words": ["*cat*"] }), json!({ "block": true }))
+        .await;
+    assert!(setup.blocked(&setup.general, gif).await);
+}
+
 #[rocket::async_test]
 async fn the_same_text_in_many_channels_is_blocked() {
     let setup = setup().await;
