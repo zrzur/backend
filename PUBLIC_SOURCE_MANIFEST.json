@@ -5650,8 +5650,8 @@
     },
     {
       "path": "crates/delta/src/routes/servers/vanity.rs",
-      "sha256": "6ee10c468d10d31857b6fe8e270bf983b2cd53acc8a21b19cc0e5385e9716886",
-      "bytes": 18153,
+      "sha256": "2e7bb5e2a55f3b83fc3e476a0adbe1b36c0028e28cd83740d00e2c1ba3720ec5",
+      "bytes": 20110,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -5686,8 +5686,8 @@
     },
     {
       "path": "crates/delta/src/routes/session/login.rs",
-      "sha256": "484d56db1ba6df55b74b69864632b1f2791a90a92b8300dda85239849d457dca",
-      "bytes": 27962,
+      "sha256": "a5ba2911a58d7c739328bcb779115321111efa335e6ee3871f66e93249fe14dd",
+      "bytes": 28354,
       "category": "product-source-or-build-manifest"
     },
     {
