@@ -552,13 +552,21 @@ mod tests {
     async fn login_tells_nothing_before_the_password_is_right() {
         let harness = TestHarness::new().await;
 
+        // Wrong passwords are counted per address in Redis, which outlives a
+        // test run: fixed addresses reached the limit after a few runs and
+        // the test then saw the wait (403) instead of what it checks. A new
+        // address every run keeps the count at one.
+        let run = ulid::Ulid::new().to_string().to_lowercase();
+        let nobody = format!("nobody_{run}@validemail.com");
+        let probe = format!("probe_{run}@validemail.com");
+
         // unknown address
-        let unknown = attempt(&harness, "nobody_here@validemail.com", "password1234").await;
+        let unknown = attempt(&harness, &nobody, "password1234").await;
 
         // known address, unverified, and a password from a breach list
         let mut account = Account::new(
             &harness.db,
-            "enumeration_probe@validemail.com".into(),
+            probe.clone(),
             "password_insecure".into(),
             false,
         )
@@ -569,7 +577,7 @@ mod tests {
             expiry: Timestamp::now_utc() + iso8601_timestamp::Duration::hours(1),
         };
         account.save(&harness.db).await.unwrap();
-        let known = attempt(&harness, "enumeration_probe@validemail.com", "password1234").await;
+        let known = attempt(&harness, &probe, "password1234").await;
 
         assert_eq!(unknown.0, Status::Unauthorized);
         assert_eq!(known.0, unknown.0);
