@@ -550,8 +550,8 @@
     },
     {
       "path": "crates/core/config/src/cors.rs",
-      "sha256": "19898b8cd6eede079977de608e2c58ac1bc9b5c0fbad7f4a1c28b0540202781c",
-      "bytes": 4562,
+      "sha256": "87543379ac85201e1412faf9928b72a8ab729b0d79bb76e51cfa1794f613e8a2",
+      "bytes": 6078,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -3028,8 +3028,8 @@
     },
     {
       "path": "crates/core/database/src/util/automod.rs",
-      "sha256": "1391eca948cfd62ff2205299b23059b7b4ba3c596937c4c17a13f191de0ba316",
-      "bytes": 27998,
+      "sha256": "2241ff5419233ee57ff12e6c6148b0e2f9a39f032d8c8d8bf1617cff57fe2ac5",
+      "bytes": 29584,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -5332,8 +5332,8 @@
     },
     {
       "path": "crates/delta/src/routes/servers/automod_tests.rs",
-      "sha256": "ece41bc4a9a2e2249053e2aa0ffa57c385f3714f323e76445507c52a97972f99",
-      "bytes": 9940,
+      "sha256": "eab5ba8383097c6e8255dd7f5bd1f3d1f15176c3fb8a6a5b795ef661671c211d",
+      "bytes": 11305,
       "category": "product-source-or-build-manifest"
     },
     {
