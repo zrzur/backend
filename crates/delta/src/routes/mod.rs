@@ -13,6 +13,7 @@ pub(crate) mod channels;
 mod customisation;
 mod community;
 mod discover;
+mod discover_review;
 pub(crate) mod interactions;
 mod invites;
 mod oauth;
@@ -113,8 +114,11 @@ pub fn mount(config: Settings, mut rocket: Rocket<Build>) -> Rocket<Build> {
         };
     }
 
-    // platform staff: kept out of the public OpenAPI document
-    rocket.mount("/staff", staff::routes())
+    // platform staff and the Discover review desk: kept out of the public
+    // OpenAPI document
+    rocket
+        .mount("/staff", staff::routes())
+        .mount("/discover/review", discover_review::routes())
 }
 
 fn custom_openapi_spec() -> OpenApi {

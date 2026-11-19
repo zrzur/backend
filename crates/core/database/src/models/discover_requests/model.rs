@@ -33,6 +33,18 @@ auto_derived!(
         /// Whether moderators feature this listing
         #[serde(default, skip_serializing_if = "crate::if_false")]
         pub featured: bool,
+        /// When the owner filed (or filed again) this request, in
+        /// milliseconds since the epoch. Missing on requests filed before
+        /// this was recorded.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub submitted_at: Option<i64>,
+        /// Reviewer who last acted on this filing (under review, approved,
+        /// denied) from the review desk. Never shown to the owner.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub acted_by: Option<String>,
+        /// When `acted_by` acted
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub acted_at: Option<i64>,
     }
 
     pub struct DiscoverBan {

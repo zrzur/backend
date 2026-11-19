@@ -23,6 +23,7 @@ impl AbstractDiscoverRequest for MongoDb {
         request_type: DiscoverRequestType,
         item: &str,
     ) -> Result<DiscoverRequest> {
+        let submitted_at = crate::staff_now();
         if let Ok(mut prev) = self
             .fetch_discover_request_by_item_id(request_type.clone(), item)
             .await
@@ -41,10 +42,20 @@ impl AbstractDiscoverRequest for MongoDb {
             }?;
             self.col::<DiscoverRequest>(DISCOVER_COL).update_one(
                 key(&request_type, item),
-                doc! {"$set": {"status": bson::to_bson(&DiscoverRequestStatus::Pending).expect("failed to serialize")}},
+                doc! {
+                    "$set": {
+                        "status": bson::to_bson(&DiscoverRequestStatus::Pending).expect("failed to serialize"),
+                        "submitted_at": submitted_at,
+                    },
+                    // a new filing starts without a reviewer
+                    "$unset": {"acted_by": "", "acted_at": ""},
+                },
             ).await.map_err(|_| create_database_error!("update_one", DISCOVER_COL))?;
 
             prev.status = DiscoverRequestStatus::Pending;
+            prev.submitted_at = Some(submitted_at);
+            prev.acted_by = None;
+            prev.acted_at = None;
             Ok(prev)
         } else {
             let ret = DiscoverRequest {
@@ -55,6 +66,9 @@ impl AbstractDiscoverRequest for MongoDb {
                 category: None,
                 language: None,
                 featured: false,
+                submitted_at: Some(submitted_at),
+                acted_by: None,
+                acted_at: None,
             };
             self.col::<DiscoverRequest>(DISCOVER_COL)
                 .insert_one(ret.clone())
@@ -125,6 +139,44 @@ impl AbstractDiscoverRequest for MongoDb {
         } else {
             Ok(())
         }
+    }
+
+    /// A reviewer's act, only while the request is open and unchanged
+    async fn act_on_open_discover_request(
+        &self,
+        request_type: DiscoverRequestType,
+        item: &str,
+        submitted_at: Option<i64>,
+        status: DiscoverRequestStatus,
+        acted_by: &str,
+        acted_at: i64,
+    ) -> Result<bool> {
+        let mut filter = key(&request_type, item);
+        filter.insert(
+            "status",
+            doc! {"$in": [
+                bson::to_bson(&DiscoverRequestStatus::Pending).expect("failed to serialize"),
+                bson::to_bson(&DiscoverRequestStatus::UnderReview).expect("failed to serialize"),
+            ]},
+        );
+        match submitted_at {
+            Some(at) => filter.insert("submitted_at", at),
+            // requests filed before the time was recorded have no such field
+            None => filter.insert("submitted_at", doc! {"$exists": false}),
+        };
+        let result = self
+            .col::<DiscoverRequest>(DISCOVER_COL)
+            .update_one(
+                filter,
+                doc! {"$set": {
+                    "status": bson::to_bson(&status).expect("failed to serialize"),
+                    "acted_by": acted_by,
+                    "acted_at": acted_at,
+                }},
+            )
+            .await
+            .map_err(|_| create_database_error!("update_one", DISCOVER_COL))?;
+        Ok(result.matched_count == 1)
     }
 
     /// Replace an existing discover request

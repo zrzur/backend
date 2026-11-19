@@ -77,7 +77,7 @@
   },
   "discover.denied": {
     "title": "Discover",
-    "body": "Wir haben „{name}“ nicht bei Discover gelistet.\n{note}"
+    "body": "Wir haben „{name}“ nicht bei Discover gelistet.\n{note}\n\nDu kannst das Nötige ändern und es in den Einstellungen erneut einreichen."
   },
   "discover.removed": {
     "title": "Aus Discover entfernt",

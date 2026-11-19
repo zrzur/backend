@@ -41,6 +41,20 @@ pub trait AbstractDiscoverRequest: Sync + Send {
         status: DiscoverRequestStatus,
     ) -> Result<()>;
 
+    /// A reviewer's act on a request that is still open: set `status`,
+    /// `acted_by` and `acted_at` only if the request is pending or under
+    /// review and is still the filing the reviewer saw (`submitted_at`).
+    /// Returns `false` when it is not (decided meanwhile, or filed anew).
+    async fn act_on_open_discover_request(
+        &self,
+        request_type: DiscoverRequestType,
+        item: &str,
+        submitted_at: Option<i64>,
+        status: DiscoverRequestStatus,
+        acted_by: &str,
+        acted_at: i64,
+    ) -> Result<bool>;
+
     /// Replace an existing Discover request (listing details, featured flag)
     async fn save_discover_request(&self, request: &DiscoverRequest) -> Result<()>;
 

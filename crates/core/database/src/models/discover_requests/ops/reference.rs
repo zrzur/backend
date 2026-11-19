@@ -21,6 +21,9 @@ impl AbstractDiscoverRequest for ReferenceDb {
             category: None,
             language: None,
             featured: false,
+            submitted_at: Some(crate::staff_now()),
+            acted_by: None,
+            acted_at: None,
         };
 
         let mut discover = self.discover_requests.lock().await;
@@ -33,6 +36,9 @@ impl AbstractDiscoverRequest for ReferenceDb {
             std::collections::hash_map::Entry::Occupied(mut e) => match e.get().status {
                 DiscoverRequestStatus::Denied(_) => {
                     e.get_mut().status = DiscoverRequestStatus::Pending;
+                    e.get_mut().submitted_at = ret.submitted_at;
+                    e.get_mut().acted_by = None;
+                    e.get_mut().acted_at = None;
                     Ok(e.get().clone())
                 }
                 DiscoverRequestStatus::Removed(_) => Err(create_error!(ContactSupport {
@@ -98,6 +104,33 @@ impl AbstractDiscoverRequest for ReferenceDb {
             .ok_or_else(|| create_error!(NotFound))?;
         request.status = status;
         Ok(())
+    }
+
+    /// A reviewer's act, only while the request is open and unchanged
+    async fn act_on_open_discover_request(
+        &self,
+        request_type: DiscoverRequestType,
+        item: &str,
+        submitted_at: Option<i64>,
+        status: DiscoverRequestStatus,
+        acted_by: &str,
+        acted_at: i64,
+    ) -> Result<bool> {
+        let mut discover = self.discover_requests.lock().await;
+        let Some(request) = discover.get_mut(&(request_type, item.to_string())) else {
+            return Ok(false);
+        };
+        let open = matches!(
+            request.status,
+            DiscoverRequestStatus::Pending | DiscoverRequestStatus::UnderReview
+        );
+        if !open || request.submitted_at != submitted_at {
+            return Ok(false);
+        }
+        request.status = status;
+        request.acted_by = Some(acted_by.to_string());
+        request.acted_at = Some(acted_at);
+        Ok(true)
     }
 
     /// Replace an existing discover request

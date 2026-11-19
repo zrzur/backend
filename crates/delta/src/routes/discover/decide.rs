@@ -78,26 +78,36 @@ pub(crate) async fn decide_request(
 
     db.save_discover_request(&request).await?;
 
-    // tell the owner in their private messages (not for "under review")
-    let outcome = match &request.status {
-        DiscoverRequestStatus::Approved(note) if decided => Some(("discover.approved", note.clone())),
-        DiscoverRequestStatus::Denied(note) if decided => Some(("discover.denied", note.clone())),
-        DiscoverRequestStatus::Removed(note) if decided => Some(("discover.removed", note.clone())),
-        _ => None,
-    };
-    if let Some((key, note)) = outcome {
-        let owner = match request_type {
-            DiscoverRequestType::Server => db.fetch_server(id).await.ok().map(|s| (s.owner, s.name)),
-            DiscoverRequestType::Bot => match db.fetch_bot(id).await {
-                Ok(bot) => Some((bot.owner, db.fetch_user(id).await.map(|u| u.username).unwrap_or_default())),
-                Err(_) => None,
-            },
-        };
-        if let Some((owner_id, name)) = owner {
-            crate::util::official::discover_decided(db, &owner_id, key, &name, note.as_deref()).await;
-        }
+    if decided {
+        tell_owner(db, &request_type, id, &request.status).await;
     }
     Ok(())
+}
+
+/// Tell the owner of a decision in their private messages (nothing for
+/// "pending" or "under review")
+pub(crate) async fn tell_owner(
+    db: &Database,
+    request_type: &DiscoverRequestType,
+    id: &str,
+    status: &DiscoverRequestStatus,
+) {
+    let (key, note) = match status {
+        DiscoverRequestStatus::Approved(note) => ("discover.approved", note.clone()),
+        DiscoverRequestStatus::Denied(note) => ("discover.denied", note.clone()),
+        DiscoverRequestStatus::Removed(note) => ("discover.removed", note.clone()),
+        _ => return,
+    };
+    let owner = match request_type {
+        DiscoverRequestType::Server => db.fetch_server(id).await.ok().map(|s| (s.owner, s.name)),
+        DiscoverRequestType::Bot => match db.fetch_bot(id).await {
+            Ok(bot) => Some((bot.owner, db.fetch_user(id).await.map(|u| u.username).unwrap_or_default())),
+            Err(_) => None,
+        },
+    };
+    if let Some((owner_id, name)) = owner {
+        crate::util::official::discover_decided(db, &owner_id, key, &name, note.as_deref()).await;
+    }
 }
 
 #[cfg(test)]

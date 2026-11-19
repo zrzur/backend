@@ -543,6 +543,16 @@ require_declared_age = true
 # the rules) or "blocked" (nobody, until a real age check exists). Default: blocked.
 mature_content = "blocked"
 
+[features.discover_review]
+# Discover review desk: one bot shows open Discover requests in one staff
+# channel; people holding one role in that server approve or reject them
+# there. The bot itself can decide nothing (routes under /discover/review).
+# Leave any value empty to keep the routes switched off.
+server = ""
+channel = ""
+role = ""
+bot = ""
+
 [features.billing]
 # Zrzur Feather (member subscription) and Wings (server supercharges).
 # Only test mode exists: purchases are simulated and nothing is charged.

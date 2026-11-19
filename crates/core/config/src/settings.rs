@@ -1333,6 +1333,9 @@ pub struct Features {
 
     #[serde(default)]
     pub age_safety: FeaturesAgeSafety,
+
+    #[serde(default)]
+    pub discover_review: FeaturesDiscoverReview,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -2057,6 +2060,35 @@ mod billing_mode_tests {
         assert!(billing
             .live_gate_report(&hosts(PROD.0, PROD.1), &legal(true))
             .contains(&("no_test_api_base", false)));
+    }
+}
+
+/// Discover review desk: one bot may show open Discover requests in one
+/// staff channel, and hand back the clicks of people holding one role there.
+/// The bot has no power of its own: every decision is checked against the
+/// person who clicked (`/discover/review/*`). Any value left empty switches
+/// the routes off.
+#[derive(Deserialize, Debug, Clone, Default, PartialEq, Eq)]
+pub struct FeaturesDiscoverReview {
+    /// Id of the server the reviewers work in
+    #[serde(default)]
+    pub server: String,
+    /// Id of the staff channel in that server the notices are posted to
+    #[serde(default)]
+    pub channel: String,
+    /// Id of the role in that server whose holders may decide
+    #[serde(default)]
+    pub role: String,
+    /// Id of the one bot allowed to use the review routes
+    #[serde(default)]
+    pub bot: String,
+}
+
+impl FeaturesDiscoverReview {
+    pub fn enabled(&self) -> bool {
+        ![&self.server, &self.channel, &self.role, &self.bot]
+            .iter()
+            .any(|value| value.trim().is_empty())
     }
 }
 

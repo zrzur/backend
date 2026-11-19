@@ -567,6 +567,7 @@ async fn component(
     );
     let ephemeral = matches!(source, InteractionSource::Ephemeral { .. });
     interaction.source = Some(source);
+    interaction.custom_id = Some(custom_id.to_string());
 
     let mut payload = payload(db, user, &scope, &interaction, token, data.locale).await;
     payload.message_id = Some(message_id.to_string());
@@ -814,6 +815,8 @@ async fn modal_submit(
     );
     // A form opened from a component can update that component's message
     interaction.source = parent.source.clone();
+    interaction.custom_id = Some(modal.custom_id.clone());
+    interaction.modal_fields = fields.clone();
 
     let mut payload = payload(db, user, &scope, &interaction, token, data.locale).await;
     match &parent.source {

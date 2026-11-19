@@ -1,6 +1,7 @@
 use iso8601_timestamp::{Duration, Timestamp};
 use revolt_models::v0::{
     interaction_limits, CommandOptionType, EphemeralMessage, InteractionType, Modal,
+    ModalFieldValue,
 };
 use sha2::{Digest, Sha256};
 use ulid::Ulid;
@@ -55,6 +56,14 @@ pub struct Interaction {
     /// Components and modal submits: where the component was
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub source: Option<InteractionSource>,
+    /// Components: the `custom_id` of the button or menu the person used;
+    /// form submits: the form's `custom_id`. Kept so a route acting on the
+    /// person's behalf can check what they really pressed.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub custom_id: Option<String>,
+    /// Form submits: the checked values the person sent
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub modal_fields: Vec<ModalFieldValue>,
     /// The answer changes `source` instead of creating a message (`UpdateMessage`, `DeferredUpdate`)
     #[serde(default)]
     pub updates_source: bool,
@@ -141,6 +150,8 @@ impl Interaction {
                 status: InteractionStatus::Pending,
                 ephemeral: false,
                 source: None,
+                custom_id: None,
+                modal_fields: vec![],
                 updates_source: false,
                 original_message_id: None,
                 ephemeral_message: None,
