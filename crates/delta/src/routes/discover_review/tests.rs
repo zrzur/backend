@@ -830,6 +830,31 @@ async fn own_requests_unlistable_servers_and_visits_walk() {
         .count();
     assert_eq!(visits, 1);
 
+    // a reviewer who is already inside gets no invite: joining again would fail
+    Member::create_from(
+        &d.harness.db,
+        &d.applied,
+        &d.reviewer,
+        None,
+        revolt_database::InsightJoinSource::Invite,
+    )
+    .await
+    .unwrap();
+    let pressed = d.press(&session, &channel, &message, &format!("dr:visit:{key}")).await;
+    let (status, outcome) = d.act(&pressed).await;
+    assert_eq!(status, Status::Ok, "{outcome}");
+    assert_eq!(outcome["applied"], false);
+    assert_eq!(outcome["problem"], "already_member");
+    assert!(outcome["invite"].is_null());
+    assert_eq!(outcome["id"], d.applied.id.as_str());
+    let visits = d
+        .audit()
+        .await
+        .iter()
+        .filter(|(action, _, _)| action == "discover.review.visit")
+        .count();
+    assert_eq!(visits, 1);
+
     // a server that is not open to join cannot be listed
     let mut applied = d.harness.db.fetch_server(&d.applied.id).await.unwrap();
     applied

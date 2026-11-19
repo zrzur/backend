@@ -440,7 +440,7 @@ pub struct ReviewOutcome {
     /// Whether the act was carried out
     pub applied: bool,
     /// Why not, when `applied` is false: `already_decided`, `withdrawn`,
-    /// `own_item`, `not_listable`, `no_channel`, `not_listed`
+    /// `own_item`, `not_listable`, `no_channel`, `not_listed`, `already_member`
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub problem: Option<String>,
     /// `review`, `approve`, `deny`, `visit` or `remove`
@@ -801,6 +801,10 @@ async fn act(
             return refuse(outcome, "not_listable");
         }
         let server = db.fetch_server(&pressed.id).await?;
+        // someone already inside needs no invite, and joining again would fail
+        if db.fetch_member(&server.id, &person.id).await.is_ok() {
+            return refuse(outcome, "already_member");
+        }
         let mut channel = None;
         for id in &server.channels {
             if let Ok(found @ Channel::TextChannel { .. }) = db.fetch_channel(id).await {
