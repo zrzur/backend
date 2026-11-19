@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Discover review desk (2026-11-19)
+
+- New routes under `/discover/review` (`GET /queue`, `GET /requests/{kind}/{id}`, `POST /act`), outside the public OpenAPI document and switched off unless `[features.discover_review]` names a server, a channel, a role and a bot. They let one bot show open Discover requests in one staff channel; people holding the role approve or reject there. The bot can decide nothing: an action is read from the interaction the server stored, the person is checked again, the platform audit record names the person, and of two decisions at once one applies.
+- A rejection needs a written reason (3 to 512 characters). A reviewer cannot decide their own request. A visiting invite is one-use, 30 minutes, once per press, and only for a server open to everyone.
+- The rejection notice tells the owner they can change what is needed and apply again (en, ar, de).
+- No data migration: `submitted_at`, `acted_by`, `acted_at` on a Discover request and `custom_id`, `modal_fields`, `used` on a stored interaction are optional.
+
 ### Tickets: a name for the entry (2026-11-17)
 
 * `ServerTickets.label`: a server can name the "Open a ticket" entry its members see (at most 32 characters; empty goes back to the app's wording).
