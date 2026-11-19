@@ -120,6 +120,18 @@ impl AbstractInteractions for MongoDb {
         Ok(result.modified_count == 1)
     }
 
+    async fn claim_interaction_use(&self, id: &str) -> Result<bool> {
+        let result = self
+            .col::<Interaction>(COL)
+            .update_one(
+                doc! { "_id": id, "used": { "$ne": true } },
+                doc! { "$set": { "used": true } },
+            )
+            .await
+            .map_err(|_| create_database_error!("update_one", COL))?;
+        Ok(result.modified_count == 1)
+    }
+
     async fn push_interaction_followup(
         &self,
         id: &str,

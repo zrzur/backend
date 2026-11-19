@@ -79,6 +79,9 @@ pub struct Interaction {
     /// The form was submitted (once)
     #[serde(default)]
     pub modal_submitted: bool,
+    /// A one-use action was taken with this interaction (once)
+    #[serde(default)]
+    pub used: bool,
     /// Autocomplete: type of the focused option, to check the bot's suggestions
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub autocomplete_type: Option<CommandOptionType>,
@@ -157,6 +160,7 @@ impl Interaction {
                 ephemeral_message: None,
                 modal: None,
                 modal_submitted: false,
+                used: false,
                 autocomplete_type: None,
                 followups: vec![],
                 followup_message_ids: vec![],

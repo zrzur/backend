@@ -53,6 +53,9 @@ pub trait AbstractInteractions: Sync + Send {
     /// Mark the form of an interaction as submitted; `false` if it already was
     async fn claim_modal_submission(&self, id: &str) -> Result<bool>;
 
+    /// Mark an interaction as used for a one-use action; `false` if it already was
+    async fn claim_interaction_use(&self, id: &str) -> Result<bool>;
+
     /// Record a follow-up (a private message, or the id of a channel message);
     /// `false` once the interaction has `MAX_FOLLOWUPS` of them
     async fn push_interaction_followup(

@@ -742,6 +742,17 @@ async fn own_requests_unlistable_servers_and_visits_walk() {
         d.reviewer.id.clone(),
         "Success".to_string()
     )));
+    // the same press handed back again gives no second invite
+    let (status, again) = d.act(&pressed).await;
+    assert_eq!(status, Status::Gone, "{again}");
+    assert!(again["invite"].is_null());
+    let visits = d
+        .audit()
+        .await
+        .iter()
+        .filter(|(action, _, _)| action == "discover.review.visit")
+        .count();
+    assert_eq!(visits, 1);
 
     // a server that is not open to join cannot be listed
     let mut applied = d.harness.db.fetch_server(&d.applied.id).await.unwrap();
@@ -766,6 +777,13 @@ async fn own_requests_unlistable_servers_and_visits_walk() {
     assert_eq!(outcome["applied"], false);
     assert_eq!(outcome["problem"], "not_listable");
     assert_eq!(d.request().await.status, DiscoverRequestStatus::Pending);
+    // and nobody gets a way in past its approval step
+    let pressed = d.press(&session, &channel, &message, &format!("dr:visit:{key}")).await;
+    let (status, outcome) = d.act(&pressed).await;
+    assert_eq!(status, Status::Ok);
+    assert_eq!(outcome["applied"], false);
+    assert_eq!(outcome["problem"], "not_listable");
+    assert!(outcome["invite"].is_null());
     // it can still be rejected with that reason
     let pressed = d.reject(&session, &message, &key, "Open your server to everyone first").await;
     let (_, outcome) = d.act(&pressed).await;

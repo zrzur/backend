@@ -165,4 +165,15 @@ impl AbstractInteractions for ReferenceDb {
             _ => Ok(false),
         }
     }
+
+    async fn claim_interaction_use(&self, id: &str) -> Result<bool> {
+        let mut interactions = self.interactions.lock().await;
+        match interactions.get_mut(id) {
+            Some(interaction) if !interaction.used => {
+                interaction.used = true;
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
 }

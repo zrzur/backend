@@ -13,9 +13,14 @@
 //!   (`dr:<action>:<kind>:<id>:<submitted_at>`), never a value the bot sends;
 //! - the reason of a rejection: the form field stored on the interaction.
 //!
-//! So a stolen bot token can read the queue and nothing more. A decision is
-//! written to the platform audit log first, under the person's name, and
-//! applies only while the request is still open and still the same filing.
+//! So a stolen bot token alone can read the queue and decide nothing: every
+//! action needs a press by a person who holds the role right now. What it
+//! can still do is mislabel a button in the staff channel, because the bot
+//! writes its own notices; the audit record shows what was really done and
+//! by whom. A decision is written to the platform audit log first, under the
+//! person's name, and applies only while the request is still open and still
+//! the same filing. A visiting invite is given once per press, and only for
+//! a server that is open to everyone.
 //! `Remove` and `featured` are not reachable here: they stay in the admin
 //! console.
 
@@ -614,7 +619,7 @@ async fn act(
         action: format!("discover.review.{}", pressed.action.word()),
         target_kind: Some(kind_text),
         target_id: Some(pressed.id.clone()),
-        reason: reason.as_ref().map(|r| r.chars().take(500).collect()),
+        reason: reason.as_ref().map(|r| r.chars().take(MAX_REASON).collect()),
         summary: Some(format!(
             "via bot {} interaction {}",
             settings.bot, interaction.id
@@ -625,6 +630,10 @@ async fn act(
     if pressed.action == Action::Visit {
         if pressed.kind != DiscoverRequestType::Server {
             return Err(create_error!(InvalidOperation));
+        }
+        // a server that asks before letting people in is not walked into
+        if !listable {
+            return refuse(outcome, "not_listable");
         }
         let server = db.fetch_server(&pressed.id).await?;
         let mut channel = None;
@@ -637,9 +646,22 @@ async fn act(
         let Some(channel) = channel else {
             return refuse(outcome, "no_channel");
         };
-        record_platform_audit(db, record, AuditOutcome::Success).await?;
+        // one press, one invite: handing the same press back gives nothing
+        if !db.claim_interaction_use(&interaction.id).await? {
+            return Err(create_error!(InteractionExpired));
+        }
+        record_platform_audit(db, record.clone(), AuditOutcome::Success).await?;
         let expires = Timestamp::now_utc().checked_add(Duration::minutes(VISIT_MINUTES));
-        let invite = Invite::create_channel_invite(db, &person, &channel, Some(1), expires).await?;
+        let invite =
+            match Invite::create_channel_invite(db, &person, &channel, Some(1), expires).await {
+                Ok(invite) => invite,
+                Err(error) => {
+                    record.summary =
+                        Some(format!("{:?}", error.error_type).chars().take(200).collect());
+                    let _ = record_platform_audit(db, record, AuditOutcome::Failed).await;
+                    return Err(error);
+                }
+            };
         outcome.applied = true;
         outcome.invite = Some(invite.code().to_string());
         return Ok(Json(outcome));
@@ -693,8 +715,18 @@ async fn act(
         _ => Ok(()),
     };
     if let Err(error) = listing {
-        // put the request back as it was: nothing was listed
-        let _ = db.save_discover_request(&request).await;
+        // put the request back as it was: nothing was listed. Only while it
+        // still carries this decision, so a decision made since is kept
+        let ours = db
+            .fetch_discover_request_by_item_id(pressed.kind.clone(), &pressed.id)
+            .await
+            .map(|current| {
+                current.acted_at == Some(now) && current.acted_by.as_deref() == Some(person.id.as_str())
+            })
+            .unwrap_or(false);
+        if ours {
+            let _ = db.save_discover_request(&request).await;
+        }
         record.summary = Some(format!("{:?}", error.error_type).chars().take(200).collect());
         let _ = record_platform_audit(db, record, AuditOutcome::Failed).await;
         return Err(error);
