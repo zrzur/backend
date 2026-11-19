@@ -8,6 +8,7 @@
 - `[features.discover_review]` gains `channel_bots` (a second staff channel for requests of bots; empty = one channel for both) and `remove_role`. A server is decided in the servers' channel only and a bot in the bots' one.
 - Holders of `remove_role` can take a listed server or bot off Discover from the desk: a form with a written reason (3 to 512 characters), the platform audit record `discover.review.remove` names the person, the listing is dropped only while the request is still approved, and the owner is told the reason. With `remove_role` empty nobody can.
 - New `GET /discover/review/find?q=` (a server id, a bot id or a server's link name), for the desk's bot only.
+- A reviewer who is already a member of the server gets no visiting invite (joining again would fail): the desk answers `already_member` and nothing is recorded.
 - No data migration.
 
 ### Discover review desk (2026-11-19)

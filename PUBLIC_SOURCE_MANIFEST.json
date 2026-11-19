@@ -202,8 +202,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "dbb56aa61a301b39a3fcaa1c523498bd7d162ed47d7970471f3fa8e7eeb3f215",
-      "bytes": 100717,
+      "sha256": "0100a6c19cf9779f21fbbaddf4b606f5c2c5c742b092660b31b1b94d313910cf",
+      "bytes": 100879,
       "category": "public-documentation"
     },
     {
@@ -4996,14 +4996,14 @@
     },
     {
       "path": "crates/delta/src/routes/discover_review/mod.rs",
-      "sha256": "7890437abb6869b034587e57129895cab294e573c31bb045cb4be8637e417c98",
-      "bytes": 33545,
+      "sha256": "ff61a2d8585a6d19678b9b7737a07d371b2f73bdb79e6ed56f8872beeac67fb8",
+      "bytes": 33774,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/delta/src/routes/discover_review/tests.rs",
-      "sha256": "2d6a756f6d5a249a7a5577d7277a71e9c2a9c4c38236f6eb47a7791ea7ffca92",
-      "bytes": 41135,
+      "sha256": "a8dcab03f8374988408072b0a1e1a8129bc78ce596d4c5c62d659e4d2d1842e1",
+      "bytes": 41968,
       "category": "product-source-or-build-manifest"
     },
     {
