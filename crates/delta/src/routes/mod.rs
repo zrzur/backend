@@ -14,6 +14,7 @@ mod customisation;
 mod community;
 mod discover;
 mod discover_review;
+mod team_desk;
 pub(crate) mod interactions;
 mod invites;
 mod oauth;
@@ -119,6 +120,7 @@ pub fn mount(config: Settings, mut rocket: Rocket<Build>) -> Rocket<Build> {
     rocket
         .mount("/staff", staff::routes())
         .mount("/discover/review", discover_review::routes())
+        .mount("/team/desk", team_desk::routes())
 }
 
 fn custom_openapi_spec() -> OpenApi {

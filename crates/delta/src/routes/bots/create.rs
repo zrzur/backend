@@ -15,6 +15,9 @@ pub async fn create_bot(
     user: User,
     info: Json<v0::DataCreateBot>,
 ) -> Result<Json<v0::BotWithUserResponse>> {
+    // not before the e-mail of an account made from an invite link is confirmed
+    revolt_database::Account::assert_confirmed(db, &user.id).await?;
+
     let info = info.into_inner();
     info.validate().map_err(|error| revolt_database::util::validation::validation_failed(&error))?;
 

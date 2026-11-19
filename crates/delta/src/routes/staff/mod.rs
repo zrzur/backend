@@ -263,6 +263,7 @@ async fn too_many_code_failures(db: &Database, user_id: &str) -> Result<bool> {
             before_seq: None,
             actor_id: Some(user_id.to_string()),
             target_id: None,
+            action_prefix: None,
             limit: 50,
         })
         .await?;
@@ -688,6 +689,7 @@ async fn audit(
             before_seq: before,
             actor_id: actor.filter(|a| !a.is_empty() && a.len() <= 64),
             target_id: target.filter(|t| !t.is_empty() && t.len() <= 64),
+            action_prefix: None,
             limit: limit.unwrap_or(50).clamp(1, 200),
         })
         .await?,

@@ -239,8 +239,10 @@ impl Account {
     /// Account information for its owner, with the age
     pub async fn into_info(self) -> revolt_models::v0::AccountInfo {
         let age = self.age_info().await;
+        let confirm_by = self.confirm_by().await;
         let mut info: revolt_models::v0::AccountInfo = self.into();
         info.age = Some(age);
+        info.confirm_by = confirm_by;
         info
     }
 

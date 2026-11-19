@@ -1051,3 +1051,168 @@ async fn removal_walk() {
     assert_eq!(outcome["problem"], "not_listed");
     assert_eq!(d.told_by(safety).await.len(), told_before + 1);
 }
+
+#[test]
+fn reading_is_for_role_holders_and_the_log_follows() {
+    on_big_stack(reading_walk);
+}
+
+async fn reading_walk() {
+    let mut d = desk().await;
+    let channel = d.channel.clone();
+    let lobby = d.lobby.clone();
+    let session = d.reviewer_session.clone();
+    let guest_session = d.guest_session.clone();
+    let key = d.key().await;
+    let message = d.notice(&channel, &key).await;
+
+    // a message of the bot outside the staff channel, with one button
+    let response = d
+        .harness
+        .client
+        .post(format!("/channels/{}/messages", lobby.id()))
+        .header(Header::new("x-bot-token", d.bot.token.clone()))
+        .header(ContentType::JSON)
+        .body(
+            json!({ "content": "Desk", "components": [{ "type": "ActionRow", "components": [
+                { "type": "Button", "style": "Secondary", "label": "Listed", "custom_id": "dk:listed:all:0" }
+            ]}]})
+            .to_string(),
+        )
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Ok);
+    let panel = response.into_json::<v0::Message>().await.unwrap().id;
+
+    let ask = |pressed: &(String, String), what: &str, q: Option<&str>| {
+        json!({ "interaction_id": pressed.0, "token": pressed.1, "what": what, "q": q })
+    };
+
+    // a member without a role reads nothing
+    let pressed = d.press(&guest_session, &lobby, &panel, "dk:listed:all:0").await;
+    for what in ["queue", "listed", "lookup", "stats"] {
+        let (status, _) = d
+            .as_bot(&d.bot.token, "/discover/review/ask", Some(ask(&pressed, what, Some(&d.applied.id))))
+            .await;
+        assert_eq!(status, Status::Forbidden, "{what}");
+    }
+
+    // a reviewer reads, in any channel of the review server
+    let pressed = d.press(&session, &lobby, &panel, "dk:listed:all:0").await;
+    // the token has to be the one the bot received
+    let (status, _) = d
+        .as_bot(
+            &d.bot.token,
+            "/discover/review/ask",
+            Some(json!({ "interaction_id": pressed.0, "token": "not-it", "what": "queue" })),
+        )
+        .await;
+    assert_ne!(status, Status::Ok);
+    let (status, answer) = d
+        .as_bot(&d.bot.token, "/discover/review/ask", Some(ask(&pressed, "queue", None)))
+        .await;
+    assert_eq!(status, Status::Ok, "{answer}");
+    assert_eq!(answer["may_remove"], false);
+    assert_eq!(answer["total"], 1);
+    assert_eq!(answer["entries"][0]["id"], d.applied.id.as_str());
+    let (status, _) = d
+        .as_bot(&d.bot.token, "/discover/review/ask", Some(ask(&pressed, "everything", None)))
+        .await;
+    assert_eq!(status, Status::BadRequest);
+
+    // any server can be looked up: one with a request, one without, none
+    let (status, answer) = d
+        .as_bot(&d.bot.token, "/discover/review/ask", Some(ask(&pressed, "lookup", Some(&d.applied.id))))
+        .await;
+    assert_eq!(status, Status::Ok, "{answer}");
+    assert_eq!(answer["entry"]["status"], "Pending");
+    assert_eq!(answer["entry"]["owner_id"], d.applicant.id.as_str());
+    assert_eq!(answer["records"].as_array().unwrap().len(), 0);
+    let (other, _) = d.harness.new_server(&d.applicant).await;
+    let (status, answer) = d
+        .as_bot(&d.bot.token, "/discover/review/ask", Some(ask(&pressed, "lookup", Some(&other.id))))
+        .await;
+    assert_eq!(status, Status::Ok, "{answer}");
+    assert_eq!(answer["entry"]["status"], "None");
+    assert_eq!(answer["entry"]["name"], other.name.as_str());
+    for q in ["nothing-here", "../..", ""] {
+        let (status, _) = d
+            .as_bot(&d.bot.token, "/discover/review/ask", Some(ask(&pressed, "lookup", Some(q))))
+            .await;
+        assert_eq!(status, Status::NotFound, "{q}");
+    }
+
+    // nothing is listed yet
+    let (_, answer) = d
+        .as_bot(&d.bot.token, "/discover/review/ask", Some(ask(&pressed, "listed", None)))
+        .await;
+    assert_eq!(answer["total"], 0);
+    assert_eq!(answer["pages"], 1);
+
+    // where the log stands now; nothing after it yet
+    let (status, log) = d.as_bot(&d.bot.token, "/discover/review/log", None).await;
+    assert_eq!(status, Status::Ok, "{log}");
+    assert_eq!(log["records"].as_array().unwrap().len(), 0);
+    let start = log["upto"].as_i64().unwrap();
+    let (_, log) = d
+        .as_bot(&d.bot.token, &format!("/discover/review/log?after={start}"), None)
+        .await;
+    assert_eq!(log["records"].as_array().unwrap().len(), 0);
+    assert_eq!(log["upto"], start);
+
+    // the reviewer approves: the log tells it once, under their name
+    let approve = d.press(&session, &channel, &message, &format!("dr:approve:{key}")).await;
+    let (_, outcome) = d.act(&approve).await;
+    assert_eq!(outcome["applied"], true);
+    let (status, log) = d
+        .as_bot(&d.bot.token, &format!("/discover/review/log?after={start}"), None)
+        .await;
+    assert_eq!(status, Status::Ok, "{log}");
+    let records = log["records"].as_array().unwrap();
+    assert_eq!(records.len(), 1, "{log}");
+    assert_eq!(records[0]["action"], "approve");
+    assert_eq!(records[0]["actor_id"], d.reviewer.id.as_str());
+    assert_eq!(records[0]["id"], d.applied.id.as_str());
+    assert_eq!(records[0]["name"], d.applied.name.as_str());
+    let upto = log["upto"].as_i64().unwrap();
+    assert!(upto > start);
+    let (_, log) = d
+        .as_bot(&d.bot.token, &format!("/discover/review/log?after={upto}"), None)
+        .await;
+    assert_eq!(log["records"].as_array().unwrap().len(), 0);
+
+    // it is listed now: in the list, in the counts and in its own record
+    let (_, answer) = d
+        .as_bot(&d.bot.token, "/discover/review/ask", Some(ask(&pressed, "listed", None)))
+        .await;
+    assert_eq!(answer["total"], 1);
+    assert_eq!(answer["entries"][0]["id"], d.applied.id.as_str());
+    assert_eq!(answer["entries"][0]["key"], key.as_str());
+    let (_, answer) = d
+        .as_bot(
+            &d.bot.token,
+            "/discover/review/ask",
+            Some(json!({ "interaction_id": pressed.0, "token": pressed.1, "what": "listed", "kind": "bot" })),
+        )
+        .await;
+    assert_eq!(answer["total"], 0);
+    let (_, answer) = d
+        .as_bot(&d.bot.token, "/discover/review/ask", Some(ask(&pressed, "stats", None)))
+        .await;
+    assert_eq!(answer["listed_servers"], 1);
+    assert_eq!(answer["pending"], 0);
+    assert_eq!(answer["counts"][0]["approved"], 1);
+    let (_, answer) = d
+        .as_bot(&d.bot.token, "/discover/review/ask", Some(ask(&pressed, "lookup", Some(&d.applied.id))))
+        .await;
+    assert_eq!(answer["entry"]["status"], "Approved");
+    assert_eq!(answer["records"][0]["action"], "approve");
+    assert_eq!(answer["records"][0]["actor_id"], d.reviewer.id.as_str());
+
+    // a submitted form is not a way to read
+    let form = d.form(&session, &message, &key, "remove", "Spam in every channel").await;
+    let (status, _) = d
+        .as_bot(&d.bot.token, "/discover/review/ask", Some(ask(&form, "queue", None)))
+        .await;
+    assert_eq!(status, Status::BadRequest);
+}

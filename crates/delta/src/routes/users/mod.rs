@@ -14,6 +14,10 @@ pub(crate) mod change_requests;
 mod edit_user;
 mod fetch_dms;
 mod fetch_mentions;
+mod reminders;
+#[cfg(test)]
+mod saved_reminders_tests;
+mod saved;
 mod fetch_profile;
 mod fetch_self;
 mod fetch_user;
@@ -42,6 +46,16 @@ pub fn routes() -> (Vec<Route>, OpenApi) {
         get_default_avatar::default_avatar,
         fetch_profile::profile,
         fetch_mentions::fetch_mentions,
+        // Saved messages and reminders
+        saved::list,
+        saved::save,
+        saved::unsave,
+        reminders::list,
+        reminders::create,
+        reminders::edit,
+        reminders::delete,
+        // Your events across your servers
+        crate::routes::servers::events::mine,
         privacy::fetch_privacy,
         privacy::edit_privacy,
         // Linked accounts

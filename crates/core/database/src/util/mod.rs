@@ -1,6 +1,7 @@
 pub mod acker;
 pub mod automod;
 pub mod age;
+pub mod arabic_fold;
 pub mod bridge;
 pub mod bulk_permissions;
 pub mod captcha;
@@ -22,6 +23,8 @@ pub mod proxy_ticket;
 pub mod permissions;
 pub mod raid;
 pub mod reference;
+pub mod server_import;
+pub mod server_import_fetch;
 pub mod shield;
 pub mod signed_request;
 pub mod status_emoji;

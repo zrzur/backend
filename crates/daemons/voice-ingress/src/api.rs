@@ -5,7 +5,7 @@ use revolt_database::{
     iso8601_timestamp::{Duration, Timestamp},
     util::reference::Reference,
     voice::{
-        create_voice_state, delete_channel_voice_state, delete_voice_state,
+        capture_after_leave, create_voice_state, delete_channel_voice_state, delete_voice_state,
         get_call_notification_recipients, get_user_moved_from_voice, get_user_moved_to_voice,
         get_user_voice_channels, get_voice_channel_members, get_voice_state,
         is_stale_voice_session, is_voice_reentry_revoked, leave_other_voice_channels,
@@ -359,6 +359,14 @@ pub async fn ingress(
             }
 
             delete_voice_state(&voice_channel, user_id).await?;
+
+            // clips and recording: their choice goes with them, a recording
+            // they ran ends, and the room is told (never fails the webhook)
+            let opt_in = revolt_config::config().await.features.voice_capture.consent
+                == revolt_config::VoiceCaptureConsent::OptIn;
+            if let Err(error) = capture_after_leave(&voice_channel, user_id, opt_in).await {
+                log::warn!("capture state after leave: {error:?}");
+            }
 
             // Dont send leave event when a user is moved
             if get_user_moved_from_voice(channel_id, user_id)

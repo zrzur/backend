@@ -218,6 +218,55 @@ auto_derived!(
             event: String,
             title: String,
         },
+        /// A draft event was published
+        ServerEventPublish {
+            event: String,
+            title: String,
+        },
+        /// A scheduled event was started by hand
+        ServerEventStart {
+            event: String,
+            title: String,
+        },
+        /// An active event was ended by hand
+        ServerEventEnd {
+            event: String,
+            title: String,
+        },
+        /// The retention time of an event ran out (12 months after it
+        /// ended). Made by the system; it names nobody and holds no text of
+        /// the event. When it ran is the time of the entry.
+        ServerEventRetention {
+            event: String,
+            /// How many answers were removed
+            records: u64,
+            /// `PeopleRemoved`: who answered, the seat list and the invited
+            /// list are gone, the event and its counts stay. `EventDeleted`:
+            /// the event of a server that no longer exists is gone as a whole
+            outcome: String,
+        },
+        /// Someone who manages events but is not named on an event limited
+        /// to roles or invited people read who takes part in it, giving the
+        /// entry's reason
+        ServerEventPeopleAccess {
+            event: String,
+        },
+        /// An organiser removed a person from an event
+        ServerEventAttendeeRemove {
+            event: String,
+            title: String,
+            user: String,
+        },
+        /// An organiser gave a waiting person a seat
+        ServerEventAttendeeSeat {
+            event: String,
+            title: String,
+            user: String,
+            /// The seat was given beyond the event's seat limit, which the
+            /// organiser confirmed
+            #[serde(default)]
+            over_capacity: bool,
+        },
     }
 
     /// Audit Log Query
@@ -355,7 +404,19 @@ impl AuditLogEntry {
                 AuditLogEntryAction::ServerEventCreate { .. }
                 | AuditLogEntryAction::ServerEventEdit { .. }
                 | AuditLogEntryAction::ServerEventCancel { .. }
-                | AuditLogEntryAction::ServerEventDelete { .. } => {}
+                | AuditLogEntryAction::ServerEventDelete { .. }
+                | AuditLogEntryAction::ServerEventPublish { .. }
+                | AuditLogEntryAction::ServerEventStart { .. }
+                | AuditLogEntryAction::ServerEventEnd { .. }
+                | AuditLogEntryAction::ServerEventRetention { .. }
+                | AuditLogEntryAction::ServerEventPeopleAccess { .. } => {}
+                AuditLogEntryAction::ServerEventAttendeeRemove { user, .. }
+                | AuditLogEntryAction::ServerEventAttendeeSeat { user, .. } => {
+                    // empty once hidden from this reader
+                    if !user.is_empty() {
+                        user_ids.insert(user.clone());
+                    }
+                }
             };
         }
 

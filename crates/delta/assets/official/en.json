@@ -76,12 +76,16 @@
     "body": "“{name}” is now listed on Discover."
   },
   "discover.denied": {
-    "title": "Discover",
-    "body": "We didn't list “{name}” on Discover.\n{note}\n\nYou can change what is needed and apply again from its settings."
+    "title": "Your Discover request was not approved",
+    "body": "Thank you for applying. We reviewed “{name}” and did not list it on Discover this time.\n\nReason: {note}\n\nYou can make the changes needed and apply again from its settings at any time."
+  },
+  "discover.no_reason": {
+    "title": "",
+    "body": "No reason was written."
   },
   "discover.removed": {
-    "title": "Removed from Discover",
-    "body": "“{name}” is no longer listed on Discover.\n{note}"
+    "title": "Your listing was removed from Discover",
+    "body": "“{name}” is no longer listed on Discover. Nothing else about it changed; only the listing was removed.\n\nReason: {note}\n\nIf you think this was a mistake, write to us at {contact}."
   },
   "plugin.approved": {
     "title": "Your plugin version is live",

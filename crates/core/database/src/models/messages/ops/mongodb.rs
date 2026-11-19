@@ -97,7 +97,8 @@ impl AbstractMessages for MongoDb {
             filter.insert(
                 "$text",
                 doc! {
-                    "$search": query
+                    // widened to the spellings the same Arabic word is stored under
+                    "$search": crate::util::arabic_fold::search_terms(&query)
                 },
             );
 

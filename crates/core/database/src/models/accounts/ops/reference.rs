@@ -93,6 +93,20 @@ impl AbstractAccounts for ReferenceDb {
             .collect())
     }
 
+    async fn fetch_provisional_accounts_before(&self, before: Timestamp) -> Result<Vec<Account>> {
+        let accounts = self.accounts.lock().await;
+        Ok(accounts
+            .values()
+            .filter(|account| {
+                account
+                    .provisional
+                    .as_ref()
+                    .is_some_and(|provisional| provisional.since <= before)
+            })
+            .cloned()
+            .collect())
+    }
+
     // Save account
     async fn save_account(&self, account: &Account) -> Result<()> {
         let mut accounts = self.accounts.lock().await;
@@ -236,6 +250,14 @@ impl AbstractAccounts for ReferenceDb {
                 .values()
                 .filter(|t| t.user_id == user_id)
                 .filter_map(|t| serde_json::to_value(t).ok())
+                .collect(),
+            ExportSource::TeamApplications => self
+                .team_applications
+                .lock()
+                .await
+                .values()
+                .filter(|a| a.user_id == user_id)
+                .filter_map(|a| serde_json::to_value(a).ok())
                 .collect(),
             ExportSource::Settings => self
                 .user_settings

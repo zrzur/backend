@@ -74,11 +74,16 @@ pub async fn member_experimental_query(
         .into_iter()
         .zip(users)
         .filter(|(member, user)| {
-            if let Some(nickname) = &member.nickname {
-                nickname.contains(&options.query)
-            } else {
-                user.username.contains(&options.query)
-            }
+            // the name shown in the server, the display name or the username, in
+            // any spelling (case, alef forms, ta marbuta, vowel marks, digits)
+            [
+                member.nickname.as_deref(),
+                user.display_name.as_deref(),
+                Some(user.username.as_str()),
+            ]
+            .into_iter()
+            .flatten()
+            .any(|name| revolt_database::util::arabic_fold::text_matches(name, &options.query))
         })
         .collect();
 
@@ -102,4 +107,57 @@ pub async fn member_experimental_query(
         members: members.into_iter().map(Into::into).collect(),
         users,
     }))
+}
+
+#[cfg(test)]
+mod test {
+    use crate::{rocket, util::test::TestHarness};
+    use revolt_database::{Member, PartialUser};
+    use rocket::http::{Header, Status};
+
+    #[rocket::async_test]
+    async fn a_member_is_found_however_the_name_is_typed() {
+        let harness = TestHarness::new().await;
+        let (_, session, owner) = harness.new_user().await;
+        let (server, _) = harness.new_server(&owner).await;
+        Member::create(&harness.db, &server, &owner, None).await.unwrap();
+
+        let (_, _, mut ahmad) = harness.new_user().await;
+        ahmad
+            .update(
+                &harness.db,
+                PartialUser {
+                    display_name: Some("أحمد الخطيب".to_string()),
+                    ..Default::default()
+                },
+                vec![],
+            )
+            .await
+            .unwrap();
+        Member::create(&harness.db, &server, &ahmad, None).await.unwrap();
+
+        // (typed, found): the display name counts, in any spelling
+        for (typed, found) in [
+            ("أحمد", true),
+            ("احمد", true),
+            ("أَحمد", true),
+            ("خطيب", true),
+            ("الخطيب", true),
+            ("سلمى", false),
+        ] {
+            let response = harness
+                .client
+                .get(format!(
+                    "/servers/{}/members_experimental_query?query={}&experimental_api=true",
+                    server.id,
+                    rocket::http::RawStr::new(typed).percent_encode()
+                ))
+                .header(Header::new("x-session-token", session.token.clone()))
+                .dispatch()
+                .await;
+            assert_eq!(response.status(), Status::Ok);
+            let body = response.into_string().await.unwrap();
+            assert_eq!(body.contains(&ahmad.id), found, "{typed}");
+        }
+    }
 }

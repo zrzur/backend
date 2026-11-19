@@ -154,6 +154,12 @@ impl AbstractPlatformStaff for ReferenceDb {
                     .as_ref()
                     .is_none_or(|t| e.target_id.as_ref() == Some(t))
             })
+            .filter(|e| {
+                query
+                    .action_prefix
+                    .as_ref()
+                    .is_none_or(|p| e.action.starts_with(p.as_str()))
+            })
             .take(query.limit)
             .cloned()
             .collect())

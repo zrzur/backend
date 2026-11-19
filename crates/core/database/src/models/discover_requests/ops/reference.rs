@@ -91,6 +91,16 @@ impl AbstractDiscoverRequest for ReferenceDb {
             .collect())
     }
 
+    /// Fetch requests that are approved
+    async fn fetch_listed_discover_requests(&self) -> Result<Vec<DiscoverRequest>> {
+        let discover = self.discover_requests.lock().await;
+        Ok(discover
+            .values()
+            .filter(|d| matches!(d.status, DiscoverRequestStatus::Approved(_)))
+            .cloned()
+            .collect())
+    }
+
     /// Set the status of an existing discover request
     async fn update_discover_request_status(
         &self,

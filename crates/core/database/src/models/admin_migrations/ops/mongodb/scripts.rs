@@ -26,7 +26,7 @@ struct MigrationInfo {
     revision: i32,
 }
 
-pub const LATEST_REVISION: i32 = 90; // MUST BE +1 to last migration
+pub const LATEST_REVISION: i32 = 92; // MUST BE +1 to last migration
 // Number given only in the release after the one above, once no old delta runs:
 // a session an old delta wrote during the rollout has no date and never expires.
 const PENDING_SESSION_EXPIRY_FILL: i32 = -1;
@@ -55,6 +55,10 @@ const PENDING_SESSION_HASHES: i32 = 87;
 const PENDING_SESSION_TOKEN_INDEX: i32 = 88;
 // Number given by the coordinator at merge (stream steam-connection)
 const PENDING_LINKED_ACCOUNT_INDEXES: i32 = 89;
+// Stream saved-reminders: the coordinator gives the final number at merge
+const PENDING_SAVED_REMINDER_INDEXES: i32 = 90;
+// Number given by the coordinator at merge (stream events-v5)
+const PENDING_SERVER_EVENT_ANSWERS: i32 = 91;
 
 /// The earliest day a session from before expiry can expire. At least 30
 /// days out, also with expiry switched off (0), for the day it is switched on.
@@ -2640,9 +2644,452 @@ pub async fn run_migrations(db: &MongoDb, revision: i32) -> i32 {
         create_linked_account_indexes(&db.db()).await;
     }
 
+    if revision <= PENDING_SAVED_REMINDER_INDEXES {
+        info!("Running migration [revision {PENDING_SAVED_REMINDER_INDEXES} / 19-11-2026]: Indexes for saved messages and message reminders");
+        create_saved_reminder_indexes(&db.db()).await;
+    }
+
+    if revision <= PENDING_SERVER_EVENT_ANSWERS {
+        info!("Running migration [revision {PENDING_SERVER_EVENT_ANSWERS} / 18-11-2026]: Event answers: every Interested mark becomes maybe, counts are set again from the answers");
+        let report = migrate_server_event_answers(&db.db()).await;
+        info!("Event answers: {report:?}");
+    }
+
     // Reminder to update LATEST_REVISION when adding new migrations.
     LATEST_REVISION.max(revision)
 }
+
+/// Saved messages are listed by person, newest first. Reminders are listed
+/// by person, and crond finds the waiting ones that are due. Only indexes,
+/// no data moves. Safe to run twice: creating an index that exists is a
+/// no-op.
+pub async fn create_saved_reminder_indexes(db: &mongodb::Database) {
+    db.run_command(doc! {
+        "createIndexes": "saved_messages",
+        "indexes": [
+            { "key": { "user_id": 1_i32, "saved_at": -1_i32 }, "name": "user_newest" }
+        ]
+    })
+    .await
+    .expect("Failed to create the saved message index");
+    db.run_command(doc! {
+        "createIndexes": "message_reminders",
+        "indexes": [
+            { "key": { "user_id": 1_i32, "due_at": 1_i32 }, "name": "user_due" },
+            { "key": { "delivered_at": 1_i32, "due_at": 1_i32 }, "name": "waiting_due" }
+        ]
+    })
+    .await
+    .expect("Failed to create the message reminder indexes");
+}
+
+/// Indexes for answers to events: the attendee list of one answer (paged by
+/// user), a server's events by start (calendar and "my events"), events by
+/// creator (the copy of a person's data) and seat lists by server (deleted
+/// with it). Creating an index that exists does nothing.
+pub async fn create_server_event_answer_indexes(db: &crate::mongodb::Database) {
+    for (collection, index) in [
+        (
+            "server_event_interests",
+            doc! {
+                "key": { "_id.event": 1_i32, "answer": 1_i32, "_id.user": 1_i32 },
+                "name": "event_answer_user"
+            },
+        ),
+        (
+            "server_event_interests",
+            doc! { "key": { "server": 1_i32 }, "name": "server" },
+        ),
+        (
+            "server_events",
+            doc! { "key": { "server": 1_i32, "starts_at": 1_i32 }, "name": "server_start" },
+        ),
+        (
+            "server_events",
+            doc! { "key": { "creator": 1_i32 }, "name": "creator" },
+        ),
+        (
+            "server_event_rosters",
+            doc! { "key": { "server": 1_i32 }, "name": "server" },
+        ),
+        (
+            "server_events",
+            doc! { "key": { "invited": 1_i32 }, "name": "invited", "sparse": true },
+        ),
+        (
+            "server_events",
+            doc! { "key": { "status": 1_i32, "ended_at": 1_i32 }, "name": "status_ended" },
+        ),
+        (
+            "server_events",
+            doc! { "key": { "co_organisers": 1_i32 }, "name": "co_organisers", "sparse": true },
+        ),
+        // a share link code belongs to one event
+        (
+            "server_events",
+            doc! {
+                "key": { "link.code": 1_i32 },
+                "name": "link_code",
+                "unique": true,
+                "partialFilterExpression": { "link.code": { "$exists": true } }
+            },
+        ),
+        (
+            "server_events",
+            doc! {
+                "key": { "invitations.code": 1_i32 },
+                "name": "invitation_code",
+                "unique": true,
+                "partialFilterExpression": { "invitations.code": { "$exists": true } }
+            },
+        ),
+    ] {
+        db.run_command(doc! { "createIndexes": collection, "indexes": [index] })
+            .await
+            .unwrap_or_else(|error| panic!("Failed to create an index on {collection}: {error}"));
+    }
+}
+
+/// What the releases before left behind: events (with their marks and seat
+/// lists) of servers that were deleted, and marks of people who are no
+/// longer members of the server (they left through a deleted account).
+///
+/// With `remove: false` it only counts them. With `remove: true` it deletes
+/// them; nothing of a server that exists and of a person who is a member
+/// there is touched. Returns (events, marks) found.
+///
+/// Nothing calls this with `remove: true`: the migration keeps every old
+/// event and mark (owner, 2026-11-18). It is here for a deliberate run once
+/// a retention period has passed or a deletion is due.
+pub async fn remove_orphaned_server_event_data(
+    db: &crate::mongodb::Database,
+    remove: bool,
+) -> (u64, u64) {
+    let events = db.collection::<Document>("server_events");
+    let rows = db.collection::<Document>("server_event_interests");
+    let rosters = db.collection::<Document>("server_event_rosters");
+    let servers = db.collection::<Document>("servers");
+    let members = db.collection::<Document>("server_members");
+    let (mut gone_events, mut gone_rows) = (0, 0);
+
+    let mut known: std::collections::HashMap<String, bool> = Default::default();
+    let mut cursor = events
+        .find(doc! {})
+        .projection(doc! { "_id": 1_i32, "server": 1_i32 })
+        .await
+        .expect("Failed to read the events");
+    let mut orphans = Vec::new();
+    while let Some(event) = cursor.next().await {
+        let event = event.expect("Failed to read an event");
+        let (Ok(id), Ok(server)) = (event.get_str("_id"), event.get_str("server")) else {
+            continue;
+        };
+        let exists = match known.get(server) {
+            Some(exists) => *exists,
+            None => {
+                let exists = servers
+                    .count_documents(doc! { "_id": server })
+                    .await
+                    .expect("Failed to look for a server")
+                    > 0;
+                known.insert(server.to_string(), exists);
+                exists
+            }
+        };
+        if !exists {
+            orphans.push(id.to_string());
+        }
+    }
+    let orphaned: std::collections::HashSet<String> = orphans.iter().cloned().collect();
+    for id in orphans {
+        if !remove {
+            gone_events += 1;
+            gone_rows += rows
+                .count_documents(doc! { "_id.event": &id })
+                .await
+                .expect("Failed to count the marks of an orphaned event");
+            continue;
+        }
+        gone_rows += rows
+            .delete_many(doc! { "_id.event": &id })
+            .await
+            .expect("Failed to remove the marks of an orphaned event")
+            .deleted_count;
+        rosters
+            .delete_one(doc! { "_id": &id })
+            .await
+            .expect("Failed to remove the seat list of an orphaned event");
+        gone_events += events
+            .delete_one(doc! { "_id": &id })
+            .await
+            .expect("Failed to remove an orphaned event")
+            .deleted_count;
+    }
+
+    let mut cursor = rows
+        .find(doc! {})
+        .projection(doc! { "_id": 1_i32, "server": 1_i32 })
+        .await
+        .expect("Failed to read the marks");
+    let mut left = Vec::new();
+    while let Some(row) = cursor.next().await {
+        let row = row.expect("Failed to read a mark");
+        let (Ok(key), Ok(server)) = (row.get_document("_id"), row.get_str("server")) else {
+            continue;
+        };
+        let Ok(user) = key.get_str("user") else { continue };
+        // counted with its event above
+        if key.get_str("event").is_ok_and(|event| orphaned.contains(event)) {
+            continue;
+        }
+        let member = members
+            .count_documents(doc! { "_id.server": server, "_id.user": user })
+            .await
+            .expect("Failed to look for a member")
+            > 0;
+        if !member {
+            left.push((key.clone(), user.to_string()));
+        }
+    }
+    for (key, user) in left {
+        if !remove {
+            gone_rows += 1;
+            continue;
+        }
+        gone_rows += rows
+            .delete_one(doc! { "_id": key.clone() })
+            .await
+            .expect("Failed to remove the mark of someone who left")
+            .deleted_count;
+        if let Ok(event) = key.get_str("event") {
+            rosters
+                .update_one(
+                    doc! { "_id": event },
+                    doc! { "$pull": { "going": &user, "waiting": &user } },
+                )
+                .await
+                .expect("Failed to take someone who left off a seat list");
+        }
+    }
+    (gone_events, gone_rows)
+}
+
+/// What one run of `migrate_server_event_answers` changed
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ServerEventAnswerMigration {
+    /// "Interested" marks that became "maybe" answers
+    pub marks_turned_into_maybe: u64,
+    /// Events whose counts were written differently than they stood
+    pub events_recounted: u64,
+    /// Events that exist and were looked at
+    pub events_kept: u64,
+    /// Events still scheduled, running or in draft whose server no longer
+    /// exists: called off (not deleted), so that they fall under the
+    /// retention time
+    pub events_of_deleted_servers_called_off: u64,
+    /// How often the counts had to be written until the rows stood still
+    /// (1 when nobody else wrote meanwhile)
+    pub count_passes: u32,
+    /// Events of servers that no longer exist: found and kept
+    pub orphaned_events_found: u64,
+    /// Marks of such events, and of people who are no longer members of
+    /// the server: found and kept
+    pub orphaned_marks_found: u64,
+}
+
+/// Events get answers (going, maybe, not going) in place of the single
+/// "Interested" mark. Every mark is kept and becomes "maybe", and each
+/// event's counts are set again from its rows (and its seat list, when it
+/// has one). Nothing is deleted: what earlier releases left behind (events
+/// of deleted servers, marks of deleted accounts) is counted and reported,
+/// and stays until a deliberate clean-up. A second run finds nothing left
+/// to change and reports zero changes.
+pub async fn migrate_server_event_answers(
+    db: &crate::mongodb::Database,
+) -> ServerEventAnswerMigration {
+    create_server_event_answer_indexes(db).await;
+
+    let mut report = ServerEventAnswerMigration::default();
+    // counted only: nothing is removed here
+    let (events, marks) = remove_orphaned_server_event_data(db, false).await;
+    report.orphaned_events_found = events;
+    report.orphaned_marks_found = marks;
+
+    let rows = db.collection::<Document>("server_event_interests");
+    report.marks_turned_into_maybe = rows
+        .update_many(
+            doc! { "answer": { "$exists": false } },
+            doc! { "$set": { "answer": "Maybe", "waiting": false } },
+        )
+        .await
+        .expect("Failed to turn Interested marks into answers")
+        .modified_count;
+
+    report.events_of_deleted_servers_called_off = call_off_events_of_deleted_servers(db).await;
+
+    // The counts are written from a snapshot of the rows. If the rows
+    // changed meanwhile (an API process is taking answers), the counts
+    // would be wrong for good: counted again, a few times, and then the
+    // migration stops with a clear word instead of leaving them wrong.
+    loop {
+        report.count_passes += 1;
+        let wanted = server_event_counts_snapshot(db).await;
+        let (kept, changed) = write_server_event_counts(db, &wanted).await;
+        report.events_kept = kept;
+        report.events_recounted += changed;
+        if server_event_counts_snapshot(db).await == wanted {
+            break;
+        }
+        if report.count_passes >= MAX_COUNT_PASSES {
+            panic!(
+                "Event answers changed {MAX_COUNT_PASSES} times while the migration counted them: \
+                 an API process is still taking answers. Stop every API process, then start again; \
+                 the migration is safe to run again."
+            );
+        }
+    }
+    report
+}
+
+/// How often the migration counts again before it gives up
+const MAX_COUNT_PASSES: u32 = 3;
+
+/// Events still to come, running or in draft whose server no longer exists
+/// are called off at this moment. Nothing is deleted: they and their answers
+/// then fall under the retention time like any other ended event. Events of
+/// servers that exist are not touched. Returns how many were called off.
+pub async fn call_off_events_of_deleted_servers(db: &crate::mongodb::Database) -> u64 {
+    let events = db.collection::<Document>("server_events");
+    let servers = db.collection::<Document>("servers");
+    let mut known: std::collections::HashMap<String, bool> = Default::default();
+    let mut cursor = events
+        .find(doc! { "status": { "$in": ["Scheduled", "Active", "Draft"] } })
+        .projection(doc! { "_id": 1_i32, "server": 1_i32 })
+        .await
+        .expect("Failed to read the events");
+    let mut orphans = Vec::new();
+    while let Some(event) = cursor.next().await {
+        let event = event.expect("Failed to read an event");
+        let (Ok(id), Ok(server)) = (event.get_str("_id"), event.get_str("server")) else {
+            continue;
+        };
+        let exists = match known.get(server) {
+            Some(exists) => *exists,
+            None => {
+                let exists = servers
+                    .count_documents(doc! { "_id": server })
+                    .await
+                    .expect("Failed to look for a server")
+                    > 0;
+                known.insert(server.to_string(), exists);
+                exists
+            }
+        };
+        if !exists {
+            orphans.push(id.to_string());
+        }
+    }
+    let now = to_bson(&Timestamp::now_utc()).expect("a time");
+    let mut called_off = 0;
+    for id in orphans {
+        called_off += events
+            .update_one(
+                doc! { "_id": &id, "status": { "$in": ["Scheduled", "Active", "Draft"] } },
+                doc! { "$set": { "status": "Cancelled", "ended_at": now.clone() } },
+            )
+            .await
+            .expect("Failed to call off an event of a deleted server")
+            .modified_count;
+    }
+    called_off
+}
+
+/// What every event's four counts should be, from its rows (and its seat
+/// list, when it has one): going, maybe, not going, waiting
+pub async fn server_event_counts_snapshot(
+    db: &crate::mongodb::Database,
+) -> std::collections::BTreeMap<String, [i64; 4]> {
+    let rows = db.collection::<Document>("server_event_interests");
+    let mut counts: std::collections::BTreeMap<String, [i64; 4]> = Default::default();
+    let mut cursor = rows
+        .aggregate(vec![doc! { "$group": {
+            "_id": { "event": "$_id.event", "answer": "$answer", "waiting": "$waiting" },
+            "n": { "$sum": 1_i32 }
+        } }])
+        .await
+        .expect("Failed to count event answers");
+    while let Some(group) = cursor.next().await {
+        let group = group.expect("Failed to read an event answer count");
+        let Ok(id) = group.get_document("_id") else { continue };
+        let Ok(event) = id.get_str("event") else { continue };
+        let n = group
+            .get_i64("n")
+            .or_else(|_| group.get_i32("n").map(i64::from))
+            .unwrap_or(0);
+        let slot = match (id.get_str("answer"), id.get_bool("waiting").unwrap_or(false)) {
+            (Ok("Going"), false) => 0,
+            (Ok("Going"), true) => 3,
+            (Ok("NotGoing"), _) => 2,
+            _ => 1,
+        };
+        counts.entry(event.to_string()).or_default()[slot] += n;
+    }
+    // an event that has a seat list: it decides the seats
+    let mut cursor = db
+        .collection::<Document>("server_event_rosters")
+        .find(doc! {})
+        .await
+        .expect("Failed to read the seat lists");
+    while let Some(roster) = cursor.next().await {
+        let roster = roster.expect("Failed to read a seat list");
+        let Ok(id) = roster.get_str("_id") else { continue };
+        let size = |field: &str| roster.get_array(field).map(|a| a.len() as i64).unwrap_or(0);
+        let entry = counts.entry(id.to_string()).or_default();
+        entry[0] = size("going");
+        entry[3] = size("waiting");
+    }
+    counts
+}
+
+/// Write the counts onto every event (an event without rows gets zeros).
+/// Returns (events looked at, events whose counts changed).
+async fn write_server_event_counts(
+    db: &crate::mongodb::Database,
+    counts: &std::collections::BTreeMap<String, [i64; 4]>,
+) -> (u64, u64) {
+    let events = db.collection::<Document>("server_events");
+    let mut ids = Vec::new();
+    let mut cursor = events
+        .find(doc! {})
+        .projection(doc! { "_id": 1_i32 })
+        .await
+        .expect("Failed to read the events");
+    while let Some(event) = cursor.next().await {
+        if let Ok(id) = event.expect("Failed to read an event").get_str("_id") {
+            ids.push(id.to_string());
+        }
+    }
+    let (mut kept, mut changed) = (0, 0);
+    for id in ids {
+        let [going, maybe, not_going, waiting] = counts.get(&id).copied().unwrap_or_default();
+        kept += 1;
+        changed += events
+            .update_one(
+                doc! { "_id": &id },
+                doc! { "$set": {
+                    "interested_count": maybe,
+                    "going_count": going,
+                    "not_going_count": not_going,
+                    "waitlist_count": waiting,
+                } },
+            )
+            .await
+            .expect("Failed to set the counts of an event")
+            .modified_count;
+    }
+    (kept, changed)
+}
+
 
 /// Linked accounts: found by person, and one service account links to one
 /// Zrzur account only. Safe to run twice.
@@ -3243,6 +3690,7 @@ mod thread_permission_migration_tests {
         assert_eq!(category.get_str("title").unwrap(), "edited");
         assert_eq!(category.get_document("default_permissions").unwrap().get_i64("d").unwrap(), 0);
         assert!(saved.get_bool(THREADS_DONE).unwrap());
+
         db.drop_database().await;
     }
 }
@@ -3288,6 +3736,31 @@ mod community_migration_tests {
 #[cfg(test)]
 mod statement_migration_tests {
     use crate::mongodb::bson::{doc, Document};
+
+    /// MongoDB only: the saved message and reminder indexes can be made twice
+    #[tokio::test]
+    async fn saved_reminder_indexes_run_twice_on_mongodb() {
+        let db = crate::DatabaseInfo::Test("saved_reminder_indexes".to_string())
+            .connect()
+            .await
+            .expect("Database connection failed.");
+        let crate::Database::MongoDb(mongo) = &db else {
+            return;
+        };
+        for _ in 0..2 {
+            super::create_saved_reminder_indexes(&mongo.db()).await;
+        }
+        for (collection, wanted) in [("saved_messages", 2), ("message_reminders", 3)] {
+            let names = mongo
+                .db()
+                .collection::<Document>(collection)
+                .list_index_names()
+                .await
+                .unwrap();
+            assert_eq!(names.len(), wanted, "{collection}: {names:?}");
+        }
+        db.drop_database().await;
+    }
 
     /// MongoDB only: the poll index can be made twice
     #[tokio::test]
@@ -3843,4 +4316,240 @@ pub async fn create_soundboard(db: &crate::mongodb::Database) {
         )
         .await
         .expect("Failed to give servers the soundboard");
+}
+
+#[cfg(test)]
+mod server_event_answer_migration_tests {
+    use crate::mongodb::bson::{doc, to_document, Document};
+    use crate::{Database, DatabaseInfo, ServerEvent};
+    use futures::TryStreamExt;
+    use iso8601_timestamp::Timestamp;
+    use revolt_models::v0;
+
+    /// An event as the release before answers stored it
+    fn old_event(id: &str, interested: i64) -> Document {
+        let mut event = ServerEvent::new(
+            "SERVER",
+            "CREATOR",
+            "Old event".into(),
+            None,
+            Timestamp::now_utc(),
+            None,
+            v0::ServerEventPlace::External {
+                location: "Park".into(),
+            },
+            None,
+        );
+        event.id = id.to_string();
+        let mut document = to_document(&event).unwrap();
+        for new in [
+            "going_count",
+            "not_going_count",
+            "waitlist_count",
+            "roster_version",
+            "waitlist",
+            "visibility",
+            "attendee_list",
+        ] {
+            document.remove(new);
+        }
+        // a count that drifted from its rows
+        document.insert("interested_count", interested);
+        document
+    }
+
+    fn old_mark(event: &str, user: &str) -> Document {
+        doc! {
+            "_id": { "event": event, "user": user },
+            "server": "SERVER",
+            "created_at": crate::mongodb::bson::to_bson(&Timestamp::now_utc()).unwrap(),
+        }
+    }
+
+    #[tokio::test]
+    async fn old_marks_become_maybe_none_is_lost_and_twice_is_the_same() {
+        let db = DatabaseInfo::Test("server_event_answers".to_string())
+            .connect()
+            .await
+            .expect("Database connection failed.");
+        let Database::MongoDb(mongo) = &db else { return };
+        db.drop_database().await;
+        let handle = mongo.db();
+        let events = handle.collection::<Document>("server_events");
+        let rows = handle.collection::<Document>("server_event_interests");
+        // the server exists and three people are members of it
+        handle
+            .collection::<Document>("servers")
+            .insert_one(doc! { "_id": "SERVER" })
+            .await
+            .unwrap();
+        handle
+            .collection::<Document>("server_members")
+            .insert_many(["USER_1", "USER_2", "USER_3"].map(|user| {
+                doc! { "_id": { "server": "SERVER", "user": user } }
+            }))
+            .await
+            .unwrap();
+        // left behind by earlier releases: an event of a deleted server
+        // with a mark, and the mark of a deleted account
+        let mut orphan = old_event("EVENT_GONE", 1);
+        orphan.insert("server", "SERVER_GONE");
+        let mut orphan_mark = old_mark("EVENT_GONE", "USER_1");
+        orphan_mark.insert("server", "SERVER_GONE");
+        events
+            .insert_many([
+                old_event("EVENT_A", 9),
+                old_event("EVENT_B", 0),
+                old_event("EVENT_C", 4),
+                orphan,
+            ])
+            .await
+            .unwrap();
+        rows.insert_many([
+            old_mark("EVENT_A", "USER_1"),
+            old_mark("EVENT_A", "USER_2"),
+            old_mark("EVENT_B", "USER_1"),
+            old_mark("EVENT_A", "USER_DELETED"),
+            orphan_mark,
+        ])
+        .await
+        .unwrap();
+
+        for run in 0..2 {
+            let report = super::migrate_server_event_answers(&handle).await;
+            // the first run says what it changed, the second changes nothing
+            let expected = if run == 0 {
+                super::ServerEventAnswerMigration {
+                    marks_turned_into_maybe: 5,
+                    events_recounted: 4,
+                    events_kept: 4,
+                    // the scheduled event of the deleted server is called
+                    // off, not deleted
+                    events_of_deleted_servers_called_off: 1,
+                    count_passes: 1,
+                    orphaned_events_found: 1,
+                    orphaned_marks_found: 2,
+                }
+            } else {
+                super::ServerEventAnswerMigration {
+                    events_kept: 4,
+                    count_passes: 1,
+                    orphaned_events_found: 1,
+                    orphaned_marks_found: 2,
+                    ..Default::default()
+                }
+            };
+            assert_eq!(report, expected, "run {run}");
+
+            // nothing is deleted: the event of the deleted server and the
+            // mark of the deleted account are still there
+            let gone = db.fetch_server_event("EVENT_GONE").await.unwrap();
+            assert_eq!(gone.interested_count, 1, "run {run}");
+            // called off at the migration, so that its retention time runs
+            assert_eq!(gone.status, v0::ServerEventStatus::Cancelled, "run {run}");
+            assert!(gone.ended_at.is_some(), "run {run}");
+            // an event of a server that exists is not called off
+            assert_eq!(
+                db.fetch_server_event("EVENT_A").await.unwrap().status,
+                v0::ServerEventStatus::Scheduled,
+                "run {run}"
+            );
+            assert_eq!(
+                rows.count_documents(doc! { "_id.user": "USER_DELETED" }).await.unwrap(),
+                1,
+                "run {run}"
+            );
+            // every mark is still there, as "maybe"
+            let all: Vec<Document> = rows.find(doc! {}).await.unwrap().try_collect().await.unwrap();
+            assert_eq!(all.len(), 5, "run {run}");
+            assert!(all.iter().all(|row| row.get_str("answer") == Ok("Maybe")), "run {run}");
+            for (event, maybe) in [("EVENT_A", 3), ("EVENT_B", 1), ("EVENT_C", 0)] {
+                let stored = db.fetch_server_event(event).await.unwrap();
+                assert_eq!(stored.interested_count, maybe, "{event}, run {run}");
+                assert_eq!(
+                    (stored.going_count, stored.not_going_count, stored.waitlist_count),
+                    (0, 0, 0),
+                    "{event}, run {run}"
+                );
+                // what an old event means with the new settings: as before
+                assert_eq!(stored.visibility, v0::ServerEventVisibility::Place);
+                assert_eq!(stored.attendee_list, v0::ServerEventAttendeeList::Everyone);
+                assert!(stored.waitlist);
+                let shown: v0::ServerEvent = stored.into();
+                assert_eq!(shown.interested_count, maybe, "{event}, run {run}");
+                assert_eq!(shown.counts.maybe, maybe, "{event}, run {run}");
+            }
+            let marked = db.fetch_server_event_interested("EVENT_A", None, 10).await.unwrap();
+            assert_eq!(
+                marked,
+                vec!["USER_1".to_string(), "USER_2".to_string(), "USER_DELETED".to_string()],
+                "run {run}"
+            );
+        }
+
+        // answers given after the migration survive another run
+        let mut event = db.fetch_server_event("EVENT_A").await.unwrap();
+        event
+            .answer(&db, "USER_1", v0::ServerEventAnswer::Going)
+            .await
+            .unwrap();
+        event
+            .answer(&db, "USER_3", v0::ServerEventAnswer::NotGoing)
+            .await
+            .unwrap();
+        super::migrate_server_event_answers(&handle).await;
+        let stored = db.fetch_server_event("EVENT_A").await.unwrap();
+        assert_eq!(
+            (stored.going_count, stored.interested_count, stored.not_going_count),
+            (1, 2, 1)
+        );
+        assert_eq!(rows.count_documents(doc! {}).await.unwrap(), 6);
+
+        // the new indexes exist once
+        for (collection, name) in [
+            ("server_event_interests", "event_answer_user"),
+            ("server_events", "server_start"),
+            ("server_event_rosters", "server"),
+            ("server_events", "invited"),
+            ("server_events", "co_organisers"),
+        ] {
+            let indexes: Vec<_> = handle
+                .collection::<Document>(collection)
+                .list_indexes()
+                .await
+                .unwrap()
+                .try_collect()
+                .await
+                .unwrap();
+            let count = indexes
+                .iter()
+                .filter(|index| index.options.as_ref().and_then(|o| o.name.as_deref()) == Some(name))
+                .count();
+            assert_eq!(count, 1, "{collection}.{name}");
+        }
+
+        // what the migration checks itself with: the counts the rows give.
+        // A row written behind its back changes that picture, which is how
+        // it notices that someone else is still taking answers
+        let before = super::server_event_counts_snapshot(&handle).await;
+        assert_eq!(before.get("EVENT_A"), Some(&[1, 2, 1, 0]));
+        rows.insert_one(old_mark("EVENT_B", "USER_2")).await.unwrap();
+        let after = super::server_event_counts_snapshot(&handle).await;
+        assert_ne!(after, before);
+        assert_eq!(after.get("EVENT_B"), Some(&[0, 2, 0, 0]));
+        rows.delete_one(doc! { "_id": { "event": "EVENT_B", "user": "USER_2" } })
+            .await
+            .unwrap();
+
+        // the deliberate clean-up, when someone decides to run it: only the
+        // leftovers go, nothing of a member of an existing server
+        assert_eq!(super::remove_orphaned_server_event_data(&handle, false).await, (1, 2));
+        assert_eq!(rows.count_documents(doc! {}).await.unwrap(), 6, "counting removes nothing");
+        assert_eq!(super::remove_orphaned_server_event_data(&handle, true).await, (1, 2));
+        assert!(db.fetch_server_event("EVENT_GONE").await.is_err());
+        assert_eq!(rows.count_documents(doc! { "_id.user": "USER_DELETED" }).await.unwrap(), 0);
+        assert_eq!(rows.count_documents(doc! {}).await.unwrap(), 4);
+        assert_eq!(super::remove_orphaned_server_event_data(&handle, true).await, (0, 0));
+        db.drop_database().await;
+    }
 }

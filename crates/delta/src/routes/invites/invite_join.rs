@@ -21,6 +21,23 @@ pub async fn join(
     if user.bot.is_some() {
         return Err(create_error!(IsBot));
     }
+    // the server an account entered from its invite link is the only one
+    // until its e-mail is confirmed
+    revolt_database::Account::assert_confirmed(db, &user.id).await?;
+
+    join_invite(db, amqp, &user, target.id).await.map(Json)
+}
+
+/// Join an invite as `user`: every check of the join route (paused invites,
+/// age, ban, access mode, uses). Also the last step of
+/// `POST /auth/account/join`, so both paths refuse the same people.
+pub async fn join_invite(
+    db: &Database,
+    amqp: &AMQP,
+    user: &User,
+    code: &str,
+) -> Result<v0::InviteJoinResponse> {
+    let target = Reference::from_unchecked(code);
 
     user.can_acquire_server(db).await?;
 
@@ -45,7 +62,7 @@ pub async fn join(
             }
 
             // Mature Servers are for declared adults only
-            revolt_database::util::age::assert_can_join_server(db, &user, &server).await?;
+            revolt_database::util::age::assert_can_join_server(db, user, &server).await?;
 
             if db.fetch_ban(&server.id, &user.id).await.is_ok() {
                 return Err(create_error!(Banned));
@@ -80,9 +97,9 @@ pub async fn join(
                             request
                         }
                     };
-                    return Ok(Json(InviteJoinResponse::JoinRequest {
+                    return Ok(InviteJoinResponse::JoinRequest {
                         request: request.into(),
-                    }));
+                    });
                 }
             }
 
@@ -94,7 +111,7 @@ pub async fn join(
             } else {
                 revolt_database::InsightJoinSource::Invite
             };
-            let (_, channels) = match Member::create_from(db, &server, &user, None, source).await {
+            let (_, channels) = match Member::create_from(db, &server, user, None, source).await {
                 Ok(created) => created,
                 Err(error) => {
                     give_back_use(db, invite.code(), stored).await;
@@ -114,25 +131,25 @@ pub async fn join(
                 .ok();
             }
 
-            Ok(Json(InviteJoinResponse::Server {
+            Ok(InviteJoinResponse::Server {
                 channels: channels.into_iter().map(|c| c.into()).collect(),
-                server: server.into_for(db, &user).await,
-            }))
+                server: server.into_for(db, user).await,
+            })
         }
         Invite::Group {
             channel, creator, ..
         } => {
             let mut channel = db.fetch_channel(channel).await?;
             take_use(db, invite.code(), stored).await?;
-            if let Err(error) = channel.add_user_to_group(db, amqp, &user, creator).await {
+            if let Err(error) = channel.add_user_to_group(db, amqp, user, creator).await {
                 give_back_use(db, invite.code(), stored).await;
                 return Err(error);
             }
             if let Channel::Group { recipients, .. } = &channel {
-                Ok(Json(InviteJoinResponse::Group {
-                    users: User::fetch_many_ids_as_mutuals(db, &user, recipients).await?,
+                Ok(InviteJoinResponse::Group {
+                    users: User::fetch_many_ids_as_mutuals(db, user, recipients).await?,
                     channel: channel.into(),
-                }))
+                })
             } else {
                 unreachable!()
             }

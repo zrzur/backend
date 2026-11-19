@@ -355,6 +355,30 @@ polls_enabled = false
 # and the app hides the Events entry. The stable app shows an unknown system
 # message for "event started" until it ships the events screens.
 server_events_enabled = false
+# The short path from an invite link. On: GET /invites/{code} also lists up to
+# four channels everyone in the server can see, and POST /auth/account/join
+# makes an account from a name, an e-mail address and a month and year of
+# birth that enters the invited server at once. Until its e-mail is confirmed
+# such an account cannot open direct messages, join or create another server,
+# create invites or bots, or upload files; crond removes it after
+# join_confirm_hours. Off, the route answers FeatureDisabled and sign-up works
+# as before. Needs SMTP (the confirmation mail sets the password).
+join_by_link_enabled = false
+join_confirm_hours = 72
+# Voice on a weak connection: each person's app steps down (lighter voice,
+# video lowered, then video paused with audio kept) and shows a sign. Off,
+# calls behave as before. Numbers in [features.voice_weak_network].
+voice_weak_network_enabled = false
+# Voice clips: a person in a voice room saves the last seconds and shares
+# them as a message. A voice is included only after its owner agreed. Off,
+# the routes answer FeatureDisabled and the app hides the button.
+voice_clips_enabled = false
+# Recorded rooms: an episode of a voice room that members can hear later.
+# Same consent as clips; hours per month by Wings level. Off, the routes
+# answer FeatureDisabled.
+voice_recordings_enabled = false
+# An event's share link can show a little to people outside the server
+server_event_public_links = false
 # Enable push notifications for mass pings (everyone, online, roles)
 # When false this will still ping in-client but will not send notifications from pushd
 mass_mentions_send_notifications = true
@@ -511,6 +535,23 @@ sounds = 512_000
 decorations = 2_500_000
 effects = 2_000_000
 
+[features.saved_reminders]
+# "Save message" (a private list only the person sees) and "Remind me" on a
+# message (crond delivers it as an entry in the app and a push notification).
+# Off, every route answers FeatureDisabled, crond leaves reminders alone and
+# the app hides both actions; saved entries and reminders stay stored.
+enabled = false
+# Saved messages per person: saving is not limited as a product rule, this
+# only stops runaway scripts (one entry is about 150 bytes).
+max_saved = 1000
+# Reminders waiting at the same time, per person, and the same with Feather
+max_active = 10
+max_active_plus = 100
+# How far ahead a reminder may be set
+max_days_ahead = 366
+# A delivered reminder stays listed this long, then crond removes it
+keep_delivered_days = 30
+
 [features.community]
 # Community designs: only creators granted by staff can upload, and their
 # designs are published straight away (reviewers can still suspend them).
@@ -531,6 +572,18 @@ effect_min_frame_ms = 33
 # stored. It may be this big going in; ffmpeg is killed after this long.
 webm_max_bytes = 8_000_000
 webm_timeout_ms = 20_000
+
+[features.server_import]
+# "Copy a server setup": builds a server from the layout in a Discord server
+# template (channels, categories, roles; never messages or members).
+# Off, the routes answer FeatureDisabled and the app shows no way in.
+enabled = false
+# Reading a template by its link makes this server call Discord's public
+# template address, once per read. Off, people paste the template's text
+# instead. Turn this off if Discord refuses the calls; pasting keeps working.
+link_fetch = false
+template_endpoint = "https://discord.com/api/v10/guilds/templates/"
+reads_per_hour = 5
 
 [features.age_safety]
 # Sign-up may take the month and year of birth (off: the app asks at the
@@ -557,6 +610,135 @@ role = ""
 # desk (with a written reason). Empty = not possible from the desk.
 remove_role = ""
 bot = ""
+
+[features.team_applications]
+# "Join the Zrzur team": people apply for a team role through one bot in one
+# server; holders of one role there review the applications. The bot itself
+# can decide nothing and hands out nothing (routes under /team/desk): the
+# server checks who pressed, and the server gives the role.
+# Leave server, channel_apply, channel_review, reviewer_role or bot empty to
+# keep the routes switched off.
+server = ""
+# The channel with the Apply message, and the private staff channel.
+channel_apply = ""
+channel_review = ""
+reviewer_role = ""
+bot = ""
+# Days to wait after a decision before applying again.
+cooldown_days = 30
+# Minutes to wait after withdrawing before applying again.
+withdraw_wait_minutes = 60
+# Days a rejected application is kept (never less than the cooldown), and
+# days an accepted one is kept. A withdrawn one loses its answers at once.
+retention_days = 30
+accepted_retention_days = 90
+privacy_url = "https://zrzur.com/legal/privacy"
+
+# The team roles, in the order shown. A role is offered once `server` is set
+# and it has a `role` to give (or is manual) and `open` is true. Every role
+# is a volunteer role; anyone with an account (16 or over) may apply.
+# The key decides the texts: a key that is a known kind, or a kind with a
+# suffix (moderator-lounge), has its name, description, rules and questions
+# in the app's seven languages (crates/delta/assets/team/). Kinds: support,
+# moderator, discover-reviewer, community-manager, designer, developer,
+# administrator.
+#   name, description, rules  your own English words for this role (they
+#           replace the English text; a role of no known kind needs `name`
+#           and shows these words in every language)
+#   team_role  a second role of that server given with it: its "Zrzur Team" role
+#   channel_review, reviewer_role  this role's own staff channel (it may be in
+#           the role's server) and a role of that server whose holders may
+#           decide its applications; the common reviewers decide everything
+#   manual  never given by the system: accepting records it and tells the
+#           owner of the server, who gives the role by hand. Always so for
+#           the key "administrator" and for any role that can manage the
+#           server, its roles or its permissions.
+#   adult   true: only accounts whose stated age is 18 or over may apply
+#           (default false)
+#   questions  up to two [[...roles.questions]] with id, label (45
+#           characters) and hint (100), in one language; none: the two
+#           standard questions, in every language
+[[features.team_applications.roles]]
+key = "support"
+server = ""
+role = ""
+
+[[features.team_applications.roles]]
+key = "moderator-lounge"
+server = ""
+role = ""
+
+[[features.team_applications.roles]]
+key = "moderator-discover"
+server = ""
+role = ""
+
+[[features.team_applications.roles]]
+key = "moderator-designs"
+server = ""
+role = ""
+
+[[features.team_applications.roles]]
+key = "moderator-developers"
+server = ""
+role = ""
+
+[[features.team_applications.roles]]
+key = "discover-reviewer"
+server = ""
+role = ""
+
+[[features.team_applications.roles]]
+key = "community-manager"
+server = ""
+role = ""
+
+[[features.team_applications.roles]]
+key = "designer"
+server = ""
+role = ""
+
+[[features.team_applications.roles]]
+key = "developer"
+server = ""
+role = ""
+
+[[features.team_applications.roles]]
+key = "administrator"
+server = ""
+manual = true
+[features.voice_weak_network]
+# Packet loss (percent) and round trip time (ms) from which a call counts
+# as weak, then as very weak
+weak_loss_percent = 5
+bad_loss_percent = 15
+weak_rtt_ms = 400
+bad_rtt_ms = 800
+# Microphone bitrate on a weak and on a very weak connection (low-data
+# mode's lighter voice uses the first)
+weak_audio_bitrate = 24_000
+bad_audio_bitrate = 16_000
+# Seconds a call stays good before it steps back up one level
+recover_seconds = 10
+
+[features.voice_capture]
+# "opt_in": a voice is in a clip or an episode only after its owner chose
+# so. "opt_out": included until they choose to be left out (check the law
+# where you run the server first).
+consent = "opt_in"
+# Clip length, largest clip file, and clips per person per calendar month
+# (the second number is for people with Feather)
+clip_seconds = 30
+clip_max_bytes = 600_000
+clips_per_month = 10
+clips_per_month_plus = 100
+# Recording: minutes per month for a server without Wings (a trial; 0 = no
+# recording without Wings), then hours per month by Wings level
+trial_minutes = 10
+recording_hours_by_level = [5, 20, 60]
+# Longest single episode, and how many days an episode is kept (0 = kept)
+episode_max_minutes = 60
+episode_retention_days = 90
 
 [features.billing]
 # Zrzur Feather (member subscription) and Wings (server supercharges).

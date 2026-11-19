@@ -42,6 +42,27 @@ pub struct VoiceFeature {
     pub nodes: Vec<VoiceNode>,
 }
 
+/// # Weak Connection Steps
+#[derive(Serialize, JsonSchema, Debug)]
+pub struct VoiceWeakNetworkFeature {
+    /// Whether the app steps a call down on a weak connection
+    pub enabled: bool,
+    /// Packet loss (percent) from which a call is weak
+    pub weak_loss_percent: u32,
+    /// Packet loss (percent) from which a call is very weak
+    pub bad_loss_percent: u32,
+    /// Round trip time (ms) from which a call is weak
+    pub weak_rtt_ms: u32,
+    /// Round trip time (ms) from which a call is very weak
+    pub bad_rtt_ms: u32,
+    /// Microphone bitrate on a weak connection
+    pub weak_audio_bitrate: u32,
+    /// Microphone bitrate on a very weak connection
+    pub bad_audio_bitrate: u32,
+    /// Seconds a call stays good before it steps back up
+    pub recover_seconds: u32,
+}
+
 /// # Feature Configuration
 #[derive(Serialize, JsonSchema, Debug)]
 pub struct RevoltFeatures {
@@ -64,6 +85,26 @@ pub struct RevoltFeatures {
     pub polls: bool,
     /// Whether servers can schedule events
     pub server_events: bool,
+    /// Whether an invite link can make an account that enters the server at
+    /// once (`POST /auth/account/join`)
+    pub join_by_link: bool,
+    /// Whether a server can be built from a Discord server template
+    pub server_import: bool,
+    /// Whether such a template can be read by its link (else its text is pasted)
+    pub server_import_link: bool,
+    /// Whether people can save messages to a private list and set
+    /// reminders on messages
+    pub saved_reminders: bool,
+    /// Voice on a weak connection: whether the app steps down, and when
+    pub voice_weak_network: VoiceWeakNetworkFeature,
+    /// Whether voice clips are on
+    pub voice_clips: bool,
+    /// Whether rooms can be recorded as episodes
+    pub voice_recordings: bool,
+    /// Whether an event's share link can be opened to people outside the
+    /// server
+    #[serde(default)]
+    pub server_event_public_links: bool,
     /// File server service configuration
     pub autumn: Feature,
     /// Proxy service configuration
@@ -225,6 +266,26 @@ pub async fn root() -> Result<Json<RevoltConfig>> {
             forwarding: config.features.message_forwarding_enabled,
             polls: config.features.polls_enabled,
             server_events: config.features.server_events_enabled,
+            join_by_link: config.features.join_by_link_enabled
+                && !config.api.smtp.host.is_empty(),
+            server_import: config.features.server_import.enabled,
+            server_import_link: config.features.server_import.enabled
+                && config.features.server_import.link_fetch,
+            saved_reminders: config.features.saved_reminders.enabled,
+            voice_weak_network: VoiceWeakNetworkFeature {
+                enabled: config.features.voice_weak_network_enabled,
+                weak_loss_percent: config.features.voice_weak_network.weak_loss_percent,
+                bad_loss_percent: config.features.voice_weak_network.bad_loss_percent,
+                weak_rtt_ms: config.features.voice_weak_network.weak_rtt_ms,
+                bad_rtt_ms: config.features.voice_weak_network.bad_rtt_ms,
+                weak_audio_bitrate: config.features.voice_weak_network.weak_audio_bitrate,
+                bad_audio_bitrate: config.features.voice_weak_network.bad_audio_bitrate,
+                recover_seconds: config.features.voice_weak_network.recover_seconds,
+            },
+            voice_clips: config.features.voice_clips_enabled,
+            voice_recordings: config.features.voice_recordings_enabled,
+            server_event_public_links: config.features.server_events_enabled
+                && config.features.server_event_public_links,
             autumn: Feature {
                 enabled: !config.hosts.autumn.is_empty(),
                 url: config.hosts.autumn.clone(),

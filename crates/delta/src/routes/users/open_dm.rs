@@ -25,6 +25,9 @@ pub async fn open_dm(
     user: User,
     target: Reference<'_>,
 ) -> Result<Json<v0::Channel>> {
+    // not before the e-mail of an account made from an invite link is confirmed
+    revolt_database::Account::assert_confirmed(db, &user.id).await?;
+
     let target = target.as_user(db).await?;
 
     // nobody starts a conversation with an official account: only the one

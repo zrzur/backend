@@ -16,6 +16,9 @@ pub async fn send_friend_request(
     mut user: User,
     data: Json<v0::DataSendFriendRequest>,
 ) -> Result<Json<v0::User>> {
+    // not before the e-mail of an account made from an invite link is confirmed
+    revolt_database::Account::assert_confirmed(db, &user.id).await?;
+
     // "name" finds the account that owns that username; "name#1234" finds an
     // account that still has its old tag
     let (username, discriminator) = data

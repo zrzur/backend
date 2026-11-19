@@ -109,6 +109,19 @@ impl AbstractAccounts for MongoDb {
         )
     }
 
+    async fn fetch_provisional_accounts_before(&self, before: Timestamp) -> Result<Vec<Account>> {
+        query!(
+            self,
+            find,
+            COL,
+            doc! {
+                "provisional.since": {
+                    "$lte": to_bson(&before).unwrap()
+                }
+            }
+        )
+    }
+
     // Save account
     async fn save_account(&self, account: &Account) -> Result<()> {
         self.col::<Account>(COL)
@@ -306,6 +319,7 @@ impl AbstractAccounts for MongoDb {
             ExportSource::Reports => ("safety_reports", doc! { "author_id": user_id }, None, 0),
             ExportSource::Settings => ("user_settings", doc! { "_id": user_id }, None, 0),
             ExportSource::SupportTickets => ("support_tickets", doc! { "user_id": user_id }, None, 0),
+            ExportSource::TeamApplications => ("team_applications", doc! { "user_id": user_id }, None, 0),
         };
         let collection = self.col::<Document>(col);
         let mut find = collection.find(filter).limit(limit);

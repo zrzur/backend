@@ -221,6 +221,8 @@ pub async fn send_inner(
     // Check permissions for files
     if data.attachments.as_ref().is_some_and(|v| !v.is_empty()) {
         permissions.throw_if_lacking_channel_permission(ChannelPermission::UploadFiles)?;
+        // no files before the e-mail of an account made from an invite link is confirmed
+        revolt_database::Account::assert_confirmed(db, &user.id).await?;
     }
 
     if !permissions.has_channel_permission(ChannelPermission::BypassSlowmode) {

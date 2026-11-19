@@ -74,6 +74,7 @@ pub async fn overview(db: &State<Database>, staff: StaffContext) -> Result<Json<
             before_seq: None,
             actor_id: None,
             target_id: None,
+            action_prefix: None,
             limit: SCAN,
         })
         .await?;

@@ -118,6 +118,17 @@ impl AbstractDiscoverRequest for MongoDb {
         )
     }
 
+    /// Fetch requests that are approved
+    async fn fetch_listed_discover_requests(&self) -> Result<Vec<DiscoverRequest>> {
+        // an approval is stored as { "Approved": <note or null> }
+        query!(
+            self,
+            find,
+            DISCOVER_COL,
+            doc! {"status.Approved": {"$exists": true}}
+        )
+    }
+
     /// Set the status of an existing discover request
     async fn update_discover_request_status(
         &self,

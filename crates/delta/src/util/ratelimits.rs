@@ -51,6 +51,10 @@ impl<'a> RatelimitResolver<Request<'a>> for DeltaRatelimits {
                 ("users", Some("@me"), _) if extra == Some("connections") => {
                     ("connections", None)
                 }
+                // your events across your servers: with the other event reads
+                ("users", Some("@me"), Method::Get) if extra == Some("events") => {
+                    ("server_events_read", None)
+                }
                 ("users", target, Method::Patch) => ("user_edit", target),
                 ("users", _, _) => {
                     if let Some("default_avatar") = extra {
@@ -108,6 +112,12 @@ impl<'a> RatelimitResolver<Request<'a>> for DeltaRatelimits {
                 {
                     ("member_list", Some(id))
                 }
+                // reading a template may make the server call out; a person
+                // who pastes the wrong link a few times must still reach the build
+                ("servers", Some("import"), Method::Post) if extra == Some("preview") => {
+                    ("server_import_preview", None)
+                }
+                ("servers", Some("import"), Method::Post) => ("server_import", None),
                 // server-wide message search reads many channels at once: one
                 // small bucket per person, shared by every server, apart from
                 // the server actions
@@ -189,6 +199,8 @@ impl<'a> RatelimitResolver<Request<'a>> for DeltaRatelimits {
             "soundboard_play" => 4,
             "stage" => 20,
             "servers" => 5,
+            "server_import" => 3,
+            "server_import_preview" => 8,
             "member_list" => 15,
             "message_search" => 5,
             "server_events_read" => 20,

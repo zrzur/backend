@@ -33,6 +33,9 @@ pub trait AbstractDiscoverRequest: Sync + Send {
     /// Fetch requests still awaiting a decision (pending or under review)
     async fn fetch_open_discover_requests(&self) -> Result<Vec<DiscoverRequest>>;
 
+    /// Fetch requests that are approved: what is listed on Discover now
+    async fn fetch_listed_discover_requests(&self) -> Result<Vec<DiscoverRequest>>;
+
     /// Set the status of an existing Discover request
     async fn update_discover_request_status(
         &self,

@@ -177,6 +177,7 @@ impl TestHarness {
                 1,
             ))),
             terms: Some(revolt_database::TermsAcceptance::current()),
+            provisional: None,
         };
 
         self.db.save_account(&account).await.expect("`Account`");

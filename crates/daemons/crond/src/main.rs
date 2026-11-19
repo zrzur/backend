@@ -58,6 +58,7 @@ async fn main() {
         cron_task_wrapper(prune_dangling_files::task, db.clone(), amqp.clone()),
         cron_task_wrapper(prune_members::task, db.clone(), amqp.clone()),
         cron_task_wrapper(delete_accounts::task, db.clone(), amqp.clone()),
+        cron_task_wrapper(delete_unconfirmed_accounts::task, db.clone(), amqp.clone()),
         cron_task_wrapper(acks::task, db.clone(), amqp.clone()),
         cron_task_wrapper(delete_expired_invites::task, db.clone(), amqp.clone()),
         cron_task_wrapper(safety_retention::task, db.clone(), amqp.clone()),
@@ -65,8 +66,11 @@ async fn main() {
         cron_task_wrapper(expire_sessions::task, db.clone(), amqp.clone()),
         cron_task_wrapper(end_polls::task, db.clone(), amqp.clone()),
         cron_task_wrapper(server_events::task, db.clone(), amqp.clone()),
+        cron_task_wrapper(message_reminders::task, db.clone(), amqp.clone()),
         cron_task_wrapper(expire_statuses::task, db.clone(), amqp.clone()),
         cron_task_wrapper(server_insights::task, db.clone(), amqp.clone()),
         cron_task_wrapper(support_retention::task, db.clone(), amqp.clone()),
+        cron_task_wrapper(team_applications_retention::task, db.clone(), amqp.clone()),
+        cron_task_wrapper(voice_episodes::task, db.clone(), amqp.clone()),
     );
 }

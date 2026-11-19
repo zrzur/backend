@@ -19,6 +19,8 @@ pub async fn create_group(
     if user.bot.is_some() {
         return Err(create_error!(IsBot));
     }
+    // not before the e-mail of an account made from an invite link is confirmed
+    revolt_database::Account::assert_confirmed(db, &user.id).await?;
 
     let data = data.into_inner();
     data.validate().map_err(|error| revolt_database::util::validation::validation_failed(&error))?;

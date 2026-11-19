@@ -322,16 +322,22 @@ impl Filter {
         featured: bool,
     ) -> bool {
         if let Some(query) = &self.query {
-            let hit = name.to_lowercase().contains(query)
-                || description.is_some_and(|d| d.to_lowercase().contains(query))
-                || tags.iter().any(|t| t.contains(query));
+            // any spelling of what was typed: alef forms, ta marbuta, marks, digits
+            use revolt_database::util::arabic_fold::text_matches;
+            let hit = text_matches(name, query)
+                || description.is_some_and(|d| text_matches(d, query))
+                || tags.iter().any(|t| text_matches(t, query));
             if !hit {
                 return false;
             }
         }
 
         self.category.as_deref().is_none_or(|c| category == Some(c))
-            && self.tag.as_ref().is_none_or(|t| tags.contains(t))
+            && self.tag.as_ref().is_none_or(|t| {
+                let wanted = revolt_database::util::arabic_fold::fold_text(t);
+                tags.iter()
+                    .any(|tag| revolt_database::util::arabic_fold::fold_text(tag) == wanted)
+            })
             && self.language.as_deref().is_none_or(|l| language == Some(l))
             && self.featured.is_none_or(|f| featured == f)
     }
@@ -617,5 +623,56 @@ mod ranking_test {
         assert_eq!(out.len(), 50);
         // the five places are full of boosted servers
         assert!(out[..5].iter().all(|id| id.parse::<u32>().unwrap() >= 30));
+    }
+}
+
+#[cfg(test)]
+mod arabic_search_test {
+    use super::Filter;
+
+    fn typed(query: &str) -> Filter {
+        Filter {
+            query: Some(query.to_string()),
+            category: None,
+            tag: None,
+            language: None,
+            featured: None,
+        }
+    }
+
+    fn found(query: &str, name: &str, description: Option<&str>, tags: &[&str]) -> bool {
+        let tags: Vec<String> = tags.iter().map(|t| t.to_string()).collect();
+        typed(query).matches(name, description, &tags, None, None, false)
+    }
+
+    #[test]
+    fn a_server_is_found_however_its_name_is_typed() {
+        let name = "مكتبة الأصدقاء";
+        for query in ["مكتبة", "مكتبه", "الاصدقاء", "اصدقاء", "أصدقاء", "مَكتبة", "مكتبـة"] {
+            assert!(found(query, name, None, &[]), "{query}");
+        }
+        assert!(!found("مدرسة", name, None, &[]));
+    }
+
+    #[test]
+    fn digits_marks_and_persian_letters_in_the_listing() {
+        assert!(found("2024", "دوري ٢٠٢٤", None, &[]));
+        assert!(found("٢٠٢٤", "دوري 2024", None, &[]));
+        assert!(found("كتاب", "نادي", Some("نادي الکتاب"), &[]));
+        assert!(found("العاب", "نادي", None, &["ألعاب"]));
+        assert!(found("GAMES", "Games Hall", None, &[]));
+    }
+
+    #[test]
+    fn a_tag_is_the_same_tag_in_any_spelling() {
+        let filter = Filter {
+            query: None,
+            category: None,
+            tag: Some("العاب".to_string()),
+            language: None,
+            featured: None,
+        };
+        assert!(filter.matches("x", None, &["ألعاب".to_string()], None, None, false));
+        assert!(!filter.matches("x", None, &["ألعاب-فيديو".to_string()], None, None, false));
     }
 }

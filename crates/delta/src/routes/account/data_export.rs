@@ -238,6 +238,7 @@ mod tests {
             "reports.json",
             "settings.json",
             "support.json",
+            "applications.json",
             "bots.json",
             "creations.json",
             "linked_accounts.json",

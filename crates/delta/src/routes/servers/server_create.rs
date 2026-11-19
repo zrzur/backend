@@ -113,6 +113,8 @@ pub async fn create_server(
     if user.bot.is_some() {
         return Err(create_error!(IsBot));
     }
+    // not before the e-mail of an account made from an invite link is confirmed
+    revolt_database::Account::assert_confirmed(db, &user.id).await?;
 
     let config = config().await;
 

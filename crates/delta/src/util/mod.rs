@@ -9,6 +9,7 @@ pub mod official;
 pub mod public_commands;
 pub mod ratelimits;
 pub mod steam;
+pub mod team_texts;
 pub mod twitch;
 pub mod webhooks;
 

@@ -1240,6 +1240,8 @@ impl User {
         // A failure must surface: the account then stays due and crond retries.
         db.delete_user_settings(&self.id).await?;
         db.scrub_user_fields(&self.id).await?;
+        // Applications to join the team go with the account
+        db.delete_team_applications_of(&self.id).await?;
         self.locale = None;
         self.privacy = None;
         self.profile = None;
@@ -1318,6 +1320,9 @@ impl User {
             // once per server even when the deletion is tried again
             crate::ServerInsightDay::count_account_leave(db, &member.id.server, &self.id).await;
         }
+        // their answers to events go before the memberships: a seat they
+        // held goes to the next waiting person
+        crate::ServerEvent::forget_user(db, &self.id).await?;
         db.clear_memberships(&self.id).await?;
         self.clear_relationships(db).await?;
         // their files first, as each message would on its own (forwarded

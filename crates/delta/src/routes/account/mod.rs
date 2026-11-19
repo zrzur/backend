@@ -7,6 +7,7 @@ pub mod change_email;
 pub mod change_password;
 pub mod confirm_deletion;
 pub mod create_account;
+pub mod create_and_join;
 pub mod data_export;
 pub mod delete_account;
 pub mod disable_account;
@@ -19,6 +20,7 @@ pub mod verify_email;
 pub fn routes() -> (Vec<Route>, OpenApi) {
     openapi_get_routes_spec![
         create_account::create_account,
+        create_and_join::create_and_join,
         resend_verification::resend_verification,
         confirm_deletion::confirm_deletion,
         fetch_account::fetch_account,
@@ -31,6 +33,7 @@ pub fn routes() -> (Vec<Route>, OpenApi) {
         data_export::request_data_export,
         data_export::download_data_export,
         verify_email::verify_email,
+        verify_email::verify_email_info,
         password_reset::password_reset,
         send_password_reset::send_password_reset,
         change_request::fetch,

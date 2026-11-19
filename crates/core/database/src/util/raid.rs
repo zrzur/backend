@@ -41,6 +41,27 @@ pub async fn dms_paused_between(db: &Database, a: &User, b: &User) -> Result<boo
         .any(Server::dms_paused))
 }
 
+/// Welcome messages a server posts within a minute at most
+pub const WELCOMES_PER_MINUTE: usize = 10;
+
+/// Whether one more welcome message may be posted in this server now: the
+/// first ten of a minute are, the rest of a rush are skipped (the members
+/// join all the same). The window starts with the first join. Without the
+/// cache nothing is posted, so a failing cache cannot flood a channel.
+pub async fn welcome_allowed(server_id: &str) -> bool {
+    let key = format!("welcome:{server_id}");
+    let Ok(mut redis) = get_connection().await else {
+        return false;
+    };
+    let Ok(count): std::result::Result<usize, _> = redis.incr(&key, 1).await else {
+        return false;
+    };
+    if count == 1 {
+        let _: std::result::Result<(), _> = redis.expire(&key, 60).await;
+    }
+    count <= WELCOMES_PER_MINUTE
+}
+
 /// Count a join. When more than `raid_alert_joins` people join within
 /// `raid_alert_minutes`, post one alert in the server's join message
 /// channel (members with Manage Server see "Pause invites" and "Ignore").

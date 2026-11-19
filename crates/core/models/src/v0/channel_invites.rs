@@ -98,6 +98,20 @@ auto_derived!(
             /// joining with this invite sends a request
             #[serde(skip_serializing_if = "Option::is_none")]
             server_access: Option<ServerAccess>,
+            /// Description of the server
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            server_description: Option<String>,
+            /// Up to four channels everyone in the server can see, by name
+            /// (empty unless the short join path is on)
+            #[serde(default, skip_serializing_if = "Vec::is_empty")]
+            inside: Vec<InviteInsideChannel>,
+            /// Invites of this server are paused: joining is refused for now
+            #[serde(default, skip_serializing_if = "crate::if_false")]
+            invites_paused: bool,
+            /// The server's own custom link, not one person's invite: pages
+            /// do not say "invited by" for it
+            #[serde(default, skip_serializing_if = "crate::if_false")]
+            custom_link: bool,
         },
         /// Group channel invite
         Group {
@@ -116,6 +130,15 @@ auto_derived!(
             #[serde(skip_serializing_if = "Option::is_none")]
             user_avatar: Option<File>,
         },
+    }
+
+    /// A channel named on the invite page
+    pub struct InviteInsideChannel {
+        /// Name of the channel
+        pub name: String,
+        /// Whether it is a voice channel
+        #[serde(default, skip_serializing_if = "crate::if_false")]
+        pub voice: bool,
     }
 
     /// Invite join response

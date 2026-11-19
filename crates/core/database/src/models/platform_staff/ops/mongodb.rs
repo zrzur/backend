@@ -189,6 +189,17 @@ impl AbstractPlatformStaff for MongoDb {
         if let Some(target) = query.target_id {
             filter.insert("target_id", target);
         }
+        if let Some(prefix) = query.action_prefix {
+            // actions are dotted lowercase words: only those are searched for
+            if prefix.chars().all(|c| c.is_ascii_lowercase() || c == '.' || c == '_') {
+                filter.insert(
+                    "action",
+                    doc! { "$regex": format!("^{}", regex::escape(&prefix)) },
+                );
+            } else {
+                return Ok(vec![]);
+            }
+        }
         self.find_with_options(
             AUDIT,
             filter,

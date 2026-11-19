@@ -1559,3 +1559,159 @@ async fn being_given_the_role_shows_the_category_at_once() {
     assert!(state.handle_incoming_event_v1(&db, &mut event, SERVER).await);
     assert_eq!(told(&event), Some(vec!["Open".to_string()]));
 }
+
+// Scheduled events limited to roles or invited people
+
+/// A server with its owner, a guest and an outsider as members, in a
+/// database the event code can read
+async fn event_server() -> (Database, Server) {
+    let db = db().await;
+    let server = server(false);
+    db.insert_server(&server).await.expect("server");
+    for id in [OWNER, "guest", "outsider"] {
+        let user = User {
+            id: id.to_string(),
+            username: id.to_string(),
+            ..Default::default()
+        };
+        db.insert_user(&user).await.expect("user");
+        db.insert_or_merge_member(&Member {
+            id: MemberCompositeKey {
+                server: SERVER.to_string(),
+                user: id.to_string(),
+            },
+            ..Default::default()
+        })
+        .await
+        .expect("member");
+    }
+    (db, server)
+}
+
+fn scheduled_event() -> revolt_database::ServerEvent {
+    revolt_database::ServerEvent::new(
+        SERVER,
+        OWNER,
+        "Private".to_string(),
+        None,
+        serde_json::from_value(serde_json::json!("2030-01-01T18:00:00Z")).expect("a time"),
+        None,
+        v0::ServerEventPlace::External {
+            location: "Park".to_string(),
+        },
+        None,
+    )
+}
+
+/// Whether a session listens on any of the topics an event is sent to
+async fn hears(state: &State, audience: &revolt_database::EventAudience) -> bool {
+    match audience {
+        revolt_database::EventAudience::Nobody => false,
+        revolt_database::EventAudience::Topic(topic) => subscribed(state, topic).await,
+        revolt_database::EventAudience::People(people) => {
+            for user in people {
+                if subscribed(state, &format!("{user}!")).await {
+                    return true;
+                }
+            }
+            false
+        }
+    }
+}
+
+/// The two halves together: where the API sends an invited-only event, and
+/// which sessions the gateway has listening there. The session of someone
+/// who may not see the event listens on none of those topics.
+#[tokio::test]
+async fn an_invited_only_event_reaches_only_the_sessions_of_people_who_may_see_it() {
+    let (db, server) = event_server().await;
+    let mut event = scheduled_event();
+    event.visibility = v0::ServerEventVisibility::Invited;
+    event.invited = vec!["guest".to_string()];
+    let audience = event.audience(&db).await;
+    // person by person, never the topic every member listens on
+    let revolt_database::EventAudience::People(people) = &audience else {
+        panic!("sent to {audience:?}");
+    };
+    let mut sorted = people.clone();
+    sorted.sort();
+    assert_eq!(sorted, vec!["guest".to_string(), OWNER.to_string()]);
+
+    for (user, sees) in [(OWNER, true), ("guest", true), ("outsider", false)] {
+        let session = state(user, &server, &[]).await;
+        // every session listens on the server topic and on its own
+        assert!(subscribed(&session, SERVER).await);
+        assert!(subscribed(&session, &format!("{user}!")).await);
+        assert_eq!(hears(&session, &audience).await, sees, "{user}");
+        // nobody listens on another person's own topic
+        for other in [OWNER, "guest", "outsider"] {
+            if other != user {
+                assert!(!subscribed(&session, &format!("{other}!")).await, "{user} hears {other}");
+            }
+        }
+    }
+
+    // the guest's session passes the event on to the app, without the list
+    // of who else is invited
+    let mut guest = state("guest", &server, &[]).await;
+    let mut sent = EventV1::ServerEventCreate(event.clone().into());
+    assert!(guest.handle_incoming_event_v1(&db, &mut sent, "guest!").await);
+    let EventV1::ServerEventCreate(shown) = &sent else {
+        panic!("changed into {sent:?}");
+    };
+    assert!(shown.invited.is_none());
+    assert!(!serde_json::to_string(&sent).unwrap().contains("outsider"));
+}
+
+#[tokio::test]
+async fn a_role_event_reaches_role_holders_and_a_draft_reaches_nobody() {
+    let (db, server) = event_server().await;
+    // one more member, who holds the staff role
+    db.insert_or_merge_member(&Member {
+        id: MemberCompositeKey {
+            server: SERVER.to_string(),
+            user: "holder".to_string(),
+        },
+        roles: vec![STAFF.to_string()],
+        ..Default::default()
+    })
+    .await
+    .expect("member");
+    db.insert_user(&User {
+        id: "holder".to_string(),
+        username: "holder".to_string(),
+        ..Default::default()
+    })
+    .await
+    .expect("user");
+    let mut event = scheduled_event();
+    event.visibility = v0::ServerEventVisibility::Roles;
+    event.visible_roles = vec![STAFF.to_string()];
+    let audience = event.audience(&db).await;
+    for (user, roles, sees) in [
+        ("holder", vec![STAFF], true),
+        (OWNER, vec![], true),
+        ("guest", vec![], false),
+        ("outsider", vec![], false),
+    ] {
+        let session = state(user, &server, &roles).await;
+        assert_eq!(hears(&session, &audience).await, sees, "{user}");
+    }
+
+    // an event open to everyone who sees the place goes to the server topic
+    let open = scheduled_event();
+    let audience = open.audience(&db).await;
+    assert_eq!(audience, revolt_database::EventAudience::Topic(SERVER.to_string()));
+    let session = state("outsider", &server, &[]).await;
+    assert!(hears(&session, &audience).await);
+
+    // a draft goes nowhere
+    let mut draft = scheduled_event();
+    draft.status = v0::ServerEventStatus::Draft;
+    let audience = draft.audience(&db).await;
+    assert_eq!(audience, revolt_database::EventAudience::Nobody);
+    for user in [OWNER, "guest", "outsider"] {
+        let session = state(user, &server, &[]).await;
+        assert!(!hears(&session, &audience).await, "{user}");
+    }
+}

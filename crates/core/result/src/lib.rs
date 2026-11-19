@@ -274,6 +274,38 @@ pub enum ErrorType {
     TooManyServerEvents {
         max: usize,
     },
+    /// This person has this many reminders waiting already
+    TooManyReminders {
+        max: usize,
+    },
+    /// This person has this many messages saved already
+    TooManySavedMessages {
+        max: usize,
+    },
+    /// A server has this many draft events already
+    TooManyServerEventDrafts {
+        max: usize,
+    },
+    /// Every seat of the event is taken and nobody can wait for one
+    ServerEventFull,
+    /// Reading who takes part in an event limited to roles or invited
+    /// people, by someone who manages events but is not named on that
+    /// event, needs a written reason (header `X-Audit-Log-Reason`); the
+    /// access is then noted in the audit log
+    ServerEventReasonRequired,
+    /// Seating this person would put more people in the event than it has
+    /// seats. An organiser who means it repeats the request with
+    /// `over_capacity=true`
+    ServerEventOverCapacity {
+        capacity: u32,
+    },
+    /// A field of an event was refused. `field` is the field's name and
+    /// `reason` one of: `too_many`, `out_of_range`, `not_a_member`,
+    /// `unknown_role`, `empty`, `not_a_time`, `unknown`
+    ServerEventInvalid {
+        field: String,
+        reason: String,
+    },
     TooManyChannels {
         max: usize,
     },
@@ -299,6 +331,19 @@ pub enum ErrorType {
     ForumsDisabled,
     /// Plugins are switched off on this server (`features.plugins_enabled`)
     PluginsDisabled,
+    /// A server layout can't be read from what was given. `reason` is one
+    /// of `invite_link`, `not_a_link`, `not_a_template`, `empty`,
+    /// `too_large`, `nothing_given`
+    ImportInvalid {
+        reason: String,
+    },
+    /// The template link names nothing: deleted, or never existed
+    ImportTemplateNotFound,
+    /// The template can't be fetched right now (the source did not answer
+    /// or refused, or reading by link is switched off): paste its text
+    ImportSourceUnavailable,
+    /// A layout can only be built into a server nothing was built in yet
+    ImportTargetNotEmpty,
     EmptyMessage,
     PayloadTooLarge,
     CannotRemoveYourself,
@@ -546,6 +591,19 @@ pub enum ErrorType {
     // ? Polls
     /// The poll is over: no more votes, and it can't be ended again
     PollEnded,
+
+    // ? Voice clips and recorded rooms
+    /// This person shared as many clips this month as they may
+    TooManyVoiceClips {
+        max: u32,
+    },
+    /// This server recorded as long this month as its Wings level allows
+    /// (max is in seconds; 0: recording needs Wings)
+    RecordingTimeUsedUp {
+        max: u64,
+    },
+    /// Someone named in the clip or episode did not agree to be in it
+    VoiceNotAgreed,
 }
 
 #[macro_export]

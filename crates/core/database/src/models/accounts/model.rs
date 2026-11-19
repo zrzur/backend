@@ -83,8 +83,27 @@ auto_derived_partial!(
         /// Accounts from before this was recorded have none.
         #[serde(skip_serializing_if = "Option::is_none", default)]
         pub terms: Option<TermsAcceptance>,
+
+        /// Set on an account made from an invite link until its e-mail is
+        /// confirmed. Written as null when cleared (a save only sets fields,
+        /// it never removes one).
+        #[serde(default)]
+        pub provisional: Option<ProvisionalAccount>,
     },
     "PartialAccount"
+);
+
+auto_derived!(
+    /// An account that entered a server from an invite link before
+    /// confirming its e-mail
+    pub struct ProvisionalAccount {
+        /// When the account was made
+        pub since: Timestamp,
+        /// The password is a random one nobody knows: confirming the e-mail
+        /// asks for a real one
+        #[serde(default)]
+        pub password_unset: bool,
+    }
 );
 
 auto_derived!(
@@ -504,6 +523,7 @@ impl Account {
                 mfa: Default::default(),
                 age,
                 terms,
+                provisional: None,
             };
 
             // Send email verification
@@ -522,6 +542,64 @@ impl Account {
 
             Ok(account)
         }
+    }
+
+    /// When this account is removed unless its e-mail is confirmed
+    pub async fn confirm_by(&self) -> Option<Timestamp> {
+        let hours = config().await.features.join_confirm_hours as i64;
+        self.provisional
+            .as_ref()
+            .and_then(|provisional| provisional.since.checked_add(Duration::hours(hours)))
+    }
+
+    /// Refuse what an account may not do before its e-mail is confirmed
+    /// (direct messages, another server, invites, bots, uploads). Only
+    /// accounts made from an invite link are ever in that state; bots and
+    /// everyone else pass.
+    pub async fn assert_confirmed(db: &Database, user_id: &str) -> Result<()> {
+        match db.fetch_account(user_id).await {
+            Ok(account) if account.provisional.is_some() => {
+                Err(create_error!(UnverifiedAccount))
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// Remove every account made from an invite link more than `hours` ago
+    /// whose e-mail is still not confirmed (crond). One that did nothing is
+    /// erased entirely; one that wrote messages or made anything is deleted
+    /// like any account (its messages and files go with it)
+    /// and the address is gone from the record. Returns how many were due.
+    pub async fn remove_unconfirmed(db: &Database, hours: i64) -> Result<usize> {
+        let Some(before) = Timestamp::now_utc().checked_sub(Duration::hours(hours)) else {
+            return Ok(0);
+        };
+
+        let accounts = db.fetch_provisional_accounts_before(before).await?;
+        let count = accounts.len();
+
+        for mut account in accounts {
+            // an error counts as "has content", so nothing is erased by mistake
+            if !db.user_has_content(&account.id).await.unwrap_or(true) {
+                if let Err(error) = account.erase_completely(db).await {
+                    log::warn!("Could not erase unconfirmed account {}: {error:?}", account.id);
+                }
+                continue;
+            }
+
+            if let Ok(mut user) = db.fetch_user(&account.id).await {
+                if let Err(error) = user.delete(db).await {
+                    log::warn!("Could not delete user {}: {error:?}", account.id);
+                    continue;
+                }
+            }
+            account.provisional = None;
+            if let Err(error) = account.mark_deleted(db).await {
+                log::warn!("Could not delete unconfirmed account {}: {error:?}", account.id);
+            }
+        }
+
+        Ok(count)
     }
 
     /// Create a new session
@@ -917,6 +995,9 @@ impl Account {
         crate::erase_community_items_of(db, &self.id).await?;
         // linked accounts (Steam) and their copies
         db.delete_linked_accounts(&self.id).await?;
+        // their private saved list and their reminders
+        db.delete_saved_messages_of(&self.id).await?;
+        db.delete_reminders_of(&self.id).await?;
 
         self.email = format!("Deleted User {}", &self.id);
         self.email_normalised = format!("Deleted User {}", &self.id);
@@ -969,6 +1050,8 @@ impl Account {
     pub async fn erase_completely(&mut self, db: &Database) -> Result<()> {
         crate::erase_community_items_of(db, &self.id).await?;
         db.delete_linked_accounts(&self.id).await?;
+        db.delete_saved_messages_of(&self.id).await?;
+        db.delete_reminders_of(&self.id).await?;
         db.remove_account(&self.id).await?;
 
         if let Err(error) = self.delete_all_sessions(db, None).await {

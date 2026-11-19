@@ -407,6 +407,7 @@ pub fn scope(event: &EventV1) -> Scope<'_> {
         }
         UserMoveVoiceChannel { to, .. } => Scope::Channel(to),
         StageUpdate { id, .. } => Scope::Channel(id),
+        VoiceCaptureUpdate { id, .. } => Scope::Channel(id),
         SoundboardPlay { channel_id, .. } => Scope::Channel(channel_id),
         SoundboardSoundCreate(sound) | SoundboardSoundUpdate(sound) => Scope::Server(&sound.server),
         VoiceChannelMove { from, to, .. } => Scope::Channels(from, to),
@@ -434,7 +435,8 @@ pub fn scope(event: &EventV1) -> Scope<'_> {
             Some(channel) => Scope::Channel(channel),
             None => Scope::Server(&event.server),
         },
-        ServerEventInterest { channel, server, .. } => match channel {
+        ServerEventInterest { channel, server, .. }
+        | ServerEventCounts { channel, server, .. } => match channel {
             Some(channel) => Scope::Channel(channel),
             None => Scope::Server(server),
         },

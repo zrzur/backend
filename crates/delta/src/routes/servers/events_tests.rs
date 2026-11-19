@@ -15,19 +15,19 @@ use serde_json::{json, Value};
 
 use crate::util::test::{PubSubTestHelper, TestHarness};
 
-struct Setup {
-    harness: TestHarness,
-    owner: User,
-    owner_session: Session,
-    member: User,
-    member_session: Session,
-    server: Server,
-    text: Channel,
-    voice: Channel,
-    private: Channel,
+pub(super) struct Setup {
+    pub(super) harness: TestHarness,
+    pub(super) owner: User,
+    pub(super) owner_session: Session,
+    pub(super) member: User,
+    pub(super) member_session: Session,
+    pub(super) server: Server,
+    pub(super) text: Channel,
+    pub(super) voice: Channel,
+    pub(super) private: Channel,
 }
 
-async fn channel(harness: &TestHarness, server: &Server, voice: bool, private: bool) -> Channel {
+pub(super) async fn channel(harness: &TestHarness, server: &Server, voice: bool, private: bool) -> Channel {
     Channel::create_server_channel(
         &harness.db,
         &mut harness.db.fetch_server(&server.id).await.unwrap(),
@@ -52,7 +52,7 @@ async fn channel(harness: &TestHarness, server: &Server, voice: bool, private: b
 }
 
 /// A server with events switched on by its owner (they start off)
-async fn setup(enabled: bool) -> Setup {
+pub(super) async fn setup(enabled: bool) -> Setup {
     let s = setup_off(enabled).await;
     if enabled {
         let (status, body) = call(
@@ -99,7 +99,7 @@ async fn setup_off(enabled: bool) -> Setup {
     }
 }
 
-async fn call(
+pub(super) async fn call(
     harness: &TestHarness,
     method: Method,
     path: &str,
@@ -127,11 +127,11 @@ async fn call(
     (status, serde_json::from_str(&text).unwrap_or(Value::Null))
 }
 
-fn at(hours: i64) -> Value {
+pub(super) fn at(hours: i64) -> Value {
     serde_json::to_value(Timestamp::now_utc() + Duration::hours(hours)).unwrap()
 }
 
-fn body(place: Value) -> Value {
+pub(super) fn body(place: Value) -> Value {
     json!({
         "title": "Game night",
         "description": "Bring **snacks**",
@@ -141,7 +141,7 @@ fn body(place: Value) -> Value {
     })
 }
 
-async fn create(s: &Setup, place: Value) -> Value {
+pub(super) async fn create(s: &Setup, place: Value) -> Value {
     let (status, event) = call(
         &s.harness,
         Method::Post,
@@ -154,7 +154,7 @@ async fn create(s: &Setup, place: Value) -> Value {
     event
 }
 
-fn voice_place(s: &Setup) -> Value {
+pub(super) fn voice_place(s: &Setup) -> Value {
     json!({ "type": "Voice", "channel": s.voice.id() })
 }
 
@@ -359,8 +359,14 @@ async fn interested_marks_count_once_and_page() {
         .unwrap();
     call(&s.harness, Method::Put, &mark, &third_session, None).await;
 
-    let (status, page) =
+    // the list of a new event is for its organisers (it was open to every
+    // member before answers; the count still is)
+    let (status, hidden) =
         call(&s.harness, Method::Get, &format!("{mark}?limit=2"), &s.member_session, None).await;
+    assert_eq!(status, Status::Ok, "{hidden}");
+    assert_eq!(hidden["users"], json!([]));
+    let (status, page) =
+        call(&s.harness, Method::Get, &format!("{mark}?limit=2"), &s.owner_session, None).await;
     assert_eq!(status, Status::Ok, "{page}");
     assert_eq!(page["users"].as_array().unwrap().len(), 2);
     let next = page["next"].as_str().expect("a next page").to_string();
@@ -368,7 +374,7 @@ async fn interested_marks_count_once_and_page() {
         &s.harness,
         Method::Get,
         &format!("{mark}?limit=2&after={next}"),
-        &s.member_session,
+        &s.owner_session,
         None,
     )
     .await;

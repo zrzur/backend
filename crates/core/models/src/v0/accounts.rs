@@ -35,6 +35,56 @@ auto_derived!(
         pub birth_month: Option<String>,
     }
 
+    /// # Create Account And Join Data
+    ///
+    /// Sign-up from an invite link: no password yet (the confirmation mail
+    /// sets it), and the account joins the invite at once
+    pub struct DataCreateAndJoin {
+        /// Valid email address
+        pub email: String,
+        /// Name shown to other people; the username is made from it
+        pub display_name: String,
+        /// Year and month of birth, `YYYY-MM` (the day is never collected)
+        pub birth_month: String,
+        /// Code of the invite to join
+        pub invite: String,
+        /// Captcha verification code
+        pub captcha: Option<String>,
+    }
+
+    /// # Create Account And Join Response
+    #[serde(tag = "result")]
+    #[allow(clippy::large_enum_variant)]
+    pub enum ResponseCreateAndJoin {
+        /// The account exists and is signed in
+        Entered {
+            /// Session of the new account
+            session: super::Session,
+            /// What joining the invite gave; missing when it was refused
+            #[serde(skip_serializing_if = "Option::is_none")]
+            joined: Option<super::InviteJoinResponse>,
+            /// Why joining was refused (an error type such as `Banned`)
+            #[serde(skip_serializing_if = "Option::is_none")]
+            join_error: Option<String>,
+            /// When the account is removed unless its e-mail is confirmed
+            confirm_by: iso8601_timestamp::Timestamp,
+        },
+        /// Nothing more is said here: a mail was sent to the address
+        CheckEmail,
+    }
+
+    /// # Verify Email Data
+    pub struct DataVerifyEmail {
+        /// Password to set, for an account that has none yet
+        pub password: Option<String>,
+    }
+
+    /// # Verification Link Information
+    pub struct VerifyEmailInfo {
+        /// Whether confirming needs a password to be chosen
+        pub needs_password: bool,
+    }
+
     pub struct AccountInfo {
         #[serde(rename = "_id")]
         pub id: String,
@@ -43,6 +93,10 @@ auto_derived!(
         /// (absent from servers older than the age rules)
         #[serde(skip_serializing_if = "Option::is_none", default)]
         pub age: Option<AccountAgeInfo>,
+        /// When the account is removed unless its e-mail is confirmed
+        /// (only on an account made from an invite link, until confirmed)
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        pub confirm_by: Option<iso8601_timestamp::Timestamp>,
     }
 
     /// # Age group

@@ -481,7 +481,15 @@ pub async fn bot(db: &Database, owner_id: &str, key: &str, name: &str, note: Opt
 }
 
 pub async fn discover_decided(db: &Database, owner_id: &str, key: &str, name: &str, note: Option<&str>) {
-    send(db, owner_id, key, &[("name", name), ("note", note.unwrap_or_default())]).await;
+    // a rejection or a removal always names a reason, also when none was written
+    let unwritten = text(language_for(db, owner_id).await, "discover.no_reason").body;
+    let note = match note.map(str::trim).filter(|note| !note.is_empty()) {
+        Some(note) => note,
+        None if key == "discover.approved" => "",
+        None => unwritten.as_str(),
+    };
+    let contact = contact_email();
+    send(db, owner_id, key, &[("name", name), ("note", note), ("contact", &contact)]).await;
 }
 
 pub async fn plugin(db: &Database, user_id: &str, key: &str, name: &str, version: &str, note: Option<&str>) {

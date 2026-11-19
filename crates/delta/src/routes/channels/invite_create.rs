@@ -27,6 +27,9 @@ pub async fn create_invite(
     // TODO[v1]: make this non-optional; currently silently ignores malformed body
     data: Option<Json<v0::DataCreateInvite>>,
 ) -> Result<Json<v0::Invite>> {
+    // not before the e-mail of an account made from an invite link is confirmed
+    revolt_database::Account::assert_confirmed(db, &user.id).await?;
+
     let mut data = data.map(Json::into_inner).unwrap_or(v0::DataCreateInvite {
         max_uses: None,
         expires: None,

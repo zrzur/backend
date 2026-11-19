@@ -38,6 +38,9 @@ mod stream_preview_tests;
 mod stage_tests;
 mod threads;
 mod typing;
+mod voice_capture;
+#[cfg(test)]
+mod voice_capture_tests;
 mod voice_join;
 mod voice_rooms;
 mod voice_state;
@@ -96,6 +99,15 @@ pub fn routes() -> (Vec<Route>, OpenApi) {
         soundboard_play::play_sound,
         stream_preview::set_preview,
         stream_preview::fetch_preview,
+        voice_capture::fetch_capture,
+        voice_capture::switch_clips,
+        voice_capture::set_consent,
+        voice_capture::share_clip,
+        voice_capture::start_recording,
+        voice_capture::stop_recording,
+        voice_capture::finish_recording,
+        voice_capture::list_captures,
+        voice_capture::delete_capture,
         stage::fetch_stage,
         stage::edit_stage,
         stage::end_stage,

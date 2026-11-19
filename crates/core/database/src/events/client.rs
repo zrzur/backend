@@ -440,7 +440,30 @@ pub enum EventV1 {
         server: String,
     },
 
-    /// Someone marked or unmarked a scheduled server event "Interested"
+    /// The answer counts of a scheduled server event changed. It does not
+    /// say who answered.
+    ServerEventCounts {
+        id: String,
+        server: String,
+        /// The place's channel, for channel places
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        channel: Option<String>,
+        counts: revolt_models::v0::ServerEventCounts,
+    },
+
+    /// Your own answer to a scheduled server event changed (sent only to
+    /// you): you answered on another device, a seat became yours, or an
+    /// organiser removed you. Absent `rsvp`: you have no answer now.
+    ServerEventRsvpUpdate {
+        id: String,
+        server: String,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        rsvp: Option<revolt_models::v0::ServerEventRsvp>,
+    },
+
+    /// The number of people taking part in a scheduled server event changed
+    /// (the older form of `ServerEventCounts`). `user` is empty, except on
+    /// the copy sent to the person who answered.
     ServerEventInterest {
         id: String,
         server: String,
@@ -507,6 +530,11 @@ pub enum EventV1 {
         id: String,
         data: revolt_models::v0::StageChange,
     },
+    /// Clips or recording in a voice room changed (the whole state)
+    VoiceCaptureUpdate {
+        id: String,
+        data: revolt_models::v0::VoiceCaptureState,
+    },
     /// Someone played a soundboard sound in a voice channel
     SoundboardPlay {
         channel_id: String,
@@ -568,12 +596,17 @@ pub enum EventV1 {
         id: String,
         choices: Vec<revolt_models::v0::CommandOptionChoice>,
     },
+    /// A reminder the person set on a message is due (to their sessions only)
+    MessageReminderDue(revolt_models::v0::MessageReminderDue),
     /// An application changed its commands; clients refetch them for this server
     ApplicationCommandsUpdate {
         application_id: String,
         server_id: String,
     },
 }
+
+/// People named in one queue message of `EventV1::private_broadcast`
+pub const PRIVATE_BROADCAST_CHUNK: usize = 100;
 
 impl EventV1 {
     // Shim for legacy redis channel names
@@ -589,6 +622,7 @@ impl EventV1 {
             | UserSettingsUpdate { .. }
             | UserSlowmodes { .. }
             | MessagePollChoice { .. }
+            | MessageReminderDue(_)
             | UserMoveVoiceChannel { .. }
             | InteractionCreate { .. }
             | InteractionStateUpdate { .. }
@@ -638,6 +672,45 @@ impl EventV1 {
                 log::error!("{e:?}");
             };
         };
+    }
+
+    /// Publish to one person only, on their private topic
+    pub async fn private(self, user: String) {
+        #[cfg(debug_assertions)]
+        info!("Publishing event to {user}!: {self:?}");
+
+        redis_kiss::publish(format!("{user}!"), &self).await.unwrap();
+
+        if let Err(e) = get_amqp().publish_event(user, &self).await {
+            if cfg!(debug_assertions) {
+                panic!("{e:?}");
+            } else {
+                log::error!("{e:?}");
+            };
+        };
+    }
+
+    /// Publish to several people, each on their private topic. The queue
+    /// gets one message for every `PRIVATE_BROADCAST_CHUNK` people: the
+    /// names travel in the message's header, and a header for thousands of
+    /// people is refused by the broker, which then closes the channel for
+    /// everything that follows.
+    pub async fn private_broadcast(self, users: Vec<String>) {
+        for chunk in users.chunks(PRIVATE_BROADCAST_CHUNK) {
+            for user in chunk {
+                redis_kiss::publish(format!("{user}!"), &self).await.unwrap();
+            }
+            if let Err(e) = get_amqp()
+                .publish_event_broadcast(chunk.to_vec(), &self)
+                .await
+            {
+                if cfg!(debug_assertions) {
+                    panic!("{e:?}");
+                } else {
+                    log::error!("{e:?}");
+                };
+            };
+        }
     }
 
     /// Publish internal global event

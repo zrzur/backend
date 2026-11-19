@@ -1001,6 +1001,7 @@ impl From<Server> for crate::Server {
             stats: value.stats,
             lobby: value.lobby,
             tickets: value.tickets,
+            on_join: None,
             threads_disabled: value.threads_disabled,
             forums_disabled: value.forums_disabled,
             events_enabled: value.events_enabled,
@@ -1085,6 +1086,7 @@ impl From<PartialServer> for crate::PartialServer {
             stats: value.stats,
             lobby: value.lobby,
             tickets: value.tickets,
+            on_join: None,
             threads_disabled: value.threads_disabled,
             forums_disabled: value.forums_disabled,
             events_enabled: value.events_enabled,
@@ -2129,6 +2131,41 @@ impl From<crate::AuditLogEntryAction> for AuditLogEntryAction {
             crate::AuditLogEntryAction::ServerEventDelete { event, title } => {
                 AuditLogEntryAction::ServerEventDelete { event, title }
             }
+            crate::AuditLogEntryAction::ServerEventPublish { event, title } => {
+                AuditLogEntryAction::ServerEventPublish { event, title }
+            }
+            crate::AuditLogEntryAction::ServerEventStart { event, title } => {
+                AuditLogEntryAction::ServerEventStart { event, title }
+            }
+            crate::AuditLogEntryAction::ServerEventEnd { event, title } => {
+                AuditLogEntryAction::ServerEventEnd { event, title }
+            }
+            crate::AuditLogEntryAction::ServerEventPeopleAccess { event } => {
+                AuditLogEntryAction::ServerEventPeopleAccess { event }
+            }
+            crate::AuditLogEntryAction::ServerEventRetention {
+                event,
+                records,
+                outcome,
+            } => AuditLogEntryAction::ServerEventRetention {
+                event,
+                records,
+                outcome,
+            },
+            crate::AuditLogEntryAction::ServerEventAttendeeRemove { event, title, user } => {
+                AuditLogEntryAction::ServerEventAttendeeRemove { event, title, user }
+            }
+            crate::AuditLogEntryAction::ServerEventAttendeeSeat {
+                event,
+                title,
+                user,
+                over_capacity,
+            } => AuditLogEntryAction::ServerEventAttendeeSeat {
+                event,
+                title,
+                user,
+                over_capacity,
+            },
             crate::AuditLogEntryAction::MessagePin {
                 message,
                 author,
@@ -2173,6 +2210,7 @@ impl From<crate::Account> for AccountInfo {
             id: item.id,
             email: item.email,
             age: None,
+            confirm_by: None,
         }
     }
 }
@@ -2453,9 +2491,46 @@ impl From<crate::ServerEvent> for ServerEvent {
             cover: value.cover.map(Into::into),
             status: value.status,
             repeat: value.repeat,
-            interested_count: value.interested_count,
+            // the older count: everyone who takes part
+            interested_count: value.going_count + value.interested_count,
             previous: value.previous,
             time_zone: value.time_zone,
+            counts: ServerEventCounts {
+                going: value.going_count,
+                maybe: value.interested_count,
+                not_going: value.not_going_count,
+                waiting: value.waitlist_count,
+            },
+            over_capacity: value
+                .capacity
+                .is_some_and(|capacity| value.going_count > capacity),
+            capacity: value.capacity,
+            waitlist: value.waitlist,
+            visibility: value.visibility,
+            visible_roles: value.visible_roles,
+            attendee_list: value.attendee_list,
+            co_organisers: value.co_organisers,
+            // organisers get the list from the routes, never from here
+            invited: None,
+            started_at: value.started_at,
+            ended_at: value.ended_at,
+            people_removed_at: value.people_removed_at,
+            reminders: value.reminders,
+            link: value.link,
+            link_public: value.link_public,
+        }
+    }
+}
+
+impl From<crate::ServerEventInvitation> for ServerEventInvitation {
+    fn from(value: crate::ServerEventInvitation) -> Self {
+        ServerEventInvitation {
+            code: value.code,
+            creator: value.creator,
+            uses: value.uses,
+            max_uses: value.max_uses,
+            expires_at: value.expires_at,
+            created_at: value.created_at,
         }
     }
 }

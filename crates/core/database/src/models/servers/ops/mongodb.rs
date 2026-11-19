@@ -78,7 +78,8 @@ impl AbstractServers for MongoDb {
         if let Some(query) = query {
             filter.insert(
                 "name",
-                doc! { "$regex": regex::escape(query), "$options": "i" },
+                // any spelling of what was typed (alef forms, ta marbuta, digits, marks)
+                doc! { "$regex": crate::util::arabic_fold::fold_regex(query), "$options": "i" },
             );
         }
 
@@ -306,12 +307,10 @@ impl MongoDb {
         })
         .await?;
 
-        self.col::<Document>("audit_logs")
-            .delete_many(doc! {
-                "server": &server_id
-            })
-            .await
-            .map_err(|_| create_database_error!("delete_many", "audit_logs"))?;
+        // The audit log is not deleted with the server (owner, 2026-11-18):
+        // what was done stays readable for accountability until each entry's
+        // own time is up (`expires_at`, removed by the collection's expiry
+        // index).
 
         Ok(())
     }

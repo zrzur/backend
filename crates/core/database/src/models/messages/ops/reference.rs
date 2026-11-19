@@ -37,7 +37,7 @@ fn matches_filter(filter: &MessageFilter, message: &Message) -> bool {
         let Some(content) = &message.content else {
             return false;
         };
-        if !content.to_lowercase().contains(&query.to_lowercase()) {
+        if !crate::util::arabic_fold::text_matches(content, query) {
             return false;
         }
     }

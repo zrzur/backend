@@ -1297,6 +1297,10 @@ impl Default for FeaturesAdvanced {
     }
 }
 
+fn default_join_confirm_hours() -> u64 {
+    72
+}
+
 #[derive(Deserialize, Debug, Clone)]
 pub struct Features {
     pub limits: FeaturesLimitsCollection,
@@ -1321,6 +1325,21 @@ pub struct Features {
     /// Scheduled server events (`/servers/{target}/events`). Unset means off.
     #[serde(default)]
     pub server_events_enabled: bool,
+    /// The short path from an invite link: the invite page says what is
+    /// inside the server, and `POST /auth/account/join` makes an account
+    /// that enters the invited server before its e-mail is confirmed.
+    /// Unset means off.
+    #[serde(default)]
+    pub join_by_link_enabled: bool,
+    /// Hours an account made by `POST /auth/account/join` has to confirm its
+    /// e-mail before crond removes it. Unset means 72.
+    #[serde(default = "default_join_confirm_hours")]
+    pub join_confirm_hours: u64,
+    /// Organisers can open an event's share link to people outside the
+    /// server (title, time, cover and server name only). Unset means off:
+    /// a share link then works for members only.
+    #[serde(default)]
+    pub server_event_public_links: bool,
 
     #[serde(default)]
     pub advanced: FeaturesAdvanced,
@@ -1336,6 +1355,244 @@ pub struct Features {
 
     #[serde(default)]
     pub discover_review: FeaturesDiscoverReview,
+
+    #[serde(default)]
+    pub server_import: FeaturesServerImport,
+    /// Boxed: the settings are copied onto the stack of every request, and
+    /// some long test walks have no room left for another wide field
+    #[serde(default)]
+    pub team_applications: Box<FeaturesTeamApplications>,
+    #[serde(default)]
+    pub saved_reminders: FeaturesSavedReminders,
+
+    /// Voice rooms step down on a weak connection (lighter voice, video
+    /// lowered, then video paused with audio kept) and show a sign. The
+    /// steps are taken by each person's app; this switch and the numbers in
+    /// `voice_weak_network` reach it through `GET /`. Unset means off.
+    #[serde(default)]
+    pub voice_weak_network_enabled: bool,
+    /// Voice clips: the last seconds of a voice room, saved by a person in
+    /// it and shared as a message (`/channels/{target}/capture/...`). Unset
+    /// means off.
+    #[serde(default)]
+    pub voice_clips_enabled: bool,
+    /// Recorded rooms: an episode of a voice room that members can hear
+    /// later. Unset means off.
+    #[serde(default)]
+    pub voice_recordings_enabled: bool,
+
+    #[serde(default)]
+    pub voice_weak_network: FeaturesVoiceWeakNetwork,
+
+    #[serde(default)]
+    pub voice_capture: FeaturesVoiceCapture,
+}
+
+/// Building a server from a layout read out of a Discord server template
+#[derive(Deserialize, Debug, Clone)]
+pub struct FeaturesServerImport {
+    /// The whole feature: the preview and the build. Off, both routes answer
+    /// `FeatureDisabled` and the app shows no way in.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Reading a template by its link, which makes this server call
+    /// Discord. Off, people paste the template's text instead; nothing else
+    /// changes. This is the switch to turn if Discord refuses the calls.
+    #[serde(default)]
+    pub link_fetch: bool,
+    /// Where a template is read from; its code is put at the end. Only for
+    /// operators and tests: a person never chooses the address.
+    #[serde(default = "server_import_endpoint")]
+    pub template_endpoint: String,
+    /// Link reads one account may ask for in an hour
+    #[serde(default = "server_import_per_hour")]
+    pub reads_per_hour: i64,
+}
+
+fn server_import_endpoint() -> String {
+    "https://discord.com/api/v10/guilds/templates/".to_string()
+}
+fn server_import_per_hour() -> i64 {
+    5
+}
+
+impl Default for FeaturesServerImport {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            link_fetch: false,
+            template_endpoint: server_import_endpoint(),
+            reads_per_hour: server_import_per_hour(),
+        }
+    }
+}
+
+/// Saving a message to a private list and "remind me" on a message
+/// (`/users/@me/saved`, `/users/@me/reminders`; crond delivers reminders)
+#[derive(Deserialize, Debug, Clone)]
+pub struct FeaturesSavedReminders {
+    /// Both parts are open. Unset means off.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Messages one person may keep saved. Saving costs one small record,
+    /// so this only stops runaway scripts.
+    #[serde(default = "saved_reminders_max_saved")]
+    pub max_saved: usize,
+    /// Reminders one person may have waiting at the same time
+    #[serde(default = "saved_reminders_max_active")]
+    pub max_active: usize,
+    /// The same with Feather
+    #[serde(default = "saved_reminders_max_active_plus")]
+    pub max_active_plus: usize,
+    /// How far ahead a reminder may be set, in days
+    #[serde(default = "saved_reminders_max_days_ahead")]
+    pub max_days_ahead: u32,
+    /// Days a delivered reminder stays in the list before crond removes it
+    #[serde(default = "saved_reminders_keep_delivered_days")]
+    pub keep_delivered_days: u32,
+}
+
+fn saved_reminders_max_saved() -> usize {
+    1000
+}
+fn saved_reminders_max_active() -> usize {
+    10
+}
+fn saved_reminders_max_active_plus() -> usize {
+    100
+}
+fn saved_reminders_max_days_ahead() -> u32 {
+    366
+}
+fn saved_reminders_keep_delivered_days() -> u32 {
+    30
+}
+
+impl Default for FeaturesSavedReminders {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_saved: saved_reminders_max_saved(),
+            max_active: saved_reminders_max_active(),
+            max_active_plus: saved_reminders_max_active_plus(),
+            max_days_ahead: saved_reminders_max_days_ahead(),
+            keep_delivered_days: saved_reminders_keep_delivered_days(),
+        }
+    }
+}
+
+
+/// When a call counts as weak or very weak, and what the app sends then.
+/// Every number is a setting; the app reads them from `GET /`.
+#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[serde(default)]
+pub struct FeaturesVoiceWeakNetwork {
+    /// Packet loss (percent) from which a call is weak
+    pub weak_loss_percent: u32,
+    /// Packet loss (percent) from which a call is very weak
+    pub bad_loss_percent: u32,
+    /// Round trip time (ms) from which a call is weak
+    pub weak_rtt_ms: u32,
+    /// Round trip time (ms) from which a call is very weak
+    pub bad_rtt_ms: u32,
+    /// Microphone bitrate (bits per second) on a weak connection. Low-data
+    /// mode's lighter voice uses the same number.
+    pub weak_audio_bitrate: u32,
+    /// Microphone bitrate on a very weak connection
+    pub bad_audio_bitrate: u32,
+    /// Seconds a call has to stay good before it steps back up one level
+    pub recover_seconds: u32,
+}
+
+impl Default for FeaturesVoiceWeakNetwork {
+    fn default() -> Self {
+        Self {
+            weak_loss_percent: 5,
+            bad_loss_percent: 15,
+            weak_rtt_ms: 400,
+            bad_rtt_ms: 800,
+            weak_audio_bitrate: 24_000,
+            bad_audio_bitrate: 16_000,
+            recover_seconds: 10,
+        }
+    }
+}
+
+/// Who agrees how before their voice is in a clip or an episode
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum VoiceCaptureConsent {
+    /// A voice is included only after its owner chose to be included
+    #[default]
+    OptIn,
+    /// A voice is included until its owner chooses to be left out. Check
+    /// the law where you run the server before using this.
+    OptOut,
+}
+
+/// Limits of voice clips and recorded rooms. All of them are settings.
+#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[serde(default)]
+pub struct FeaturesVoiceCapture {
+    /// How people agree to be in a clip or an episode
+    pub consent: VoiceCaptureConsent,
+    /// Length of a clip in seconds
+    pub clip_seconds: u32,
+    /// Largest clip file in bytes
+    pub clip_max_bytes: usize,
+    /// Clips a person may share per calendar month
+    pub clips_per_month: u32,
+    /// Clips a person with Feather may share per calendar month
+    pub clips_per_month_plus: u32,
+    /// Minutes a server without Wings may record per calendar month (a
+    /// trial; 0 turns recording off for such servers)
+    pub trial_minutes: u32,
+    /// Hours a server may record per calendar month, by Wings level (first
+    /// entry: level 1). A level past the end uses the last entry.
+    pub recording_hours_by_level: Vec<u32>,
+    /// Longest single episode in minutes
+    pub episode_max_minutes: u32,
+    /// Days an episode is kept (0: until someone deletes it)
+    pub episode_retention_days: u32,
+}
+
+impl Default for FeaturesVoiceCapture {
+    fn default() -> Self {
+        Self {
+            consent: VoiceCaptureConsent::OptIn,
+            clip_seconds: 30,
+            clip_max_bytes: 600_000,
+            clips_per_month: 10,
+            clips_per_month_plus: 100,
+            trial_minutes: 10,
+            recording_hours_by_level: vec![5, 20, 60],
+            episode_max_minutes: 60,
+            episode_retention_days: 90,
+        }
+    }
+}
+
+impl FeaturesVoiceCapture {
+    /// Seconds a server of this Wings level may record per month
+    pub fn recording_seconds(&self, wings_level: usize) -> u64 {
+        if wings_level == 0 {
+            return u64::from(self.trial_minutes) * 60;
+        }
+        self.recording_hours_by_level
+            .get(wings_level - 1)
+            .or(self.recording_hours_by_level.last())
+            .map(|hours| u64::from(*hours) * 3600)
+            .unwrap_or_default()
+    }
+
+    /// Clips a person may share per month
+    pub fn clips_allowed(&self, plus: bool) -> u32 {
+        if plus {
+            self.clips_per_month_plus.max(self.clips_per_month)
+        } else {
+            self.clips_per_month
+        }
+    }
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -2110,6 +2367,259 @@ impl FeaturesDiscoverReview {
     }
 }
 
+/// "Join the Zrzur Team": every team role is a volunteer role (owner,
+/// 2026-11-19: never paid, never employment), and the texts say so.
+/// People apply for a team role through one bot in
+/// one server, and holders of one role there review the applications
+/// (`/team/desk/*`). The bot has no power of its own: who applied, who
+/// pressed and what they may do is checked by the server, and the server,
+/// not the bot, hands out the role. `server`, `channel_apply`,
+/// `channel_review`, `reviewer_role` or `bot` left empty switches the
+/// routes off.
+#[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct FeaturesTeamApplications {
+    /// Id of the server people apply in and reviewers work in
+    #[serde(default)]
+    pub server: String,
+    /// Id of the channel with the Apply message
+    #[serde(default)]
+    pub channel_apply: String,
+    /// Id of the private staff channel the applications are shown in
+    #[serde(default)]
+    pub channel_review: String,
+    /// Id of the role in `server` whose holders may decide
+    #[serde(default)]
+    pub reviewer_role: String,
+    /// Id of the one bot allowed to use the routes
+    #[serde(default)]
+    pub bot: String,
+    /// Days a person waits after a decision before applying again
+    #[serde(default = "default_team_cooldown_days")]
+    pub cooldown_days: i64,
+    /// Minutes a person waits after withdrawing before applying again
+    #[serde(default = "default_team_withdraw_wait_minutes")]
+    pub withdraw_wait_minutes: i64,
+    /// Days a rejected application is kept (never less than the cooldown)
+    #[serde(default = "default_team_retention_days")]
+    pub retention_days: i64,
+    /// Days an accepted application is kept
+    #[serde(default = "default_team_accepted_retention_days")]
+    pub accepted_retention_days: i64,
+    /// Where the form sends people to read how their data is used
+    #[serde(default = "default_team_privacy_url")]
+    pub privacy_url: String,
+    /// The team roles people can apply for, in the order shown
+    #[serde(default)]
+    pub roles: Vec<TeamRole>,
+}
+
+fn default_team_cooldown_days() -> i64 {
+    30
+}
+fn default_team_withdraw_wait_minutes() -> i64 {
+    60
+}
+fn default_team_retention_days() -> i64 {
+    30
+}
+fn default_team_accepted_retention_days() -> i64 {
+    90
+}
+fn default_team_privacy_url() -> String {
+    "https://zrzur.com/legal/privacy".to_string()
+}
+
+impl Default for FeaturesTeamApplications {
+    fn default() -> Self {
+        FeaturesTeamApplications {
+            server: String::new(),
+            channel_apply: String::new(),
+            channel_review: String::new(),
+            reviewer_role: String::new(),
+            bot: String::new(),
+            cooldown_days: default_team_cooldown_days(),
+            withdraw_wait_minutes: default_team_withdraw_wait_minutes(),
+            retention_days: default_team_retention_days(),
+            accepted_retention_days: default_team_accepted_retention_days(),
+            privacy_url: default_team_privacy_url(),
+            roles: Vec::new(),
+        }
+    }
+}
+
+/// One team role people can apply for
+#[derive(Deserialize, Debug, Clone, Default, PartialEq, Eq)]
+pub struct TeamRole {
+    /// Short name used in button ids: lowercase letters, digits and `-`
+    pub key: String,
+    /// English name shown to people. Empty: the name of the role's kind,
+    /// which exists in every language of the app.
+    #[serde(default)]
+    pub name: String,
+    /// One English line on what the role does. Empty: that of its kind.
+    #[serde(default)]
+    pub description: String,
+    /// Id of the server the role belongs to
+    #[serde(default)]
+    pub server: String,
+    /// Id of the role in that server an accepted person receives
+    #[serde(default)]
+    pub role: String,
+    /// Id of a second role in that server every accepted person receives
+    /// with it: the server's "Zrzur Team" role. Empty: none.
+    #[serde(default)]
+    pub team_role: String,
+    /// Id of the staff channel this role's applications are shown and
+    /// decided in (it may be in the role's own server). Empty: the common
+    /// `channel_review`.
+    #[serde(default)]
+    pub channel_review: String,
+    /// Id of a role in `server` whose holders may decide this role's
+    /// applications, besides the holders of the common `reviewer_role`.
+    /// Empty: only those.
+    #[serde(default)]
+    pub reviewer_role: String,
+    /// Only accounts whose stated age is 18 or over may apply. Off by
+    /// default (owner, 2026-11-19): anyone with an account, so 16 or over,
+    /// may volunteer for any role.
+    #[serde(default)]
+    pub adult: bool,
+    /// Never handed out by the system: accepting only records it and tells
+    /// the owner of `server`, who gives the role by hand. Always the case
+    /// for the key `administrator` and for any role that can manage the
+    /// server, its roles or its permissions.
+    #[serde(default)]
+    pub manual: bool,
+    /// Whether applications are taken right now
+    #[serde(default = "default_true")]
+    pub open: bool,
+    /// English text sent to an accepted person: what the role may and may
+    /// not do. Empty: the rules of its kind.
+    #[serde(default)]
+    pub rules: String,
+    /// Up to two questions of the form, besides languages and time. Empty:
+    /// "experience" and "why".
+    #[serde(default)]
+    pub questions: Vec<TeamQuestion>,
+}
+
+/// One free-text question of the form
+#[derive(Deserialize, Debug, Clone, Default, PartialEq, Eq)]
+pub struct TeamQuestion {
+    /// Short name: lowercase letters, digits and `-`
+    pub id: String,
+    /// The question, at most 45 characters
+    pub label: String,
+    /// A line under the question, at most 100 characters
+    #[serde(default)]
+    pub hint: String,
+}
+
+impl TeamRole {
+    /// A role with this key is never handed out by the system
+    pub const ALWAYS_MANUAL: &'static str = "administrator";
+
+    /// The kinds of role whose name, description and rules exist in every
+    /// language of the app. A role is of a kind when its key is the kind or
+    /// starts with it and `-` (`moderator-lounge`).
+    pub const KINDS: &'static [&'static str] = &[
+        "support",
+        "moderator",
+        "discover-reviewer",
+        "community-manager",
+        "designer",
+        "developer",
+        "administrator",
+    ];
+
+    pub fn has_kind(&self) -> bool {
+        Self::KINDS
+            .iter()
+            .any(|kind| self.key == *kind || self.key.starts_with(&format!("{kind}-")))
+    }
+
+    pub fn is_manual(&self) -> bool {
+        self.manual || self.key == Self::ALWAYS_MANUAL
+    }
+
+    /// Whether the role is set up well enough to be offered
+    pub fn ready(&self) -> bool {
+        let word = |s: &str| {
+            !s.is_empty()
+                && s.len() <= 32
+                && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        };
+        word(&self.key)
+            && (self.has_kind() || !self.name.trim().is_empty())
+            && !self.server.trim().is_empty()
+            && (self.is_manual() || !self.role.trim().is_empty())
+            && self.questions.len() <= 2
+            && self.questions.iter().all(|q| word(&q.id) && !q.label.trim().is_empty())
+    }
+
+    /// The free-text questions of this role's form
+    pub fn form_questions(&self) -> Vec<TeamQuestion> {
+        if !self.questions.is_empty() {
+            return self.questions.clone();
+        }
+        vec![
+            TeamQuestion {
+                id: "experience".to_string(),
+                label: "Your experience".to_string(),
+                hint: "What have you done that fits this role? Links are welcome.".to_string(),
+            },
+            TeamQuestion {
+                id: "why".to_string(),
+                label: "Why do you want this role?".to_string(),
+                hint: "A few honest lines are enough.".to_string(),
+            },
+        ]
+    }
+}
+
+impl FeaturesTeamApplications {
+    pub fn enabled(&self) -> bool {
+        ![
+            &self.server,
+            &self.channel_apply,
+            &self.channel_review,
+            &self.reviewer_role,
+            &self.bot,
+        ]
+        .iter()
+        .any(|value| value.trim().is_empty())
+    }
+
+    /// The staff channel the applications for `key` are decided in
+    pub fn review_channel(&self, key: &str) -> &str {
+        match self.role(key) {
+            Some(role) if !role.channel_review.trim().is_empty() => &role.channel_review,
+            _ => &self.channel_review,
+        }
+    }
+
+    /// Every staff channel in use, the common one first, without repeats
+    pub fn review_channels(&self) -> Vec<String> {
+        let mut channels = vec![self.channel_review.clone()];
+        for role in &self.roles {
+            let channel = role.channel_review.trim();
+            if !channel.is_empty() && !channels.iter().any(|c| c == channel) {
+                channels.push(channel.to_string());
+            }
+        }
+        channels
+    }
+
+    pub fn role(&self, key: &str) -> Option<&TeamRole> {
+        self.roles.iter().find(|role| role.key == key)
+    }
+
+    /// Days a rejected application is kept: the cooldown needs its date
+    pub fn rejected_days(&self) -> i64 {
+        self.retention_days.max(self.cooldown_days).max(0)
+    }
+}
+
 /// Age safety: the declared month and year of birth
 #[derive(Deserialize, Debug, Clone)]
 pub struct FeaturesAgeSafety {
@@ -2174,6 +2684,19 @@ mod release_integrity_tests {
     fn shipped_audit_log_lasts_ninety_days() {
         let s = shipped();
         assert_eq!(s.api.audit_logs.expires_after, 90 * 24 * 60 * 60);
+    }
+
+    /// New features ship off, and the address is Discord's documented one
+    #[test]
+    fn shipped_server_import_is_off() {
+        let s = shipped();
+        assert!(!s.features.server_import.enabled);
+        assert!(!s.features.server_import.link_fetch);
+        assert_eq!(
+            s.features.server_import.template_endpoint,
+            "https://discord.com/api/v10/guilds/templates/"
+        );
+        assert_eq!(s.features.server_import.reads_per_hour, 5);
     }
 
     #[test]

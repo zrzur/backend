@@ -27,11 +27,13 @@ mod account_change_requests;
 mod official_mark_requests;
 mod platform_notices;
 mod support_tickets;
+mod team_applications;
 mod plugins;
 mod policy_changes;
 mod ratelimit_events;
 mod safety_reports;
 mod safety_snapshots;
+mod saved_reminders;
 mod server_bans;
 mod server_events;
 mod server_insights;
@@ -40,6 +42,7 @@ mod server_members;
 mod servers;
 mod sessions;
 mod soundboard;
+mod voice_captures;
 mod trust_safety;
 mod user_settings;
 mod users;
@@ -73,11 +76,13 @@ pub use account_change_requests::*;
 pub use official_mark_requests::*;
 pub use platform_notices::*;
 pub use support_tickets::*;
+pub use team_applications::*;
 pub use plugins::*;
 pub use policy_changes::*;
 pub use ratelimit_events::*;
 pub use safety_reports::*;
 pub use safety_snapshots::*;
+pub use saved_reminders::*;
 pub use server_bans::*;
 pub use server_events::*;
 pub use server_insights::*;
@@ -86,6 +91,7 @@ pub use server_members::*;
 pub use servers::*;
 pub use sessions::*;
 pub use soundboard::*;
+pub use voice_captures::*;
 pub use trust_safety::*;
 pub use user_settings::*;
 pub use users::*;
@@ -111,6 +117,7 @@ pub trait AbstractDatabase:
     + channel_webhooks::AbstractWebhooks
     + emojis::AbstractEmojis
     + soundboard::AbstractSoundboard
+    + voice_captures::AbstractVoiceCaptures
     + file_hashes::AbstractAttachmentHashes
     + files::AbstractAttachments
     + messages::AbstractMessages
@@ -142,7 +149,9 @@ pub trait AbstractDatabase:
     + official_mark_requests::AbstractOfficialMarkRequest
     + platform_notices::AbstractPlatformNotice
     + support_tickets::AbstractSupportTicket
+    + team_applications::AbstractTeamApplications
     + linked_accounts::AbstractLinkedAccounts
+    + saved_reminders::AbstractSavedReminders
 {
 }
 

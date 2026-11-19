@@ -79,6 +79,8 @@ auto_derived!(
         Reports,
         /// Support tickets the person opened (staff-only notes removed later)
         SupportTickets,
+        /// Applications to join the team the person sent (reviewers removed later)
+        TeamApplications,
         /// The person's own settings
         Settings,
     }
@@ -219,6 +221,21 @@ pub async fn build_export_zip(db: &Database, account: &Account, user: &User) -> 
         })
         .collect();
 
+    // Their private saved list and their reminders: which message, in which
+    // channel, and when. The messages themselves are other people's.
+    let saved: Vec<Value> = db
+        .fetch_saved_messages(&user.id)
+        .await?
+        .into_iter()
+        .map(|entry| json!({ "message": entry.message_id, "channel": entry.channel_id, "saved_at": entry.saved_at }))
+        .collect();
+    let reminders: Vec<Value> = db
+        .fetch_reminders(&user.id)
+        .await?
+        .into_iter()
+        .map(|r| json!({ "message": r.message_id, "channel": r.channel_id, "due_at": r.due_at, "created_at": r.created_at, "delivered_at": r.delivered_at }))
+        .collect();
+
     // Designs they made, with what they promised about each. Who reported or
     // reviewed one is not theirs to have.
     let creations: Vec<Value> = db
@@ -252,6 +269,68 @@ pub async fn build_export_zip(db: &Database, account: &Account, user: &User) -> 
         .filter_map(|message| own_poll_vote(message, &user.id))
         .collect();
     let truncated = messages.len() as i64 >= DATA_EXPORT_MAX_MESSAGES;
+
+    // events: the answers they gave, and the events they created
+    let mut event_answers: Vec<Value> = Vec::new();
+    for row in db.fetch_server_event_answers_by_user(&user.id, None).await? {
+        // what the answer is to, and the place in the line when waiting
+        let event = db.fetch_server_event(&row.id.event).await.ok();
+        let position = if row.waiting {
+            db.fetch_server_event_roster(&row.id.event)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|roster| roster.position(&user.id))
+        } else {
+            None
+        };
+        event_answers.push(json!({
+            "event": row.id.event,
+            "title": event.as_ref().map(|event| event.title.clone()),
+            "starts_at": event.as_ref().map(|event| event.starts_at),
+            "server": row.server,
+            "answer": row.answer,
+            "waiting_for_a_seat": row.waiting,
+            "place_on_the_waiting_list": position,
+            "first_answered_at": row.created_at,
+            "changed_at": row.updated_at,
+        }));
+    }
+    // events that name them: invited to, or helping to organise
+    let mut events_invited_to: Vec<Value> = Vec::new();
+    let mut events_helping: Vec<Value> = Vec::new();
+    for event in db.fetch_server_events_naming(&user.id).await? {
+        let line = json!({
+            "id": event.id,
+            "server": event.server,
+            "title": event.title,
+            "starts_at": event.starts_at,
+            "status": event.status,
+        });
+        if event.invited.contains(&user.id) {
+            events_invited_to.push(line.clone());
+        }
+        if event.co_organisers.contains(&user.id) {
+            events_helping.push(line);
+        }
+    }
+    let events_created: Vec<Value> = db
+        .fetch_server_events_created_by(&user.id)
+        .await?
+        .into_iter()
+        .map(|event| {
+            json!({
+                "id": event.id,
+                "server": event.server,
+                "title": event.title,
+                "description": event.description,
+                "starts_at": event.starts_at,
+                "ends_at": event.ends_at,
+                "place": event.place,
+                "status": event.status,
+            })
+        })
+        .collect();
 
     let files: Vec<Value> = db
         .export_documents(&user.id, ExportSource::Files)
@@ -345,6 +424,20 @@ pub async fn build_export_zip(db: &Database, account: &Account, user: &User) -> 
             t
         })
         .collect();
+    // Applications to join the team: what the person sent and what became
+    // of it, without who reviewed it
+    let applications: Vec<Value> = db
+        .export_documents(&user.id, ExportSource::TeamApplications)
+        .await?
+        .into_iter()
+        .map(|mut a| {
+            if let Some(o) = a.as_object_mut() {
+                o.remove("acted_by");
+                o.remove("interviewer");
+            }
+            a
+        })
+        .collect();
     let bots: Vec<Value> = db
         .fetch_bots_by_user(&user.id)
         .await?
@@ -371,7 +464,7 @@ pub async fn build_export_zip(db: &Database, account: &Account, user: &User) -> 
         "Zrzur data export
 Created: {}
 
-This ZIP holds your own data as JSON files: account.json (no password or secrets), profile.json, messages.json (messages you sent, up to {DATA_EXPORT_MAX_MESSAGES}; polls show how many chose each answer), poll_votes.json (the answers you chose in polls), files.json (files you uploaded, with links that work while the file exists), servers.json, purchases.json, reports.json (reports you filed), support.json (your support tickets), bots.json (bots you own, without tokens), creations.json (designs you made, with your rights confirmations), linked_accounts.json (accounts on other services you linked, such as Steam, and the copy we keep) and settings.json. Other people appear as ids only.
+This ZIP holds your own data as JSON files: account.json (no password or secrets), profile.json, messages.json (messages you sent, up to {DATA_EXPORT_MAX_MESSAGES}; polls show how many chose each answer), poll_votes.json (the answers you chose in polls), files.json (files you uploaded, with links that work while the file exists), servers.json, events.json (your answers to events: going, maybe or not going, with the event's title and time and your place on a waiting list; the events you created, the ones you are invited to and the ones you help organise), purchases.json, reports.json (reports you filed), support.json (your support tickets), applications.json (your applications to join the Zrzur team), bots.json (bots you own, without tokens), creations.json (designs you made, with your rights confirmations), linked_accounts.json (accounts on other services you linked, such as Steam, and the copy we keep), saved.json (messages you saved and reminders you set: ids and times, not the messages) and settings.json. Other people appear as ids only.
 {cap_note}
 Why we use this data, who receives it, how long we keep it, your rights and how to complain to the Austrian data protection authority: https://zrzur.com/legal/privacy . Questions: {ACCOUNT_CONTACT_EMAIL}.
 ",
@@ -386,6 +479,15 @@ Why we use this data, who receives it, how long we keep it, your rights and how 
         ("profile.json".into(), compact(profile)),
         ("messages.json".into(), compact(Value::Array(messages))),
         ("poll_votes.json".into(), compact(Value::Array(poll_votes))),
+        (
+            "events.json".into(),
+            compact(json!({
+                "answers": event_answers,
+                "created": events_created,
+                "invited_to": events_invited_to,
+                "helping_to_organise": events_helping,
+            })),
+        ),
         ("files.json".into(), compact(Value::Array(files))),
         (
             "servers.json".into(),
@@ -394,9 +496,14 @@ Why we use this data, who receives it, how long we keep it, your rights and how 
         ("purchases.json".into(), compact(purchases)),
         ("reports.json".into(), compact(Value::Array(reports))),
         ("support.json".into(), compact(Value::Array(support))),
+        ("applications.json".into(), compact(Value::Array(applications))),
         ("bots.json".into(), compact(Value::Array(bots))),
         ("creations.json".into(), compact(Value::Array(creations))),
         ("linked_accounts.json".into(), compact(Value::Array(linked_accounts))),
+        (
+            "saved.json".into(),
+            compact(json!({ "saved": saved, "reminders": reminders })),
+        ),
         ("settings.json".into(), compact(Value::Array(settings))),
     ]))
 }

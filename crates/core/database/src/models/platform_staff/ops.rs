@@ -15,6 +15,8 @@ pub struct PlatformAuditQuery {
     pub before_seq: Option<i64>,
     pub actor_id: Option<String>,
     pub target_id: Option<String>,
+    /// Only records whose action starts with this (`discover.review.`)
+    pub action_prefix: Option<String>,
     pub limit: usize,
 }
 

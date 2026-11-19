@@ -108,6 +108,11 @@ auto_derived_partial!(
         /// Tickets: members open a private channel with the staff
         #[serde(skip_serializing_if = "Option::is_none", default)]
         pub tickets: Option<v0::ServerTickets>,
+        /// Roles given to everyone who joins, and the welcome message
+        /// (`/servers/{id}/on_join`). Stored whole; switched off, it is an
+        /// empty object, never removed.
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        pub on_join: Option<v0::ServerOnJoin>,
 
         /// Threads are switched off on this server: nothing new, the
         /// threads it has stay readable
@@ -253,8 +258,19 @@ impl Server {
         owner: &User,
         create_default_channels: bool,
     ) -> Result<(Server, Vec<Channel>)> {
+        let (mut server, blueprint) = Server::build(data, owner);
+        let channels =
+            Server::create_built(db, &mut server, blueprint, owner, create_default_channels).await?;
+        Ok((server, channels))
+    }
+
+    /// A new server as it starts, not saved, and the blueprint it came with
+    fn build(
+        mut data: v0::DataCreateServer,
+        owner: &User,
+    ) -> (Server, Option<v0::DataServerBlueprint>) {
         let blueprint = data.blueprint.take();
-        let mut server = Server {
+        let server = Server {
             id: ulid::Ulid::new().to_string(),
             owner: owner.id.to_string(),
             name: data.name,
@@ -283,13 +299,23 @@ impl Server {
             stats: None,
             lobby: None,
             tickets: None,
+            on_join: None,
             threads_disabled: false,
             forums_disabled: false,
             events_enabled: false,
             supercharge: None,
             vanity_invite: None,
         };
+        (server, blueprint)
+    }
 
+    async fn create_built(
+        db: &Database,
+        server: &mut Server,
+        blueprint: Option<v0::DataServerBlueprint>,
+        owner: &User,
+        create_default_channels: bool,
+    ) -> Result<Vec<Channel>> {
         let mut channels = match &blueprint {
             Some(blueprint) => server.apply_blueprint(blueprint),
             None => vec![],
@@ -318,7 +344,219 @@ impl Server {
             }
             return Err(error);
         }
+        Ok(channels)
+    }
+
+    /// Create a server from a whole layout: it exists complete, or the
+    /// request fails and nothing is left behind
+    pub async fn create_from_structure(
+        db: &Database,
+        data: v0::DataImportServer,
+        owner: &User,
+    ) -> Result<(Server, Vec<Channel>)> {
+        let base = v0::DataCreateServer {
+            name: data.name,
+            access: data.access,
+            ..Default::default()
+        };
+        let (mut server, _) = Server::build(base, owner);
+        let channels = server.apply_structure(&data.structure);
+        server.channels = channels.iter().map(|c| c.id().to_string()).collect();
+
+        if let Some(icon) = data.icon {
+            server.icon = Some(File::use_server_icon(db, &icon, &server.id, &owner.id).await?);
+        }
+        if let Err(error) = server.save_with_channels(db, &channels).await {
+            if let Some(icon) = &server.icon {
+                if let Err(error) = db.mark_attachment_as_deleted(&icon.id).await {
+                    log::error!("icon of a server that failed: {error:?}");
+                }
+            }
+            return Err(error);
+        }
         Ok((server, channels))
+    }
+
+    /// Nothing was built here yet: no roles, no categories, and at most
+    /// the one channel a new server starts with, never written in
+    pub fn is_unbuilt(&self, channels: &[Channel]) -> bool {
+        self.roles.is_empty()
+            && self.categories.as_ref().is_none_or(|categories| categories.is_empty())
+            && self.channels.len() <= 1
+            && channels.len() == self.channels.len()
+            && channels.iter().all(|channel| {
+                matches!(
+                    channel,
+                    Channel::TextChannel { last_message_id: None, thread: None, .. }
+                )
+            })
+    }
+
+    /// Build a layout into this server, which must be unbuilt. The channel
+    /// it started with is taken away. Returns the new channels.
+    pub async fn fill_from_structure(
+        &mut self,
+        db: &Database,
+        structure: &v0::DataServerStructure,
+        starting: Vec<Channel>,
+    ) -> Result<Vec<Channel>> {
+        let channels = self.apply_structure(structure);
+        let ids: Vec<String> = channels.iter().map(|c| c.id().to_string()).collect();
+        for (saved, channel) in channels.iter().enumerate() {
+            if let Err(error) = db.insert_channel(channel).await {
+                if let Err(error) = db.delete_unattached_channels(&ids[..saved]).await {
+                    log::error!("channels {ids:?} of a failed import: {error:?}");
+                }
+                return Err(error);
+            }
+        }
+        let partial = PartialServer {
+            channels: Some(ids.clone()),
+            categories: self.categories.clone(),
+            roles: Some(self.roles.clone()),
+            default_permissions: Some(self.default_permissions),
+            description: self.description.clone(),
+            system_messages: self.system_messages.clone(),
+            ..Default::default()
+        };
+        if let Err(error) = db.update_server(&self.id, &partial, vec![]).await {
+            if let Err(error) = db.delete_unattached_channels(&ids).await {
+                log::error!("channels {ids:?} of a failed import: {error:?}");
+            }
+            return Err(error);
+        }
+        self.channels = ids;
+        for channel in &channels {
+            EventV1::ChannelCreate(channel.clone().into())
+                .p(self.id.clone())
+                .await;
+        }
+        EventV1::ServerUpdate {
+            id: self.id.clone(),
+            data: partial.into(),
+            clear: vec![],
+        }
+        .p(self.id.clone())
+        .await;
+        for channel in starting {
+            if let Err(error) = channel.delete(db).await {
+                log::error!("starting channel {} after an import: {error:?}", channel.id());
+            }
+        }
+        Ok(channels)
+    }
+
+    /// Put a layout on a server and return its channels, not saved. Roles
+    /// and categories live in the server document and every channel carries
+    /// its rights in its own, so nothing is ever stored open or half-built.
+    fn apply_structure(&mut self, structure: &v0::DataServerStructure) -> Vec<Channel> {
+        let mut role_ids = HashMap::new();
+        for (rank, role) in structure.roles.iter().enumerate() {
+            let id = Ulid::new().to_string();
+            role_ids.insert(role.key.clone(), id.clone());
+            self.roles.insert(
+                id.clone(),
+                Role {
+                    id,
+                    name: role.name.clone(),
+                    rank: rank as i64,
+                    colour: role.colour.clone(),
+                    hoist: role.hoist,
+                    permissions: OverrideField { a: role.allow as i64, d: 0 },
+                    icon: None,
+                    owner: None,
+                },
+            );
+        }
+        if let Some(rights) = structure.default_permissions {
+            self.default_permissions = rights as i64;
+        }
+        if self.description.is_none() {
+            self.description.clone_from(&structure.description);
+        }
+
+        let per_role = |rights: &HashMap<String, revolt_permissions::Override>| {
+            rights
+                .iter()
+                .filter_map(|(key, field)| {
+                    role_ids
+                        .get(key)
+                        .map(|id| (id.clone(), OverrideField::from(field.clone())))
+                })
+                .collect::<HashMap<String, OverrideField>>()
+        };
+        let server = self.id.clone();
+        let mut system = None;
+        let mut build = |room: &v0::StructureChannel, category: Option<&v0::StructureCategory>| {
+            let id = Ulid::new().to_string();
+            if structure.system_channel.as_ref() == Some(&room.key) {
+                system = Some(id.clone());
+            }
+            let data = DataCreateServerChannel {
+                channel_type: room.channel_type.clone(),
+                name: room.name.clone(),
+                description: room.description.clone(),
+                nsfw: Some(room.nsfw),
+                voice: room
+                    .max_users
+                    .map(|max_users| v0::VoiceInformation {
+                        max_users: Some(max_users),
+                        ..Default::default()
+                    }),
+                announcement: Some(room.announcement),
+                ..Default::default()
+            };
+            // a channel that follows its category carries a copy of its rights
+            let (default, roles) = match (room.synced, category) {
+                (true, Some(category)) => {
+                    (&category.default_permissions, &category.role_permissions)
+                }
+                _ => (&room.default_permissions, &room.role_permissions),
+            };
+            let default = default.clone().map(OverrideField::from);
+            let synced = room.synced && category.is_some();
+            let mut channel = Channel::build_server_channel(&server, id, data, default, synced);
+            if let Channel::TextChannel { role_permissions, slowmode, .. } = &mut channel {
+                *role_permissions = per_role(roles);
+                *slowmode = room.slowmode;
+            }
+            channel
+        };
+
+        let mut channels: Vec<Channel> =
+            structure.channels.iter().map(|room| build(room, None)).collect();
+        let mut categories = Vec::with_capacity(structure.categories.len());
+        for category in &structure.categories {
+            let rooms: Vec<Channel> = category
+                .channels
+                .iter()
+                .map(|room| build(room, Some(category)))
+                .collect();
+            categories.push(Category {
+                id: Ulid::new().to_string(),
+                title: category.title.clone(),
+                channels: rooms.iter().map(|c| c.id().to_string()).collect(),
+                description: None,
+                default_permissions: category
+                    .default_permissions
+                    .clone()
+                    .map(OverrideField::from),
+                role_permissions: per_role(&category.role_permissions),
+            });
+            channels.extend(rooms);
+        }
+        if !categories.is_empty() {
+            self.categories = Some(categories);
+        }
+        if let Some(id) = system {
+            self.system_messages = Some(SystemMessageChannels {
+                user_joined: Some(id),
+                user_left: None,
+                user_kicked: None,
+                user_banned: None,
+            });
+        }
+        channels
     }
 
     /// Put a blueprint on a server that isn't saved yet and return its rooms,
@@ -473,6 +711,8 @@ impl Server {
         db.delete_promotions_for_target(&self.id).await?;
         // its insights go with it, not at the end of their retention
         db.delete_server_insights_of(&self.id).await?;
+        // its events are called off and kept for their retention time
+        crate::ServerEvent::close_all_of_server(db, &self.id).await?;
         db.delete_server(&self.id).await
     }
 

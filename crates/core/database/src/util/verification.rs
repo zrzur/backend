@@ -58,7 +58,14 @@ pub async fn assert_can_talk_in(db: &Database, user: &User, server: &Server) -> 
         }
     }
 
-    if rank(level) == 0 || !member.roles.is_empty() {
+    // a role skips the level, but not one the server gives to everyone who
+    // joins: that would switch the level off for all newcomers
+    let given_to_all = server.on_join.as_ref().map(|on_join| on_join.roles.as_slice());
+    let has_own_role = member
+        .roles
+        .iter()
+        .any(|role| !given_to_all.is_some_and(|roles| roles.contains(role)));
+    if rank(level) == 0 || has_own_role {
         return Ok(());
     }
 

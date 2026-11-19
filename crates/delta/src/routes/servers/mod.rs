@@ -10,10 +10,11 @@ mod ban_remove;
 mod channel_create;
 mod discover;
 mod emoji_list;
-mod events;
+pub(crate) mod events;
 mod insights;
 mod invites_fetch;
 mod join_requests;
+mod on_join;
 mod lobby_answer;
 mod tickets;
 mod vanity;
@@ -37,6 +38,7 @@ mod rules_accept;
 mod safety_pause;
 mod server_ack;
 mod server_create;
+mod server_import;
 mod server_delete;
 mod server_edit;
 mod server_fetch;
@@ -83,12 +85,23 @@ mod message_search_tests;
 mod events_tests;
 
 #[cfg(test)]
+mod events_answers_tests;
+
+#[cfg(test)]
+mod events_organiser_tests;
+
+#[cfg(test)]
+mod events_notices_tests;
+
+#[cfg(test)]
 mod insights_tests;
 
 pub fn routes() -> (Vec<Route>, OpenApi) {
     openapi_get_routes_spec![
         webhook_fetch_all::fetch_server_webhooks,
         server_create::create_server,
+        server_import::preview,
+        server_import::import,
         super::applications::server_commands::fetch_server_commands,
         super::applications::install::list_server_apps,
         super::applications::install::uninstall_server_app,
@@ -109,6 +122,8 @@ pub fn routes() -> (Vec<Route>, OpenApi) {
         rules_accept::accept,
         automod::fetch,
         automod::set,
+        on_join::fetch,
+        on_join::set,
         tickets::open,
         tickets::close,
         tickets::reopen,
@@ -133,6 +148,21 @@ pub fn routes() -> (Vec<Route>, OpenApi) {
         events::mark_interested,
         events::unmark_interested,
         events::interested,
+        events::publish,
+        events::copy,
+        events::rsvp_set,
+        events::rsvp_remove,
+        events::attendees,
+        events::attendee_remove,
+        events::attendee_seat,
+        events::clashes,
+        events::stats,
+        events::notices_set,
+        events::link_set,
+        events::link_remove,
+        events::invitation_create,
+        events::invitations,
+        events::invitation_delete,
         insights::fetch,
         join_requests::list,
         join_requests::approve,

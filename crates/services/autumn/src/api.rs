@@ -40,6 +40,7 @@ use crate::{
     webm::{WebmLimits, convert_webm, is_webm},
     exif::strip_metadata, metadata::generate_metadata, mime_type::determine_mime_type,
     preview::PREVIEWS,
+    small::{PreviewQuery, preview_key, render_small},
 };
 
 /// Which websites may read answers in a browser (S-02)
@@ -166,6 +167,10 @@ pub(crate) async fn render_design_still(original: Vec<u8>, tag: &'static str) ->
 pub struct RootResponse {
     autumn: &'static str,
     version: &'static str,
+    /// This server makes small previews (`?size=small` on the preview
+    /// route). An app asks for them only after reading this: a server
+    /// without it would answer a GIF's small preview with the whole GIF.
+    small_previews: bool,
 }
 
 /// Capture crate version from Cargo
@@ -184,7 +189,18 @@ async fn root() -> Json<RootResponse> {
     Json(RootResponse {
         autumn: "Hello, I am a file server!",
         version: CRATE_VERSION,
+        small_previews: true,
     })
+}
+
+#[cfg(test)]
+mod root_tests {
+    #[tokio::test]
+    async fn the_greeting_says_small_previews_are_made() {
+        let hello = serde_json::to_value(super::root().await.0).unwrap();
+        assert_eq!(hello["small_previews"], true);
+        assert_eq!(hello["autumn"], "Hello, I am a file server!");
+    }
 }
 
 /// Empty handler for OPTIONS routes
@@ -288,6 +304,12 @@ async fn upload_file(
         return Err(create_error!(MissingPlatformPermission {
             permission: PlatformPermission::CosmeticsSubmit.name().to_string()
         }));
+    }
+
+    // No attachments before the e-mail of an account made from an invite
+    // link is confirmed (a profile picture is fine)
+    if matches!(tag, Tag::attachments) {
+        revolt_database::Account::assert_confirmed(&db, &user.id).await?;
     }
 
     // Get user's file upload limits
@@ -807,6 +829,12 @@ async fn community_gate(
 /// <sup>†</sup> aspect ratio will always be preserved
 ///
 /// <sup>‡</sup> to fetch animated variant, suffix `/{file_name}` or `/original` to the path
+///
+/// With `?size=small` the preview is made for a phone that saves data: at
+/// most 480px for attachments, 96px for avatars and icons, 640px for banners,
+/// 640x360px for backgrounds, 64px for emojis, 192px for decorations and
+/// 128x228px for effects, and always one still frame, also of an animated
+/// file. Any other value is the ordinary preview.
 #[utoipa::path(
     get,
     path = "/{tag}/{file_id}",
@@ -816,14 +844,17 @@ async fn community_gate(
     ),
     params(
         ("tag" = Tag, Path, description = "Tag to fetch from (e.g. attachments, icons, ...)"),
-        ("file_id" = String, Path, description = "File identifier")
+        ("file_id" = String, Path, description = "File identifier"),
+        ("size" = Option<String>, Query, description = "`small` for the data-saving preview (one still frame)")
     ),
 )]
 async fn fetch_preview(
     State(db): State<Database>,
     viewer: Option<User>,
     Path((tag, file_id)): Path<(Tag, String)>,
+    Query(query): Query<PreviewQuery>,
 ) -> Result<Response> {
+    let small = query.small();
     let tag_str: &'static str = tag.clone().into();
     let file = db.fetch_attachment(tag_str, &file_id).await?;
 
@@ -871,7 +902,10 @@ async fn fetch_preview(
     // Only process image files and don't process animations if not avatar or
     // icon. The preview of a design is one still frame: tiles, lists and anyone
     // who asked for no motion never play anything.
-    if !matches!(hash.metadata, Metadata::Image { .. }) || (is_animated && !previews_a_still(&tag)) {
+    // A small preview is always a still frame, so an animated file has one too.
+    if !matches!(hash.metadata, Metadata::Image { .. })
+        || (is_animated && !small && !previews_a_still(&tag))
+    {
         return Ok(
             to_original(&tag, &format!("/{tag_str}/{file_id}/{}", file.filename)).into_response(),
         );
@@ -879,7 +913,7 @@ async fn fetch_preview(
 
     // Same file and tag, same preview: cached by content
     let preview = PREVIEWS
-        .get_or_render(format!("{tag_str}:{}", hash.id), || async {
+        .get_or_render(preview_key(tag_str, &hash.id, small), || async {
             // Original image data
             let original = if let Some(data) = data {
                 data
@@ -887,7 +921,9 @@ async fn fetch_preview(
                 retrieve_file_by_hash(&hash).await?
             };
 
-            if tag_str == "effects" || (is_animated && tag_str == "decorations") {
+            if small {
+                render_small(original, file.content_type.clone(), tag_str).await
+            } else if tag_str == "effects" || (is_animated && tag_str == "decorations") {
                 render_design_still(original, tag_str).await
             } else {
                 render_preview(original, file.content_type.clone(), tag_str).await

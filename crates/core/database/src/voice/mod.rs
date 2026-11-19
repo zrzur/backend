@@ -18,11 +18,13 @@ use revolt_models::v0::{self, PartialUserVoiceState, UserVoiceState};
 use revolt_permissions::{calculate_channel_permissions, ChannelPermission, PermissionValue};
 use revolt_result::{create_error, Result, ToRevoltError};
 
+mod capture;
 mod preview;
 mod ring;
 mod rooms;
 mod stage;
 mod voice_client;
+pub use capture::*;
 pub use preview::*;
 pub use ring::*;
 pub use rooms::*;
@@ -487,6 +489,12 @@ pub async fn delete_channel_voice_state(
     pipeline.del(stage::topic_key(&channel.id));
     pipeline.del(stage::speakers_key(&channel.id));
     pipeline.del(stage::hands_key(&channel.id));
+    // and its clips, recording and the choices people made
+    pipeline.del(capture::clips_key(&channel.id));
+    pipeline.del(capture::recording_key(&channel.id));
+    pipeline.del(capture::ever_key(&channel.id));
+    pipeline.del(capture::yes_key(&channel.id));
+    pipeline.del(capture::no_key(&channel.id));
 
     for user_id in user_ids {
         let unique_key = format!("{user_id}:{parent_id}");

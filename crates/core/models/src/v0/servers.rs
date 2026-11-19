@@ -240,6 +240,40 @@ auto_derived!(
         Tickets,
     }
 
+    /// What a server does when someone joins. Bots are left out of both.
+    #[derive(Default)]
+    pub struct ServerOnJoin {
+        /// Roles given to everyone who joins (at most five)
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Vec::is_empty", default))]
+        pub roles: Vec<String>,
+        /// A message the system posts when someone joins; missing = none
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub welcome: Option<ServerWelcomeMessage>,
+    }
+
+    /// The welcome message of a server
+    pub struct ServerWelcomeMessage {
+        /// Text channel of the server it is posted in
+        pub channel: String,
+        /// The text: `{member}` mentions the person, `{server}` is the
+        /// server's name, a channel is written `<#id>`
+        pub content: String,
+    }
+
+    /// # On-Join Settings
+    pub struct DataEditServerOnJoin {
+        /// Roles given to everyone who joins; replaces the list
+        #[cfg_attr(feature = "serde", serde(default))]
+        pub roles: Vec<String>,
+        /// The welcome message; leave out to switch it off
+        #[cfg_attr(feature = "serde", serde(default))]
+        pub welcome: Option<ServerWelcomeMessage>,
+        /// Needed when one of the roles can manage the server or act on
+        /// members
+        #[cfg_attr(feature = "serde", serde(default))]
+        pub confirm_powerful_roles: bool,
+    }
+
     /// Tickets of a server: a member opens a private channel that only they
     /// and the ticket staff can see
     #[derive(Default)]
@@ -722,6 +756,192 @@ auto_derived!(
         pub server: Server,
         /// Default channels
         pub channels: Vec<Channel>,
+    }
+
+    /// A whole server layout, built in one request: wider than a blueprint
+    /// (topics, own permissions per channel and category). Channels without
+    /// a category come first, then each category, in the order given. Roles
+    /// and channels are named by a `key` that only lives in this document.
+    #[derive(Default)]
+    #[cfg_attr(feature = "validator", derive(Validate))]
+    pub struct DataServerStructure {
+        /// Server description
+        #[cfg_attr(feature = "validator", validate(length(min = 0, max = 1024)))]
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub description: Option<String>,
+        /// What every member may do (missing: the usual default)
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub default_permissions: Option<u64>,
+        /// Channels outside any category
+        #[cfg_attr(feature = "serde", serde(default))]
+        #[cfg_attr(feature = "validator", validate)]
+        pub channels: Vec<StructureChannel>,
+        /// Categories with their channels
+        #[cfg_attr(feature = "serde", serde(default))]
+        #[cfg_attr(feature = "validator", validate)]
+        pub categories: Vec<StructureCategory>,
+        /// Roles, highest first. They can't hold control of the server.
+        #[cfg_attr(feature = "serde", serde(default))]
+        #[cfg_attr(feature = "validator", validate)]
+        pub roles: Vec<StructureRole>,
+        /// `key` of the channel that shows who joined
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub system_channel: Option<String>,
+    }
+
+    /// A category of a server layout
+    #[derive(Default)]
+    #[cfg_attr(feature = "validator", derive(Validate))]
+    pub struct StructureCategory {
+        /// Category title
+        #[cfg_attr(feature = "validator", validate(length(min = 1, max = 32)))]
+        pub title: String,
+        /// Channels in this category
+        #[cfg_attr(feature = "serde", serde(default))]
+        #[cfg_attr(feature = "validator", validate)]
+        pub channels: Vec<StructureChannel>,
+        /// What every member may do in the channels that follow the category
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub default_permissions: Option<Override>,
+        /// The same per role, by role `key`
+        #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "HashMap::is_empty"))]
+        pub role_permissions: HashMap<String, Override>,
+    }
+
+    /// A channel of a server layout
+    #[derive(Default)]
+    #[cfg_attr(feature = "validator", derive(Validate))]
+    pub struct StructureChannel {
+        /// Name of this channel inside the layout
+        #[cfg_attr(feature = "validator", validate(length(min = 1, max = 32)))]
+        pub key: String,
+        /// Channel type
+        #[serde(rename = "type", default = "LegacyServerChannelType::default")]
+        pub channel_type: LegacyServerChannelType,
+        /// Channel name
+        #[cfg_attr(feature = "validator", validate(length(min = 1, max = 32)))]
+        pub name: String,
+        /// Channel description
+        #[cfg_attr(feature = "validator", validate(length(min = 0, max = 1024)))]
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub description: Option<String>,
+        /// Age-restricted
+        #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "crate::if_false"))]
+        pub nsfw: bool,
+        /// Announcement channel (text only)
+        #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "crate::if_false"))]
+        pub announcement: bool,
+        /// Slow mode delay in seconds, up to 6 hours
+        #[cfg_attr(feature = "validator", validate(range(min = 1, max = 21600)))]
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub slowmode: Option<u64>,
+        /// Most people in the voice channel at once
+        #[cfg_attr(feature = "validator", validate(range(min = 1, max = 99)))]
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub max_users: Option<usize>,
+        /// Follows its category's permissions; its own are then ignored
+        #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "crate::if_false"))]
+        pub synced: bool,
+        /// What every member may do here
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub default_permissions: Option<Override>,
+        /// The same per role, by role `key`
+        #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "HashMap::is_empty"))]
+        pub role_permissions: HashMap<String, Override>,
+    }
+
+    /// A role of a server layout
+    #[derive(Default)]
+    #[cfg_attr(feature = "validator", derive(Validate))]
+    pub struct StructureRole {
+        /// Name of this role inside the layout
+        #[cfg_attr(feature = "validator", validate(length(min = 1, max = 32)))]
+        pub key: String,
+        /// Role name
+        #[cfg_attr(feature = "validator", validate(length(min = 1, max = 32)))]
+        pub name: String,
+        /// Role colour
+        #[cfg_attr(
+            feature = "validator",
+            validate(length(min = 1, max = 128), regex = "RE_COLOUR")
+        )]
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub colour: Option<String>,
+        /// Whether this role should be displayed separately
+        #[cfg_attr(feature = "serde", serde(default))]
+        pub hoist: bool,
+        /// Permissions the role allows across the server
+        #[cfg_attr(feature = "serde", serde(default))]
+        pub allow: u64,
+    }
+
+    /// Where a server layout is read from: a template link, or the
+    /// template's text as the owner copied it. One of the two.
+    #[derive(Default)]
+    pub struct DataImportPreview {
+        /// Server template link, or its code
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub link: Option<String>,
+        /// The template document itself
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub text: Option<String>,
+    }
+
+    /// What was left out of a layout while reading it, for the preview
+    #[derive(Default)]
+    pub struct ImportReport {
+        /// Categories, channels and roles the layout holds
+        pub categories: usize,
+        pub channels: usize,
+        pub roles: usize,
+        /// Roles that held control of the server at the source (it is not
+        /// given here; the owner grants it afterwards)
+        pub held_back: Vec<String>,
+        /// Names that were too long and are cut
+        pub shortened: Vec<String>,
+        /// Channels of a kind that can't be built, by name
+        pub skipped_channels: Vec<String>,
+        /// Channels and roles beyond this server's limits
+        pub over_limit_channels: usize,
+        pub over_limit_roles: usize,
+        /// Source permissions with no match here, by their source name
+        pub unmatched_permissions: Vec<String>,
+        /// Permission settings for single members (members do not move)
+        pub member_overrides: usize,
+        /// Channels nobody but chosen roles can see
+        pub private_channels: usize,
+        /// Age-restricted channels
+        pub mature_channels: usize,
+    }
+
+    /// A layout as read, with the name the source gave the server
+    pub struct ImportPreviewResponse {
+        /// Suggested server name
+        pub name: String,
+        /// The layout that `POST /servers/import` builds
+        pub structure: DataServerStructure,
+        /// What was left out
+        pub report: ImportReport,
+    }
+
+    /// Build a server from a layout
+    #[cfg_attr(feature = "validator", derive(Validate))]
+    pub struct DataImportServer {
+        /// Server name
+        #[cfg_attr(feature = "validator", validate(length(min = 1, max = 32)))]
+        pub name: String,
+        /// Id of an uploaded icon (tag `icons`)
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub icon: Option<String>,
+        /// Who can become a member (default `Open`)
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub access: Option<ServerAccess>,
+        /// The layout
+        #[cfg_attr(feature = "validator", validate)]
+        pub structure: DataServerStructure,
+        /// Build into this empty server of the caller instead of a new one
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub into: Option<String>,
     }
 
     /// Options when fetching server

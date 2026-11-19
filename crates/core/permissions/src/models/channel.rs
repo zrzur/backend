@@ -129,8 +129,13 @@ pub enum ChannelPermission {
     /// Add, change and remove the server's soundboard sounds
     ManageSoundboard = 1 << 48,
 
+    // * Events
+    /// Create scheduled events and manage every event of the server (never
+    /// in the default permissions; Manage Server implies it)
+    ManageEvents = 1 << 49,
+
     // * Misc. permissions
-    // % Bits 49 to 52: free area
+    // % Bits 50 to 52: free area
     // % Bits 53 to 64: do not use
 
     // * Grant all permissions

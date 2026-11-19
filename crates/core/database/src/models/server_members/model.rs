@@ -154,6 +154,17 @@ impl Member {
             member.roles.push(billing.plus_role.clone());
         }
 
+        // Roles the server gives to everyone who joins (not to bots). A role
+        // deleted since it was chosen is skipped.
+        let on_join = server.on_join.as_ref().filter(|_| user.bot.is_none());
+        if let Some(on_join) = on_join {
+            for role in &on_join.roles {
+                if server.roles.contains_key(role) && !member.roles.contains(role) {
+                    member.roles.push(role.clone());
+                }
+            }
+        }
+
         if let Some(updated) = db.insert_or_merge_member(&member).await? {
             member = updated;
         }
@@ -237,6 +248,24 @@ impl Member {
             .send_without_notifications(db, None, None, false, false, false)
             .await
             .ok();
+        }
+
+        // The server's own welcome, posted by the system: no notification,
+        // and no more than a few a minute when many people join at once.
+        // A failure here (a deleted channel) never stops someone joining.
+        if let Some(welcome) = on_join.and_then(|on_join| on_join.welcome.as_ref()) {
+            if crate::util::raid::welcome_allowed(&server.id).await {
+                SystemMessage::Text {
+                    content: welcome
+                        .content
+                        .replace("{member}", &format!("<@{}>", user.id))
+                        .replace("{server}", &server.name),
+                }
+                .into_message(welcome.channel.clone())
+                .send_without_notifications(db, None, None, false, false, false)
+                .await
+                .ok();
+            }
         }
 
         // many joins at once: offer to pause invites

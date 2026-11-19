@@ -111,9 +111,14 @@ PromotionSlotsFull
 ProxyError
 RateLimited
 ReachedMaximumBots
+RecordingTimeUsedUp
 RenderFail
 RulesNotAccepted
 SafetyCaseConflict
+ServerEventFull
+ServerEventInvalid
+ServerEventOverCapacity
+ServerEventReasonRequired
 ShortPassword
 SignedDeliveryRejected
 SoundAlreadyAdded
@@ -132,12 +137,14 @@ TooManyPendingFriendRequests
 TooManyReplies
 TooManyReports
 TooManyRoles
+TooManyServerEventDrafts
 TooManyServerEvents
 TooManyServerWebhooks
 TooManyServers
 TooManySounds
 TooManySpeakers
 TooManySupercharges
+TooManyVoiceClips
 TotpAlreadyEnabled
 UnknownApplication
 UnknownAttachment
@@ -155,4 +162,5 @@ VanityReserved
 VanityTaken
 VanityUnavailable
 VerificationRequired
+VoiceNotAgreed
 VosoUnavailable

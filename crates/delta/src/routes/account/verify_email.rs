@@ -1,23 +1,61 @@
 //! Verify an account
 //! POST /verify/<code>
 use rocket::{serde::json::Json, State};
-use revolt_database::{Database, EmailVerification, MFATicket, util::email::normalise_email};
-use revolt_result::Result;
+use revolt_database::{Database, EmailVerification, MFATicket, util::{email::normalise_email, password::{assert_safe, hash_password}}};
+use revolt_result::{create_error, Result};
 use revolt_models::v0;
+
+/// # Verification Link Information
+///
+/// Whether confirming with this link needs a password to be chosen (an
+/// account made from an invite link has none yet). Uses nothing up.
+#[openapi(tag = "Account")]
+#[get("/verify/<code>")]
+pub async fn verify_email_info(
+    db: &State<Database>,
+    code: String,
+) -> Result<Json<v0::VerifyEmailInfo>> {
+    let account = db.fetch_account_with_email_verification(&code).await?;
+    Ok(Json(v0::VerifyEmailInfo {
+        needs_password: account
+            .provisional
+            .as_ref()
+            .is_some_and(|provisional| provisional.password_unset),
+    }))
+}
 
 /// # Verify Email
 ///
-/// Verify an email address.
+/// Verify an email address. An account made from an invite link sends the
+/// password it wants with it.
 #[openapi(tag = "Account")]
-#[post("/verify/<code>")]
+#[post("/verify/<code>", data = "<data>")]
 pub async fn verify_email(
     db: &State<Database>,
     code: String,
+    data: Option<Json<v0::DataVerifyEmail>>,
 ) -> Result<Json<v0::ResponseVerify>> {
     // Find the account
     let mut account = db
         .fetch_account_with_email_verification(&code)
         .await?;
+
+    // An account made from an invite link chooses its password here; the
+    // link stays good until it does
+    if account
+        .provisional
+        .as_ref()
+        .is_some_and(|provisional| provisional.password_unset)
+    {
+        let Some(password) = data.and_then(|data| data.into_inner().password) else {
+            return Err(create_error!(IncorrectData {
+                with: "password".to_string()
+            }));
+        };
+        assert_safe(&password).await?;
+        account.password = hash_password(password)?;
+    }
+    account.provisional = None;
 
     // Update account email
     let response = if let EmailVerification::Moving { new_email, .. } = &account.verification {

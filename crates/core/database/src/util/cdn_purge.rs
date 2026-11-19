@@ -45,14 +45,15 @@ fn encode_name(name: &str) -> String {
     out
 }
 
-/// Every link a file can be cached under: its preview, `/original` and its
-/// named file
+/// Every link a file can be cached under: its preview, `/original`, its
+/// named file and its small preview
 pub fn file_urls(base: &str, tag: &str, id: &str, filename: &str) -> Vec<String> {
     let root = format!("{}/{tag}/{id}", base.trim_end_matches('/'));
     vec![
         root.clone(),
         format!("{root}/original"),
         format!("{root}/{}", encode_name(filename)),
+        format!("{root}?size=small"),
     ]
 }
 
@@ -216,13 +217,14 @@ mod tests {
     }
 
     #[test]
-    fn a_file_has_three_links() {
+    fn a_file_has_four_links() {
         assert_eq!(
             file_urls("https://cdn.zrzur.com/", "avatars", "abc", "my cat (1).png"),
             vec![
                 "https://cdn.zrzur.com/avatars/abc",
                 "https://cdn.zrzur.com/avatars/abc/original",
                 "https://cdn.zrzur.com/avatars/abc/my%20cat%20(1).png",
+                "https://cdn.zrzur.com/avatars/abc?size=small",
             ]
         );
         assert_eq!(

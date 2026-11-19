@@ -31,6 +31,7 @@ pub mod metadata;
 pub mod mime_type;
 mod preview;
 mod ratelimits;
+mod small;
 mod sound;
 mod utils;
 mod webm;

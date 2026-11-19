@@ -67,15 +67,12 @@ impl AbstractServers for ReferenceDb {
         offset: u64,
     ) -> Result<Vec<Server>> {
         let servers = self.servers.lock().await;
-        let query = query.map(str::to_lowercase);
 
         let mut matching: Vec<Server> = servers
             .values()
             .filter(|server| server.is_listed())
             .filter(|server| {
-                query
-                    .as_ref()
-                    .is_none_or(|q| server.name.to_lowercase().contains(q))
+                query.is_none_or(|q| crate::util::arabic_fold::text_matches(&server.name, q))
             })
             .cloned()
             .collect();

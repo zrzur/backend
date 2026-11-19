@@ -37,7 +37,8 @@ pub async fn query(
         limit,
     } = options;
 
-    let audit_logs = db
+    let by_target = target.is_some();
+    let mut audit_logs = db
         .get_server_audit_logs(
             &server.id,
             AuditLogQuery {
@@ -50,6 +51,17 @@ pub async fn query(
             },
         )
         .await?;
+
+    // who was removed from or seated in an event is shown only to the
+    // people who manage that event and see its people; the ids stay stored
+    revolt_database::ServerEvent::redact_audit_entries(
+        db,
+        &user,
+        &server,
+        &mut audit_logs,
+        by_target,
+    )
+    .await;
 
     let (users, members) = AuditLogEntry::with_users(db, &server.id, &user, &audit_logs).await?;
 
