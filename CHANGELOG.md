@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Discover review desk: richer notices, a channel for bots, removal (2026-11-19)
+
+- `GET /discover/review/queue` entries carry `icon` and `banner` (as `<bucket>/<file id>` on the file server) and `marks` (`Official`, `Verified`).
+- `[features.discover_review]` gains `channel_bots` (a second staff channel for requests of bots; empty = one channel for both) and `remove_role`. A server is decided in the servers' channel only and a bot in the bots' one.
+- Holders of `remove_role` can take a listed server or bot off Discover from the desk: a form with a written reason (3 to 512 characters), the platform audit record `discover.review.remove` names the person, the listing is dropped only while the request is still approved, and the owner is told the reason. With `remove_role` empty nobody can.
+- New `GET /discover/review/find?q=` (a server id, a bot id or a server's link name), for the desk's bot only.
+- No data migration.
+
 ### Discover review desk (2026-11-19)
 
 - New routes under `/discover/review` (`GET /queue`, `GET /requests/{kind}/{id}`, `POST /act`), outside the public OpenAPI document and switched off unless `[features.discover_review]` names a server, a channel, a role and a bot. They let one bot show open Discover requests in one staff channel; people holding the role approve or reject there. The bot can decide nothing: an action is read from the interaction the server stored, the person is checked again, the platform audit record names the person, and of two decisions at once one applies.

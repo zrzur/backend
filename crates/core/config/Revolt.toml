@@ -549,8 +549,13 @@ mature_content = "blocked"
 # there. The bot itself can decide nothing (routes under /discover/review).
 # Leave any value empty to keep the routes switched off.
 server = ""
+# A second channel for requests of bots; empty = bots share `channel`.
 channel = ""
+channel_bots = ""
 role = ""
+# Holders of this role may take a listed server or bot off Discover from the
+# desk (with a written reason). Empty = not possible from the desk.
+remove_role = ""
 bot = ""
 
 [features.billing]

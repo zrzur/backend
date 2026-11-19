@@ -179,6 +179,38 @@ impl AbstractDiscoverRequest for MongoDb {
         Ok(result.matched_count == 1)
     }
 
+    async fn remove_listed_discover_request(
+        &self,
+        request_type: DiscoverRequestType,
+        item: &str,
+        submitted_at: Option<i64>,
+        status: DiscoverRequestStatus,
+        acted_by: &str,
+        acted_at: i64,
+    ) -> Result<bool> {
+        let mut filter = key(&request_type, item);
+        // an approval is stored as { "Approved": <note or null> }
+        filter.insert("status.Approved", doc! {"$exists": true});
+        match submitted_at {
+            Some(at) => filter.insert("submitted_at", at),
+            None => filter.insert("submitted_at", doc! {"$exists": false}),
+        };
+        let result = self
+            .col::<DiscoverRequest>(DISCOVER_COL)
+            .update_one(
+                filter,
+                doc! {"$set": {
+                    "status": bson::to_bson(&status).expect("failed to serialize"),
+                    "acted_by": acted_by,
+                    "acted_at": acted_at,
+                    "featured": false,
+                }},
+            )
+            .await
+            .map_err(|_| create_database_error!("update_one", DISCOVER_COL))?;
+        Ok(result.matched_count == 1)
+    }
+
     /// Replace an existing discover request
     async fn save_discover_request(&self, request: &DiscoverRequest) -> Result<()> {
         let result = self

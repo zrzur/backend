@@ -133,6 +133,31 @@ impl AbstractDiscoverRequest for ReferenceDb {
         Ok(true)
     }
 
+    async fn remove_listed_discover_request(
+        &self,
+        request_type: DiscoverRequestType,
+        item: &str,
+        submitted_at: Option<i64>,
+        status: DiscoverRequestStatus,
+        acted_by: &str,
+        acted_at: i64,
+    ) -> Result<bool> {
+        let mut discover = self.discover_requests.lock().await;
+        let Some(request) = discover.get_mut(&(request_type, item.to_string())) else {
+            return Ok(false);
+        };
+        if !matches!(request.status, DiscoverRequestStatus::Approved(_))
+            || request.submitted_at != submitted_at
+        {
+            return Ok(false);
+        }
+        request.status = status;
+        request.acted_by = Some(acted_by.to_string());
+        request.acted_at = Some(acted_at);
+        request.featured = false;
+        Ok(true)
+    }
+
     /// Replace an existing discover request
     async fn save_discover_request(&self, request: &DiscoverRequest) -> Result<()> {
         let mut discover = self.discover_requests.lock().await;

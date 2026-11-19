@@ -55,6 +55,19 @@ pub trait AbstractDiscoverRequest: Sync + Send {
         acted_at: i64,
     ) -> Result<bool>;
 
+    /// Take a listed item off: set `status` (a removal), `acted_by` and
+    /// `acted_at`, and drop `featured`, only if the request is approved
+    /// and is still the filing the person saw. Returns `false` otherwise.
+    async fn remove_listed_discover_request(
+        &self,
+        request_type: DiscoverRequestType,
+        item: &str,
+        submitted_at: Option<i64>,
+        status: DiscoverRequestStatus,
+        acted_by: &str,
+        acted_at: i64,
+    ) -> Result<bool>;
+
     /// Replace an existing Discover request (listing details, featured flag)
     async fn save_discover_request(&self, request: &DiscoverRequest) -> Result<()>;
 

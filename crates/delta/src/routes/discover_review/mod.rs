@@ -21,8 +21,10 @@
 //! person's name, and applies only while the request is still open and still
 //! the same filing. A visiting invite is given once per press, and only for
 //! a server that is open to everyone.
-//! `Remove` and `featured` are not reachable here: they stay in the admin
-//! console.
+//! `featured` is not reachable here: it stays in the admin console. Taking
+//! a listed server or bot off Discover is, for holders of a second role
+//! (`remove_role`), from a form that needs a written reason; with no such
+//! role named nobody can.
 
 use iso8601_timestamp::{Duration, Timestamp};
 use revolt_config::{config, FeaturesDiscoverReview};
@@ -41,7 +43,7 @@ use super::discover::{decide::tell_owner, listing::set_discoverable};
 mod tests;
 
 pub fn routes() -> Vec<Route> {
-    routes![queue, request_state, act]
+    routes![queue, request_state, find, act]
 }
 
 /// Shortest reason of a rejection, as in the admin console
@@ -125,6 +127,17 @@ pub struct ReviewEntry {
     /// Servers: the public link name, if it has one
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub link: Option<String>,
+    /// Its picture on the file server, as `<bucket>/<file id>` (a server's
+    /// icon, a bot's avatar)
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub icon: Option<String>,
+    /// Its banner on the file server, as `<bucket>/<file id>` (a server's
+    /// banner, a bot's profile background)
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub banner: Option<String>,
+    /// Marks it carries: `Official`, `Verified`
+    #[serde(default)]
+    pub marks: Vec<String>,
     /// Servers: `Open`, `Approval` or `Locked`. Bots: `Public` or `Private`.
     pub access: String,
     /// Whether it can be listed as it stands (an open server, a public bot)
@@ -211,7 +224,21 @@ fn key_of(request: &DiscoverRequest) -> String {
 
 /// The notice of one open request; `None` when its server or bot is gone
 async fn entry(db: &Database, request: &DiscoverRequest) -> Option<ReviewEntry> {
-    let (name, description, owner_id, count, link, access, listable, mature) =
+    let path = |file: &Option<revolt_database::File>| {
+        file.as_ref().map(|file| format!("{}/{}", file.tag, file.id))
+    };
+    let mark = |flags: Option<i32>, official: i32, verified: i32| {
+        let flags = flags.unwrap_or_default();
+        let mut marks = Vec::new();
+        if flags & official != 0 {
+            marks.push("Official".to_string());
+        }
+        if flags & verified != 0 {
+            marks.push("Verified".to_string());
+        }
+        marks
+    };
+    let (name, description, owner_id, count, link, access, listable, mature, icon, banner, marks) =
         match request.request_type {
             DiscoverRequestType::Server => {
                 let server = db.fetch_server(&request.request_id).await.ok()?;
@@ -225,6 +252,10 @@ async fn entry(db: &Database, request: &DiscoverRequest) -> Option<ReviewEntry> 
                     format!("{access:?}"),
                     access == v0::ServerAccess::Open,
                     server.nsfw,
+                    path(&server.icon),
+                    path(&server.banner),
+                    // server flags: 1 official, 2 verified
+                    mark(server.flags, 1, 2),
                 )
             }
             DiscoverRequestType::Bot => {
@@ -243,6 +274,24 @@ async fn entry(db: &Database, request: &DiscoverRequest) -> Option<ReviewEntry> 
                     if bot.public { "Public" } else { "Private" }.to_string(),
                     bot.public,
                     false,
+                    path(&bot_user.avatar),
+                    path(
+                        &bot_user
+                            .profile
+                            .as_ref()
+                            .and_then(|profile| profile.background.clone()),
+                    ),
+                    {
+                        let mut marks = mark(
+                            bot.flags,
+                            v0::BotFlags::Official as i32,
+                            v0::BotFlags::Verified as i32,
+                        );
+                        if bot_user.official_bot && !marks.iter().any(|m| m == "Official") {
+                            marks.insert(0, "Official".to_string());
+                        }
+                        marks
+                    },
                 )
             }
         };
@@ -275,6 +324,9 @@ async fn entry(db: &Database, request: &DiscoverRequest) -> Option<ReviewEntry> 
         category: request.category.clone(),
         language: request.language.clone(),
         link,
+        icon,
+        banner,
+        marks,
         access,
         listable,
         mature,
@@ -300,6 +352,42 @@ async fn queue(db: &State<Database>, user: User) -> Result<Json<Vec<ReviewEntry>
     }
     entries.sort_by_key(|entry| (!entry.priority, entry.submitted_at));
     Ok(Json(entries))
+}
+
+/// # Review desk: find a request by what a person typed
+///
+/// `q` is a server id, a bot id or a server's link name. Gives the request
+/// with what its notice shows, whatever its status (`status` is then one of
+/// `Pending`, `UnderReview`, `Approved`, `Denied`, `Removed`). Only the
+/// desk's bot.
+#[get("/find?<q>")]
+async fn find(db: &State<Database>, user: User, q: &str) -> Result<Json<ReviewEntry>> {
+    desk(&user).await?;
+    let q = q.trim();
+    if q.is_empty() || q.len() > 64 || !q.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err(create_error!(NotFound));
+    }
+    let mut request = None;
+    for kind in [DiscoverRequestType::Server, DiscoverRequestType::Bot] {
+        if let Ok(found) = db.fetch_discover_request_by_item_id(kind, q).await {
+            request = Some(found);
+            break;
+        }
+    }
+    if request.is_none() {
+        // a link name: the server it leads to
+        if let Ok(Invite::Server { server, .. }) = db.fetch_invite(q).await {
+            request = db
+                .fetch_discover_request_by_item_id(DiscoverRequestType::Server, &server)
+                .await
+                .ok();
+        }
+    }
+    let request = request.ok_or_else(|| create_error!(NotFound))?;
+    entry(db, &request)
+        .await
+        .map(Json)
+        .ok_or_else(|| create_error!(NotFound))
 }
 
 /// # Review desk: where one request stands
@@ -352,10 +440,10 @@ pub struct ReviewOutcome {
     /// Whether the act was carried out
     pub applied: bool,
     /// Why not, when `applied` is false: `already_decided`, `withdrawn`,
-    /// `own_item`, `not_listable`, `no_channel`
+    /// `own_item`, `not_listable`, `no_channel`, `not_listed`
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub problem: Option<String>,
-    /// `review`, `approve`, `deny` or `visit`
+    /// `review`, `approve`, `deny`, `visit` or `remove`
     pub action: String,
     pub kind: String,
     pub id: String,
@@ -385,6 +473,7 @@ enum Action {
     Approve,
     Deny,
     Visit,
+    Remove,
 }
 
 impl Action {
@@ -394,6 +483,7 @@ impl Action {
             Action::Approve => "approve",
             Action::Deny => "deny",
             Action::Visit => "visit",
+            Action::Remove => "remove",
         }
     }
 }
@@ -417,6 +507,7 @@ fn parse_pressed(custom_id: &str) -> Option<Pressed> {
         "approve" => Action::Approve,
         "deny" => Action::Deny,
         "visit" => Action::Visit,
+        "remove" => Action::Remove,
         _ => return None,
     };
     let kind = kind_of(parts.next()?)?;
@@ -456,8 +547,11 @@ async fn genuine_press(
     if interaction.is_expired() {
         return Err(create_error!(InteractionExpired));
     }
+    // either staff channel; which one a request belongs to is checked once
+    // the pressed button is read
     if interaction.server_id.as_deref() != Some(settings.server.as_str())
-        || interaction.channel_id != settings.channel
+        || (interaction.channel_id != settings.channel
+            && interaction.channel_id != settings.channel_for(true))
     {
         return Err(no_review_permission());
     }
@@ -469,7 +563,12 @@ async fn reviewer(
     db: &Database,
     settings: &FeaturesDiscoverReview,
     interaction: &Interaction,
+    role: &str,
 ) -> Result<User> {
+    // no role named for this act: nobody may
+    if role.trim().is_empty() {
+        return Err(no_review_permission());
+    }
     let person = db
         .fetch_user(&interaction.user_id)
         .await
@@ -486,7 +585,7 @@ async fn reviewer(
         .fetch_member(&settings.server, &person.id)
         .await
         .map_err(|_| no_review_permission())?;
-    if !member.roles.contains(&settings.role) {
+    if !member.roles.iter().any(|held| held == role) {
         return Err(no_review_permission());
     }
     Ok(person)
@@ -532,11 +631,18 @@ async fn act(
         .as_deref()
         .and_then(parse_pressed)
         .ok_or_else(|| create_error!(InvalidOperation))?;
+    // a bot is decided in the bots' channel, a server in the servers' one;
+    // a removal may be asked for in either
+    if pressed.action != Action::Remove
+        && interaction.channel_id != settings.channel_for(pressed.kind == DiscoverRequestType::Bot)
+    {
+        return Err(no_review_permission());
+    }
 
     // A rejection comes from the form (it carries the reason); everything
     // else from a button
     let reason = match (pressed.action, interaction.kind) {
-        (Action::Deny, InteractionType::ModalSubmit) => {
+        (Action::Deny | Action::Remove, InteractionType::ModalSubmit) => {
             let reason = interaction
                 .modal_fields
                 .iter()
@@ -553,14 +659,19 @@ async fn act(
             }
             Some(reason)
         }
-        (Action::Deny, _) | (_, InteractionType::ModalSubmit) => {
+        (Action::Deny | Action::Remove, _) | (_, InteractionType::ModalSubmit) => {
             return Err(create_error!(InvalidOperation))
         }
         (_, InteractionType::Component) => None,
         _ => return Err(create_error!(InvalidOperation)),
     };
 
-    let person = reviewer(db, &settings, &interaction).await?;
+    let role = if pressed.action == Action::Remove {
+        settings.remove_role.clone()
+    } else {
+        settings.role.clone()
+    };
+    let person = reviewer(db, &settings, &interaction, &role).await?;
     let reviewer_name = format!("{}#{}", person.username, person.discriminator);
 
     let kind_text = kind_word(&pressed.kind).to_string();
@@ -603,6 +714,60 @@ async fn act(
         outcome.status = "Withdrawn".to_string();
         return refuse(outcome, "withdrawn");
     };
+    if pressed.action == Action::Remove {
+        // taking a listed item off: it must be listed, and be the filing the
+        // person was shown
+        if request.submitted_at.unwrap_or_default() != pressed.submitted_at
+            || !matches!(request.status, DiscoverRequestStatus::Approved(_))
+        {
+            return refuse(outcome, "not_listed");
+        }
+        let status = DiscoverRequestStatus::Removed(reason.clone());
+        let mut record = AuditRecord {
+            actor_id: person.id.clone(),
+            action: "discover.review.remove".to_string(),
+            target_kind: Some(kind_text),
+            target_id: Some(pressed.id.clone()),
+            reason: reason.as_ref().map(|r| r.chars().take(MAX_REASON).collect()),
+            summary: Some(format!(
+                "via bot {} interaction {}",
+                settings.bot, interaction.id
+            )),
+            ..Default::default()
+        };
+        // the record first: no record, no removal
+        record_platform_audit(db, record.clone(), AuditOutcome::Success).await?;
+        let now = staff_now();
+        let won = db
+            .remove_listed_discover_request(
+                pressed.kind.clone(),
+                &pressed.id,
+                request.submitted_at,
+                status.clone(),
+                &person.id,
+                now,
+            )
+            .await?;
+        if !won {
+            record.summary = Some("lost the race: no longer listed".to_string());
+            let _ = record_platform_audit(db, record, AuditOutcome::Failed).await;
+            return refuse(outcome, "not_listed");
+        }
+        if let Err(error) = set_discoverable(db, pressed.kind.clone(), &pressed.id, false).await {
+            // the request already says removed; the listing flag did not follow
+            record.summary = Some(format!("{:?}", error.error_type).chars().take(200).collect());
+            let _ = record_platform_audit(db, record, AuditOutcome::Failed).await;
+            return Err(error);
+        }
+        tell_owner(db, &pressed.kind, &pressed.id, &status).await;
+        outcome.applied = true;
+        outcome.status = status_word(&status).to_string();
+        outcome.acted_by_name = Some(outcome.reviewer_name.clone());
+        outcome.acted_at = Some(now);
+        outcome.reason = reason;
+        return Ok(Json(outcome));
+    }
+
     if request.submitted_at.unwrap_or_default() != pressed.submitted_at {
         // filed anew since: this notice is about an older filing
         return refuse(outcome, "already_decided");
@@ -675,7 +840,7 @@ async fn act(
         Action::Review => DiscoverRequestStatus::UnderReview,
         Action::Approve => DiscoverRequestStatus::Approved(None),
         Action::Deny => DiscoverRequestStatus::Denied(reason.clone()),
-        Action::Visit => unreachable!(),
+        Action::Visit | Action::Remove => unreachable!(),
     };
 
     // the record first: no record, no decision

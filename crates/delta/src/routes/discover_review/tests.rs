@@ -89,7 +89,9 @@ async fn desk() -> Desk {
     super::test_settings::register(FeaturesDiscoverReview {
         server: server.id.clone(),
         channel: channel.id().to_string(),
+        channel_bots: String::new(),
         role: role.id.clone(),
+        remove_role: String::new(),
         bot: bot.id.clone(),
     });
 
@@ -174,7 +176,7 @@ impl Desk {
         };
         let components = json!([{ "type": "ActionRow", "components": [
             button("review"), button("approve"), button("deny"), button("visit"), button("ask-deny")
-        ]}]);
+        ]}, { "type": "ActionRow", "components": [button("remove")] }]);
         let response = self
             .harness
             .client
@@ -242,11 +244,16 @@ impl Desk {
 
     /// A reviewer opens the rejection form and sends it with `reason`
     async fn reject(&mut self, session: &str, message: &str, key: &str, reason: &str) -> (String, String) {
+        self.form(session, message, key, "deny", reason).await
+    }
+
+    /// A person is shown a form of the desk (`deny` or `remove`) and sends it with `reason`
+    async fn form(&mut self, session: &str, message: &str, key: &str, action: &str, reason: &str) -> (String, String) {
         let channel = self.channel.clone();
         let (parent, token) = self
             .press(session, &channel, message, &format!("dr:ask-deny:{key}"))
             .await;
-        let form = format!("dr:deny:{key}");
+        let form = format!("dr:{action}:{key}");
         let modal = json!({
             "custom_id": form,
             "title": "Reject",
@@ -302,7 +309,11 @@ impl Desk {
 
     /// What the applicant was told in their private messages
     async fn told(&self) -> Vec<String> {
-        let official = revolt_database::OfficialAccount::Zrzur.id();
+        self.told_by(revolt_database::OfficialAccount::Zrzur.id()).await
+    }
+
+    /// What one official account wrote to the applicant
+    async fn told_by(&self, official: &str) -> Vec<String> {
         let Ok(channel) = self
             .harness
             .db
@@ -424,6 +435,71 @@ async fn the_routes_exist_only_for_the_desk_bot_walk() {
     assert!(submitted > 0);
     assert_eq!(entry["key"], format!("server:{}:{submitted}", d.applied.id));
     assert!(entry["created_at"].as_i64().unwrap() > 0);
+    // no picture, no banner, no marks on a plain server
+    assert!(entry.get("icon").is_none());
+    assert!(entry.get("banner").is_none());
+    assert_eq!(entry["marks"], json!([]));
+
+    // an official, verified server says so
+    let mut applied = d.harness.db.fetch_server(&d.applied.id).await.unwrap();
+    applied
+        .update(
+            &d.harness.db,
+            PartialServer {
+                flags: Some(3),
+                ..Default::default()
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
+    let queue = d.queue().await;
+    let entry = queue.iter().find(|e| e["id"] == d.applied.id.as_str()).unwrap();
+    assert_eq!(entry["marks"], json!(["Official", "Verified"]));
+}
+
+#[test]
+fn with_a_bots_channel_a_server_is_decided_in_the_servers_channel_only() {
+    on_big_stack(with_a_bots_channel_walk);
+}
+
+async fn with_a_bots_channel_walk() {
+    let mut d = desk().await;
+    let channel = d.channel.clone();
+    let lobby = d.lobby.clone();
+    let session = d.reviewer_session.clone();
+    // the second staff channel is for bots
+    let server = d.channel.server().unwrap().to_string();
+    super::test_settings::register(FeaturesDiscoverReview {
+        server,
+        channel: channel.id().to_string(),
+        channel_bots: lobby.id().to_string(),
+        role: d.role.clone(),
+        remove_role: String::new(),
+        bot: d.bot.id.clone(),
+    });
+    let key = d.key().await;
+
+    // a server's button pressed in the bots' channel does nothing
+    let elsewhere = d.notice(&lobby, &key).await;
+    let pressed = d.press(&session, &lobby, &elsewhere, &format!("dr:review:{key}")).await;
+    let (status, _) = d.act(&pressed).await;
+    assert_eq!(status, Status::Forbidden);
+    assert_eq!(d.request().await.status, DiscoverRequestStatus::Pending);
+
+    // in the servers' channel it works as before
+    let message = d.notice(&channel, &key).await;
+    let pressed = d.press(&session, &channel, &message, &format!("dr:review:{key}")).await;
+    let (status, outcome) = d.act(&pressed).await;
+    assert_eq!(status, Status::Ok, "{outcome}");
+    assert_eq!(outcome["applied"], true);
+
+    // a bot's button pressed in the servers' channel does nothing either
+    let bot_key = format!("bot:{}:0", d.bot.id);
+    let message = d.notice(&channel, &bot_key).await;
+    let pressed = d.press(&session, &channel, &message, &format!("dr:review:{bot_key}")).await;
+    let (status, _) = d.act(&pressed).await;
+    assert_eq!(status, Status::Forbidden);
 }
 
 #[test]
@@ -835,7 +911,6 @@ fn only_the_desk_grammar_is_read() {
         "dr",
         "dr:approve",
         "dr:approve:server:01ABC",
-        "dr:remove:server:01ABC:1",
         "dr:feature:server:01ABC:1",
         "dr:approve:channel:01ABC:1",
         "dr:approve:server::1",
@@ -846,4 +921,108 @@ fn only_the_desk_grammar_is_read() {
     ] {
         assert!(parse_pressed(bad).is_none(), "{bad}");
     }
+    // a removal is read as one (who may, and that it needs the form, is decided later)
+    {
+        let pressed = parse_pressed("dr:remove:server:01ABC:1").unwrap();
+        assert!(pressed.action == super::Action::Remove);
+    }
+}
+
+#[test]
+fn a_listed_server_is_taken_off_by_the_removal_role_only() {
+    on_big_stack(removal_walk);
+}
+
+async fn removal_walk() {
+    let mut d = desk().await;
+    let channel = d.channel.clone();
+    let session = d.reviewer_session.clone();
+    let second_session = d.second_session.clone();
+    let key = d.key().await;
+    let message = d.notice(&channel, &key).await;
+
+    // listed first
+    let pressed = d.press(&session, &channel, &message, &format!("dr:approve:{key}")).await;
+    let (_, outcome) = d.act(&pressed).await;
+    assert_eq!(outcome["applied"], true);
+    assert!(d.harness.db.fetch_server(&d.applied.id).await.unwrap().discoverable);
+
+    // no removal role named: nobody can, not even a reviewer
+    let pressed = d.form(&session, &message, &key, "remove", "Spam in every channel").await;
+    let (status, _) = d.act(&pressed).await;
+    assert_eq!(status, Status::Forbidden);
+
+    // a removal role, held by the second person only
+    let review_server = d.harness.db.fetch_server(d.channel.server().unwrap()).await.unwrap();
+    let removers = d.harness.new_role(&review_server, 2, None).await;
+    give_role(&d.harness, &review_server, &d.second, vec![d.role.clone(), removers.id.clone()]).await;
+    super::test_settings::register(FeaturesDiscoverReview {
+        server: review_server.id.clone(),
+        channel: channel.id().to_string(),
+        channel_bots: String::new(),
+        role: d.role.clone(),
+        remove_role: removers.id.clone(),
+        bot: d.bot.id.clone(),
+    });
+
+    // the bot finds the listing by id, by nothing else
+    let (status, found) = d
+        .as_bot(&d.bot.token, &format!("/discover/review/find?q={}", d.applied.id), None)
+        .await;
+    assert_eq!(status, Status::Ok);
+    assert_eq!(found["status"], "Approved");
+    assert_eq!(found["key"], key.as_str());
+    let (status, _) = d.as_bot(&d.bot.token, "/discover/review/find?q=nothing-here", None).await;
+    assert_eq!(status, Status::NotFound);
+    let (status, _) = d.as_bot(&d.bot.token, "/discover/review/find?q=..%2F..", None).await;
+    assert_eq!(status, Status::NotFound);
+
+    // a reviewer without the removal role is refused, and it stays listed
+    let pressed = d.form(&session, &message, &key, "remove", "Spam in every channel").await;
+    let (status, _) = d.act(&pressed).await;
+    assert_eq!(status, Status::Forbidden);
+    assert!(d.harness.db.fetch_server(&d.applied.id).await.unwrap().discoverable);
+
+    // a button cannot remove: only the form, with its reason
+    let buttons = d.notice(&channel, &key).await;
+    let pressed = d.press(&second_session, &channel, &buttons, &format!("dr:remove:{key}")).await;
+    let (status, _) = d.act(&pressed).await;
+    assert_eq!(status, Status::BadRequest);
+    // (a reason shorter than three characters is refused by the form itself)
+    assert!(d.harness.db.fetch_server(&d.applied.id).await.unwrap().discoverable);
+
+    // the holder of the role removes it, with a reason
+    // a removal is told by the Safety account
+    let safety = revolt_database::OfficialAccount::Safety.id();
+    let told_before = d.told_by(safety).await.len();
+    let pressed = d.form(&second_session, &message, &key, "remove", "Spam in every channel").await;
+    let (status, outcome) = d.act(&pressed).await;
+    assert_eq!(status, Status::Ok, "{outcome}");
+    assert_eq!(outcome["applied"], true);
+    assert_eq!(outcome["status"], "Removed");
+    assert_eq!(outcome["reason"], "Spam in every channel");
+    assert!(!d.harness.db.fetch_server(&d.applied.id).await.unwrap().discoverable);
+    let request = d.request().await;
+    assert_eq!(
+        request.status,
+        DiscoverRequestStatus::Removed(Some("Spam in every channel".to_string()))
+    );
+    assert_eq!(request.acted_by.as_deref(), Some(d.second.id.as_str()));
+    assert!(d.audit().await.contains(&(
+        "discover.review.remove".to_string(),
+        d.second.id.clone(),
+        "Success".to_string()
+    )));
+    // the owner is told once, with the reason
+    let told = d.told_by(safety).await;
+    assert_eq!(told.len(), told_before + 1);
+    assert!(told.iter().any(|message| message.contains("Spam in every channel")));
+
+    // a second removal finds nothing listed
+    let pressed = d.form(&second_session, &message, &key, "remove", "Spam in every channel").await;
+    let (status, outcome) = d.act(&pressed).await;
+    assert_eq!(status, Status::Ok);
+    assert_eq!(outcome["applied"], false);
+    assert_eq!(outcome["problem"], "not_listed");
+    assert_eq!(d.told_by(safety).await.len(), told_before + 1);
 }

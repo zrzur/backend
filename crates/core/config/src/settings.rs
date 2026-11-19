@@ -2076,15 +2076,33 @@ pub struct FeaturesDiscoverReview {
     /// Id of the staff channel in that server the notices are posted to
     #[serde(default)]
     pub channel: String,
+    /// Id of a second staff channel for requests of bots. Empty: bots share
+    /// `channel` with servers.
+    #[serde(default)]
+    pub channel_bots: String,
     /// Id of the role in that server whose holders may decide
     #[serde(default)]
     pub role: String,
+    /// Id of the role whose holders may take a listed server or bot off
+    /// Discover from the desk. Empty: nobody can, the admin console stays
+    /// the only way.
+    #[serde(default)]
+    pub remove_role: String,
     /// Id of the one bot allowed to use the review routes
     #[serde(default)]
     pub bot: String,
 }
 
 impl FeaturesDiscoverReview {
+    /// The staff channel requests of this kind are decided in
+    pub fn channel_for(&self, bot_request: bool) -> &str {
+        if bot_request && !self.channel_bots.trim().is_empty() {
+            &self.channel_bots
+        } else {
+            &self.channel
+        }
+    }
+
     pub fn enabled(&self) -> bool {
         ![&self.server, &self.channel, &self.role, &self.bot]
             .iter()
