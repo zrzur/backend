@@ -882,11 +882,13 @@ pub const COUNTING_STOPPED: &str = "counting_stopped";
 pub const COUNTING_RESUMED: &str = "counting_resumed";
 
 /// Whether the person objected and is not counted: the newest of the two
-/// words on their current memberships is `counting_stopped`
+/// words on any of their memberships, ended ones included, is
+/// `counting_stopped`. The objection belongs to the person: a membership
+/// that is opened or reopened later gets the word copied in (`enrol`), so it
+/// outlives the deletion of the ended record too.
 pub fn counting_stopped(members: &[TeamMember]) -> bool {
     members
         .iter()
-        .filter(|m| m.is_current())
         .flat_map(|m| m.history.iter())
         .filter(|entry| entry.action == COUNTING_STOPPED || entry.action == COUNTING_RESUMED)
         .max_by_key(|entry| entry.at)

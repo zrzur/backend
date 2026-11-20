@@ -208,8 +208,9 @@ async fn identity_needs_step_up_and_is_logged() {
     // and when the age was given
     assert_eq!(body["age_given_at"], 1);
     assert_eq!(body["country"], "Austria");
-    // escaped: the mention is dead text
-    assert!(!body["name"].as_str().unwrap().contains("<@everyone>"), "{body}");
+    // raw: the console shows it as text (Solid escapes it), so no markdown
+    // backslashes; a mention there is harmless text
+    assert_eq!(body["name"], "Sara <@everyone> Hidden", "{body}");
 
     // logged, with the staff member as actor, and no identity in the log
     let entries = all_audit(&harness).await;
@@ -433,6 +434,100 @@ async fn counting_stops_on_objection_and_resumes() {
     assert_eq!(stored(&harness, &m.id).await.history.last().unwrap().action, "counting_resumed");
     let (_, body) = get(&harness, &owner, &token, &format!("/staff/team/{}", m.id)).await;
     assert_eq!(body["counting_stopped"], false);
+}
+
+#[rocket::async_test]
+async fn names_come_raw_for_the_console_to_show_as_text() {
+    let harness = TestHarness::new().await;
+    let (_, _, first) = harness.new_user().await;
+    let (owner, token) = owner_signed_in(&harness).await;
+    let server = desk_on(&harness, &owner, &first).await;
+    // a name with characters markdown would escape
+    let yasmin = User {
+        id: ulid::Ulid::new().to_string(),
+        username: "Yasmin_8c95c9".to_string(),
+        discriminator: "0001".to_string(),
+        ..Default::default()
+    };
+    harness.db.insert_user(&yasmin).await.unwrap();
+    let m = volunteer(&harness, &yasmin, &server, TeamMemberStatus::Active).await;
+    let (status, body) = get(&harness, &owner, &token, "/staff/team").await;
+    assert_eq!(status, Status::Ok, "{body}");
+    let row = body.as_array().unwrap().iter().find(|r| r["member_id"] == m.id.as_str()).unwrap().clone();
+    // no markdown backslash: the admin renders it as text
+    assert_eq!(row["account_name"], "Yasmin_8c95c9", "{row}");
+    let (_, body) = get(&harness, &owner, &token, &format!("/staff/team/{}", m.id)).await;
+    assert_eq!(body["row"]["account_name"], "Yasmin_8c95c9");
+    assert!(!body.to_string().contains("\\\\_"), "{body}");
+}
+
+#[rocket::async_test]
+async fn retention_on_the_test_database() {
+    use revolt_database::util::team_activity::{run_daily, TeamMessenger, DAY_MS};
+    struct Quiet;
+    #[rocket::async_trait]
+    impl TeamMessenger for Quiet {
+        async fn send(&self, _user_id: &str, _content: String) -> bool {
+            true
+        }
+    }
+    let harness = TestHarness::new().await;
+    let (_, _, gone) = harness.new_user().await;
+    let (_, _, stays) = harness.new_user().await;
+    let (_, _, alone) = harness.new_user().await;
+    let (owner, _) = owner_signed_in(&harness).await;
+    let server = desk_on(&harness, &owner, &gone).await;
+    let mut settings = crate::routes::team_desk::test_settings::get(&owner.user.id).unwrap();
+    settings.volunteers.enabled = false;
+    let now = staff_now();
+
+    // left 91 days ago: goes with its counts; left 10 days ago: stays
+    let mut old = volunteer(&harness, &gone, &server, TeamMemberStatus::Left).await;
+    old.left_at = Some(now - 91 * DAY_MS);
+    harness.db.update_team_member(&old).await.unwrap();
+    harness
+        .db
+        .upsert_team_activity_day(&TeamActivityDay {
+            id: format!("{}:20261101", gone.id),
+            user_id: gone.id.clone(),
+            day: 20261101,
+            counts: vec![],
+        })
+        .await
+        .unwrap();
+    let mut recent = volunteer(&harness, &stays, &server, TeamMemberStatus::Left).await;
+    recent.left_at = Some(now - 10 * DAY_MS);
+    harness.db.update_team_member(&recent).await.unwrap();
+    // "About you" that nothing holds: a day, set without writing the record
+    let identity = TeamIdentity {
+        id: alone.id.clone(),
+        name: "Sara".into(),
+        age: 24,
+        country: "Austria".into(),
+        rules_version: "1".into(),
+        rules_at: now,
+        purge_at: None,
+    };
+    harness.db.upsert_team_identity(&identity).await.unwrap();
+
+    run_daily(&harness.db, &settings, &Quiet, now).await.unwrap();
+    assert!(harness.db.fetch_team_member(&old.id).await.is_err());
+    assert!(harness.db.fetch_team_activity(&gone.id, 0, 99_991_231).await.unwrap().is_empty());
+    assert!(harness.db.fetch_team_member(&recent.id).await.is_ok());
+    let marked = harness.db.fetch_team_identity(&alone.id).await.unwrap().unwrap();
+    assert_eq!(marked.purge_at, Some(now + DAY_MS));
+    assert_eq!(marked.name, "Sara");
+    // the conditional writes themselves
+    assert!(!harness.db.mark_team_identity_purge(&alone.id, now + 5).await.unwrap());
+    assert!(harness.db.clear_team_identity_purge(&alone.id).await.unwrap());
+    assert!(!harness.db.mark_team_identity_purge("nobody-here", now).await.unwrap());
+    assert!(harness.db.fetch_team_identity("nobody-here").await.unwrap().is_none());
+    let mut rejoined = harness.db.fetch_team_member(&recent.id).await.unwrap();
+    rejoined.status = TeamMemberStatus::Trial;
+    rejoined.left_at = None;
+    harness.db.update_team_member(&rejoined).await.unwrap();
+    assert_eq!(harness.db.delete_team_member_if_left(&recent.id, now).await.unwrap(), 0);
+    assert!(harness.db.fetch_team_member(&recent.id).await.is_ok());
 }
 
 #[rocket::async_test]

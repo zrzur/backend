@@ -8,8 +8,9 @@
 //! the identity, the note or the text of a message.
 //!
 //! Only counts are shown (`month_contributions`, `months`): no message
-//! content, no channel names. Names and servers are escaped
-//! (`team_texts::plain`). Notes are shown to staff only here; the person
+//! content, no channel names. Names and servers are sent as they are
+//! (trimmed): the console shows them as text, so nothing is
+//! escaped for markdown here. Notes are shown to staff only here; the person
 //! gets them in their own data export (GDPR Art. 15).
 
 use std::collections::HashMap;
@@ -31,7 +32,6 @@ use crate::routes::team_desk::{
     self, identity_view, length_problem, member_word, no_identity, role_name, server_name,
     volunteers, IdentityView,
 };
-use crate::util::team_texts;
 
 /// Rows of the list a page holds, when the caller names none
 const DEFAULT_LIMIT: u32 = 100;
@@ -48,12 +48,12 @@ const MAX_NOTE: usize = 2000;
 pub struct StaffTeamRow {
     pub member_id: String,
     pub user_id: String,
-    /// Display name, else the username (escaped)
+    /// Display name, else the username (raw, trimmed: shown as text)
     pub account_name: String,
     /// Key of the team role
     pub role: String,
     pub role_name: String,
-    /// Escaped
+    /// Raw, trimmed
     pub server_name: String,
     /// trial, active, away, inactive or left
     pub status: String,
@@ -141,10 +141,10 @@ async fn row(
                 .map(|server| server.name)
                 .unwrap_or_default(),
         };
-        servers.insert(member.server.clone(), team_texts::plain(&name));
+        servers.insert(member.server.clone(), name.trim().to_string());
     }
     let account_name = match db.fetch_user(&member.user_id).await {
-        Ok(person) => team_texts::plain(&person.display_name.clone().unwrap_or(person.username)),
+        Ok(person) => person.display_name.clone().unwrap_or(person.username).trim().to_string(),
         Err(_) => String::new(),
     };
     let (from, to) = volunteers::month_bounds(now);
@@ -303,7 +303,7 @@ pub async fn identity(db: &State<Database>, staff: StaffContext, id: &str) -> Re
     let member = member_of(db, id).await?;
     team_desk::purge_due(db, staff.now).await?;
     log(db, &staff, "team.identity.view", &member, None, format!("admin console, member {}", member.id)).await?;
-    Ok(Json(identity_view(db, &member.user_id).await?.unwrap_or_else(no_identity)))
+    Ok(Json(identity_view(db, &member.user_id, false).await?.unwrap_or_else(no_identity)))
 }
 
 /// # Team: confirm a volunteer on trial

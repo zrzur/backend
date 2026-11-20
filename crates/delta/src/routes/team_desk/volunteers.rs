@@ -143,8 +143,13 @@ pub(super) async fn enrol(
     let now = staff_now();
     let trial_ends_at = now + days_ms(settings.volunteers.trial_days);
 
+    let all = db.fetch_team_members_of(&application.user_id).await?;
+    // an objection to the counting belongs to the person: it comes along
+    let objected = team_activity::counting_stopped(&all);
+    let objection = || history(team_activity::SYSTEM, team_activity::COUNTING_STOPPED);
+
     let find = |all: Vec<TeamMember>| all.into_iter().find(|m| m.role == application.role);
-    if let Some(mut member) = find(db.fetch_team_members_of(&application.user_id).await?) {
+    if let Some(mut member) = find(all) {
         if member.status == TeamMemberStatus::Left {
             member.status = TeamMemberStatus::Trial;
             member.joined_at = now;
@@ -154,6 +159,9 @@ pub(super) async fn enrol(
             member.left_at = None;
             member.low_months = 0;
             member.history.push(history(actor, "rejoined"));
+            if objected {
+                member.history.push(objection());
+            }
             db.update_team_member(&member).await?;
         }
         return Ok(member);
@@ -175,7 +183,11 @@ pub(super) async fn enrol(
         left_at: None,
         low_months: 0,
         notes: None,
-        history: vec![history(actor, "accepted")],
+        history: if objected {
+            vec![history(actor, "accepted"), objection()]
+        } else {
+            vec![history(actor, "accepted")]
+        },
     };
     match db.insert_team_member(&member).await {
         Ok(()) => Ok(member),

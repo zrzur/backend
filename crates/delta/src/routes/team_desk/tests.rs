@@ -3277,12 +3277,10 @@ fn report_left_member_counted_in_volunteers_only() {
         let (_, report) = d.the_report("20261109").await;
         let team = team_of(&report, "support");
         assert_eq!(team["volunteers"], 1, "{report}");
-        for bucket in ["trial", "active", "away"] {
-            assert_eq!(team[bucket], 0, "{bucket}");
+        // a team of one shows only how many it has
+        for bucket in ["trial", "active", "away", "inactive", "contributions"] {
+            assert_eq!(team[bucket], Value::Null, "{bucket}");
         }
-        // a team of one gets no totals
-        assert_eq!(team["inactive"], Value::Null);
-        assert_eq!(team["contributions"], Value::Null);
         assert!(team["new_names"].as_array().unwrap().is_empty());
     });
 }
@@ -3334,14 +3332,106 @@ fn report_hides_totals_of_teams_under_three() {
         let (_, report) = d.the_report("20261109").await;
         let team = team_of(&report, "support");
         assert_eq!(team["volunteers"], 2, "{report}");
-        assert_eq!(team["inactive"], Value::Null, "{report}");
-        assert_eq!(team["contributions"], Value::Null, "{report}");
+        for bucket in ["trial", "active", "away", "inactive", "contributions"] {
+            assert_eq!(team[bucket], Value::Null, "{bucket}: {report}");
+        }
         // a third: the totals are there
         let (_, _, third) = d.harness.new_user().await;
         d.place(&third, "support", &lounge, S::Active, WEEK_START - WEEK_DAY, None).await;
         let (_, report) = d.the_report("20261109").await;
         let team = team_of(&report, "support");
         assert_eq!(team["inactive"], 1, "{report}");
+        assert_eq!(team["active"], 2, "{report}");
+        assert_eq!(team["trial"], 0, "{report}");
+        assert_eq!(team["away"], 0, "{report}");
         assert_eq!(team["contributions"], 5, "{report}");
+    });
+}
+
+#[test]
+fn an_objection_stays_with_the_person_after_a_rejoin() {
+    on_big_stack(|| async {
+        use revolt_database::util::team_activity::{self, COUNTING_NOTICE, COUNTING_STOPPED};
+        let mut d = desk().await;
+        d.volunteers_on("1");
+        let settings = super::test_settings::get(&d.bot.id).unwrap();
+        let session = d.applicant_session.clone();
+        let first = d.accepted_as(&session, "support").await;
+        // the person objects (as the staff route writes it), then leaves
+        let mut member = d.members_of(&d.applicant).await.remove(0);
+        member.history.push(revolt_database::TeamHistory {
+            at: revolt_database::staff_now(),
+            actor: "boss".to_string(),
+            action: COUNTING_STOPPED.to_string(),
+        });
+        d.harness.db.update_team_member(&member).await.unwrap();
+        super::volunteers::end_membership(&d.harness.db, &settings, &mut member, "x", "left", None)
+            .await
+            .unwrap();
+
+        // accepted again later (the cooldown is over): the same record reopens
+        let mut accepted = d.stored(&first).await;
+        accepted.acted_at = Some(1);
+        assert!(d
+            .harness
+            .db
+            .replace_team_application_if(&accepted, TeamApplicationStatus::Accepted)
+            .await
+            .unwrap());
+        d.accepted_as(&session, "support").await;
+        let members = d.members_of(&d.applicant).await;
+        assert_eq!(members.len(), 1);
+        let reopened = &members[0];
+        assert!(reopened.is_current());
+        assert!(team_activity::counting_stopped(&members), "{:?}", reopened.history);
+        // copied onto the reopened record, and no new counting notice
+        let after_rejoin: Vec<&str> = reopened
+            .history
+            .iter()
+            .skip_while(|h| h.action != "rejoined")
+            .map(|h| h.action.as_str())
+            .collect();
+        assert!(after_rejoin.contains(&COUNTING_STOPPED), "{after_rejoin:?}");
+        assert!(!after_rejoin.contains(&COUNTING_NOTICE), "{after_rejoin:?}");
+        // the welcome does not say they are counted
+        // (two welcomes; only the first, before the objection, names the counting)
+        let told = d.told(&d.applicant).await;
+        assert_eq!(told.iter().filter(|m| m.contains("Welcome to the Zrzur Team")).count(), 2, "{told:?}");
+        assert_eq!(told.iter().filter(|m| m.contains("we count how often you help")).count(), 1, "{told:?}");
+
+        // the daily job counts nothing of them and sends no notice
+        let day = d.harness.db.fetch_team_activity(&d.applicant.id, 0, 99_991_231).await.unwrap();
+        assert!(day.is_empty());
+    });
+}
+
+#[test]
+fn an_objection_comes_along_to_a_new_team() {
+    on_big_stack(|| async {
+        use revolt_database::util::team_activity::{self, COUNTING_STOPPED};
+        let mut d = desk().await;
+        d.volunteers_on("1");
+        let session = d.applicant_session.clone();
+        let first = d.accepted_as(&session, "support").await;
+        let mut member = d.members_of(&d.applicant).await.remove(0);
+        member.history.push(revolt_database::TeamHistory {
+            at: revolt_database::staff_now(),
+            actor: "boss".to_string(),
+            action: COUNTING_STOPPED.to_string(),
+        });
+        d.harness.db.update_team_member(&member).await.unwrap();
+        let mut accepted = d.stored(&first).await;
+        accepted.acted_at = Some(1);
+        assert!(d
+            .harness
+            .db
+            .replace_team_application_if(&accepted, TeamApplicationStatus::Accepted)
+            .await
+            .unwrap());
+        d.accepted_as(&session, "designer").await;
+        let members = d.members_of(&d.applicant).await;
+        let designer = members.iter().find(|m| m.role == "designer").unwrap();
+        // the new record carries the objection on its own
+        assert!(team_activity::counting_stopped(std::slice::from_ref(designer)), "{:?}", designer.history);
     });
 }

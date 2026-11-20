@@ -1826,7 +1826,11 @@ async fn act(
             };
             // the welcome tells a volunteer that contributions are counted;
             // that is the notice the daily job waits for
-            let counting = if enrolled.is_some() { "yes" } else { "" };
+            // a person who objected is not counted: no counting line, no notice
+            let counted = enrolled.as_ref().is_some_and(|member| {
+                !team_activity::counting_stopped(std::slice::from_ref(member))
+            });
+            let counting = if counted { "yes" } else { "" };
             let days = team_activity::activity_keep_days(&settings).to_string();
             let went = team_texts::send(
                 db,
@@ -1844,7 +1848,7 @@ async fn act(
             .await;
             // noted only when the welcome went out; otherwise the daily job
             // sends the notice
-            if let (Some(member), true) = (enrolled, went) {
+            if let (Some(member), true) = (enrolled.filter(|_| counted), went) {
                 volunteers::mark_counting_notice(db, &member.id).await;
             }
             // the invite to the team server goes with the welcome, in private
@@ -2091,7 +2095,7 @@ async fn identity(
         view.rules_needed = true;
         return Ok(Json(view));
     }
-    let Some(view) = identity_view(db, &application.user_id).await? else {
+    let Some(view) = identity_view(db, &application.user_id, true).await? else {
         return nothing().await;
     };
     // the record first: no record, no view
@@ -2104,9 +2108,15 @@ async fn identity(
     Ok(Json(view))
 }
 
-/// What is on file for a person, escaped; `None` when there is nothing. The
-/// caller logs the view first.
-pub(crate) async fn identity_view(db: &Database, user_id: &str) -> Result<Option<IdentityView>> {
+/// What is on file for a person; `None` when there is nothing. The caller
+/// logs the view first. `for_chat`: name and country made harmless for a
+/// chat message (`team_texts::plain`, the bot's reply); otherwise raw and
+/// trimmed, for the admin console, which shows them as text.
+pub(crate) async fn identity_view(
+    db: &Database,
+    user_id: &str,
+    for_chat: bool,
+) -> Result<Option<IdentityView>> {
     // one whose time is up is gone, whether or not the purge has run yet
     let Some(stored) = db
         .fetch_team_identity(user_id)
@@ -2115,6 +2125,13 @@ pub(crate) async fn identity_view(db: &Database, user_id: &str) -> Result<Option
     else {
         return Ok(None);
     };
+    let shown = |text: &str| {
+        if for_chat {
+            team_texts::plain(text)
+        } else {
+            text.trim().to_string()
+        }
+    };
     // the age goes out of date: compared as it is today
     let age_today = age_now(stored.age, stored.rules_at, staff_now());
     let age_note = match db.fetch_user(user_id).await {
@@ -2122,10 +2139,10 @@ pub(crate) async fn identity_view(db: &Database, user_id: &str) -> Result<Option
         Err(_) => false,
     };
     Ok(Some(IdentityView {
-        name: team_texts::plain(&stored.name),
+        name: shown(&stored.name),
         age: stored.age,
         age_given_at: stored.rules_at,
-        country: team_texts::plain(&stored.country),
+        country: shown(&stored.country),
         age_note,
         missing: false,
         rules_needed: false,
@@ -2562,11 +2579,11 @@ pub struct TeamWeek {
     pub server_name: String,
     /// Volunteers who belonged to the team at any time during the week
     pub volunteers: u32,
-    pub trial: u32,
-    pub active: u32,
-    pub away: u32,
-    /// `None` for a team of fewer than [`MIN_TEAM_FOR_TOTALS`]: there it
-    /// would name one person's status
+    /// The four status counts are `None` for a team of fewer than
+    /// [`MIN_TEAM_FOR_TOTALS`]: there each would name one person's status
+    pub trial: Option<u32>,
+    pub active: Option<u32>,
+    pub away: Option<u32>,
     pub inactive: Option<u32>,
     /// The five kinds of count in the team's own server over the week, for
     /// the team's volunteers only; `None` for a team of fewer than
@@ -2576,8 +2593,9 @@ pub struct TeamWeek {
     pub new_names: Vec<String>,
 }
 
-/// The weekly report shows totals (contributions, inactive) only for teams
-/// with at least this many volunteers
+/// The weekly report shows the status counts and the contributions only for
+/// teams with at least this many volunteers; smaller ones show only how many
+/// volunteers they have
 pub const MIN_TEAM_FOR_TOTALS: u32 = 3;
 
 /// The weekly report for the staff channel
@@ -2609,7 +2627,8 @@ fn is_monday(week: i32) -> bool {
 /// team's own server, for those volunteers only, each person once per team.
 /// `new_names` are account display names of those who joined that week;
 /// never name, age, country or anything of their identity. A team of fewer
-/// than three volunteers gets no totals (`contributions`, `inactive`).
+/// than three volunteers shows only `volunteers` (no status counts, no
+/// `contributions`).
 #[get("/report?<week>")]
 async fn report(db: &State<Database>, user: User, week: i32) -> Result<Json<WeekReport>> {
     use revolt_database::util::team_activity::{add_days, contributions, day_start};
@@ -2644,9 +2663,9 @@ async fn report(db: &State<Database>, user: User, week: i32) -> Result<Json<Week
             role_name: role_name(&settings, &role.key),
             server_name: team_texts::plain(&server_name(db, Some(role)).await),
             volunteers: 0,
-            trial: 0,
-            active: 0,
-            away: 0,
+            trial: Some(0),
+            active: Some(0),
+            away: Some(0),
             inactive: Some(0),
             contributions: Some(0),
             new_names: Vec::new(),
@@ -2659,9 +2678,9 @@ async fn report(db: &State<Database>, user: User, week: i32) -> Result<Json<Week
             }
             team.volunteers += 1;
             match member.status {
-                S::Trial => team.trial += 1,
-                S::Active => team.active += 1,
-                S::Away => team.away += 1,
+                S::Trial => team.trial = team.trial.map(|n| n + 1),
+                S::Active => team.active = team.active.map(|n| n + 1),
+                S::Away => team.away = team.away.map(|n| n + 1),
                 S::Inactive => team.inactive = team.inactive.map(|n| n + 1),
                 S::Left => {}
             }
@@ -2681,6 +2700,9 @@ async fn report(db: &State<Database>, user: User, week: i32) -> Result<Json<Week
         team.new_names.sort();
         // a small team's totals would be one person's numbers
         if team.volunteers < MIN_TEAM_FOR_TOTALS {
+            team.trial = None;
+            team.active = None;
+            team.away = None;
             team.inactive = None;
             team.contributions = None;
         }
