@@ -71,6 +71,7 @@ async fn main() {
         cron_task_wrapper(server_insights::task, db.clone(), amqp.clone()),
         cron_task_wrapper(support_retention::task, db.clone(), amqp.clone()),
         cron_task_wrapper(team_applications_retention::task, db.clone(), amqp.clone()),
+        cron_task_wrapper(team_volunteers::task, db.clone(), amqp.clone()),
         cron_task_wrapper(voice_episodes::task, db.clone(), amqp.clone()),
     );
 }

@@ -65,5 +65,9 @@
   "volunteer.away.title": "You are away",
   "volunteer.away.body": "Thank you for telling us. Your volunteer role rests for {days} days: nothing is expected of you meanwhile. Press “My status” and set 0 days when you are back.",
   "volunteer.back.title": "Welcome back",
-  "volunteer.back.body": "Your volunteer role is active again. Thank you, and there is no hurry: help when you have time."
+  "volunteer.back.body": "Your volunteer role is active again. Thank you, and there is no hurry: help when you have time.",
+  "volunteer.reminder.title": "We missed you",
+  "volunteer.reminder.body": "Thank you for being a volunteer in the Zrzur Team. Last month we saw little of your help, and that is completely fine: everyone has busy times.\n\nHelp when you have time; a little is enough. If you need a break, press “My status” in the apply channel and set yourself away, and we will not ask again meanwhile.",
+  "staff.trial_ended.title": "Trial ended",
+  "staff.trial_ended.body": "The trial of {account} as “{role}” has ended. Please confirm the volunteer or end the role on the Team page of the admin console."
 }

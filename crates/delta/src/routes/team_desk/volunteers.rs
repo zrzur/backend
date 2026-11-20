@@ -8,12 +8,12 @@
 use iso8601_timestamp::{Duration, Timestamp};
 use revolt_config::FeaturesTeamApplications;
 use revolt_database::{
-    official_account, staff_now, Channel, Database, Invite, OfficialAccount, PartialMember,
-    RemovalIntention, TeamActivityDay, TeamApplication, TeamHistory, TeamMember, TeamMemberStatus,
+    official_account, staff_now, util::team_activity, Channel, Database, Invite,
+    OfficialAccount, TeamApplication, TeamHistory, TeamMember, TeamMemberStatus,
 };
 use revolt_result::Result;
 
-use super::{days_ms, out_of_reach};
+use super::days_ms;
 use crate::util::team_texts;
 
 /// Days a team-server invite lives
@@ -27,20 +27,10 @@ fn history(actor: &str, action: &str) -> TeamHistory {
     }
 }
 
-/// Everything a person did in the current UTC month, all five kinds of
-/// count together. Counts only; the days come from `fetch_team_activity`.
-pub fn month_total(days: &[TeamActivityDay]) -> u32 {
-    days.iter()
-        .flat_map(|day| day.counts.iter())
-        .fold(0_u32, |total, count| {
-            total
-                .saturating_add(count.messages)
-                .saturating_add(count.replies)
-                .saturating_add(count.moderation)
-                .saturating_add(count.reviews)
-                .saturating_add(count.tickets)
-        })
-}
+/// Everything a person did in a UTC month, all five kinds of count
+/// together. Counts only; the days come from `fetch_team_activity`. Shared
+/// with crond's volunteer job.
+pub use revolt_database::util::team_activity::month_total;
 
 /// First and last day (yyyymmdd) of the UTC month `now` (milliseconds) is in
 pub fn month_bounds(now: i64) -> (i32, i32) {
@@ -194,69 +184,12 @@ pub(super) async fn enrol(
     }
 }
 
-/// Take server roles off a person in one server (they may not be there any
-/// more, or the roles gone: nothing to do then)
-async fn take_roles(db: &Database, server: &str, user_id: &str, drop: &[String]) {
-    let Ok(mut member) = db.fetch_member(server, user_id).await else {
-        return;
-    };
-    let roles: Vec<String> = member
-        .roles
-        .iter()
-        .filter(|id| !drop.contains(id))
-        .cloned()
-        .collect();
-    if roles.len() == member.roles.len() {
-        return;
-    }
-    if let Err(error) = member
-        .update(
-            db,
-            PartialMember {
-                roles: Some(roles),
-                ..Default::default()
-            },
-            vec![],
-        )
-        .await
-    {
-        log::warn!("team roles not taken back: {:?}", error.error_type);
-    }
-}
-
-/// The person leaves the team server, unless that is one of the servers a
-/// team role belongs to or the person owns it
-async fn leave_team_server(db: &Database, settings: &FeaturesTeamApplications, user_id: &str) {
-    let id = settings.volunteers.team_server.trim();
-    if id.is_empty() {
-        return;
-    }
-    if settings.roles.iter().any(|role| role.server == id) {
-        log::warn!("the team server is also a team role's server: nobody is removed from it");
-        return;
-    }
-    let Ok(server) = db.fetch_server(id).await else {
-        return;
-    };
-    if server.owner == user_id {
-        return;
-    }
-    let Ok(member) = db.fetch_member(id, user_id).await else {
-        return;
-    };
-    if let Err(error) = member
-        .remove(db, &server, RemovalIntention::Kick, true)
-        .await
-    {
-        log::warn!("not removed from the team server: {:?}", error.error_type);
-    }
-}
-
 /// End one membership. The role of the team role goes; the server's "Zrzur
 /// Team" role goes only when no other current membership is left in that
 /// server; the person leaves the team server only when nothing current is
-/// left anywhere. `action` is `left` (their own word) or `removed` (staff);
-/// it is the history word and picks the thank-you message.
+/// left anywhere (`team_activity::end_membership`, shared with crond).
+/// `action` is `left` (their own word) or `removed` (staff); it is the
+/// history word and picks the thank-you message.
 pub(super) async fn end_membership(
     db: &Database,
     settings: &FeaturesTeamApplications,
@@ -266,60 +199,11 @@ pub(super) async fn end_membership(
     reason: Option<&str>,
 ) -> Result<()> {
     // already gone: no second history entry, no second thank-you
-    if member.status == TeamMemberStatus::Left {
+    if !team_activity::end_membership(db, settings, member, actor, action).await? {
         return Ok(());
     }
-    let now = staff_now();
-    member.status = TeamMemberStatus::Left;
-    member.left_at = Some(now);
-    member.away_until = None;
-    member.history.push(history(actor, action));
-    db.update_team_member(member).await?;
 
     let role = settings.role(&member.role);
-    let others: Vec<TeamMember> = db
-        .fetch_team_members_of(&member.user_id)
-        .await?
-        .into_iter()
-        .filter(|other| other.is_current() && other.id != member.id)
-        .collect();
-    let same_server: Vec<&TeamMember> = others
-        .iter()
-        .filter(|other| other.server == member.server)
-        .collect();
-
-    if let Some(role) = role {
-        let mut drop = Vec::new();
-        // a role only the owner gives by hand is taken back by hand
-        let shared_role = same_server
-            .iter()
-            .filter_map(|other| settings.role(&other.role))
-            .any(|other| other.role == role.role || other.team_role == role.role);
-        if !role.is_manual() && !role.role.trim().is_empty() && !shared_role {
-            drop.push(role.role.clone());
-        }
-        // the server's Zrzur Team role stays while another membership is there
-        if !role.team_role.trim().is_empty() && same_server.is_empty() {
-            drop.push(role.team_role.clone());
-        }
-        if !drop.is_empty() {
-            take_roles(db, &member.server, &member.user_id, &drop).await;
-        }
-    }
-
-    if others.is_empty() {
-        leave_team_server(db, settings, &member.user_id).await;
-        // the details are deleted after the keeping time, unless an open
-        // application still holds them
-        if out_of_reach(db, &member.user_id, "").await {
-            if let Ok(Some(mut identity)) = db.fetch_team_identity(&member.user_id).await {
-                identity.purge_at =
-                    Some(now + days_ms(settings.volunteers.identity_keep_days));
-                let _ = db.upsert_team_identity(&identity).await;
-            }
-        }
-    }
-
     let key = if action == "removed" {
         "volunteer.removed"
     } else {
