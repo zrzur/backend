@@ -209,6 +209,7 @@ mod tests {
             rules_version: "1".into(),
             rules_at: 100,
             purge_at,
+            reviewer: false,
         }
     }
 
@@ -226,6 +227,7 @@ mod tests {
             left_at: None,
             low_months: 0,
             notes: Some("note".into()),
+            invite: None,
             history: vec![TeamHistory {
                 at: 1,
                 actor: "staff".into(),

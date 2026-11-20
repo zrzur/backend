@@ -339,8 +339,14 @@ pub(crate) async fn purge_due(db: &Database, now: i64) -> Result<()> {
     Ok(())
 }
 
-/// The person has no other open application and no current membership
-async fn out_of_reach(db: &Database, person: &str, except: &str) -> bool {
+/// The person has no other open application, no current membership and no
+/// reviewer role
+async fn out_of_reach(
+    db: &Database,
+    settings: &FeaturesTeamApplications,
+    person: &str,
+    except: &str,
+) -> bool {
     let busy = db
         .fetch_team_applications_of(person)
         .await
@@ -351,7 +357,7 @@ async fn out_of_reach(db: &Database, person: &str, except: &str) -> bool {
         .await
         .map(|all| all.iter().any(|m| m.is_current()))
         .unwrap_or(true);
-    !busy && !member
+    !busy && !member && !team_activity::holds_reviewer_role(db, settings, person).await
 }
 
 /// The identity of someone whose application ended, when nothing else
@@ -364,7 +370,7 @@ async fn release_identity(
     application: &TeamApplication,
     erase: bool,
 ) {
-    if !out_of_reach(db, &application.user_id, &application.id).await {
+    if !out_of_reach(db, settings, &application.user_id, &application.id).await {
         return;
     }
     match erase {
@@ -1155,9 +1161,12 @@ async fn about(
             problem: Some(problem.to_string()),
         }))
     };
+    // a reviewer with no membership gives their details here too (to accept
+    // the rules, which "Show identity" needs)
+    let mut reviewer = false;
     if role_key == "me" {
-        // "Add my details": only a current volunteer with no application
-        // open, who is not asked through an application
+        // "Add my details": a current volunteer, or a holder of a reviewer
+        // role, with no application open (that one asks through it)
         let member = db
             .fetch_team_members_of(&person.id)
             .await?
@@ -1168,7 +1177,10 @@ async fn about(
             .await?
             .iter()
             .any(|a| a.is_open());
-        if !member || open {
+        if !member && !open {
+            reviewer = team_activity::holds_reviewer_role(db, &settings, &person.id).await;
+        }
+        if (!member && !reviewer) || open {
             return refuse("not_a_volunteer");
         }
     } else if !settings.role(&role_key).is_some_and(offered) {
@@ -1200,7 +1212,7 @@ async fn about(
     let now = staff_now();
     // held by nothing yet (step 2 not sent): gone after a day, unless an
     // application or a membership claims it (`keep_identity`)
-    let purge_at = out_of_reach(db, &person.id, "")
+    let purge_at = out_of_reach(db, &settings, &person.id, "")
         .await
         .then_some(now + team_activity::ORPHAN_IDENTITY_MS);
     db.upsert_team_identity(&TeamIdentity {
@@ -1211,6 +1223,7 @@ async fn about(
         rules_version: settings.volunteers.rules_version.clone(),
         rules_at: now,
         purge_at,
+        reviewer,
     })
     .await?;
     Ok(Json(AboutOutcome {
@@ -1848,6 +1861,7 @@ async fn act(
             .await;
             // noted only when the welcome went out; otherwise the daily job
             // sends the notice
+            let enrolled_id = enrolled.as_ref().map(|member| member.id.clone());
             if let (Some(member), true) = (enrolled.filter(|_| counted), went) {
                 volunteers::mark_counting_notice(db, &member.id).await;
             }
@@ -1856,6 +1870,10 @@ async fn act(
                 if let Some(code) =
                     volunteers::invite_to_team_server(db, &settings, &applicant.id).await
                 {
+                    // kept on the membership, so it goes when the membership ends
+                    if let Some(id) = &enrolled_id {
+                        volunteers::keep_invite(db, id, &code).await;
+                    }
                     team_texts::send(
                         db,
                         &applicant.id,
@@ -2249,7 +2267,7 @@ async fn enrol_accepted(db: &Database, settings: &FeaturesTeamApplications) -> R
         }
     }
     // everyone current without details who was not asked yet is asked, once
-    for mut member in known.into_values() {
+    for member in known.into_values() {
         if !member.is_current()
             || member.history.iter().any(|h| h.action == "identity_requested")
             || settings.role(&member.role).is_none()
@@ -2257,6 +2275,14 @@ async fn enrol_accepted(db: &Database, settings: &FeaturesTeamApplications) -> R
             continue;
         }
         if matches!(db.fetch_team_identity(&member.user_id).await, Ok(Some(_))) {
+            continue;
+        }
+        // read again right before the write: a leave, a removal or another
+        // look in between wins
+        let Ok(mut member) = db.fetch_team_member(&member.id).await else {
+            continue;
+        };
+        if !member.is_current() || member.history.iter().any(|h| h.action == "identity_requested") {
             continue;
         }
         member.history.push(revolt_database::TeamHistory {
@@ -2329,6 +2355,10 @@ pub struct MyStatus {
     /// locale), so the bot's own lines match the server's question
     #[serde(default)]
     pub language: String,
+    /// The person may use "Add my details": a current volunteer, or a holder
+    /// of a reviewer role (who accepts the rules there for "Show identity")
+    #[serde(default)]
+    pub can_add_details: bool,
 }
 
 /// The language of the person's stored locale, English when unknown
@@ -2375,6 +2405,8 @@ async fn my_status(
     }
     let (from, to) = volunteers::month_bounds(staff_now());
     let days = db.fetch_team_activity(user_id, from, to).await?;
+    let can_add_details = !memberships.is_empty()
+        || team_activity::holds_reviewer_role(db, settings, user_id).await;
     Ok(MyStatus {
         memberships,
         month: MyMonth {
@@ -2384,6 +2416,7 @@ async fn my_status(
         away_max_days: settings.volunteers.away_max_days,
         confirm: None,
         language: person_language(db, user_id).await.to_string(),
+        can_add_details,
     })
 }
 

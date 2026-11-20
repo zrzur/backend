@@ -19,7 +19,7 @@ use revolt_database::{send_official_message, Database, OfficialAccount};
 
 // The text files and the helpers live in the database crate, so crond's
 // volunteer job sends the same texts; the files stay in `assets/team/`.
-pub use revolt_database::util::team_texts::{language_of, plain, text, LANGUAGES};
+pub use revolt_database::util::team_texts::{is_format, language_of, plain, text, LANGUAGES};
 #[allow(unused_imports)]
 pub(crate) use revolt_database::util::team_texts::{fill, message, TEXTS};
 
@@ -357,6 +357,21 @@ mod tests {
         assert_eq!(filled.matches("TERMS").count(), 1);
         assert!(filled.ends_with("B TERMS"));
         assert_eq!(fill("{a}{b} {c}", &[("a", "{b}".to_string()), ("b", "x".to_string())]), "{b}x {c}");
+    }
+
+    #[test]
+    fn invisible_format_characters_from_people_are_dropped() {
+        // a right-to-left override, isolates, marks and zero-width characters
+        let sneaky = "Sara\u{202E}gnp.exe\u{2066}\u{2069}\u{200E}\u{200F}\u{200B}\u{FEFF}\u{2060} Haddad";
+        let shown = plain(sneaky);
+        assert_eq!(shown, "Saragnp.exe Haddad");
+        for c in shown.chars() {
+            assert!(!is_format(c), "{:?} left in", c);
+        }
+        // Arabic text itself stays as it is
+        assert_eq!(plain("لينا حداد"), "لينا حداد");
+        // the zero-width space plain() puts after `@` is its own, not the person's
+        assert_eq!(plain("@everyone"), "@\u{200b}everyone");
     }
 
     #[test]

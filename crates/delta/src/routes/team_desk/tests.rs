@@ -1544,6 +1544,7 @@ impl Desk {
                 rules_version: version,
                 rules_at: revolt_database::staff_now(),
                 purge_at: None,
+                reviewer: false,
             })
             .await
             .unwrap();
@@ -1783,6 +1784,7 @@ fn withdraw_erases_identity_without_membership() {
                 left_at: None,
                 low_months: 0,
                 notes: None,
+                invite: None,
                 history: vec![],
             })
             .await
@@ -2176,6 +2178,45 @@ fn identity_needs_the_viewer_to_have_accepted_the_rules() {
 }
 
 #[test]
+fn a_reviewer_without_a_membership_accepts_the_rules_with_add_my_details() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.applied_as("Lina Haddad").await;
+        // not the helper: this reviewer has no identity and no membership
+        d.harness.db.delete_team_identity(&d.reviewer.id).await.unwrap();
+        assert!(d.members_of(&d.reviewer.clone()).await.is_empty());
+        let session = d.reviewer_session.clone();
+
+        // "My team status" offers "Add my details" to a reviewer
+        let channel = d.apply.clone();
+        let panel = d.message(&channel, &["ta:status"]).await;
+        let pressed = d.press(&session, &channel, &panel, "ta:status").await;
+        let (status, mine) = d.hand("status", &pressed).await;
+        assert_eq!(status, Status::Ok, "{mine}");
+        assert_eq!(mine["memberships"].as_array().unwrap().len(), 0);
+        assert_eq!(mine["can_add_details"], true);
+
+        let (_, outcome) = d.about_with(&session, "me", about_fields("31", &["accept"])).await;
+        assert_eq!(outcome["saved"], true, "{outcome}");
+        let identity = d.identity_of(&d.reviewer.clone()).await.unwrap();
+        assert!(identity.reviewer);
+        // held by the reviewer role: no deletion time
+        assert_eq!(identity.purge_at, None);
+        let (status, view) = d.identity_press(&session, &id).await;
+        assert_eq!(status, Status::Ok, "{view}");
+        assert_eq!(view["name"], "Lina Haddad", "{view}");
+
+        // someone with neither a membership nor a reviewer role still cannot
+        let guest = d.guest_session.clone();
+        let pressed = d.press(&guest, &channel, &panel, "ta:status").await;
+        let (_, mine) = d.hand("status", &pressed).await;
+        assert_eq!(mine["can_add_details"], false);
+        let (_, outcome) = d.about_with(&guest, "me", about_fields("31", &["accept"])).await;
+        assert_eq!(outcome["problem"], "not_a_volunteer");
+    });
+}
+
+#[test]
 fn identity_only_while_the_application_is_open() {
     on_big_stack(|| async {
         let mut d = desk().await;
@@ -2508,6 +2549,15 @@ fn welcome_dm_has_team_server_invite_when_set() {
             }
             other => panic!("{other:?}"),
         }
+        // kept on the membership, and deleted when it ends
+        let settings_now = super::test_settings::get(&d.bot.id).unwrap();
+        let mut member = d.members_of(&d.applicant).await.remove(0);
+        assert_eq!(member.invite.as_deref(), Some(code));
+        super::volunteers::end_membership(&d.harness.db, &settings_now, &mut member, "x", "left", None)
+            .await
+            .unwrap();
+        assert!(d.harness.db.fetch_invite(code).await.is_err(), "the invite outlived the volunteer");
+        assert_eq!(d.members_of(&d.applicant).await[0].invite, None);
 
         // no team server set: quietly nothing
         settings.volunteers.team_server = String::new();
@@ -3096,6 +3146,7 @@ impl Desk {
                 left_at,
                 low_months: 0,
                 notes: None,
+                invite: None,
                 history: vec![],
             })
             .await
@@ -3179,6 +3230,7 @@ fn report_has_no_identity() {
                 rules_version: "1".to_string(),
                 rules_at: 1,
                 purge_at: None,
+                reviewer: false,
             })
             .await
             .unwrap();

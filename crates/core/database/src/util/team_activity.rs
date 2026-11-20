@@ -587,8 +587,38 @@ async fn team_managers(db: &Database, now: i64) -> Result<Vec<String>> {
 
 // ---- ending a membership ----
 
-/// The person has no open application and no current membership
-async fn out_of_reach(db: &Database, person: &str) -> bool {
+/// Whether `person` holds a reviewer role right now: the desk's common
+/// reviewer role in the desk server, or a team role's own reviewer role in
+/// that role's server. Read from the database; "not sure" counts as yes.
+pub async fn holds_reviewer_role(
+    db: &Database,
+    settings: &FeaturesTeamApplications,
+    person: &str,
+) -> bool {
+    let mut places: Vec<(&str, &str)> = vec![(settings.server.as_str(), settings.reviewer_role.as_str())];
+    places.extend(
+        settings
+            .roles
+            .iter()
+            .map(|role| (role.server.as_str(), role.reviewer_role.as_str())),
+    );
+    for (server, role) in places {
+        if server.trim().is_empty() || role.trim().is_empty() {
+            continue;
+        }
+        match db.fetch_member(server, person).await {
+            Ok(member) if member.roles.iter().any(|held| held == role) => return true,
+            Ok(_) => {}
+            Err(error) if matches!(error.error_type, ErrorType::NotFound) => {}
+            Err(_) => return true,
+        }
+    }
+    false
+}
+
+/// The person has no open application, no current membership and no
+/// reviewer role
+async fn out_of_reach(db: &Database, settings: &FeaturesTeamApplications, person: &str) -> bool {
     let busy = db
         .fetch_team_applications_of(person)
         .await
@@ -599,7 +629,18 @@ async fn out_of_reach(db: &Database, person: &str) -> bool {
         .await
         .map(|all| all.iter().any(|m| m.is_current()))
         .unwrap_or(true);
-    !busy && !member
+    !busy && !member && !holds_reviewer_role(db, settings, person).await
+}
+
+/// Delete the team-server invite made for a membership, if any (best effort)
+pub async fn drop_invite(db: &Database, member: &TeamMember) {
+    if let Some(code) = member.invite.as_deref().filter(|code| !code.is_empty()) {
+        if let Err(error) = db.delete_invite(code).await {
+            if !matches!(error.error_type, ErrorType::NotFound) {
+                log::warn!("team server invite not deleted: {:?}", error.error_type);
+            }
+        }
+    }
 }
 
 /// Take server roles off a person in one server (they may not be there any
@@ -687,6 +728,9 @@ pub async fn end_membership(
         actor: actor.to_string(),
         action: action.to_string(),
     });
+    // the team-server invite made for this membership dies with it
+    drop_invite(db, member).await;
+    member.invite = None;
     db.update_team_member(member).await?;
 
     let others: Vec<TeamMember> = db
@@ -725,7 +769,7 @@ pub async fn end_membership(
         // application still holds them
         // (one conditional write: a record erased or renewed in between is
         // never written back)
-        if out_of_reach(db, &member.user_id).await {
+        if out_of_reach(db, settings, &member.user_id).await {
             let at = now + days_ms(settings.volunteers.identity_keep_days);
             let _ = db.mark_team_identity_purge(&member.user_id, at).await;
         }
@@ -763,6 +807,9 @@ fn group_by_person(members: Vec<TeamMember>) -> BTreeMap<String, Vec<TeamMember>
 /// How long "About you" stays when nothing holds it (no open application,
 /// no current membership): a form filled in without sending step 2
 pub const ORPHAN_IDENTITY_MS: i64 = DAY_MS;
+/// An identity written less than this long ago is not judged unheld yet: an
+/// application sent right after "About you" claims it first
+pub const ORPHAN_GRACE_MS: i64 = 3_600_000;
 
 /// Identities whose time is up, identities nothing holds any more (set to
 /// go after one day), ended memberships past `identity_keep_days` (with
@@ -775,10 +822,19 @@ async fn retention(db: &Database, settings: &FeaturesTeamApplications, now: i64)
     // an identity that nothing holds is not kept for ever
     // (one conditional write, never the whole record: a withdrawal, a
     // rejection or a fresh "About you" in between is not undone)
+    // A reviewer's own identity (given without a membership) is released
+    // `identity_keep_days` after they lose the role, not after one day.
     for identity in db.fetch_team_identities_kept().await? {
-        if out_of_reach(db, &identity.id).await {
-            db.mark_team_identity_purge(&identity.id, now + ORPHAN_IDENTITY_MS)
-                .await?;
+        if now - identity.rules_at < ORPHAN_GRACE_MS {
+            continue;
+        }
+        if out_of_reach(db, settings, &identity.id).await {
+            let after = if identity.reviewer {
+                days_ms(settings.volunteers.identity_keep_days)
+            } else {
+                ORPHAN_IDENTITY_MS
+            };
+            db.mark_team_identity_purge(&identity.id, now + after).await?;
         }
     }
 
@@ -792,7 +848,12 @@ async fn retention(db: &Database, settings: &FeaturesTeamApplications, now: i64)
             // write, so one reopened in between stays. One ended without a
             // date is left alone.
             if !member.is_current() && member.left_at.is_some_and(|at| at + keep <= now) {
-                remaining -= db.delete_team_member_if_left(&member.id, now - keep).await?;
+                let gone = db.delete_team_member_if_left(&member.id, now - keep).await?;
+                if gone > 0 {
+                    // an invite left over from before (normally gone at the end)
+                    drop_invite(db, member).await;
+                }
+                remaining -= gone;
             }
         }
         // nothing left of the person in the team (read again): their counts go too
@@ -1385,6 +1446,7 @@ mod tests {
             left_at: None,
             low_months: 0,
             notes: None,
+            invite: None,
             // told at once that contributions are counted
             history: vec![TeamHistory {
                 at: day_start(20260101),
@@ -1999,6 +2061,7 @@ mod tests {
             rules_version: "1".to_string(),
             rules_at: 0,
             purge_at: None,
+            reviewer: false,
         };
         // "About you" without step 2, one of a current volunteer, one of an open applicant
         db.upsert_team_identity(&identity("alone")).await.unwrap();
@@ -2036,6 +2099,54 @@ mod tests {
         assert!(db.fetch_team_identity("alone").await.unwrap().is_none());
         assert!(db.fetch_team_identity("volunteer").await.unwrap().is_some());
         assert!(db.fetch_team_identity("applicant").await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn a_reviewers_identity_is_held_by_the_role_then_kept_the_keeping_time() {
+        let db = db();
+        let mut settings = settings();
+        settings.server = SERVER.to_string();
+        settings.reviewer_role = "role_rev".to_string();
+        settings.volunteers.enabled = false;
+        let identity = |id: &str, reviewer: bool, rules_at: i64| TeamIdentity {
+            id: id.to_string(),
+            name: "Rami".to_string(),
+            age: 30,
+            country: "Jordan".to_string(),
+            rules_version: "1".to_string(),
+            rules_at,
+            purge_at: None,
+            reviewer,
+        };
+        holder(&db, "rev", vec!["role_rev".to_string()]).await;
+        db.upsert_team_identity(&identity("rev", true, NOV_10 - 10 * DAY_MS)).await.unwrap();
+        // "About you" just sent: an application may still claim it
+        db.upsert_team_identity(&identity("fresh", false, NOV_10 - 60_000)).await.unwrap();
+
+        let recorder = Recorder::default();
+        run_daily(&db, &settings, &recorder, NOV_10).await.unwrap();
+        assert_eq!(db.fetch_team_identity("rev").await.unwrap().unwrap().purge_at, None);
+        assert_eq!(db.fetch_team_identity("fresh").await.unwrap().unwrap().purge_at, None);
+
+        // the role is taken away: kept for the keeping time, not one day
+        db.remove_member_role(
+            &MemberCompositeKey {
+                server: SERVER.to_string(),
+                user: "rev".to_string(),
+            },
+            "role_rev",
+        )
+        .await
+        .unwrap();
+        let later = NOV_10 + 2 * ORPHAN_GRACE_MS;
+        run_daily(&db, &settings, &recorder, later).await.unwrap();
+        let keep = days_ms(settings.volunteers.identity_keep_days);
+        assert_eq!(db.fetch_team_identity("rev").await.unwrap().unwrap().purge_at, Some(later + keep));
+        // and the fresh one, now past the hour, gets its day
+        assert_eq!(
+            db.fetch_team_identity("fresh").await.unwrap().unwrap().purge_at,
+            Some(later + ORPHAN_IDENTITY_MS)
+        );
     }
 
     #[tokio::test]
@@ -2206,6 +2317,7 @@ mod tests {
             rules_version: "1".to_string(),
             rules_at: 0,
             purge_at: Some(NOV_10 - DAY_MS),
+            reviewer: false,
         })
         .await
         .unwrap();

@@ -64,10 +64,41 @@ async fn volunteer(
         left_at: None,
         low_months: 0,
         notes: None,
+        invite: None,
         history: vec![TeamHistory { at: 1, actor: "system".into(), action: "accepted".into() }],
     };
     harness.db.insert_team_member(&member).await.unwrap();
     member
+}
+
+/// What the official Zrzur account wrote to `user`
+async fn official_messages(harness: &TestHarness, user: &User) -> Vec<String> {
+    let Ok(channel) = harness
+        .db
+        .find_direct_message_channel(revolt_database::OfficialAccount::Zrzur.id(), &user.id)
+        .await
+    else {
+        return vec![];
+    };
+    harness
+        .db
+        .fetch_messages(revolt_database::MessageQuery {
+            limit: Some(50),
+            filter: revolt_database::MessageFilter {
+                channel: Some(channel.id().to_string()),
+                ..Default::default()
+            },
+            time_period: revolt_database::MessageTimePeriod::Absolute {
+                before: None,
+                after: None,
+                sort: None,
+            },
+        })
+        .await
+        .unwrap()
+        .into_iter()
+        .filter_map(|message| message.content)
+        .collect()
 }
 
 async fn stored(harness: &TestHarness, id: &str) -> TeamMember {
@@ -189,6 +220,7 @@ async fn identity_needs_step_up_and_is_logged() {
             rules_version: "1".into(),
             rules_at: 1,
             purge_at: None,
+            reviewer: false,
         })
         .await
         .unwrap();
@@ -344,10 +376,17 @@ async fn away_uses_the_volunteers_rules() {
     let (status, body) = send(&harness, &owner, &token, Post, &path, json!({ "days": 10 })).await;
     assert_eq!(status, Status::Ok, "{body}");
     assert_eq!(body["row"]["status"], "away");
+    // the limit comes from the settings
+    assert_eq!(body["away_max_days"], 90);
     assert!(stored(&harness, &m.id).await.away_until.is_some());
+    // the volunteer is told, as after their own "I'm away"
+    let told = official_messages(&harness, &person).await;
+    assert!(told.iter().any(|m| m.contains("Days away: 10")), "{told:?}");
     let (status, body) = send(&harness, &owner, &token, Post, &path, json!({ "days": 0 })).await;
     assert_eq!(status, Status::Ok, "{body}");
     assert_eq!(body["row"]["status"], "active");
+    let told = official_messages(&harness, &person).await;
+    assert!(told.iter().any(|m| m.contains("active again")), "{told:?}");
 }
 
 #[rocket::async_test]
@@ -391,10 +430,29 @@ async fn notes_in_own_export_never_in_log() {
         .await
         .unwrap();
 
+    // a staff member acted on the membership: their id is in the history
+    let mut acted = stored(&harness, &m.id).await;
+    acted.history.push(TeamHistory { at: 2, actor: owner.user.id.clone(), action: "confirmed".into() });
+    harness.db.update_team_member(&acted).await.unwrap();
+
+    // someone else in the team, with a note of their own
+    let (_, _, other) = harness.new_user().await;
+    let mut theirs = volunteer(&harness, &other, &server, TeamMemberStatus::Active).await;
+    theirs.notes = Some("other-person-note-7713".into());
+    harness.db.update_team_member(&theirs).await.unwrap();
+
     // in the person's own export (GDPR Art. 15), never in the audit log
     let zip = revolt_database::build_export_zip(&harness.db, &account, &person).await.unwrap();
     let text = String::from_utf8_lossy(&zip);
     assert!(text.contains("unmistakable-note-text-5521"));
+    // who acted is not named (the staff member's id is removed from the history)
+    let history = stored(&harness, &m.id).await.history;
+    assert!(history.iter().any(|h| h.actor == "system"));
+    assert!(!text.contains(&owner.user.id), "a staff id in the export");
+    assert!(!text.contains("\"actor\""), "actor fields in the export");
+    // nobody else's data
+    assert!(!text.contains("other-person-note-7713"));
+    assert!(!text.contains(&theirs.id));
     assert!(text.contains("team_memberships.json"));
     assert!(text.contains("team_activity.json"));
     assert!(text.contains("20261109") && text.contains("7731"), "the counted day is in the export");
@@ -505,8 +563,10 @@ async fn retention_on_the_test_database() {
         age: 24,
         country: "Austria".into(),
         rules_version: "1".into(),
-        rules_at: now,
+        // written over an hour ago: an application in flight no longer claims it
+        rules_at: now - 2 * 3_600_000,
         purge_at: None,
+        reviewer: false,
     };
     harness.db.upsert_team_identity(&identity).await.unwrap();
 

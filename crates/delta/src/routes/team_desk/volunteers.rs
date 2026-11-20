@@ -183,6 +183,7 @@ pub(super) async fn enrol(
         left_at: None,
         low_months: 0,
         notes: None,
+        invite: None,
         history: if objected {
             vec![history(actor, "accepted"), objection()]
         } else {
@@ -193,6 +194,26 @@ pub(super) async fn enrol(
         Ok(()) => Ok(member),
         // two looks at once: the record that got in first is the record
         Err(error) => find(db.fetch_team_members_of(&application.user_id).await?).ok_or(error),
+    }
+}
+
+/// Keep the team-server invite made for a membership on it, so it is deleted
+/// when the membership ends. One kept from before (a rejoin) goes first.
+/// Read again right before the write; best effort.
+pub(super) async fn keep_invite(db: &Database, member_id: &str, code: &str) {
+    let Ok(mut member) = db.fetch_team_member(member_id).await else {
+        return;
+    };
+    if !member.is_current() {
+        let _ = db.delete_invite(code).await;
+        return;
+    }
+    if member.invite.as_deref() != Some(code) {
+        team_activity::drop_invite(db, &member).await;
+    }
+    member.invite = Some(code.to_string());
+    if let Err(error) = db.update_team_member(&member).await {
+        log::warn!("team server invite not kept: {:?}", error.error_type);
     }
 }
 

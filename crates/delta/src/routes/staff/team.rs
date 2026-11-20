@@ -92,6 +92,8 @@ pub struct StaffTeamPerson {
     /// The person objected and is not counted (staff stopped it)
     #[serde(default)]
     pub counting_stopped: bool,
+    /// The longest away the settings allow, in days (the console's limit)
+    pub away_max_days: i64,
 }
 
 #[derive(Deserialize)]
@@ -213,6 +215,7 @@ async fn person(
         notes: member.notes.clone(),
         monthly_minimum: settings.volunteers.monthly_minimum.max(0),
         counting_stopped: counting_stopped(&all),
+        away_max_days: settings.volunteers.away_max_days.max(0),
     })
 }
 
@@ -399,6 +402,17 @@ pub async fn away(
         return Err(create_error!(InvalidOperation));
     }
     log(db, &staff, "team.member.away", &member, None, format!("member {}, days {}", member.id, data.days)).await?;
+    // the volunteer hears of it, as after their own "I'm away"
+    let key = if data.days > 0 { "volunteer.away_by_staff" } else { "volunteer.back_by_staff" };
+    crate::util::team_texts::send(
+        db,
+        &member.user_id,
+        key,
+        settings.role(&member.role),
+        &member.role,
+        &[("days", &data.days.to_string())],
+    )
+    .await;
     Ok(Json(person(db, &settings, &member, staff.now).await?))
 }
 

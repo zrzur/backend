@@ -68,6 +68,10 @@ pub fn plain(text: &str) -> String {
                 out.push('\u{200b}');
             }
             c if c.is_control() && c != '\n' => out.push(' '),
+            // invisible format characters (bidi overrides and isolates,
+            // direction marks, zero-width characters) from a stranger are
+            // dropped: they can turn a line around or hide what it says
+            c if is_format(c) => {}
             c => out.push(c),
         }
     }
@@ -83,6 +87,24 @@ pub fn plain(text: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Unicode format characters (general category Cf) that change how a line
+/// reads or hide text: the soft hyphen, the Arabic letter mark, zero-width
+/// characters and direction marks, bidi embeddings, overrides and isolates,
+/// the word joiner and invisible operators, the byte order mark, interlinear
+/// annotation and tag characters
+pub fn is_format(c: char) -> bool {
+    matches!(c,
+        '\u{00AD}' | '\u{061C}' | '\u{180E}'
+        | '\u{200B}'..='\u{200F}'
+        | '\u{202A}'..='\u{202E}'
+        | '\u{2060}'..='\u{2064}'
+        | '\u{2066}'..='\u{206F}'
+        | '\u{FEFF}'
+        | '\u{FFF9}'..='\u{FFFB}'
+        | '\u{E0001}'
+        | '\u{E0020}'..='\u{E007F}')
 }
 
 /// Fill the `{blanks}` of a template in one pass: a value is never read

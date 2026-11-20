@@ -16,6 +16,11 @@ auto_derived!(
         /// any more)
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub purge_at: Option<i64>,
+        /// Given by a reviewer who holds no membership ("Add my details" to
+        /// accept the rules): kept while they hold a reviewer role, and
+        /// released `identity_keep_days` after they lose it
+        #[serde(default)]
+        pub reviewer: bool,
     }
 
     /// Where a volunteer stands
@@ -61,6 +66,10 @@ auto_derived!(
         /// Staff notes. Part of the person's own export (GDPR Art. 15).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub notes: Option<String>,
+        /// The single-use invite to the team server made for this
+        /// membership; deleted when the membership ends or goes
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub invite: Option<String>,
         #[serde(default)]
         pub history: Vec<TeamHistory>,
     }
