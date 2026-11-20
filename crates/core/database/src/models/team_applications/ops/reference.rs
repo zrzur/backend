@@ -65,6 +65,19 @@ impl AbstractTeamApplications for ReferenceDb {
         Ok(list)
     }
 
+    async fn fetch_team_applications_accepted(&self) -> Result<Vec<TeamApplication>> {
+        let mut list: Vec<_> = self
+            .team_applications
+            .lock()
+            .await
+            .values()
+            .filter(|a| a.status == TeamApplicationStatus::Accepted)
+            .cloned()
+            .collect();
+        list.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(list)
+    }
+
     async fn replace_team_application_if(
         &self,
         application: &TeamApplication,

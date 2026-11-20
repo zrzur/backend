@@ -21,6 +21,9 @@ pub trait AbstractTeamApplications: Sync + Send {
     /// Accepted applications whose role waits for the person to join the server
     async fn fetch_team_applications_pending_grant(&self) -> Result<Vec<TeamApplication>>;
 
+    /// Every accepted application that still exists, oldest first
+    async fn fetch_team_applications_accepted(&self) -> Result<Vec<TeamApplication>>;
+
     /// Replace an application only while its status is still `expected`;
     /// `false` when someone changed it in between
     async fn replace_team_application_if(

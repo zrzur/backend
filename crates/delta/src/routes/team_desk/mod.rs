@@ -68,6 +68,7 @@ use crate::util::team_texts::{self, RoleField};
 
 #[cfg(test)]
 mod tests;
+mod volunteers;
 
 pub fn routes() -> Vec<Route> {
     routes![desk_config, queue, application_state, mine, about, apply, withdraw, act, identity, settle]
@@ -1068,7 +1069,23 @@ async fn about(
             problem: Some(problem.to_string()),
         }))
     };
-    if !settings.role(&role_key).is_some_and(offered) {
+    if role_key == "me" {
+        // "Add my details": only a current volunteer with no application
+        // open, who is not asked through an application
+        let member = db
+            .fetch_team_members_of(&person.id)
+            .await?
+            .iter()
+            .any(|m| m.is_current());
+        let open = db
+            .fetch_team_applications_of(&person.id)
+            .await?
+            .iter()
+            .any(|a| a.is_open());
+        if !member || open {
+            return refuse("not_a_volunteer");
+        }
+    } else if !settings.role(&role_key).is_some_and(offered) {
         return refuse("role_closed");
     }
 
@@ -1685,6 +1702,14 @@ async fn act(
             .await;
         }
         "accept" => {
+            // the acceptance is stored: the person is a volunteer now
+            if settings.volunteers.enabled {
+                if let Err(error) =
+                    volunteers::enrol(db, &settings, &application, &person.id).await
+                {
+                    log::warn!("team member record not made: {:?}", error.error_type);
+                }
+            }
             let grant = give_role(db, role, &applicant.id).await;
             decided.grant = Some(grant);
             // the status is ours now; only the grant is added
@@ -1706,6 +1731,22 @@ async fn act(
                 &[("server", &server)],
             )
             .await;
+            // the invite to the team server goes with the welcome, in private
+            if settings.volunteers.enabled {
+                if let Some(code) =
+                    volunteers::invite_to_team_server(db, &settings, &applicant.id).await
+                {
+                    team_texts::send(
+                        db,
+                        &applicant.id,
+                        "volunteer.invite",
+                        role,
+                        &application.role,
+                        &[("invite", &code)],
+                    )
+                    .await;
+                }
+            }
             if grant == TeamGrant::Manual {
                 // the owner of the server gives such a role by hand
                 let owner = match role {
@@ -1927,6 +1968,9 @@ async fn settle(db: &State<Database>, user: User) -> Result<Json<Vec<Settled>>> 
     let settings = desk(&user).await?;
     purge_due(db, staff_now()).await?;
     let mut settled = Vec::new();
+    if settings.volunteers.enabled {
+        enrol_accepted(db, &settings).await?;
+    }
     for mut application in db.fetch_team_applications_pending_grant().await? {
         let role = settings.role(&application.role);
         let grant = give_role(db, role, &application.user_id).await;
@@ -1962,4 +2006,51 @@ async fn settle(db: &State<Database>, user: User) -> Result<Json<Vec<Settled>>> 
         });
     }
     Ok(Json(settled))
+}
+
+/// People accepted before the records existed (or whose record was not
+/// written) get one now. Each who has not given their details yet is asked,
+/// once, to add them: the record being new is what makes it once.
+async fn enrol_accepted(db: &Database, settings: &FeaturesTeamApplications) -> Result<()> {
+    for application in db.fetch_team_applications_accepted().await? {
+        if settings.role(&application.role).is_none() {
+            continue;
+        }
+        let known = db
+            .fetch_team_members_of(&application.user_id)
+            .await?
+            .iter()
+            .any(|m| m.role == application.role);
+        if known {
+            continue;
+        }
+        let mut member = match volunteers::enrol(db, settings, &application, "system").await {
+            Ok(member) => member,
+            Err(error) => {
+                log::warn!("team member record not made: {:?}", error.error_type);
+                continue;
+            }
+        };
+        if matches!(db.fetch_team_identity(&application.user_id).await, Ok(Some(_))) {
+            continue;
+        }
+        member.history.push(revolt_database::TeamHistory {
+            at: staff_now(),
+            actor: "system".to_string(),
+            action: "identity_requested".to_string(),
+        });
+        if db.update_team_member(&member).await.is_err() {
+            continue;
+        }
+        team_texts::send(
+            db,
+            &application.user_id,
+            "volunteer.identity_request",
+            settings.role(&application.role),
+            &application.role,
+            &[],
+        )
+        .await;
+    }
+    Ok(())
 }

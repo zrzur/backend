@@ -2058,3 +2058,254 @@ fn identity_escaped() {
         assert_eq!(name, crate::util::team_texts::plain("@everyone [x](http://a)"));
     });
 }
+
+impl Desk {
+    /// Apply for `role`, and a reviewer accepts; gives the application id
+    async fn accepted_as(&mut self, session: &str, role: &str) -> String {
+        let enabled = super::test_settings::get(&self.bot.id).unwrap().volunteers.enabled;
+        let user = self.users.iter().find(|(s, _)| s == session).map(|(_, u)| u.clone()).unwrap();
+        let has_identity = self.harness.db.fetch_team_identity(&user).await.unwrap().is_some();
+        if enabled && !has_identity {
+            let (_, outcome) = self.about_with(session, role, about_fields("30", &["accept"])).await;
+            assert_eq!(outcome["saved"], true, "{outcome}");
+        }
+        let (_, outcome) = self.apply_as(session, role).await;
+        let id = id_of(&outcome);
+        let card = self.card(&id).await;
+        let reviewer = self.reviewer_session.clone();
+        let (status, outcome) = self.review_press(&reviewer, &card, "accept", &id).await;
+        assert_eq!(status, Status::Ok, "{outcome}");
+        assert_eq!(outcome["applied"], true, "{outcome}");
+        id
+    }
+
+    async fn members_of(&self, user: &User) -> Vec<revolt_database::TeamMember> {
+        self.harness.db.fetch_team_members_of(&user.id).await.unwrap()
+    }
+}
+
+#[test]
+fn accept_creates_trial_member() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        d.volunteers_on("1");
+        let session = d.applicant_session.clone();
+        d.about_as(&session, "30").await;
+        // applying alone makes no record
+        let (_, outcome) = d.apply_as(&session, "support").await;
+        assert!(d.members_of(&d.applicant).await.is_empty());
+        let id = id_of(&outcome);
+        let card = d.card(&id).await;
+        let reviewer = d.reviewer_session.clone();
+        d.review_press(&reviewer, &card, "interview", &id).await;
+        assert!(d.members_of(&d.applicant).await.is_empty());
+
+        let (_, outcome) = d.review_press(&reviewer, &card, "accept", &id).await;
+        assert_eq!(outcome["applied"], true, "{outcome}");
+        let members = d.members_of(&d.applicant).await;
+        assert_eq!(members.len(), 1);
+        let member = &members[0];
+        assert_eq!(member.role, "support");
+        assert_eq!(member.server, d.lounge.id);
+        assert_eq!(member.status, revolt_database::TeamMemberStatus::Trial);
+        assert_eq!(member.trial_ends_at - member.joined_at, 30 * super::DAY_MS);
+        assert_eq!(member.history.len(), 1);
+        assert_eq!(member.history[0].action, "accepted");
+        assert_eq!(member.history[0].actor, d.reviewer.id);
+    });
+}
+
+#[test]
+fn a_rejection_and_a_disabled_switch_make_no_record() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        d.volunteers_on("1");
+        let session = d.applicant_session.clone();
+        d.about_as(&session, "30").await;
+        let (_, outcome) = d.apply_as(&session, "support").await;
+        let id = id_of(&outcome);
+        let card = d.card(&id).await;
+        let reviewer = d.reviewer_session.clone();
+        d.reject(&reviewer, &card, &id, "Not this time, thank you").await;
+        assert!(d.members_of(&d.applicant).await.is_empty());
+
+        // switched off: the live behaviour, no record, no extra message
+        let mut settings = super::test_settings::get(&d.bot.id).unwrap();
+        settings.volunteers.enabled = false;
+        settings.volunteers.team_server = d.other.id.clone();
+        super::test_settings::register(settings);
+        let (_, other_session, other) = d.harness.new_user().await;
+        Member::create(&d.harness.db, &d.lounge, &other, None).await.unwrap();
+        d.know(&other_session.token, &other);
+        d.accepted_as(&other_session.token, "support").await;
+        assert!(d.members_of(&other).await.is_empty());
+        let told = d.told(&other).await;
+        assert!(told.iter().all(|m| !m.contains("zrzur.cc/")), "{told:?}");
+    });
+}
+
+#[test]
+fn accept_twice_keeps_one_member() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        d.volunteers_on("1");
+        let settings = super::test_settings::get(&d.bot.id).unwrap();
+        let session = d.applicant_session.clone();
+        d.accepted_as(&session, "support").await;
+        let application = d
+            .harness
+            .db
+            .fetch_team_applications_of(&d.applicant.id)
+            .await
+            .unwrap()
+            .remove(0);
+        // the same acceptance looked at again
+        let again = super::volunteers::enrol(&d.harness.db, &settings, &application, "x")
+            .await
+            .unwrap();
+        assert_eq!(d.members_of(&d.applicant).await.len(), 1);
+        assert_eq!(again.history.len(), 1);
+
+        // one who left is reopened as a trial, with a history entry
+        let mut member = again;
+        super::volunteers::end_membership(&d.harness.db, &settings, &mut member, "x", "left", None)
+            .await
+            .unwrap();
+        let back = super::volunteers::enrol(&d.harness.db, &settings, &application, "x")
+            .await
+            .unwrap();
+        assert_eq!(back.id, member.id);
+        assert_eq!(back.status, revolt_database::TeamMemberStatus::Trial);
+        assert_eq!(back.left_at, None);
+        assert_eq!(back.history.last().unwrap().action, "rejoined");
+        assert_eq!(d.members_of(&d.applicant).await.len(), 1);
+    });
+}
+
+#[test]
+fn existing_accepted_get_a_member_on_settle() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        // accepted while the switch was off: no record
+        let session = d.applicant_session.clone();
+        d.accepted_as(&session, "support").await;
+        assert!(d.members_of(&d.applicant).await.is_empty());
+
+        d.volunteers_on("1");
+        let (status, _) = d.as_bot(&d.bot.token, "/team/desk/settle", None).await;
+        assert_eq!(status, Status::Ok);
+        let members = d.members_of(&d.applicant).await;
+        assert_eq!(members.len(), 1);
+        assert!(members[0].history.iter().any(|h| h.action == "identity_requested"));
+        let told = d.told(&d.applicant).await;
+        assert!(told.iter().any(|m| m.contains("Add my details")), "{told:?}");
+
+        // once: a second look sends nothing more
+        let before = d.told(&d.applicant).await.len();
+        d.as_bot(&d.bot.token, "/team/desk/settle", None).await;
+        assert_eq!(d.told(&d.applicant).await.len(), before);
+        assert_eq!(d.members_of(&d.applicant).await.len(), 1);
+
+        // they fill it in with the bot's "Add my details"
+        let (_, outcome) = d.about_with(&session, "me", about_fields("30", &["accept"])).await;
+        assert_eq!(outcome["saved"], true, "{outcome}");
+        assert!(d.identity_of(&d.applicant).await.is_some());
+        // someone who is not a volunteer cannot
+        let guest = d.guest_session.clone();
+        let (_, outcome) = d.about_with(&guest, "me", about_fields("30", &["accept"])).await;
+        assert_eq!(outcome["saved"], false);
+        assert!(d.identity_of(&d.guest).await.is_none());
+    });
+}
+
+#[test]
+fn leaving_one_of_two_teams_keeps_zrzur_team_role() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        d.volunteers_on("1");
+        // a second team in the same lounge, with the same Zrzur Team role
+        let mut settings = super::test_settings::get(&d.bot.id).unwrap();
+        let mut designer = settings.role("designer").unwrap().clone();
+        designer.team_role = d.team_role.clone();
+        designer.role = d.admin_role.clone();
+        settings.roles.retain(|r| r.key != "designer");
+        settings.roles.push(designer);
+        super::test_settings::register(settings.clone());
+
+        let session = d.applicant_session.clone();
+        d.accepted_as(&session, "support").await;
+        d.accepted_as(&session, "designer").await;
+        let mut members = d.members_of(&d.applicant).await;
+        assert_eq!(members.len(), 2);
+        assert!(d.roles_of(&d.lounge, &d.applicant).await.contains(&d.team_role));
+
+        let at = members.iter().position(|m| m.role == "support").unwrap();
+        let mut first = members.remove(at);
+        super::volunteers::end_membership(&d.harness.db, &settings, &mut first, "x", "left", None)
+            .await
+            .unwrap();
+        let roles = d.roles_of(&d.lounge, &d.applicant).await;
+        assert!(!roles.contains(&d.support_role), "{roles:?}");
+        assert!(roles.contains(&d.team_role), "Zrzur Team role went too early: {roles:?}");
+
+        let mut second = members.remove(0);
+        super::volunteers::end_membership(&d.harness.db, &settings, &mut second, "x", "removed", None)
+            .await
+            .unwrap();
+        let roles = d.roles_of(&d.lounge, &d.applicant).await;
+        assert!(!roles.contains(&d.team_role), "{roles:?}");
+        assert!(d.members_of(&d.applicant).await.iter().all(|m| !m.is_current()));
+        let told = d.told(&d.applicant).await;
+        assert!(told.iter().any(|m| m.contains("has ended")), "{told:?}");
+    });
+}
+
+#[test]
+fn welcome_dm_has_team_server_invite_when_set() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        d.volunteers_on("1");
+        let (team_server, _) = d.harness.new_server(&d.owner).await;
+        let mut settings = super::test_settings::get(&d.bot.id).unwrap();
+        settings.volunteers.team_server = team_server.id.clone();
+        super::test_settings::register(settings.clone());
+
+        // no current membership: no invite
+        assert!(
+            super::volunteers::invite_to_team_server(&d.harness.db, &settings, &d.applicant.id)
+                .await
+                .is_none()
+        );
+
+        let session = d.applicant_session.clone();
+        d.accepted_as(&session, "support").await;
+        let told = d.told(&d.applicant).await;
+        let invite = told
+            .iter()
+            .find(|m| m.contains("https://zrzur.cc/"))
+            .expect("an invite");
+        let code = invite
+            .split("https://zrzur.cc/")
+            .nth(1)
+            .unwrap()
+            .split(|c: char| !c.is_alphanumeric())
+            .next()
+            .unwrap();
+        match d.harness.db.fetch_invite(code).await.unwrap() {
+            revolt_database::Invite::Server { server, max_uses, expires, .. } => {
+                assert_eq!(server, team_server.id);
+                assert_eq!(max_uses, Some(1));
+                assert!(expires.is_some());
+            }
+            other => panic!("{other:?}"),
+        }
+
+        // no team server set: quietly nothing
+        settings.volunteers.team_server = String::new();
+        assert!(
+            super::volunteers::invite_to_team_server(&d.harness.db, &settings, &d.applicant.id)
+                .await
+                .is_none()
+        );
+    });
+}
