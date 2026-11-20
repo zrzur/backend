@@ -1881,22 +1881,107 @@ fn former_reviewer_is_refused_and_logged() {
 }
 
 #[test]
-fn identity_needs_the_switch_and_a_stored_identity() {
+fn identity_is_off_while_the_switch_is_off() {
     on_big_stack(|| async {
         let mut d = desk().await;
         let session = d.reviewer_session.clone();
-        // off: the route does not do anything
         let (_, outcome) = d.apply_as(&d.applicant_session.clone(), "support").await;
         let id = id_of(&outcome);
         let (status, _) = d.identity_press(&session, &id).await;
         assert_ne!(status, Status::Ok);
-        // on, but the person never filled "About you"
+    });
+}
+
+#[test]
+fn identity_missing_when_never_filled_or_unknown_application() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let session = d.reviewer_session.clone();
+        let (_, outcome) = d.apply_as(&d.applicant_session.clone(), "support").await;
+        let id = id_of(&outcome);
         d.volunteers_on("1");
+        // the person never filled "About you"
         let (status, view) = d.identity_press(&session, &id).await;
         assert_eq!(status, Status::Ok, "{view}");
         assert_eq!(view["missing"], true);
         assert_eq!(view["name"], "");
         assert_eq!(view["age"], 0);
+        // an application that does not exist
+        let (status, view) = d.identity_press(&session, "01ZZZZZZZZZZZZZZZZZZZZZZZZ").await;
+        assert_eq!(status, Status::Ok, "{view}");
+        assert_eq!(view["missing"], true);
+    });
+}
+
+#[test]
+fn identity_of_own_application_is_refused_and_logged() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        d.volunteers_on("1");
+        let session = d.reviewer_session.clone();
+        let (_, outcome) = d.about_with(&session, "support", about_fields("30", &["accept"])).await;
+        assert_eq!(outcome["saved"], true, "{outcome}");
+        let (_, outcome) = d.apply_as(&session, "support").await;
+        let id = id_of(&outcome);
+        let (status, body) = d.identity_press(&session, &id).await;
+        assert_eq!(status, Status::Forbidden);
+        assert!(!body.to_string().contains("Lina"));
+        let refused: Vec<_> = d
+            .audit(&d.reviewer)
+            .await
+            .into_iter()
+            .filter(|(action, _, _)| action == "team.identity.view")
+            .collect();
+        assert_eq!(refused.len(), 1);
+        assert_eq!(refused[0].2, "Failed");
+    });
+}
+
+#[test]
+fn identity_pressed_outside_a_review_channel_is_refused_and_logged() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.applied_as("Lina Haddad").await;
+        let session = d.reviewer_session.clone();
+        let channel = d.apply.clone();
+        let card = d.message(&channel, &[&format!("ta:identity:{id}")]).await;
+        let pressed = d.press(&session, &channel, &card, &format!("ta:identity:{id}")).await;
+        let (status, body) = d.hand("identity", &pressed).await;
+        assert_eq!(status, Status::Forbidden);
+        assert!(!body.to_string().contains("Lina"));
+        let refused: Vec<_> = d
+            .audit(&d.applicant)
+            .await
+            .into_iter()
+            .filter(|(action, _, _)| action == "team.identity.view")
+            .collect();
+        assert_eq!(refused.len(), 1);
+        assert_eq!(refused[0].2, "Failed");
+    });
+}
+
+#[test]
+fn identity_carries_the_age_note() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        d.volunteers_on("1");
+        let (mut account, young_session, young) = d.harness.new_user().await;
+        let year: i32 = iso8601_timestamp::Timestamp::now_utc().format().to_string()[0..4]
+            .parse()
+            .unwrap();
+        account.age.as_mut().unwrap().birth_month = format!("{}-01", year - 17);
+        d.harness.db.save_account(&account).await.unwrap();
+        Member::create(&d.harness.db, &d.lounge, &young, None).await.unwrap();
+        let (_, outcome) = d.about_with(&young_session.token, "designer", about_fields("25", &["accept"])).await;
+        assert_eq!(outcome["saved"], true, "{outcome}");
+        let (_, outcome) = d.apply_as(&young_session.token, "designer").await;
+        let id = id_of(&outcome);
+        let session = d.reviewer_session.clone();
+        let (status, view) = d.identity_press(&session, &id).await;
+        assert_eq!(status, Status::Ok, "{view}");
+        assert_eq!(view["age"], 25);
+        assert_eq!(view["age_note"], true);
+        assert_eq!(view["missing"], false);
     });
 }
 

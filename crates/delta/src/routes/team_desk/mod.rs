@@ -1797,25 +1797,23 @@ async fn identity(
         return Err(create_error!(InvalidOperation));
     }
     let interaction = genuine(db, &settings, &data, None).await?;
-    if !settings
-        .review_channels()
-        .iter()
-        .any(|channel| channel == &interaction.channel_id)
-    {
-        return Err(no_permission());
-    }
     let id = match (interaction.kind, pressed(&interaction)) {
         (InteractionType::Component, Some(("identity", id))) if !id.is_empty() => id.to_string(),
         _ => return Err(create_error!(InvalidOperation)),
     };
 
-    let found = db.fetch_team_application(&id).await.ok();
+    // only "not found" means gone; a database fault is an error, not an answer
+    let found = match db.fetch_team_application(&id).await {
+        Ok(application) => Some(application),
+        Err(error) if matches!(error.error_type, revolt_result::ErrorType::NotFound) => None,
+        Err(error) => return Err(error),
+    };
     let key = found.as_ref().map(|a| a.role.as_str()).unwrap_or_default();
     let target = found.as_ref().map(|a| a.user_id.clone());
     // the same words for a view and a refusal: the log says who, about whom
-    let record = |action: &str, summary: String| AuditRecord {
+    let record = |summary: String| AuditRecord {
         actor_id: interaction.user_id.clone(),
-        action: action.to_string(),
+        action: "team.identity.view".to_string(),
         target_kind: target.as_ref().map(|_| "user".to_string()),
         target_id: target.clone(),
         reason: None,
@@ -1826,16 +1824,33 @@ async fn identity(
         "application {} via bot {} interaction {}",
         id, settings.bot, interaction.id
     );
+    let refused = |why: &'static str| {
+        let record = record(format!("refused, {why}: {note}"));
+        async move {
+            let _ = record_platform_audit(db, record, AuditOutcome::Failed).await;
+            Err::<Json<IdentityView>, _>(no_permission())
+        }
+    };
 
+    // the press must come from a review channel of an official server
+    let in_official = interaction
+        .server_id
+        .as_deref()
+        .is_some_and(|server| official_servers(&settings).iter().any(|s| s == server));
+    if !in_official
+        || !settings
+            .review_channels()
+            .iter()
+            .any(|channel| channel == &interaction.channel_id)
+    {
+        return refused("not a review channel").await;
+    }
     let allowed = reviewer(db, &settings, &interaction, settings.role(key)).await;
-    if allowed.is_err() || interaction.channel_id != settings.review_channel(key) {
-        let _ = record_platform_audit(
-            db,
-            record("team.identity.view", format!("refused: {note}")),
-            AuditOutcome::Failed,
-        )
-        .await;
-        return Err(no_permission());
+    if allowed.is_err() {
+        return refused("not a reviewer").await;
+    }
+    if interaction.channel_id != settings.review_channel(key) {
+        return refused("wrong review channel").await;
     }
     let person = allowed?;
 
@@ -1844,13 +1859,7 @@ async fn identity(
     };
     // nobody reads their own
     if application.user_id == person.id {
-        let _ = record_platform_audit(
-            db,
-            record("team.identity.view", format!("refused, own application: {note}")),
-            AuditOutcome::Failed,
-        )
-        .await;
-        return Err(no_permission());
+        return refused("own application").await;
     }
     purge_due(db, staff_now()).await?;
     let Some(stored) = db.fetch_team_identity(&application.user_id).await? else {
@@ -1863,7 +1872,7 @@ async fn identity(
     // the record first: no record, no view
     record_platform_audit(
         db,
-        record("team.identity.view", note),
+        record(note),
         AuditOutcome::Success,
     )
     .await?;
