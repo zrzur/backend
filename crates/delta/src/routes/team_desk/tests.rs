@@ -2787,3 +2787,260 @@ fn own_buttons_are_off_while_the_switch_is_off_and_single_use() {
         assert_ne!(status, Status::Ok);
     });
 }
+
+// ---- the weekly report ----
+
+/// Monday 2026-11-09 00:00 UTC, and the length of a day
+const WEEK: i32 = 20261109;
+const WEEK_START: i64 = 1_794_182_400_000;
+const WEEK_DAY: i64 = 86_400_000;
+
+impl Desk {
+    async fn report_as(&self, token: &str, week: &str) -> (Status, Value) {
+        self.as_bot(token, &format!("/team/desk/report?week={week}"), None).await
+    }
+
+    async fn the_report(&self, week: &str) -> (Status, Value) {
+        let token = self.bot.token.clone();
+        self.report_as(&token, week).await
+    }
+
+    /// Put a membership of `user` in `role`, with the dates given
+    async fn place(
+        &self,
+        user: &User,
+        role: &str,
+        server: &str,
+        status: revolt_database::TeamMemberStatus,
+        joined_at: i64,
+        left_at: Option<i64>,
+    ) {
+        self.harness
+            .db
+            .insert_team_member(&revolt_database::TeamMember {
+                id: ulid::Ulid::new().to_string(),
+                user_id: user.id.clone(),
+                role: role.to_string(),
+                server: server.to_string(),
+                status,
+                joined_at,
+                trial_ends_at: joined_at + 1,
+                confirmed_at: None,
+                away_until: None,
+                left_at,
+                low_months: 0,
+                notes: None,
+                history: vec![],
+            })
+            .await
+            .unwrap();
+    }
+
+    async fn counted(&self, user: &User, day: i32, server: &str, n: u32) {
+        self.harness
+            .db
+            .upsert_team_activity_day(&revolt_database::TeamActivityDay {
+                id: format!("{}:{day}", user.id),
+                user_id: user.id.clone(),
+                day,
+                counts: vec![revolt_database::TeamActivityCount {
+                    server: server.to_string(),
+                    messages: n,
+                    replies: n,
+                    moderation: n,
+                    reviews: n,
+                    tickets: n,
+                }],
+            })
+            .await
+            .unwrap();
+    }
+}
+
+fn team_of<'a>(report: &'a Value, role: &str) -> &'a Value {
+    report["teams"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|team| team["role"] == role)
+        .unwrap()
+}
+
+#[test]
+fn report_counts_by_status() {
+    on_big_stack(|| async {
+        use revolt_database::TeamMemberStatus as S;
+        let d = desk().await;
+        d.volunteers_on("1");
+        let lounge = d.lounge.id.clone();
+        let (_, _, fourth) = d.harness.new_user().await;
+        for (user, status) in [
+            (&d.applicant, S::Trial),
+            (&d.guest, S::Active),
+            (&d.reviewer, S::Away),
+            (&fourth, S::Inactive),
+        ] {
+            d.place(user, "support", &lounge, status, WEEK_START - 30 * WEEK_DAY, None).await;
+        }
+        let (status, report) = d.the_report("20261109").await;
+        assert_eq!(status, Status::Ok, "{report}");
+        assert_eq!(report["week"], WEEK);
+        let team = team_of(&report, "support");
+        assert_eq!(team["volunteers"], 4);
+        assert_eq!(team["trial"], 1);
+        assert_eq!(team["active"], 1);
+        assert_eq!(team["away"], 1);
+        assert_eq!(team["inactive"], 1);
+        assert_eq!(team["server_name"], d.lounge.name);
+        assert_eq!(team["contributions"], 0);
+        assert_eq!(team_of(&report, "elsewhere")["volunteers"], 0);
+    });
+}
+
+#[test]
+fn report_has_no_identity() {
+    on_big_stack(|| async {
+        use revolt_database::TeamMemberStatus as S;
+        let d = desk().await;
+        d.volunteers_on("1");
+        d.harness
+            .db
+            .upsert_team_identity(&revolt_database::TeamIdentity {
+                id: d.applicant.id.clone(),
+                name: "Lina Haddad".to_string(),
+                age: 33,
+                country: "Narnia".to_string(),
+                rules_version: "1".to_string(),
+                rules_at: 1,
+                purge_at: None,
+            })
+            .await
+            .unwrap();
+        let lounge = d.lounge.id.clone();
+        d.place(&d.applicant, "support", &lounge, S::Trial, WEEK_START + WEEK_DAY, None).await;
+        let (status, report) = d.the_report("20261109").await;
+        assert_eq!(status, Status::Ok, "{report}");
+        let text = report.to_string();
+        for secret in ["Lina Haddad", "Haddad", "Narnia", "\"age\"", "country", "\"name\"", "identity"] {
+            assert!(!text.contains(secret), "{secret} in {text}");
+        }
+        // the account's own display name is what is shown
+        let names = team_of(&report, "support")["new_names"].as_array().unwrap().clone();
+        assert_eq!(names.len(), 1);
+        assert_eq!(
+            names[0],
+            crate::util::team_texts::plain(
+                &d.applicant.display_name.clone().unwrap_or(d.applicant.username.clone())
+            )
+        );
+    });
+}
+
+#[test]
+fn report_only_for_the_desk_bot() {
+    on_big_stack(|| async {
+        let d = desk().await;
+        d.volunteers_on("1");
+        // a person, with a session
+        let response = d
+            .harness
+            .client
+            .get("/team/desk/report?week=20261109")
+            .header(Header::new("x-session-token", d.reviewer_session.clone()))
+            .dispatch()
+            .await;
+        assert_eq!(response.status(), Status::NotFound);
+        // another bot
+        let (other_bot, _) = d.harness.new_bot(&d.owner).await;
+        let (status, _) = d.report_as(&other_bot.token, "20261109").await;
+        assert_eq!(status, Status::NotFound);
+        // the desk's bot
+        let (status, _) = d.the_report("20261109").await;
+        assert_eq!(status, Status::Ok);
+    });
+}
+
+#[test]
+fn report_refuses_while_volunteers_off() {
+    on_big_stack(|| async {
+        let d = desk().await;
+        let (status, _) = d.the_report("20261109").await;
+        assert_eq!(status, Status::BadRequest);
+    });
+}
+
+#[test]
+fn report_refuses_unfinished_week() {
+    on_big_stack(|| async {
+        use revolt_database::util::team_activity::{add_days, day_of};
+        let d = desk().await;
+        d.volunteers_on("1");
+        // not a Monday, not a date, nonsense
+        for bad in ["20261110", "20261113", "20261345", "0", "-20261109"] {
+            let (status, _) = d.the_report(bad).await;
+            assert_eq!(status, Status::BadRequest, "{bad}");
+        }
+        let (status, _) = d.the_report("abc").await;
+        assert_ne!(status, Status::Ok);
+        // the current week and a future one
+        let now_day = revolt_database::staff_now() / WEEK_DAY;
+        let monday = day_of((now_day - (now_day + 3).rem_euclid(7)) * WEEK_DAY);
+        let (status, _) = d.the_report(&monday.to_string()).await;
+        assert_eq!(status, Status::BadRequest, "current week {monday}");
+        let (status, _) = d.the_report(&add_days(monday, 7).to_string()).await;
+        assert_eq!(status, Status::BadRequest);
+        // the week before the current one is finished
+        let (status, _) = d.the_report(&add_days(monday, -7).to_string()).await;
+        assert_eq!(status, Status::Ok);
+    });
+}
+
+#[test]
+fn report_left_member_counted_in_volunteers_only() {
+    on_big_stack(|| async {
+        use revolt_database::TeamMemberStatus as S;
+        let d = desk().await;
+        d.volunteers_on("1");
+        let lounge = d.lounge.id.clone();
+        // left in the middle of the week
+        d.place(&d.applicant, "support", &lounge, S::Left, WEEK_START - 10 * WEEK_DAY, Some(WEEK_START + 2 * WEEK_DAY)).await;
+        // left before the week began: not in it at all
+        d.place(&d.guest, "support", &lounge, S::Left, WEEK_START - 20 * WEEK_DAY, Some(WEEK_START - WEEK_DAY)).await;
+        // joined after the week ended: not in it either
+        d.place(&d.reviewer, "support", &lounge, S::Trial, WEEK_START + 7 * WEEK_DAY, None).await;
+        let (_, report) = d.the_report("20261109").await;
+        let team = team_of(&report, "support");
+        assert_eq!(team["volunteers"], 1, "{report}");
+        for bucket in ["trial", "active", "away", "inactive"] {
+            assert_eq!(team[bucket], 0, "{bucket}");
+        }
+        assert!(team["new_names"].as_array().unwrap().is_empty());
+    });
+}
+
+#[test]
+fn report_contributions_only_for_that_teams_server() {
+    on_big_stack(|| async {
+        use revolt_database::TeamMemberStatus as S;
+        let d = desk().await;
+        d.volunteers_on("1");
+        let lounge = d.lounge.id.clone();
+        let other = d.other.id.clone();
+        d.place(&d.applicant, "support", &lounge, S::Active, WEEK_START - WEEK_DAY, None).await;
+        d.place(&d.guest, "elsewhere", &other, S::Active, WEEK_START - WEEK_DAY, None).await;
+        // n = 1 gives 5 (five kinds) on Monday, n = 2 gives 10 on Sunday;
+        // days outside the week count for nothing
+        d.counted(&d.applicant, 20261109, &lounge, 1).await;
+        d.counted(&d.applicant, 20261115, &lounge, 2).await;
+        d.counted(&d.applicant, 20261108, &lounge, 7).await;
+        d.counted(&d.applicant, 20261116, &lounge, 7).await;
+        // the other team's person: only the count in their own team's server
+        d.counted(&d.guest, 20261110, &lounge, 9).await;
+        d.counted(&d.guest, 20261111, &other, 3).await;
+        // someone who is not in the team at all
+        d.counted(&d.reviewer, 20261110, &lounge, 4).await;
+        let (_, report) = d.the_report("20261109").await;
+        assert_eq!(team_of(&report, "support")["contributions"], 15, "{report}");
+        assert_eq!(team_of(&report, "elsewhere")["contributions"], 15, "{report}");
+    });
+}

@@ -84,7 +84,8 @@ pub fn routes() -> Vec<Route> {
         settle,
         status,
         away,
-        leave
+        leave,
+        report
     ]
 }
 
@@ -2363,4 +2364,128 @@ async fn leave(
     volunteers::end_membership(db, &settings, &mut member, &interaction.user_id, "left", None)
         .await?;
     Ok(Json(my_status(db, &settings, &interaction.user_id).await?))
+}
+
+// ---- the weekly report ----
+
+/// One team's week. Counts and display names only.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct TeamWeek {
+    pub role: String,
+    pub role_name: String,
+    /// Escaped (`team_texts::plain`)
+    pub server_name: String,
+    /// Volunteers who belonged to the team at any time during the week
+    pub volunteers: u32,
+    pub trial: u32,
+    pub active: u32,
+    pub away: u32,
+    pub inactive: u32,
+    /// The five kinds of count in the team's own server over the week, for
+    /// the team's volunteers only
+    pub contributions: u32,
+    /// Account display names (escaped) of volunteers who joined this week
+    pub new_names: Vec<String>,
+}
+
+/// The weekly report for the staff channel
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct WeekReport {
+    /// The Monday, yyyymmdd
+    pub week: i32,
+    pub teams: Vec<TeamWeek>,
+}
+
+/// Whether `week` (yyyymmdd) is a real date and a Monday
+fn is_monday(week: i32) -> bool {
+    use revolt_database::util::team_activity::{day_of, day_start};
+    if week <= 0 || day_of(day_start(week)) != week {
+        return false;
+    }
+    // day 0 (1970-01-01) was a Thursday
+    (day_start(week) / DAY_MS + 3).rem_euclid(7) == 0
+}
+
+/// # Team desk: the weekly report
+///
+/// `week` is the Monday (yyyymmdd) of a completed week, Monday to Sunday
+/// UTC; the current or a future week is refused. Only the desk's bot, and
+/// only while the volunteer care is on. Per team role: `volunteers` are the
+/// memberships that were current at any time during the week; the four
+/// status counts are their status now, so someone who left during the week
+/// counts in `volunteers` only. `contributions` are the five counts in the
+/// team's own server, for those volunteers only, each person once per team.
+/// `new_names` are account display names of those who joined that week;
+/// never name, age, country or anything of their identity.
+#[get("/report?<week>")]
+async fn report(db: &State<Database>, user: User, week: i32) -> Result<Json<WeekReport>> {
+    use revolt_database::util::team_activity::{add_days, contributions, day_start};
+    use revolt_database::TeamMemberStatus as S;
+
+    let settings = desk(&user).await?;
+    if !settings.volunteers.enabled || !is_monday(week) {
+        return Err(create_error!(InvalidOperation));
+    }
+    let from = day_start(week);
+    let until = from + 7 * DAY_MS;
+    // only a finished week
+    if until > staff_now() {
+        return Err(create_error!(InvalidOperation));
+    }
+    let last = add_days(week, 6);
+
+    let mut teams = Vec::new();
+    for role in settings.roles.iter().filter(|role| role.ready()) {
+        if role.server.trim().is_empty() {
+            continue;
+        }
+        let members = db
+            .fetch_team_members(&revolt_database::TeamMemberFilter {
+                role: Some(role.key.clone()),
+                status: None,
+            })
+            .await?;
+        let mut seen = std::collections::HashSet::new();
+        let mut team = TeamWeek {
+            role: role.key.clone(),
+            role_name: role_name(&settings, &role.key),
+            server_name: team_texts::plain(&server_name(db, Some(role)).await),
+            volunteers: 0,
+            trial: 0,
+            active: 0,
+            away: 0,
+            inactive: 0,
+            contributions: 0,
+            new_names: Vec::new(),
+        };
+        for member in members {
+            let current =
+                member.joined_at < until && member.left_at.is_none_or(|left| left >= from);
+            if !current || !seen.insert(member.user_id.clone()) {
+                continue;
+            }
+            team.volunteers += 1;
+            match member.status {
+                S::Trial => team.trial += 1,
+                S::Active => team.active += 1,
+                S::Away => team.away += 1,
+                S::Inactive => team.inactive += 1,
+                S::Left => {}
+            }
+            for day in db.fetch_team_activity(&member.user_id, week, last).await? {
+                for count in day.counts.iter().filter(|count| count.server == role.server) {
+                    team.contributions = team.contributions.saturating_add(contributions(count));
+                }
+            }
+            if member.joined_at >= from {
+                if let Ok(person) = db.fetch_user(&member.user_id).await {
+                    let shown = person.display_name.clone().unwrap_or(person.username.clone());
+                    team.new_names.push(team_texts::plain(&shown));
+                }
+            }
+        }
+        team.new_names.sort();
+        teams.push(team);
+    }
+    Ok(Json(WeekReport { week, teams }))
 }
