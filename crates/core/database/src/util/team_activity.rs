@@ -8,7 +8,8 @@
 //! (upsert), and every reminder, trial notice and status change of a month
 //! leaves a fixed history word (`reminded_202611`, `inactive_202611`,
 //! `active_202611`, `trial_end_notified`) that is checked before anything is
-//! sent or changed again.
+//! sent or changed again. A month is judged only when every day of it was
+//! counted. While `volunteers.enabled` is off only the retention runs.
 //!
 //! The DMs go through [`TeamMessenger`], so the job is tested without a
 //! message bus; crond passes [`OfficialMessenger`] (the official account).
@@ -36,6 +37,9 @@ pub const CATCH_UP_DAYS: i32 = 7;
 /// The monthly part runs on the first days of a month (the 1st, or later
 /// when crond was down then); its history words keep it to once a month
 pub const MONTHLY_DAYS: i32 = 7;
+/// Activity days are kept at least this long, whatever the setting says:
+/// the monthly rule reads the whole month before
+pub const MIN_ACTIVITY_KEEP_DAYS: i64 = 62;
 /// The job runs every day at this minute of the UTC day
 const RUN_AT_MS: i64 = 30 * 60_000;
 /// Rows read per query, and pages read at most per channel and day
@@ -285,34 +289,65 @@ async fn busy_channels(
     work: &BTreeSet<String>,
     from: i64,
 ) -> Result<(Vec<String>, Vec<String>)> {
+    let floor = id_after(from);
+    let busy = |last: &Option<String>| last.as_ref().is_some_and(|last| last > &floor);
+
+    // threads are not in the server's channel list: read them per work
+    // channel, active and archived (an archived thread may have had a
+    // message that day before it was archived)
+    let mut threads = Vec::new();
+    for parent in work {
+        for archived in [false, true] {
+            let mut before: Option<String> = None;
+            for _ in 0..MAX_PAGES {
+                let page = db
+                    .fetch_threads(parent, archived, before.as_deref(), PAGE)
+                    .await?;
+                let full = page.len() as i64 >= PAGE;
+                let Some(last) = page.last().map(|thread| thread.id().to_string()) else {
+                    break;
+                };
+                for thread in page {
+                    if let Channel::TextChannel {
+                        id,
+                        last_message_id,
+                        ..
+                    } = thread
+                    {
+                        if busy(&last_message_id) && !work.contains(&id) && !threads.contains(&id)
+                        {
+                            threads.push(id);
+                        }
+                    }
+                }
+                if !full {
+                    break;
+                }
+                before = Some(last);
+            }
+        }
+    }
+
     let server = match db.fetch_server(server).await {
         Ok(server) => server,
-        Err(error) if matches!(error.error_type, ErrorType::NotFound) => return Ok((vec![], vec![])),
+        Err(error) if matches!(error.error_type, ErrorType::NotFound) => {
+            return Ok((threads, vec![]))
+        }
         Err(error) => return Err(error),
     };
-    let floor = id_after(from);
-    let mut threads = Vec::new();
     let mut tickets = Vec::new();
     for channel in db.fetch_channels(&server.channels).await? {
         let Channel::TextChannel {
             id,
             last_message_id,
-            parent,
-            ticket,
+            ticket: Some(ticket),
             ..
         } = channel
         else {
             continue;
         };
-        if !last_message_id.is_some_and(|last| last > floor) || work.contains(&id) {
-            continue;
-        }
-        if let Some(ticket) = ticket {
-            if ticket.opener != user {
-                tickets.push(id);
-            }
-        } else if parent.is_some_and(|parent| work.contains(&parent)) {
-            threads.push(id);
+        if busy(&last_message_id) && !work.contains(&id) && ticket.opener != user {
+            tickets.push(id);
         }
     }
     Ok((threads, tickets))
@@ -707,6 +742,9 @@ pub struct DailyRun {
     pub reminders: u32,
     pub marked_inactive: u32,
     pub back_to_active: u32,
+    pub away_ended: u32,
+    /// People whose month was not judged because days were not counted
+    pub months_skipped: u32,
 }
 
 fn group_by_person(members: Vec<TeamMember>) -> BTreeMap<String, Vec<TeamMember>> {
@@ -739,7 +777,11 @@ async fn retention(db: &Database, settings: &FeaturesTeamApplications, now: i64)
         }
     }
 
-    let activity_keep = settings.volunteers.activity_keep_days.clamp(0, 3650);
+    // never fewer days than the monthly rule still reads (last month whole)
+    let activity_keep = settings
+        .volunteers
+        .activity_keep_days
+        .clamp(MIN_ACTIVITY_KEEP_DAYS, 3650);
     db.delete_team_activity_before(add_days(day_of(now), -activity_keep))
         .await?;
     Ok(())
@@ -756,7 +798,7 @@ async fn follow_roles(db: &Database, settings: &FeaturesTeamApplications) -> Res
         .map(|application| (application.user_id, application.role))
         .collect();
     let mut ended = 0;
-    for mut member in db.fetch_team_members(&TeamMemberFilter::default()).await? {
+    for member in db.fetch_team_members(&TeamMemberFilter::default()).await? {
         if !member.is_current() {
             continue;
         }
@@ -775,7 +817,14 @@ async fn follow_roles(db: &Database, settings: &FeaturesTeamApplications) -> Res
             // not sure: look again tomorrow
             Err(_) => continue,
         };
-        if !holds && end_membership(db, settings, &mut member, SYSTEM, "role_removed").await? {
+        if holds {
+            continue;
+        }
+        // read again right before the write: left or changed in the meantime
+        let mut member = db.fetch_team_member(&member.id).await?;
+        if member.is_current()
+            && end_membership(db, settings, &mut member, SYSTEM, "role_removed").await?
+        {
             ended += 1;
         }
     }
@@ -834,19 +883,23 @@ async fn notify_trials(
     messenger: &dyn TeamMessenger,
     now: i64,
 ) -> Result<u32> {
-    let due: Vec<TeamMember> = db
-        .fetch_team_members(&TeamMemberFilter {
-            role: None,
-            status: Some(TeamMemberStatus::Trial),
-        })
-        .await?
-        .into_iter()
-        .filter(|m| {
-            m.confirmed_at.is_none()
-                && m.trial_ends_at <= now
-                && !has_action(m, "trial_end_notified")
-        })
-        .collect();
+    // a trial whose person is away ends all the same
+    let in_trial = |m: &TeamMember| {
+        matches!(m.status, TeamMemberStatus::Trial | TeamMemberStatus::Away)
+            && m.confirmed_at.is_none()
+            && m.trial_ends_at <= now
+            && !has_action(m, "trial_end_notified")
+    };
+    let mut due: Vec<TeamMember> = Vec::new();
+    for status in [TeamMemberStatus::Trial, TeamMemberStatus::Away] {
+        let found = db
+            .fetch_team_members(&TeamMemberFilter {
+                role: None,
+                status: Some(status),
+            })
+            .await?;
+        due.extend(found.into_iter().filter(|m| in_trial(m)));
+    }
     if due.is_empty() {
         return Ok(0);
     }
@@ -859,10 +912,7 @@ async fn notify_trials(
     for member in due {
         // read again: confirmed or notified in the meantime, nothing to do
         let mut member = db.fetch_team_member(&member.id).await?;
-        if member.status != TeamMemberStatus::Trial
-            || member.confirmed_at.is_some()
-            || has_action(&member, "trial_end_notified")
-        {
+        if !in_trial(&member) {
             continue;
         }
         member
@@ -895,6 +945,72 @@ async fn notify_trials(
         sent += 1;
     }
     Ok(sent)
+}
+
+/// An away whose `away_until` has passed ends by itself, as pressing "back"
+/// does: one who was inactive before is inactive again; otherwise a trial
+/// while the trial runs and nobody confirmed it, else active. The history
+/// word is `back`, dated when the away ran out.
+async fn expire_away(db: &Database, now: i64) -> Result<u32> {
+    let mut ended = 0;
+    let away = db
+        .fetch_team_members(&TeamMemberFilter {
+            role: None,
+            status: Some(TeamMemberStatus::Away),
+        })
+        .await?;
+    for member in away {
+        if !member.away_until.is_some_and(|until| until <= now) {
+            continue;
+        }
+        // read again right before the write
+        let mut member = db.fetch_team_member(&member.id).await?;
+        let Some(until) = member.away_until.filter(|until| *until <= now) else {
+            continue;
+        };
+        if member.status != TeamMemberStatus::Away {
+            continue;
+        }
+        let was_inactive = member
+            .history
+            .iter()
+            .rev()
+            .find(|entry| is_away_start(&entry.action))
+            .is_some_and(|entry| entry.action == "away_from_inactive");
+        member.status = if was_inactive {
+            TeamMemberStatus::Inactive
+        } else if now < member.trial_ends_at && member.confirmed_at.is_none() {
+            TeamMemberStatus::Trial
+        } else {
+            TeamMemberStatus::Active
+        };
+        member.away_until = None;
+        member.history.push(TeamHistory {
+            at: until,
+            actor: SYSTEM.to_string(),
+            action: "back".to_string(),
+        });
+        db.update_team_member(&member).await?;
+        ended += 1;
+    }
+    Ok(ended)
+}
+
+/// Whether every day of `month` (yyyymm) has its row: a month with a gap
+/// (the job was down for long, a count failed, the job was switched on in
+/// the middle) is not judged
+fn month_complete(days: &[TeamActivityDay], month: i32) -> bool {
+    let (start, end) = month_range(month);
+    let have: HashSet<i32> = days.iter().map(|row| row.day).collect();
+    let mut day = day_of(start);
+    let last = day_of(end - 1);
+    while day <= last {
+        if !have.contains(&day) {
+            return false;
+        }
+        day = add_days(day, 1);
+    }
+    true
 }
 
 /// The words a month leaves in a history (yyyymm)
@@ -935,7 +1051,14 @@ async fn monthly(
         let days = db
             .fetch_team_activity(&user, month * 100 + 1, month * 100 + 31)
             .await?;
+        if !month_complete(&days, month) {
+            log::info!("team volunteers: a month with days not counted is not judged");
+            run.months_skipped += 1;
+            continue;
+        }
         let total = month_total(&days);
+        let before_words = month_words(previous_month(month));
+        let [low_before, inactive_before, _] = &before_words;
         let low = i64::from(total) < minimum;
 
         let mut remind = false;
@@ -945,6 +1068,14 @@ async fn monthly(
             if !member.is_current() || words.iter().any(|word| has_action(&member, word)) {
                 continue;
             }
+            // a row of low months holds only when the month before was
+            // judged low; a month not judged (a gap) ends the row
+            let reset = member.low_months != 0
+                && !has_action(&member, low_before)
+                && !has_action(&member, inactive_before);
+            if reset {
+                member.low_months = 0;
+            }
             let covers = away_covers(&member, start, end);
             let outcome = month_rule(&member, total, minimum, covers);
             match outcome {
@@ -952,7 +1083,7 @@ async fn monthly(
                     // an away month or a good month ends a row of low ones
                     if (covers || !low) && member.low_months != 0 {
                         member.low_months = 0;
-                    } else {
+                    } else if !reset {
                         continue;
                     }
                 }
@@ -994,8 +1125,9 @@ async fn monthly(
     Ok(())
 }
 
-/// One run of the daily job at `now`. Does nothing at all while
-/// `volunteers.enabled` is off.
+/// One run of the daily job at `now`. While `volunteers.enabled` is off only
+/// the retention runs (deleting what is past its time is a duty, not a
+/// feature); nothing is counted, changed or sent.
 pub async fn run_daily(
     db: &Database,
     settings: &FeaturesTeamApplications,
@@ -1003,14 +1135,16 @@ pub async fn run_daily(
     now: i64,
 ) -> Result<DailyRun> {
     let mut run = DailyRun::default();
+    retention(db, settings, now).await?;
     if !settings.volunteers.enabled {
         return Ok(run);
     }
     run.ran = true;
-    retention(db, settings, now).await?;
     run.ended = follow_roles(db, settings).await?;
-    run.days_counted = count_missing_days(db, settings, now).await?;
+    // before the away ends: an away trial that ran out is told about once
     run.trial_notices = notify_trials(db, settings, messenger, now).await?;
+    run.away_ended = expire_away(db, now).await?;
+    run.days_counted = count_missing_days(db, settings, now).await?;
     if day_of(now) % 100 <= MONTHLY_DAYS {
         monthly(db, settings, messenger, now, &mut run).await?;
     }
@@ -1026,7 +1160,7 @@ mod tests {
     use super::*;
     use crate::{
         AuditLogEntry, AuditLogEntryAction, Member, MemberCompositeKey, ReferenceDb, StaffGrant,
-        StaffRole, TeamApplication, TeamApplicationStatus, TeamGrant, User,
+        StaffRole, TeamApplication, TeamApplicationStatus, TeamGrant, TeamIdentity, User,
     };
 
     const SERVER: &str = "server1";
@@ -1035,7 +1169,7 @@ mod tests {
     const GENERAL: &str = "general1";
     const MOD_ROLE: &str = "role_mod";
     /// 2026-11-10 00:00 UTC
-    const NOV_10: i64 = 1_762_732_800_000;
+    const NOV_10: i64 = 1_794_268_800_000;
 
     #[derive(Default)]
     struct Recorder(Mutex<Vec<(String, String)>>);
@@ -1404,6 +1538,33 @@ mod tests {
         assert!(away_covers(&late, start, end));
     }
 
+    /// A row (with no counts) for every day of `month` that has none: the
+    /// month was counted whole
+    async fn fill_month(db: &Database, user: &str, month: i32) {
+        let have: Vec<i32> = db
+            .fetch_team_activity(user, month * 100 + 1, month * 100 + 31)
+            .await
+            .unwrap()
+            .iter()
+            .map(|row| row.day)
+            .collect();
+        let (start, end) = month_range(month);
+        let mut day = day_of(start);
+        while day <= day_of(end - 1) {
+            if !have.contains(&day) {
+                db.upsert_team_activity_day(&TeamActivityDay {
+                    id: format!("{user}:{day}"),
+                    user_id: user.to_string(),
+                    day,
+                    counts: vec![],
+                })
+                .await
+                .unwrap();
+            }
+            day = add_days(day, 1);
+        }
+    }
+
     async fn december_first(db: &Database, recorder: &Recorder) -> DailyRun {
         run_daily(db, &settings(), recorder, day_start(20261201) + 3_600_000)
             .await
@@ -1417,6 +1578,7 @@ mod tests {
         db.insert_team_member(&member("m1", "u1", TeamMemberStatus::Active))
             .await
             .unwrap();
+        fill_month(&db, "u1", 202611).await;
         let recorder = Recorder::default();
         let first = december_first(&db, &recorder).await;
         let second = december_first(&db, &recorder).await;
@@ -1447,11 +1609,14 @@ mod tests {
         });
         holder(&db, "u1", vec![MOD_ROLE.to_string(), "role_support".to_string()]).await;
         let mut first = member("m1", "u1", TeamMemberStatus::Active);
+        // October was judged low already
         first.low_months = 1;
+        first.history = vec![entry(day_start(20261101), "reminded_202610")];
         let mut second = member("m2", "u1", TeamMemberStatus::Active);
         second.role = "support".to_string();
         db.insert_team_member(&first).await.unwrap();
         db.insert_team_member(&second).await.unwrap();
+        fill_month(&db, "u1", 202611).await;
         let recorder = Recorder::default();
         let run = run_daily(&db, &settings, &recorder, day_start(20261201) + 3_600_000)
             .await
@@ -1475,6 +1640,7 @@ mod tests {
         message(&db, day_start(20261116), HELP, "u1", None).await;
         store_day(&db, &settings(), "u1", 20261115).await.unwrap();
         store_day(&db, &settings(), "u1", 20261116).await.unwrap();
+        fill_month(&db, "u1", 202611).await;
         let recorder = Recorder::default();
         let run = december_first(&db, &recorder).await;
         assert_eq!(run.back_to_active, 1);
@@ -1605,5 +1771,186 @@ mod tests {
             db.fetch_team_member("m2").await.unwrap().notes.as_deref(),
             Some("kept")
         );
+    }
+
+    // ---- review fixes ----
+
+    #[tokio::test]
+    async fn switched_on_mid_month_nobody_reminded() {
+        let db = db();
+        holder(&db, "u1", vec![MOD_ROLE.to_string()]).await;
+        db.insert_team_member(&member("m1", "u1", TeamMemberStatus::Active))
+            .await
+            .unwrap();
+        // the job counted only from the 15th on: November has a gap
+        for day in 15..=30 {
+            db.upsert_team_activity_day(&TeamActivityDay {
+                id: format!("u1:202611{day}"),
+                user_id: "u1".to_string(),
+                day: 20261100 + day,
+                counts: vec![],
+            })
+            .await
+            .unwrap();
+        }
+        let recorder = Recorder::default();
+        let run = december_first(&db, &recorder).await;
+        assert_eq!(run.reminders, 0);
+        assert_eq!(run.months_skipped, 1);
+        assert!(recorder.to("u1").await.is_empty());
+        let m = db.fetch_team_member("m1").await.unwrap();
+        assert_eq!(m.low_months, 0);
+        assert!(month_words(202611).iter().all(|word| !has_action(&m, word)));
+    }
+
+    #[tokio::test]
+    async fn a_gap_ends_the_row_of_low_months() {
+        let db = db();
+        holder(&db, "u1", vec![MOD_ROLE.to_string()]).await;
+        // low once long ago (no word for October): November is a first low month
+        let mut m = member("m1", "u1", TeamMemberStatus::Active);
+        m.low_months = 1;
+        m.history = vec![entry(day_start(20260801), "reminded_202607")];
+        db.insert_team_member(&m).await.unwrap();
+        fill_month(&db, "u1", 202611).await;
+        let recorder = Recorder::default();
+        let run = december_first(&db, &recorder).await;
+        assert_eq!(run.marked_inactive, 0);
+        assert_eq!(run.reminders, 1);
+        let m = db.fetch_team_member("m1").await.unwrap();
+        assert_eq!(m.status, TeamMemberStatus::Active);
+        assert_eq!(m.low_months, 1);
+    }
+
+    #[tokio::test]
+    async fn thread_messages_count_for_the_work_channel() {
+        let db = db();
+        db.insert_team_member(&member("m1", "u1", TeamMemberStatus::Active))
+            .await
+            .unwrap();
+        let thread = |id: &str, parent: &str, archived: bool, last: &str| -> Channel {
+            serde_json::from_value(serde_json::json!({
+                "channel_type": "TextChannel",
+                "_id": id,
+                "server": SERVER,
+                "name": "thread",
+                "parent": parent,
+                "thread": { "owner": "u2", "archived": archived },
+                "last_message_id": last,
+            }))
+            .unwrap()
+        };
+        let a = message(&db, NOV_10 + 1_000, "thread_a", "u1", None).await;
+        let b = message(&db, NOV_10 + 2_000, "thread_b", "u1", None).await;
+        let c = message(&db, NOV_10 + 3_000, "thread_c", "u1", None).await;
+        db.insert_channel(&thread("thread_a", HELP, false, &a)).await.unwrap();
+        db.insert_channel(&thread("thread_b", HELP, true, &b)).await.unwrap();
+        // a thread of #general does not count
+        db.insert_channel(&thread("thread_c", GENERAL, false, &c)).await.unwrap();
+        let counts = count_day(&db, &settings(), "u1", 20261110).await.unwrap();
+        assert_eq!(of(&counts, SERVER).messages, 2);
+    }
+
+    #[tokio::test]
+    async fn retention_runs_when_disabled_and_keeps_two_months() {
+        let db = db();
+        let mut settings = settings();
+        settings.volunteers.enabled = false;
+        settings.volunteers.activity_keep_days = 0;
+        db.upsert_team_identity(&TeamIdentity {
+            id: "gone".to_string(),
+            name: "Sara".to_string(),
+            age: 24,
+            country: "Austria".to_string(),
+            rules_version: "1".to_string(),
+            rules_at: 0,
+            purge_at: Some(NOV_10 - DAY_MS),
+        })
+        .await
+        .unwrap();
+        let row = |day: i32| TeamActivityDay {
+            id: format!("u1:{day}"),
+            user_id: "u1".to_string(),
+            day,
+            counts: vec![],
+        };
+        // 40 days back stays (at least 62 are kept); 100 days back goes
+        db.upsert_team_activity_day(&row(add_days(20261110, -40))).await.unwrap();
+        db.upsert_team_activity_day(&row(add_days(20261110, -100))).await.unwrap();
+        let recorder = Recorder::default();
+        let run = run_daily(&db, &settings, &recorder, NOV_10 + 3_600_000)
+            .await
+            .unwrap();
+        assert!(!run.ran);
+        assert!(db.fetch_team_identity("gone").await.unwrap().is_none());
+        let rows = db.fetch_team_activity("u1", 20250101, 20271231).await.unwrap();
+        assert_eq!(rows.iter().map(|r| r.day).collect::<Vec<_>>(), vec![add_days(20261110, -40)]);
+        assert!(recorder.0.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn away_ends_by_itself() {
+        let db = db();
+        let until = NOV_10 - 3_600_000;
+        let mut from_inactive = member("m1", "u1", TeamMemberStatus::Away);
+        from_inactive.history = vec![entry(NOV_10 - 20 * DAY_MS, "away_from_inactive")];
+        from_inactive.away_until = Some(until);
+        let mut in_trial = member("m2", "u2", TeamMemberStatus::Away);
+        in_trial.history = vec![entry(NOV_10 - 5 * DAY_MS, "away")];
+        in_trial.away_until = Some(until);
+        in_trial.trial_ends_at = NOV_10 + 10 * DAY_MS;
+        let mut active = member("m3", "u3", TeamMemberStatus::Away);
+        active.history = vec![entry(NOV_10 - 5 * DAY_MS, "away")];
+        active.away_until = Some(until);
+        active.confirmed_at = Some(day_start(20260201));
+        // still away
+        let mut later = member("m4", "u4", TeamMemberStatus::Away);
+        later.history = vec![entry(NOV_10 - 5 * DAY_MS, "away")];
+        later.away_until = Some(NOV_10 + 5 * DAY_MS);
+        later.confirmed_at = Some(day_start(20260201));
+        for (user, m) in [("u1", from_inactive), ("u2", in_trial), ("u3", active), ("u4", later)] {
+            holder(&db, user, vec![MOD_ROLE.to_string()]).await;
+            db.insert_team_member(&m).await.unwrap();
+        }
+        let run = run_daily(&db, &settings(), &Recorder::default(), NOV_10 + 3_600_000)
+            .await
+            .unwrap();
+        assert_eq!(run.away_ended, 3);
+        for (id, status) in [
+            ("m1", TeamMemberStatus::Inactive),
+            ("m2", TeamMemberStatus::Trial),
+            ("m3", TeamMemberStatus::Active),
+            ("m4", TeamMemberStatus::Away),
+        ] {
+            let m = db.fetch_team_member(id).await.unwrap();
+            assert_eq!(m.status, status, "{id}");
+            if id != "m4" {
+                assert_eq!(m.away_until, None);
+                let last = m.history.last().unwrap();
+                assert_eq!((last.actor.as_str(), last.action.as_str(), last.at), (SYSTEM, "back", until));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn trial_end_notice_also_when_away() {
+        let db = db();
+        holder(&db, "u1", vec![MOD_ROLE.to_string()]).await;
+        save_owner(&db, "boss").await;
+        let mut away = member("m1", "u1", TeamMemberStatus::Away);
+        away.trial_ends_at = NOV_10 - DAY_MS;
+        away.history = vec![entry(NOV_10 - 10 * DAY_MS, "away")];
+        away.away_until = Some(NOV_10 + 10 * DAY_MS);
+        db.insert_team_member(&away).await.unwrap();
+        let recorder = Recorder::default();
+        for _ in 0..2 {
+            run_daily(&db, &settings(), &recorder, NOV_10 + 3_600_000)
+                .await
+                .unwrap();
+        }
+        assert_eq!(recorder.to("boss").await.len(), 1);
+        let m = db.fetch_team_member("m1").await.unwrap();
+        assert_eq!(m.status, TeamMemberStatus::Away);
+        assert!(has_action(&m, "trial_end_notified"));
     }
 }
