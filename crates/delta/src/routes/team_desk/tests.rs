@@ -1760,3 +1760,35 @@ fn reject_sets_identity_purge_with_the_application() {
         assert_eq!(d.identity_of(&d.applicant).await.unwrap().purge_at, None);
     });
 }
+
+#[test]
+fn a_stale_identity_does_not_pass_apply() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        d.volunteers_on("1");
+        let session = d.applicant_session.clone();
+        let reviewer_session = d.reviewer_session.clone();
+        d.about_as(&session, "24").await;
+        let (_, outcome) = d.apply_as(&session, "support").await;
+        let id = id_of(&outcome);
+        let card = d.card(&id).await;
+        d.reject(&reviewer_session, &card, &id, "Not a fit right now.").await;
+        // time is up for both, but the clean-up task has not run
+        let mut identity = d.identity_of(&d.applicant).await.unwrap();
+        identity.purge_at = Some(1);
+        d.harness.db.upsert_team_identity(&identity).await.unwrap();
+        let mut application = d.stored(&id).await;
+        application.purge_at = Some(1);
+        assert!(d
+            .harness
+            .db
+            .replace_team_application_if(&application, TeamApplicationStatus::Rejected)
+            .await
+            .unwrap());
+        let (status, outcome) = d.apply_as(&session, "support").await;
+        assert_eq!(status, Status::Ok, "{outcome}");
+        assert_eq!(outcome["applied"], false);
+        assert_eq!(outcome["problem"], "identity_missing");
+        assert!(d.identity_of(&d.applicant).await.is_none());
+    });
+}

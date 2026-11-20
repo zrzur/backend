@@ -291,21 +291,29 @@ async fn out_of_reach(db: &Database, person: &str, except: &str) -> bool {
 }
 
 /// The identity of someone whose application ended, when nothing else
-/// keeps them in the team's reach: erased at once (`purge_at` `None`) or set
-/// to go when the application's own time is up
-async fn release_identity(db: &Database, application: &TeamApplication, purge_at: Option<i64>) {
+/// keeps them in the team's reach: erased at once (`erase`) or set to go when
+/// the application's own time is up (or after `identity_keep_days` when the
+/// application has none)
+async fn release_identity(
+    db: &Database,
+    settings: &FeaturesTeamApplications,
+    application: &TeamApplication,
+    erase: bool,
+) {
     if !out_of_reach(db, &application.user_id, &application.id).await {
         return;
     }
     let Ok(Some(mut identity)) = db.fetch_team_identity(&application.user_id).await else {
         return;
     };
-    match purge_at {
-        None => {
+    match erase {
+        true => {
             let _ = db.delete_team_identity(&application.user_id).await;
         }
-        Some(at) => {
-            identity.purge_at = Some(at);
+        false => {
+            identity.purge_at = Some(application.purge_at.unwrap_or_else(|| {
+                staff_now() + settings.volunteers.identity_keep_days.max(0) * DAY_MS
+            }));
             let _ = db.upsert_team_identity(&identity).await;
         }
     }
@@ -1136,6 +1144,8 @@ async fn apply(
         return refuse("adult_only", None, None);
     }
 
+    // what is past its time goes first, so a stale identity cannot pass
+    purge_due(db, staff_now()).await?;
     // "About you" first, when the volunteer care is on
     let identity = db.fetch_team_identity(&person.id).await?;
     if settings.volunteers.enabled
@@ -1307,7 +1317,7 @@ async fn withdraw(
         };
     }
     // withdrawing erases what the person gave, identity included
-    release_identity(db, &withdrawn, None).await;
+    release_identity(db, &settings, &withdrawn, true).await;
     team_texts::send(
         db,
         &withdrawn.user_id,
@@ -1641,7 +1651,7 @@ async fn act(
     }
 
     match action.as_str() {
-        "reject" => release_identity(db, &decided, decided.purge_at).await,
+        "reject" => release_identity(db, &settings, &decided, false).await,
         "accept" => keep_identity(db, &application.user_id).await,
         _ => {}
     }
