@@ -239,6 +239,92 @@ mod tests {
         assert!(english["terms"].contains("It is not a job and not employment"));
     }
 
+    /// The texts a volunteer reads (Task 10): in each person's own words,
+    /// never left in English; only the staff notice stays English
+    #[test]
+    fn every_language_has_every_volunteer_text_in_its_own_words() {
+        let english = &TEXTS["en"];
+        let volunteer_keys: Vec<&String> = english
+            .keys()
+            .filter(|key| {
+                key.starts_with("volunteer.")
+                    || key.starts_with("about_")
+                    || key.starts_with("identity_missing.")
+            })
+            .collect();
+        assert!(volunteer_keys.len() >= 24, "{} volunteer texts", volunteer_keys.len());
+        for (code, _) in LANGUAGES.iter().skip(1) {
+            let texts = &TEXTS[code];
+            for key in &volunteer_keys {
+                assert_ne!(texts[*key], english[*key], "{code} {key} is still English");
+            }
+            // the notice to the staff is English in every file (official servers are English)
+            for key in ["staff.trial_ended.title", "staff.trial_ended.body"] {
+                assert_eq!(texts[key], english[key], "{code} {key}");
+            }
+            // a button label of the leave question
+            assert!(texts["volunteer.leave_confirm.label"].chars().count() <= 80, "{code} leave label");
+        }
+        let thanks = [
+            ("en", "Thank you"),
+            ("ar", "شكر"),
+            ("de", "Danke"),
+            ("fr", "Merci"),
+            ("es", "Gracias"),
+            ("ru", "Спасибо"),
+            ("zh-Hans", "感谢"),
+        ];
+        for (code, word) in thanks {
+            for key in ["volunteer.left.body", "volunteer.removed.body", "volunteer.reminder.body"] {
+                assert!(text(code, key).contains(word), "{code} {key} says thank you");
+            }
+        }
+        // a count reads right for any number: "Days away: 1", never "1 days"
+        for (code, _) in LANGUAGES {
+            for key in &volunteer_keys {
+                let value = &TEXTS[code][*key];
+                assert!(!value.contains("(s)"), "{code} {key}");
+                assert!(!value.contains("{days} days"), "{code} {key}");
+            }
+        }
+    }
+
+    /// No text calls a volunteer role a job, a shift, a duty or a penalty, in
+    /// any language. `terms` alone names a job, to say that it is not one.
+    #[test]
+    fn never_a_job_a_shift_a_duty_or_a_penalty_in_any_language() {
+        // lower-case words, looked for in the lower-cased text
+        let words: [(&str, &[&str]); 6] = [
+            ("en", &["job", "shift", "duty", "duties", "penalt"]),
+            ("ar", &["وظيف", "دوام", "عقوب", "مناوب"]),
+            ("fr", &["emploi", "travail", "pénalit", "sanction"]),
+            ("es", &["trabajo", "empleo", "turno", "penaliz", "sanción", "sancion"]),
+            ("ru", &["работа", "смена", "смены", "смену", "дежурств", "штраф", "наказан"]),
+            ("zh-Hans", &["工作", "上班", "值班", "惩罚", "处罚"]),
+        ];
+        for (code, list) in words {
+            for (key, value) in &TEXTS[code] {
+                if key == "terms" {
+                    continue;
+                }
+                let lower = value.to_lowercase();
+                for word in list {
+                    assert!(!lower.contains(word), "{code} {key} says {word}");
+                }
+            }
+        }
+        // German nouns are written with a capital, so the case matters:
+        // "Verpflichtung" (a commitment, said to be none) is fine
+        for (key, value) in &TEXTS["de"] {
+            if key == "terms" {
+                continue;
+            }
+            for word in ["Job", "Schicht", "Pflicht", "Strafe"] {
+                assert!(!value.contains(word), "de {key} says {word}");
+            }
+        }
+    }
+
     #[test]
     fn words_from_people_are_made_harmless_and_cannot_pull_in_a_blank() {
         let reason = "[Re-verify your account](https://evil.example) @everyone <@01X> {terms} {rules}";
