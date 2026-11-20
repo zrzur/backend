@@ -2627,6 +2627,8 @@ impl TeamRole {
                 && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
         };
         word(&self.key)
+            // `me` is the button of "Add my details", not a role
+            && self.key != "me"
             && (self.has_kind() || !self.name.trim().is_empty())
             && !self.server.trim().is_empty()
             && (self.is_manual() || !self.role.trim().is_empty())

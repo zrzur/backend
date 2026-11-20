@@ -2192,7 +2192,7 @@ fn existing_accepted_get_a_member_on_settle() {
         assert!(d.members_of(&d.applicant).await.is_empty());
 
         d.volunteers_on("1");
-        let (status, _) = d.as_bot(&d.bot.token, "/team/desk/settle", None).await;
+        let (status, _) = d.as_bot(&d.bot.token, "/team/desk/settle", Some(json!({}))).await;
         assert_eq!(status, Status::Ok);
         let members = d.members_of(&d.applicant).await;
         assert_eq!(members.len(), 1);
@@ -2202,7 +2202,7 @@ fn existing_accepted_get_a_member_on_settle() {
 
         // once: a second look sends nothing more
         let before = d.told(&d.applicant).await.len();
-        d.as_bot(&d.bot.token, "/team/desk/settle", None).await;
+        d.as_bot(&d.bot.token, "/team/desk/settle", Some(json!({}))).await;
         assert_eq!(d.told(&d.applicant).await.len(), before);
         assert_eq!(d.members_of(&d.applicant).await.len(), 1);
 

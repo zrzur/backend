@@ -61,7 +61,7 @@ impl AbstractTeamApplications for MongoDb {
         self.find_with_options(
             COL,
             doc! { "status": "Accepted" },
-            FindOptions::builder().sort(doc! { "_id": 1 }).limit(2000).build(),
+            FindOptions::builder().sort(doc! { "_id": -1 }).limit(2000).build(),
         )
         .await
         .map_err(|_| create_database_error!("find", COL))

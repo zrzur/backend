@@ -13,7 +13,7 @@ use revolt_database::{
 };
 use revolt_result::Result;
 
-use super::{out_of_reach, DAY_MS};
+use super::{days_ms, out_of_reach};
 use crate::util::team_texts;
 
 /// Days a team-server invite lives
@@ -37,7 +37,7 @@ pub(super) async fn enrol(
     actor: &str,
 ) -> Result<TeamMember> {
     let now = staff_now();
-    let trial_ends_at = now + settings.volunteers.trial_days.max(0) * DAY_MS;
+    let trial_ends_at = now + days_ms(settings.volunteers.trial_days);
 
     let find = |all: Vec<TeamMember>| all.into_iter().find(|m| m.role == application.role);
     if let Some(mut member) = find(db.fetch_team_members_of(&application.user_id).await?) {
@@ -152,6 +152,10 @@ pub(super) async fn end_membership(
     action: &str,
     reason: Option<&str>,
 ) -> Result<()> {
+    // already gone: no second history entry, no second thank-you
+    if member.status == TeamMemberStatus::Left {
+        return Ok(());
+    }
     let now = staff_now();
     member.status = TeamMemberStatus::Left;
     member.left_at = Some(now);
@@ -197,7 +201,7 @@ pub(super) async fn end_membership(
         if out_of_reach(db, &member.user_id, "").await {
             if let Ok(Some(mut identity)) = db.fetch_team_identity(&member.user_id).await {
                 identity.purge_at =
-                    Some(now + settings.volunteers.identity_keep_days.max(0) * DAY_MS);
+                    Some(now + days_ms(settings.volunteers.identity_keep_days));
                 let _ = db.upsert_team_identity(&identity).await;
             }
         }

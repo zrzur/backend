@@ -81,6 +81,11 @@ const MAX_ANSWER: usize = 1000;
 const MIN_LANGUAGES: usize = 2;
 const MAX_LANGUAGES: usize = 200;
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
+
+/// Milliseconds of a number of days from the settings, kept within 0..=3650
+fn days_ms(days: i64) -> i64 {
+    days.clamp(0, 3650) * DAY_MS
+}
 const MIN_AGE: u8 = 16;
 const MAX_AGE: u8 = 99;
 const MIN_NAME: usize = 2;
@@ -313,7 +318,7 @@ async fn release_identity(
         }
         false => {
             identity.purge_at = Some(application.purge_at.unwrap_or_else(|| {
-                staff_now() + settings.volunteers.identity_keep_days.max(0) * DAY_MS
+                staff_now() + days_ms(settings.volunteers.identity_keep_days)
             }));
             let _ = db.upsert_team_identity(&identity).await;
         }
@@ -914,7 +919,7 @@ fn standing(
         let since = application.acted_at.unwrap_or(application.submitted_at);
         let until = match application.status {
             TeamApplicationStatus::Withdrawn => since + withdraw_wait_ms(settings),
-            _ => since + settings.cooldown_days.max(0) * DAY_MS,
+            _ => since + days_ms(settings.cooldown_days),
         };
         if until > now && latest.as_ref().is_none_or(|(_, other)| until > *other) {
             latest = Some((application.clone(), until));
@@ -1606,7 +1611,7 @@ async fn act(
         }
         "accept" => {
             decided.status = TeamApplicationStatus::Accepted;
-            decided.purge_at = Some(now + settings.accepted_retention_days.max(0) * DAY_MS);
+            decided.purge_at = Some(now + days_ms(settings.accepted_retention_days));
             // written with the decision: if the server stops before the role
             // is given, the next look gives it
             decided.grant = Some(TeamGrant::PendingJoin);
@@ -1614,7 +1619,7 @@ async fn act(
         _ => {
             decided.status = TeamApplicationStatus::Rejected;
             decided.reason = reason.clone();
-            decided.purge_at = Some(now + settings.rejected_days() * DAY_MS);
+            decided.purge_at = Some(now + days_ms(settings.rejected_days()));
         }
     }
 
@@ -2012,26 +2017,34 @@ async fn settle(db: &State<Database>, user: User) -> Result<Json<Vec<Settled>>> 
 /// written) get one now. Each who has not given their details yet is asked,
 /// once, to add them: the record being new is what makes it once.
 async fn enrol_accepted(db: &Database, settings: &FeaturesTeamApplications) -> Result<()> {
+    // one look at every record, not one per application
+    let mut known: std::collections::HashMap<(String, String), revolt_database::TeamMember> = db
+        .fetch_team_members(&Default::default())
+        .await?
+        .into_iter()
+        .map(|m| ((m.user_id.clone(), m.role.clone()), m))
+        .collect();
     for application in db.fetch_team_applications_accepted().await? {
-        if settings.role(&application.role).is_none() {
+        let key = (application.user_id.clone(), application.role.clone());
+        if settings.role(&application.role).is_none() || known.contains_key(&key) {
             continue;
         }
-        let known = db
-            .fetch_team_members_of(&application.user_id)
-            .await?
-            .iter()
-            .any(|m| m.role == application.role);
-        if known {
-            continue;
-        }
-        let mut member = match volunteers::enrol(db, settings, &application, "system").await {
-            Ok(member) => member,
-            Err(error) => {
-                log::warn!("team member record not made: {:?}", error.error_type);
-                continue;
+        match volunteers::enrol(db, settings, &application, "system").await {
+            Ok(member) => {
+                known.insert(key, member);
             }
-        };
-        if matches!(db.fetch_team_identity(&application.user_id).await, Ok(Some(_))) {
+            Err(error) => log::warn!("team member record not made: {:?}", error.error_type),
+        }
+    }
+    // everyone current without details who was not asked yet is asked, once
+    for mut member in known.into_values() {
+        if !member.is_current()
+            || member.history.iter().any(|h| h.action == "identity_requested")
+            || settings.role(&member.role).is_none()
+        {
+            continue;
+        }
+        if matches!(db.fetch_team_identity(&member.user_id).await, Ok(Some(_))) {
             continue;
         }
         member.history.push(revolt_database::TeamHistory {
@@ -2044,10 +2057,10 @@ async fn enrol_accepted(db: &Database, settings: &FeaturesTeamApplications) -> R
         }
         team_texts::send(
             db,
-            &application.user_id,
+            &member.user_id,
             "volunteer.identity_request",
-            settings.role(&application.role),
-            &application.role,
+            settings.role(&member.role),
+            &member.role,
             &[],
         )
         .await;
