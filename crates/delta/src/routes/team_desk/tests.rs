@@ -2309,3 +2309,427 @@ fn welcome_dm_has_team_server_invite_when_set() {
         );
     });
 }
+
+// ---- the volunteer's own buttons ----
+
+impl Desk {
+    /// The applicant becomes a volunteer in `support`; gives the member id
+    async fn volunteer(&mut self) -> String {
+        self.volunteers_on("1");
+        let session = self.applicant_session.clone();
+        self.accepted_as(&session, "support").await;
+        self.members_of(&self.applicant.clone()).await.remove(0).id
+    }
+
+    /// A person presses "My status" in the apply channel
+    async fn status_as(&mut self, session: &str) -> (Status, Value) {
+        let channel = self.apply.clone();
+        let message = self.message(&channel, &["ta:status"]).await;
+        let pressed = self.press(session, &channel, &message, "ta:status").await;
+        self.hand("status", &pressed).await
+    }
+
+    /// A person sends the away form with `days` typed in
+    async fn away_as(&mut self, session: &str, days: &str) -> (Status, Value) {
+        let channel = self.apply.clone();
+        let panel = self.panel.clone();
+        let parent = self.press(session, &channel, &panel, "ta:start").await;
+        let modal = json!({
+            "custom_id": "ta:away",
+            "title": "Away",
+            "components": [{ "type": "Field", "label": "Days", "component": {
+                "type": "TextInput", "custom_id": "days", "style": "Short",
+                "label": "Days", "required": true
+            }}]
+        });
+        let sent = self
+            .form(session, &channel, &parent, modal, json!([{ "custom_id": "days", "value": days }]))
+            .await;
+        self.hand("away", &sent).await
+    }
+
+    /// Step one: a person presses `ta:leave:<member id>`
+    async fn leave_press(&mut self, session: &str, member: &str) -> (Status, Value) {
+        let channel = self.apply.clone();
+        let id = format!("ta:leave:{member}");
+        let message = self.message(&channel, &[&id]).await;
+        let pressed = self.press(session, &channel, &message, &id).await;
+        self.hand("leave", &pressed).await
+    }
+
+    /// Step two: the bot asks in private with `content` and one button
+    /// `label`; the person presses it. Gives what the bot received.
+    async fn leave_confirm_press(
+        &mut self,
+        session: &str,
+        member: &str,
+        content: &str,
+        label: &str,
+    ) -> (String, String) {
+        let user_id = self
+            .users
+            .iter()
+            .find(|(known, _)| known == session)
+            .map(|(_, user)| user.clone())
+            .expect("a known session");
+        let mut user_events = PubSubTestHelper::new(&format!("{user_id}!")).await;
+        let channel = self.apply.clone();
+        let id = format!("ta:leave:{member}");
+        let message = self.message(&channel, &[&id]).await;
+        let asked = self.press(session, &channel, &message, &id).await;
+        let status = self
+            .harness
+            .client
+            .post(format!("/interactions/{}/{}/callback", asked.0, asked.1))
+            .header(ContentType::JSON)
+            .body(
+                json!({ "type": "Message", "data": {
+                    "content": content, "ephemeral": true,
+                    "components": [{ "type": "ActionRow", "components": [
+                        { "type": "Button", "style": "Danger", "label": label,
+                          "custom_id": format!("ta:leave_confirm:{member}") }
+                    ]}]
+                }})
+                .to_string(),
+            )
+            .dispatch()
+            .await
+            .status();
+        assert_eq!(status, Status::NoContent);
+        let question = match user_events
+            .wait_for_event(|e| matches!(e, EventV1::EphemeralMessageCreate { .. }))
+            .await
+        {
+            EventV1::EphemeralMessageCreate { message } => message,
+            _ => unreachable!(),
+        };
+        self.last_question = Some((asked.0.clone(), asked.1.clone()));
+        self.press(session, &channel, &question.id, &format!("ta:leave_confirm:{member}"))
+            .await
+    }
+
+    /// The words the server wants for leaving `member`
+    async fn leave_words(&mut self, session: &str, member: &str) -> String {
+        let (status, shown) = self.leave_press(session, member).await;
+        assert_eq!(status, Status::Ok, "{shown}");
+        shown["confirm"]["text"].as_str().unwrap().to_string()
+    }
+
+    async fn member(&self, id: &str) -> revolt_database::TeamMember {
+        self.members_of(&self.applicant)
+            .await
+            .into_iter()
+            .find(|member| member.id == id)
+            .unwrap()
+    }
+}
+
+#[test]
+fn month_total_adds_all_five_kinds() {
+    let count = |n: u32| revolt_database::TeamActivityCount {
+        server: "s".to_string(),
+        messages: n,
+        replies: n,
+        moderation: n,
+        reviews: n,
+        tickets: n,
+    };
+    let day = |counts| revolt_database::TeamActivityDay {
+        id: "u:20261101".to_string(),
+        user_id: "u".to_string(),
+        day: 20261101,
+        counts,
+    };
+    assert_eq!(super::volunteers::month_total(&[]), 0);
+    assert_eq!(
+        super::volunteers::month_total(&[day(vec![count(1), count(2)]), day(vec![count(3)])]),
+        30
+    );
+    assert_eq!(super::volunteers::month_bounds(1_794_000_000_000), (20261101, 20261131));
+    assert_eq!(super::volunteers::parse_days("٩٠"), Some(90));
+    assert_eq!(super::volunteers::parse_days("0"), Some(0));
+    for bad in ["", "ten", "-3", "5 days", "1.5", "12345"] {
+        assert_eq!(super::volunteers::parse_days(bad), None, "{bad}");
+    }
+}
+
+#[test]
+fn status_shows_month_against_minimum() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.volunteer().await;
+        let session = d.applicant_session.clone();
+        let (status, shown) = d.status_as(&session).await;
+        assert_eq!(status, Status::Ok, "{shown}");
+        assert_eq!(shown["month"]["contributions"], 0);
+        assert_eq!(shown["month"]["minimum"], 2);
+        let places = shown["memberships"].as_array().unwrap();
+        assert_eq!(places.len(), 1);
+        assert_eq!(places[0]["id"], id);
+        assert_eq!(places[0]["role"], "support");
+        assert_eq!(places[0]["status"], "trial");
+        assert_eq!(places[0]["server_name"], d.lounge.name);
+        assert!(places[0]["trial_ends_at"].as_i64().unwrap() > 0);
+        assert!(shown.get("confirm").is_none());
+
+        // counts of this month, all five kinds; last month's do not count
+        let (first, _) = super::volunteers::month_bounds(revolt_database::staff_now());
+        let count = |n: u32| revolt_database::TeamActivityCount {
+            server: d.lounge.id.clone(),
+            messages: n,
+            replies: n,
+            moderation: n,
+            reviews: n,
+            tickets: n,
+        };
+        for (day, n) in [(first, 1), (first + 1, 2), (first - 100, 9)] {
+            d.harness
+                .db
+                .upsert_team_activity_day(&revolt_database::TeamActivityDay {
+                    id: format!("{}:{day}", d.applicant.id),
+                    user_id: d.applicant.id.clone(),
+                    day,
+                    counts: vec![count(n)],
+                })
+                .await
+                .unwrap();
+        }
+        let (_, shown) = d.status_as(&session).await;
+        assert_eq!(shown["month"]["contributions"], 15);
+    });
+}
+
+#[test]
+fn status_only_shows_my_own() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let mine = d.volunteer().await;
+        let (_, other_session, other) = d.harness.new_user().await;
+        Member::create(&d.harness.db, &d.lounge, &other, None).await.unwrap();
+        d.know(&other_session.token, &other);
+        d.accepted_as(&other_session.token, "support").await;
+        let theirs = d.members_of(&other).await.remove(0).id;
+        assert_ne!(mine, theirs);
+
+        let session = d.applicant_session.clone();
+        let (_, shown) = d.status_as(&session).await;
+        let ids: Vec<_> = shown["memberships"].as_array().unwrap().iter().map(|m| m["id"].clone()).collect();
+        assert_eq!(ids, vec![json!(mine)]);
+        let (_, shown) = d.status_as(&other_session.token).await;
+        let ids: Vec<_> = shown["memberships"].as_array().unwrap().iter().map(|m| m["id"].clone()).collect();
+        assert_eq!(ids, vec![json!(theirs)]);
+        // someone who is no volunteer sees nothing of anybody
+        let guest = d.guest_session.clone();
+        let (status, shown) = d.status_as(&guest).await;
+        assert_eq!(status, Status::Ok);
+        assert!(shown["memberships"].as_array().unwrap().is_empty());
+        assert!(!shown.to_string().contains(&mine));
+        assert!(!shown.to_string().contains(&theirs));
+    });
+}
+
+#[test]
+fn away_sets_status_and_until() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.volunteer().await;
+        let session = d.applicant_session.clone();
+        let before = revolt_database::staff_now();
+        // Arabic-Indic digits are digits
+        let (status, shown) = d.away_as(&session, "١٠").await;
+        assert_eq!(status, Status::Ok, "{shown}");
+        assert_eq!(shown["memberships"][0]["status"], "away");
+        let member = d.member(&id).await;
+        assert_eq!(member.status, revolt_database::TeamMemberStatus::Away);
+        let until = member.away_until.unwrap();
+        assert!(until >= before + 10 * super::DAY_MS && until <= revolt_database::staff_now() + 10 * super::DAY_MS);
+        let last = member.history.last().unwrap();
+        assert_eq!((last.action.as_str(), last.actor.as_str()), ("away", d.applicant.id.as_str()));
+        assert_eq!(shown["memberships"][0]["away_until"], until);
+        let told = d.told(&d.applicant).await;
+        assert!(told.iter().any(|m| m.contains("You are away")), "{told:?}");
+    });
+}
+
+#[test]
+fn away_over_max_refused() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.volunteer().await;
+        let session = d.applicant_session.clone();
+        for bad in ["91", "5 days", "ten", "-3", "1.5"] {
+            let (status, _) = d.away_as(&session, bad).await;
+            assert_ne!(status, Status::Ok, "{bad}");
+            assert_eq!(d.member(&id).await.status, revolt_database::TeamMemberStatus::Trial, "{bad}");
+        }
+        // the longest allowed is allowed
+        let (status, _) = d.away_as(&session, "90").await;
+        assert_eq!(status, Status::Ok);
+        assert_eq!(d.member(&id).await.status, revolt_database::TeamMemberStatus::Away);
+    });
+}
+
+#[test]
+fn away_zero_ends_away() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.volunteer().await;
+        let session = d.applicant_session.clone();
+        // zero while not away changes nothing
+        let (status, _) = d.away_as(&session, "0").await;
+        assert_eq!(status, Status::Ok);
+        assert_eq!(d.member(&id).await.history.len(), 1);
+
+        d.away_as(&session, "10").await;
+        let (status, shown) = d.away_as(&session, "0").await;
+        assert_eq!(status, Status::Ok, "{shown}");
+        let member = d.member(&id).await;
+        // the trial is not over and not confirmed: back to the trial
+        assert_eq!(member.status, revolt_database::TeamMemberStatus::Trial);
+        assert_eq!(member.away_until, None);
+        assert_eq!(member.history.last().unwrap().action, "back");
+        let told = d.told(&d.applicant).await;
+        assert!(told.iter().any(|m| m.contains("Welcome back")), "{told:?}");
+
+        // confirmed: back to active
+        let mut confirmed = member;
+        confirmed.confirmed_at = Some(revolt_database::staff_now());
+        d.harness.db.update_team_member(&confirmed).await.unwrap();
+        d.away_as(&session, "5").await;
+        assert_eq!(d.member(&id).await.status, revolt_database::TeamMemberStatus::Away);
+        d.away_as(&session, "0").await;
+        assert_eq!(d.member(&id).await.status, revolt_database::TeamMemberStatus::Active);
+    });
+}
+
+#[test]
+fn leave_needs_the_servers_confirm() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.volunteer().await;
+        let session = d.applicant_session.clone();
+        // step one gives the server's words and the one button, ends nothing
+        let words = d.leave_words(&session, &id).await;
+        assert!(words.starts_with("Leave the Zrzur Team as Role support in "), "{words}");
+        assert!(d.member(&id).await.is_current());
+        let (_, shown) = d.leave_press(&session, &id).await;
+        assert_eq!(shown["confirm"]["label"], "Yes, leave");
+        assert_eq!(shown["confirm"]["custom_id"], format!("ta:leave_confirm:{id}"));
+
+        // a plain message button that says "confirm" ends nothing
+        let channel = d.apply.clone();
+        let custom = format!("ta:leave_confirm:{id}");
+        let stray = d.message(&channel, &[&custom]).await;
+        let pressed = d.press(&session, &channel, &stray, &custom).await;
+        let (status, _) = d.hand("leave", &pressed).await;
+        assert_eq!(status, Status::BadRequest);
+        assert!(d.member(&id).await.is_current());
+    });
+}
+
+#[test]
+fn leave_confirm_text_must_be_unchanged() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.volunteer().await;
+        let session = d.applicant_session.clone();
+        let words = d.leave_words(&session, &id).await;
+
+        // other words
+        let pressed = d.leave_confirm_press(&session, &id, "Stay a while?", "Yes, leave").await;
+        let (status, _) = d.hand("leave", &pressed).await;
+        assert_eq!(status, Status::BadRequest);
+        // the right words under another label
+        let pressed = d.leave_confirm_press(&session, &id, &words, "Stay").await;
+        let (status, _) = d.hand("leave", &pressed).await;
+        assert_eq!(status, Status::BadRequest);
+        // other words, edited to the right ones before the hand-back
+        let pressed = d.leave_confirm_press(&session, &id, "Stay a while?", "Yes, leave").await;
+        let question = d.last_question.clone().unwrap();
+        let response = d
+            .harness
+            .client
+            .patch(format!("/interactions/{}/{}/original", question.0, question.1))
+            .header(ContentType::JSON)
+            .body(json!({ "content": words }).to_string())
+            .dispatch()
+            .await;
+        assert!(response.status().code < 300, "{:?}", response.status());
+        drop(response);
+        let (status, _) = d.hand("leave", &pressed).await;
+        assert_eq!(status, Status::BadRequest);
+        assert!(d.member(&id).await.is_current());
+    });
+}
+
+#[test]
+fn leave_ends_membership() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.volunteer().await;
+        let session = d.applicant_session.clone();
+        assert!(d.roles_of(&d.lounge, &d.applicant).await.contains(&d.support_role));
+        let words = d.leave_words(&session, &id).await;
+        let pressed = d.leave_confirm_press(&session, &id, &words, "Yes, leave").await;
+        let (status, shown) = d.hand("leave", &pressed).await;
+        assert_eq!(status, Status::Ok, "{shown}");
+        assert!(shown["memberships"].as_array().unwrap().is_empty());
+        let member = d.member(&id).await;
+        assert_eq!(member.status, revolt_database::TeamMemberStatus::Left);
+        let last = member.history.last().unwrap();
+        assert_eq!((last.action.as_str(), last.actor.as_str()), ("left", d.applicant.id.as_str()));
+        assert!(!d.roles_of(&d.lounge, &d.applicant).await.contains(&d.support_role));
+        let told = d.told(&d.applicant).await;
+        assert!(told.iter().any(|m| m.contains("has ended")), "{told:?}");
+        // the press is single-use, and a left membership cannot be left again
+        let (status, _) = d.hand("leave", &pressed).await;
+        assert_ne!(status, Status::Ok);
+        assert_eq!(d.member(&id).await.history.len(), 2);
+    });
+}
+
+#[test]
+fn someone_else_cannot_leave_for_me() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.volunteer().await;
+        let guest = d.guest_session.clone();
+        // step one with another person's member id
+        let (status, _) = d.leave_press(&guest, &id).await;
+        assert_eq!(status, Status::NotFound);
+        // step two with a confirmation that carries the right words
+        let words = d.leave_words(&d.applicant_session.clone(), &id).await;
+        let pressed = d.leave_confirm_press(&guest, &id, &words, "Yes, leave").await;
+        let (status, _) = d.hand("leave", &pressed).await;
+        assert_eq!(status, Status::NotFound);
+        let member = d.member(&id).await;
+        assert!(member.is_current());
+        assert_eq!(member.history.len(), 1);
+    });
+}
+
+#[test]
+fn own_buttons_are_off_while_the_switch_is_off_and_single_use() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let session = d.applicant_session.clone();
+        let (status, _) = d.status_as(&session).await;
+        assert_eq!(status, Status::BadRequest);
+        let (status, _) = d.away_as(&session, "5").await;
+        assert_eq!(status, Status::BadRequest);
+        let (status, _) = d.leave_press(&session, "x").await;
+        assert_eq!(status, Status::BadRequest);
+
+        d.volunteer().await;
+        let channel = d.apply.clone();
+        let message = d.message(&channel, &["ta:status"]).await;
+        let pressed = d.press(&session, &channel, &message, "ta:status").await;
+        let (status, _) = d.hand("status", &pressed).await;
+        assert_eq!(status, Status::Ok);
+        let (status, _) = d.hand("status", &pressed).await;
+        assert_ne!(status, Status::Ok);
+        // only the desk bot can ask
+        let (status, _) = d.as_bot(&d.bot.token, "/team/desk/status", Some(json!({}))).await;
+        assert_ne!(status, Status::Ok);
+    });
+}

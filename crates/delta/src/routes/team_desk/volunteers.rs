@@ -9,7 +9,7 @@ use iso8601_timestamp::{Duration, Timestamp};
 use revolt_config::FeaturesTeamApplications;
 use revolt_database::{
     official_account, staff_now, Channel, Database, Invite, OfficialAccount, PartialMember,
-    RemovalIntention, TeamApplication, TeamHistory, TeamMember, TeamMemberStatus,
+    RemovalIntention, TeamActivityDay, TeamApplication, TeamHistory, TeamMember, TeamMemberStatus,
 };
 use revolt_result::Result;
 
@@ -25,6 +25,80 @@ fn history(actor: &str, action: &str) -> TeamHistory {
         actor: actor.to_string(),
         action: action.to_string(),
     }
+}
+
+/// Everything a person did in the current UTC month, all five kinds of
+/// count together. Counts only; the days come from `fetch_team_activity`.
+pub fn month_total(days: &[TeamActivityDay]) -> u32 {
+    days.iter()
+        .flat_map(|day| day.counts.iter())
+        .fold(0_u32, |total, count| {
+            total
+                .saturating_add(count.messages)
+                .saturating_add(count.replies)
+                .saturating_add(count.moderation)
+                .saturating_add(count.reviews)
+                .saturating_add(count.tickets)
+        })
+}
+
+/// First and last day (yyyymmdd) of the UTC month `now` (milliseconds) is in
+pub fn month_bounds(now: i64) -> (i32, i32) {
+    use chrono::Datelike;
+    let at = chrono::DateTime::from_timestamp_millis(now).unwrap_or_default();
+    let base = at.year() * 10000 + at.month() as i32 * 100;
+    (base + 1, base + 31)
+}
+
+/// The days of "away" typed in a form: digits only (Arabic-Indic too), at
+/// most four of them. Anything else is not a number of days.
+pub fn parse_days(text: &str) -> Option<i64> {
+    let text = text.trim();
+    if text.is_empty() || text.chars().count() > 4 {
+        return None;
+    }
+    let mut value: i64 = 0;
+    for c in text.chars() {
+        let digit = match c {
+            '0'..='9' => c as i64 - '0' as i64,
+            '\u{0660}'..='\u{0669}' => c as i64 - 0x0660,
+            _ => return None,
+        };
+        value = value * 10 + digit;
+    }
+    Some(value)
+}
+
+/// Set this membership away for `days` days, or (`days` = 0) bring it back
+/// to the status before: a trial while the trial is not over and not
+/// confirmed, otherwise active. Returns whether anything changed.
+pub(super) async fn set_away(
+    db: &Database,
+    member: &mut TeamMember,
+    actor: &str,
+    days: i64,
+) -> Result<bool> {
+    if !member.is_current() {
+        return Ok(false);
+    }
+    let now = staff_now();
+    if days > 0 {
+        member.status = TeamMemberStatus::Away;
+        member.away_until = Some(now + days_ms(days));
+        member.history.push(history(actor, "away"));
+    } else if member.status == TeamMemberStatus::Away {
+        member.status = if now < member.trial_ends_at && member.confirmed_at.is_none() {
+            TeamMemberStatus::Trial
+        } else {
+            TeamMemberStatus::Active
+        };
+        member.away_until = None;
+        member.history.push(history(actor, "back"));
+    } else {
+        return Ok(false);
+    }
+    db.update_team_member(member).await?;
+    Ok(true)
 }
 
 /// The record of an accepted person in the role of `application`; one per
@@ -143,7 +217,6 @@ async fn leave_team_server(db: &Database, settings: &FeaturesTeamApplications, u
 /// server; the person leaves the team server only when nothing current is
 /// left anywhere. `action` is `left` (their own word) or `removed` (staff);
 /// it is the history word and picks the thank-you message.
-#[allow(dead_code)] // used by the leave and removal routes of the next tasks
 pub(super) async fn end_membership(
     db: &Database,
     settings: &FeaturesTeamApplications,

@@ -61,5 +61,9 @@
   "volunteer.left.title": "Thank you",
   "volunteer.left.body": "Your volunteer role “{role}” has ended. Thank you for the time you gave to the Zrzur Team. You are welcome back whenever you like.",
   "volunteer.removed.title": "Your volunteer role has ended",
-  "volunteer.removed.body": "Your volunteer role “{role}” in the Zrzur Team has ended. Thank you for the time you gave.\n{reason}\n\nYou are welcome to apply again later."
+  "volunteer.removed.body": "Your volunteer role “{role}” in the Zrzur Team has ended. Thank you for the time you gave.\n{reason}\n\nYou are welcome to apply again later.",
+  "volunteer.away.title": "You are away",
+  "volunteer.away.body": "Thank you for telling us. Your volunteer role rests for {days} days: nothing is expected of you meanwhile. Press “My status” and set 0 days when you are back.",
+  "volunteer.back.title": "Welcome back",
+  "volunteer.back.body": "Your volunteer role is active again. Thank you, and there is no hurry: help when you have time."
 }

@@ -71,7 +71,21 @@ mod tests;
 mod volunteers;
 
 pub fn routes() -> Vec<Route> {
-    routes![desk_config, queue, application_state, mine, about, apply, withdraw, act, identity, settle]
+    routes![
+        desk_config,
+        queue,
+        application_state,
+        mine,
+        about,
+        apply,
+        withdraw,
+        act,
+        identity,
+        settle,
+        status,
+        away,
+        leave
+    ]
 }
 
 const MIN_REASON: usize = 3;
@@ -158,6 +172,27 @@ async fn confirmed(
     id: &str,
     expected: &str,
 ) -> bool {
+    confirmed_button(
+        db,
+        settings,
+        interaction,
+        expected,
+        ACCEPT_LABEL,
+        &format!("ta:accept:{id}"),
+    )
+    .await
+}
+
+/// The same check for any private confirmation: one row, one button with
+/// this `label` and `custom_id`, the server's words `expected` unchanged
+async fn confirmed_button(
+    db: &Database,
+    settings: &FeaturesTeamApplications,
+    interaction: &Interaction,
+    expected: &str,
+    want_label: &str,
+    want_custom_id: &str,
+) -> bool {
     let Some(InteractionSource::Ephemeral {
         interaction_id,
         message_id,
@@ -186,7 +221,7 @@ async fn confirmed(
                 label: Some(label),
                 custom_id: Some(custom_id),
                 ..
-            }] => label == ACCEPT_LABEL && custom_id == &format!("ta:accept:{id}"),
+            }] => label == want_label && custom_id == want_custom_id,
             _ => false,
         },
         _ => false,
@@ -2066,4 +2101,266 @@ async fn enrol_accepted(db: &Database, settings: &FeaturesTeamApplications) -> R
         .await;
     }
     Ok(())
+}
+
+// ---- the volunteer's own buttons ----
+
+/// The one label a leaving may be confirmed with
+pub const LEAVE_LABEL: &str = "Yes, leave";
+
+/// One current place of a person in the team
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct MyMembership {
+    pub id: String,
+    pub role: String,
+    pub role_name: String,
+    /// Escaped (`team_texts::plain`)
+    pub server_name: String,
+    /// `trial`, `active`, `away` or `inactive`
+    pub status: String,
+    pub trial_ends_at: i64,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub away_until: Option<i64>,
+}
+
+/// Counts of this UTC month against the minimum
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct MyMonth {
+    pub contributions: u32,
+    pub minimum: i64,
+}
+
+/// The private question before leaving, worded by the server: the bot shows
+/// `text` unchanged with one button (`label`, `custom_id`)
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct LeaveConfirm {
+    pub text: String,
+    pub label: String,
+    pub custom_id: String,
+}
+
+/// What a volunteer sees about themselves, and nobody else
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct MyStatus {
+    pub memberships: Vec<MyMembership>,
+    pub month: MyMonth,
+    /// Longest "away" in days, for the form
+    pub away_max_days: i64,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub confirm: Option<LeaveConfirm>,
+}
+
+fn member_word(status: revolt_database::TeamMemberStatus) -> &'static str {
+    use revolt_database::TeamMemberStatus as S;
+    match status {
+        S::Trial => "trial",
+        S::Active => "active",
+        S::Away => "away",
+        S::Inactive => "inactive",
+        S::Left => "left",
+    }
+}
+
+async fn my_status(
+    db: &Database,
+    settings: &FeaturesTeamApplications,
+    user_id: &str,
+) -> Result<MyStatus> {
+    let mut memberships = Vec::new();
+    for member in db.fetch_team_members_of(user_id).await? {
+        if !member.is_current() {
+            continue;
+        }
+        let server = db
+            .fetch_server(&member.server)
+            .await
+            .map(|server| server.name)
+            .unwrap_or_default();
+        memberships.push(MyMembership {
+            role_name: role_name(settings, &member.role),
+            server_name: team_texts::plain(&server),
+            status: member_word(member.status).to_string(),
+            trial_ends_at: member.trial_ends_at,
+            away_until: member.away_until,
+            id: member.id,
+            role: member.role,
+        });
+    }
+    let (from, to) = volunteers::month_bounds(staff_now());
+    let days = db.fetch_team_activity(user_id, from, to).await?;
+    Ok(MyStatus {
+        memberships,
+        month: MyMonth {
+            contributions: volunteers::month_total(&days),
+            minimum: settings.volunteers.monthly_minimum,
+        },
+        away_max_days: settings.volunteers.away_max_days,
+        confirm: None,
+    })
+}
+
+/// The settings and the stored interaction of a volunteer's own press: the
+/// switch is on, the hand-back is genuine, and it comes from a person (not a
+/// bot, not suspended or banned), who is the one the answer is about.
+async fn own_press(
+    db: &Database,
+    user: &User,
+    data: &DataDeskAct,
+) -> Result<(FeaturesTeamApplications, Interaction)> {
+    let settings = desk(user).await?;
+    if !settings.volunteers.enabled {
+        return Err(create_error!(InvalidOperation));
+    }
+    let interaction = genuine(db, &settings, data, None).await?;
+    let person = db
+        .fetch_user(&interaction.user_id)
+        .await
+        .map_err(|_| no_permission())?;
+    if barred(&person) {
+        return Err(no_permission());
+    }
+    Ok((settings, interaction))
+}
+
+/// # Team desk: my status
+///
+/// The bot hands back the press of `ta:status`, in a server channel or in a
+/// private message. The answer is always about the person who pressed.
+#[post("/status", data = "<data>")]
+async fn status(
+    db: &State<Database>,
+    user: User,
+    data: Json<DataDeskAct>,
+) -> Result<Json<MyStatus>> {
+    let (settings, interaction) = own_press(db, &user, &data).await?;
+    match (interaction.kind, pressed(&interaction)) {
+        (InteractionType::Component, Some(("status", ""))) => {}
+        _ => return Err(create_error!(InvalidOperation)),
+    }
+    if !db.claim_interaction_use(&interaction.id).await? {
+        return Err(create_error!(InteractionExpired));
+    }
+    Ok(Json(my_status(db, &settings, &interaction.user_id).await?))
+}
+
+/// # Team desk: away
+///
+/// The bot hands back the submitted form `ta:away`, field `days`: 1 up to the
+/// longest away the settings allow, or `0` to be back. It applies to every
+/// current place of the person.
+#[post("/away", data = "<data>")]
+async fn away(
+    db: &State<Database>,
+    user: User,
+    data: Json<DataDeskAct>,
+) -> Result<Json<MyStatus>> {
+    let (settings, interaction) = own_press(db, &user, &data).await?;
+    match (interaction.kind, pressed(&interaction)) {
+        (InteractionType::ModalSubmit, Some(("away", ""))) => {}
+        _ => return Err(create_error!(InvalidOperation)),
+    }
+    let max = settings.volunteers.away_max_days.max(0);
+    let days = match volunteers::parse_days(field(&interaction, "days")) {
+        Some(days) if days <= max => days,
+        _ => return Err(length_problem("days", 0, max as usize)),
+    };
+    if !db.claim_interaction_use(&interaction.id).await? {
+        return Err(create_error!(InteractionExpired));
+    }
+    let mut first: Option<String> = None;
+    for mut member in db.fetch_team_members_of(&interaction.user_id).await? {
+        if volunteers::set_away(db, &mut member, &interaction.user_id, days).await?
+            && first.is_none()
+        {
+            first = Some(member.role.clone());
+        }
+    }
+    if let Some(role) = first {
+        let key = if days > 0 { "volunteer.away" } else { "volunteer.back" };
+        team_texts::send(
+            db,
+            &interaction.user_id,
+            key,
+            settings.role(&role),
+            &role,
+            &[("days", &days.to_string())],
+        )
+        .await;
+    }
+    Ok(Json(my_status(db, &settings, &interaction.user_id).await?))
+}
+
+/// The words a person confirms before leaving. The server writes them, the
+/// bot shows them unchanged, and `leave` reads them back from the private
+/// message that was pressed.
+fn leave_text(role: &str, server: &str) -> String {
+    let place = confirm_word(server);
+    let place = if place.is_empty() { String::new() } else { format!(" in {place}") };
+    format!(
+        "Leave the Zrzur Team as {}{place}? Your role there ends now. Thank you for the time you gave; you are welcome back whenever you like.",
+        confirm_word(role)
+    )
+}
+
+/// # Team desk: leave
+///
+/// Two steps. The press of `ta:leave:<member id>` is answered with the
+/// server's own question (`confirm`); the press of its one button,
+/// `ta:leave_confirm:<member id>`, from that unchanged private message, ends
+/// the membership. Only the person's own membership can be named.
+#[post("/leave", data = "<data>")]
+async fn leave(
+    db: &State<Database>,
+    user: User,
+    data: Json<DataDeskAct>,
+) -> Result<Json<MyStatus>> {
+    let (settings, interaction) = own_press(db, &user, &data).await?;
+    let (confirming, id) = match (interaction.kind, pressed(&interaction)) {
+        (InteractionType::Component, Some(("leave", id))) if !id.is_empty() => {
+            (false, id.to_string())
+        }
+        (InteractionType::Component, Some(("leave_confirm", id))) if !id.is_empty() => {
+            (true, id.to_string())
+        }
+        _ => return Err(create_error!(InvalidOperation)),
+    };
+    // someone else's, gone, or already left: the same answer for all
+    let Some(mut member) = db
+        .fetch_team_members_of(&interaction.user_id)
+        .await?
+        .into_iter()
+        .find(|member| member.id == id && member.is_current())
+    else {
+        return Err(create_error!(NotFound));
+    };
+    let server = db
+        .fetch_server(&member.server)
+        .await
+        .map(|server| server.name)
+        .unwrap_or_default();
+    let expected = leave_text(&role_name(&settings, &member.role), &server);
+    let button = format!("ta:leave_confirm:{id}");
+
+    if !confirming {
+        if !db.claim_interaction_use(&interaction.id).await? {
+            return Err(create_error!(InteractionExpired));
+        }
+        let mut shown = my_status(db, &settings, &interaction.user_id).await?;
+        shown.confirm = Some(LeaveConfirm {
+            text: expected,
+            label: LEAVE_LABEL.to_string(),
+            custom_id: button,
+        });
+        return Ok(Json(shown));
+    }
+
+    if !confirmed_button(db, &settings, &interaction, &expected, LEAVE_LABEL, &button).await {
+        return Err(create_error!(InvalidOperation));
+    }
+    if !db.claim_interaction_use(&interaction.id).await? {
+        return Err(create_error!(InteractionExpired));
+    }
+    volunteers::end_membership(db, &settings, &mut member, &interaction.user_id, "left", None)
+        .await?;
+    Ok(Json(my_status(db, &settings, &interaction.user_id).await?))
 }
