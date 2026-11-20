@@ -62,6 +62,8 @@ pub struct StaffTeamRow {
     pub month_contributions: u32,
     /// Whether "About you" is on file (the identity itself is not here)
     pub has_identity: bool,
+    /// The monthly minimum of the settings (0 or more), so the page shows the live value
+    pub monthly_minimum: i64,
 }
 
 /// The counts of one UTC month, per kind
@@ -83,6 +85,8 @@ pub struct StaffTeamPerson {
     pub months: Vec<StaffTeamMonth>,
     pub history: Vec<TeamHistory>,
     pub notes: Option<String>,
+    /// Same value as `row.monthly_minimum`
+    pub monthly_minimum: i64,
 }
 
 #[derive(Deserialize)]
@@ -150,6 +154,7 @@ async fn row(
             .fetch_team_identity(&member.user_id)
             .await?
             .is_some_and(|stored| !stored.purge_at.is_some_and(|at| at <= now)),
+        monthly_minimum: settings.volunteers.monthly_minimum.max(0),
     })
 }
 
@@ -194,6 +199,7 @@ async fn person(
         months,
         history: member.history.clone(),
         notes: member.notes.clone(),
+        monthly_minimum: settings.volunteers.monthly_minimum.max(0),
     })
 }
 
