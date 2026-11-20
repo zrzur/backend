@@ -2209,6 +2209,16 @@ pub struct MyStatus {
     pub away_max_days: i64,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub confirm: Option<LeaveConfirm>,
+    /// The language the server writes to this person in (their stored
+    /// locale), so the bot's own lines match the server's question
+    #[serde(default)]
+    pub language: String,
+}
+
+/// The language of the person's stored locale, English when unknown
+async fn person_language(db: &Database, user_id: &str) -> &'static str {
+    let locale = db.fetch_user(user_id).await.ok().and_then(|person| person.locale);
+    team_texts::language_of(locale.as_deref())
 }
 
 pub(crate) fn member_word(status: revolt_database::TeamMemberStatus) -> &'static str {
@@ -2257,6 +2267,7 @@ async fn my_status(
         },
         away_max_days: settings.volunteers.away_max_days,
         confirm: None,
+        language: person_language(db, user_id).await.to_string(),
     })
 }
 
@@ -2407,12 +2418,7 @@ async fn leave(
         .await
         .map(|server| server.name)
         .unwrap_or_default();
-    let locale = db
-        .fetch_user(&interaction.user_id)
-        .await
-        .ok()
-        .and_then(|person| person.locale);
-    let language = team_texts::language_of(locale.as_deref());
+    let language = person_language(db, &interaction.user_id).await;
     let role = settings
         .role(&member.role)
         .map(|role| team_texts::role_text(role, language, RoleField::Name))

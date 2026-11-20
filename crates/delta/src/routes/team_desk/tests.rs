@@ -2712,6 +2712,8 @@ fn leave_is_asked_and_confirmed_in_the_persons_language() {
         let words = shown["confirm"]["text"].as_str().unwrap().to_string();
         assert!(words.starts_with("Das Zrzur-Team als „"), "{words}");
         assert_eq!(shown["confirm"]["label"], "Ja, verlassen");
+        // the reply names the language, so the bot's goodbye matches the question
+        assert_eq!(shown["language"], "de");
 
         // the English label under the German words ends nothing
         let pressed = d.leave_confirm_press(&session, &id, &words, "Yes, leave").await;
@@ -2731,6 +2733,7 @@ fn leave_is_asked_and_confirmed_in_the_persons_language() {
         let pressed = d.leave_confirm_press(&session, &id, &words, "Ja, verlassen").await;
         let (status, shown) = d.hand("leave", &pressed).await;
         assert_eq!(status, Status::Ok, "{shown}");
+        assert_eq!(shown["language"], "de");
         assert_eq!(d.member(&id).await.status, revolt_database::TeamMemberStatus::Left);
     });
 }

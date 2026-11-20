@@ -68,7 +68,7 @@
   "volunteer.back.body": "عاد دورك التطوعي نشطًا. شكرًا لك، ولا عجلة: ساعد حين يتسع وقتك.",
   "volunteer.reminder.title": "افتقدناك",
   "volunteer.reminder.body": "شكرًا لتطوعك في فريق زرزور. لم نرَ من مساعدتك إلا القليل في الشهر الماضي، ولا بأس في ذلك أبدًا: لكل منا أوقات مزدحمة.\n\nساعد حين يتسع وقتك، فالقليل يكفي. وإن احتجت إلى استراحة، فاضغط «حالتي في الفريق» (My team status) في قناة التقديم، ثم «غياب مؤقت»، ولن نسألك مجددًا خلال غيابك.",
-  "volunteer.leave_confirm.text": "هل تريد مغادرة فريق زرزور في دور «{role}» في {server}؟ ينتهي دورك هناك الآن. شكرًا على الوقت الذي منحته، ونرحب بعودتك متى شئت.",
+  "volunteer.leave_confirm.text": "هل تريد مغادرة فريق زرزور بصفتك «{role}» في {server}؟ ينتهي دورك هناك الآن. شكرًا على الوقت الذي منحته، ونرحب بعودتك متى شئت.",
   "volunteer.leave_confirm.label": "نعم، أغادر",
   "staff.trial_ended.title": "Trial ended",
   "staff.trial_ended.body": "The trial of {account} as “{role}” has ended. Please confirm the volunteer or end the role on the Team page of the admin console."
