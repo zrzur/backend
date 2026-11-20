@@ -538,6 +538,10 @@ pub struct DeskVolunteers {
     pub team_server: String,
     /// The private channel of the weekly report, empty when none is set
     pub report_channel: String,
+    /// Days a volunteer's name, age and country are kept after they leave,
+    /// for the privacy lines of the Apply message
+    #[serde(default)]
+    pub identity_keep_days: i64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -629,6 +633,7 @@ async fn desk_config(db: &State<Database>, user: User) -> Result<Json<DeskConfig
             rules_version: settings.volunteers.rules_version.clone(),
             team_server: settings.volunteers.team_server.clone(),
             report_channel: settings.volunteers.report_channel.clone(),
+            identity_keep_days: settings.volunteers.identity_keep_days.max(0),
         },
     }))
 }
@@ -2164,9 +2169,6 @@ async fn enrol_accepted(db: &Database, settings: &FeaturesTeamApplications) -> R
 
 // ---- the volunteer's own buttons ----
 
-/// The one label a leaving may be confirmed with
-pub const LEAVE_LABEL: &str = "Yes, leave";
-
 /// One current place of a person in the team
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct MyMembership {
@@ -2349,16 +2351,24 @@ async fn away(
     Ok(Json(my_status(db, &settings, &interaction.user_id).await?))
 }
 
-/// The words a person confirms before leaving. The server writes them, the
-/// bot shows them unchanged, and `leave` reads them back from the private
-/// message that was pressed.
-fn leave_text(role: &str, server: &str) -> String {
-    let place = confirm_word(server);
-    let place = if place.is_empty() { String::new() } else { format!(" in {place}") };
-    format!(
-        "Leave the Zrzur Team as {}{place}? Your role there ends now. Thank you for the time you gave; you are welcome back whenever you like.",
-        confirm_word(role)
+/// The words a person confirms before leaving, in their language
+/// (`volunteer.leave_confirm.text`). The server writes them, the bot shows
+/// them unchanged, and `leave` reads them back from the private message
+/// that was pressed. Both presses build them the same way from the
+/// person's stored locale; if it changed in between, the words differ and
+/// the confirmation simply fails, ending nothing.
+fn leave_text(language: &str, role: &str, server: &str) -> String {
+    let server = confirm_word(server);
+    let server = if server.is_empty() { "Zrzur".to_string() } else { server };
+    team_texts::fill(
+        &team_texts::text(language, "volunteer.leave_confirm.text"),
+        &[("role", confirm_word(role)), ("server", server)],
     )
+}
+
+/// The one label a leaving may be confirmed with, in the person's language
+fn leave_label(language: &str) -> String {
+    team_texts::text(language, "volunteer.leave_confirm.label")
 }
 
 /// # Team desk: leave
@@ -2397,7 +2407,19 @@ async fn leave(
         .await
         .map(|server| server.name)
         .unwrap_or_default();
-    let expected = leave_text(&role_name(&settings, &member.role), &server);
+    let locale = db
+        .fetch_user(&interaction.user_id)
+        .await
+        .ok()
+        .and_then(|person| person.locale);
+    let language = team_texts::language_of(locale.as_deref());
+    let role = settings
+        .role(&member.role)
+        .map(|role| team_texts::role_text(role, language, RoleField::Name))
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or_else(|| role_name(&settings, &member.role));
+    let expected = leave_text(language, &role, &server);
+    let label = leave_label(language);
     let button = format!("ta:leave_confirm:{id}");
 
     if !confirming {
@@ -2407,13 +2429,13 @@ async fn leave(
         let mut shown = my_status(db, &settings, &interaction.user_id).await?;
         shown.confirm = Some(LeaveConfirm {
             text: expected,
-            label: LEAVE_LABEL.to_string(),
+            label,
             custom_id: button,
         });
         return Ok(Json(shown));
     }
 
-    if !confirmed_button(db, &settings, &interaction, &expected, LEAVE_LABEL, &button).await {
+    if !confirmed_button(db, &settings, &interaction, &expected, &label, &button).await {
         return Err(create_error!(InvalidOperation));
     }
     if !db.claim_interaction_use(&interaction.id).await? {

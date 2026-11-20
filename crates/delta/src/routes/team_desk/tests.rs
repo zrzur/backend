@@ -2664,7 +2664,10 @@ fn leave_needs_the_servers_confirm() {
         let session = d.applicant_session.clone();
         // step one gives the server's words and the one button, ends nothing
         let words = d.leave_words(&session, &id).await;
-        assert!(words.starts_with("Leave the Zrzur Team as Role support in "), "{words}");
+        // the words come from the text files, in the person's language (here none: English)
+        assert!(words.starts_with("Leave the Zrzur Team as “Role support” in "), "{words}");
+        let template = crate::util::team_texts::text("en", "volunteer.leave_confirm.text");
+        assert!(words.ends_with(template.rsplit("{server}").next().unwrap()), "{words}");
         assert!(d.member(&id).await.is_current());
         let (_, shown) = d.leave_press(&session, &id).await;
         assert_eq!(shown["confirm"]["label"], "Yes, leave");
@@ -2678,6 +2681,57 @@ fn leave_needs_the_servers_confirm() {
         let (status, _) = d.hand("leave", &pressed).await;
         assert_eq!(status, Status::BadRequest);
         assert!(d.member(&id).await.is_current());
+    });
+}
+
+/// Give the applicant another app language
+async fn set_locale(d: &Desk, locale: &str) {
+    let mut person = d.harness.db.fetch_user(&d.applicant.id).await.unwrap();
+    person
+        .update(
+            &d.harness.db,
+            revolt_database::PartialUser {
+                locale: Some(locale.into()),
+                ..Default::default()
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
+}
+
+#[test]
+fn leave_is_asked_and_confirmed_in_the_persons_language() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.volunteer().await;
+        let session = d.applicant_session.clone();
+        set_locale(&d, "de-DE").await;
+        let (status, shown) = d.leave_press(&session, &id).await;
+        assert_eq!(status, Status::Ok, "{shown}");
+        let words = shown["confirm"]["text"].as_str().unwrap().to_string();
+        assert!(words.starts_with("Das Zrzur-Team als „"), "{words}");
+        assert_eq!(shown["confirm"]["label"], "Ja, verlassen");
+
+        // the English label under the German words ends nothing
+        let pressed = d.leave_confirm_press(&session, &id, &words, "Yes, leave").await;
+        let (status, _) = d.hand("leave", &pressed).await;
+        assert_eq!(status, Status::BadRequest);
+        // the language changed between the two presses: the words differ, nothing ends
+        let words = d.leave_words(&session, &id).await;
+        set_locale(&d, "en-GB").await;
+        let pressed = d.leave_confirm_press(&session, &id, &words, "Ja, verlassen").await;
+        let (status, _) = d.hand("leave", &pressed).await;
+        assert_eq!(status, Status::BadRequest);
+        assert!(d.member(&id).await.is_current());
+
+        // the German question with the German button ends the membership
+        set_locale(&d, "de-DE").await;
+        let words = d.leave_words(&session, &id).await;
+        let pressed = d.leave_confirm_press(&session, &id, &words, "Ja, verlassen").await;
+        let (status, shown) = d.hand("leave", &pressed).await;
+        assert_eq!(status, Status::Ok, "{shown}");
+        assert_eq!(d.member(&id).await.status, revolt_database::TeamMemberStatus::Left);
     });
 }
 
