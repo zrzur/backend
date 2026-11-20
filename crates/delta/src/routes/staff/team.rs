@@ -402,17 +402,20 @@ pub async fn away(
         return Err(create_error!(InvalidOperation));
     }
     log(db, &staff, "team.member.away", &member, None, format!("member {}, days {}", member.id, data.days)).await?;
-    // the volunteer hears of it, as after their own "I'm away"
-    let key = if data.days > 0 { "volunteer.away_by_staff" } else { "volunteer.back_by_staff" };
-    crate::util::team_texts::send(
-        db,
-        &member.user_id,
-        key,
-        settings.role(&member.role),
-        &member.role,
-        &[("days", &data.days.to_string())],
-    )
-    .await;
+    // the volunteer hears of it, as after their own "I'm away": until when
+    // (as stored), or the status they are back to
+    let (key, vars) = if member.status == TeamMemberStatus::Away {
+        let until = member
+            .away_until
+            .map(|at| format!("<t:{}:D>", at / 1000))
+            .unwrap_or_default();
+        ("volunteer.away_by_staff", vec![("until", until)])
+    } else {
+        ("volunteer.back_by_staff", vec![("state", member_word(member.status).to_string())])
+    };
+    let vars: Vec<(&str, &str)> = vars.iter().map(|(name, value)| (*name, value.as_str())).collect();
+    crate::util::team_texts::send(db, &member.user_id, key, settings.role(&member.role), &member.role, &vars)
+        .await;
     Ok(Json(person(db, &settings, &member, staff.now).await?))
 }
 

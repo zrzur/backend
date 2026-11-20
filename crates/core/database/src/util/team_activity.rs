@@ -589,12 +589,13 @@ async fn team_managers(db: &Database, now: i64) -> Result<Vec<String>> {
 
 /// Whether `person` holds a reviewer role right now: the desk's common
 /// reviewer role in the desk server, or a team role's own reviewer role in
-/// that role's server. Read from the database; "not sure" counts as yes.
+/// that role's server. Read from the database; a lookup that fails is an
+/// error, never an answer: the caller decides (see [`grants_reviewer`]).
 pub async fn holds_reviewer_role(
     db: &Database,
     settings: &FeaturesTeamApplications,
     person: &str,
-) -> bool {
+) -> Result<bool> {
     let mut places: Vec<(&str, &str)> = vec![(settings.server.as_str(), settings.reviewer_role.as_str())];
     places.extend(
         settings
@@ -607,13 +608,20 @@ pub async fn holds_reviewer_role(
             continue;
         }
         match db.fetch_member(server, person).await {
-            Ok(member) if member.roles.iter().any(|held| held == role) => return true,
+            Ok(member) if member.roles.iter().any(|held| held == role) => return Ok(true),
             Ok(_) => {}
             Err(error) if matches!(error.error_type, ErrorType::NotFound) => {}
-            Err(_) => return true,
+            Err(error) => return Err(error),
         }
     }
-    false
+    Ok(false)
+}
+
+/// What a reviewer check lets a person do: only a sure yes grants anything
+/// (fails closed). Keeping data is the other way round: an identity is not
+/// treated as unheld on a failed lookup (see `out_of_reach`).
+pub fn grants_reviewer(found: &Result<bool>) -> bool {
+    matches!(found, Ok(true))
 }
 
 /// The person has no open application, no current membership and no
@@ -629,7 +637,10 @@ async fn out_of_reach(db: &Database, settings: &FeaturesTeamApplications, person
         .await
         .map(|all| all.iter().any(|m| m.is_current()))
         .unwrap_or(true);
-    !busy && !member && !holds_reviewer_role(db, settings, person).await
+    // a failed lookup keeps the identity for now (the next run looks again);
+    // it never grants anything
+    let reviewer = holds_reviewer_role(db, settings, person).await.unwrap_or(true);
+    !busy && !member && !reviewer
 }
 
 /// Delete the team-server invite made for a membership, if any (best effort)
@@ -2099,6 +2110,14 @@ mod tests {
         assert!(db.fetch_team_identity("alone").await.unwrap().is_none());
         assert!(db.fetch_team_identity("volunteer").await.unwrap().is_some());
         assert!(db.fetch_team_identity("applicant").await.unwrap().is_some());
+    }
+
+    #[test]
+    fn a_reviewer_check_grants_only_on_a_sure_yes() {
+        assert!(grants_reviewer(&Ok(true)));
+        assert!(!grants_reviewer(&Ok(false)));
+        let failed: Result<bool> = Err(revolt_result::create_error!(InternalError));
+        assert!(!grants_reviewer(&failed));
     }
 
     #[tokio::test]

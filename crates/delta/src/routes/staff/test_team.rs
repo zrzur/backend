@@ -380,13 +380,17 @@ async fn away_uses_the_volunteers_rules() {
     assert_eq!(body["away_max_days"], 90);
     assert!(stored(&harness, &m.id).await.away_until.is_some());
     // the volunteer is told, as after their own "I'm away"
+    // until the stored day, written as a date mark
+    let until = stored(&harness, &m.id).await.away_until.unwrap();
     let told = official_messages(&harness, &person).await;
-    assert!(told.iter().any(|m| m.contains("Days away: 10")), "{told:?}");
+    assert!(told.iter().any(|m| m.contains(&format!("until <t:{}:D>", until / 1000))), "{told:?}");
+    assert!(told.iter().any(|m| m.contains("“My team status”")), "{told:?}");
     let (status, body) = send(&harness, &owner, &token, Post, &path, json!({ "days": 0 })).await;
     assert_eq!(status, Status::Ok, "{body}");
     assert_eq!(body["row"]["status"], "active");
+    // the status they are back to, in words
     let told = official_messages(&harness, &person).await;
-    assert!(told.iter().any(|m| m.contains("active again")), "{told:?}");
+    assert!(told.iter().any(|m| m.contains("Your status now: active.")), "{told:?}");
 }
 
 #[rocket::async_test]

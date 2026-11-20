@@ -89,20 +89,35 @@ pub fn plain(text: &str) -> String {
         .join("\n")
 }
 
-/// Unicode format characters (general category Cf) that change how a line
-/// reads or hide text: the soft hyphen, the Arabic letter mark, zero-width
-/// characters and direction marks, bidi embeddings, overrides and isolates,
-/// the word joiner and invisible operators, the byte order mark, interlinear
-/// annotation and tag characters
+/// Unicode format characters: the whole general category Cf (Unicode 15).
+/// They change how a line reads or hide text: the soft hyphen, Arabic number
+/// signs and the Arabic letter mark, the Syriac abbreviation mark, the
+/// Mongolian vowel separator, zero-width characters and direction marks,
+/// bidi embeddings, overrides and isolates, the word joiner and invisible
+/// operators, the byte order mark, interlinear annotation, Kaithi and
+/// musical formatting, Egyptian hieroglyph and shorthand format controls,
+/// and tag characters.
 pub fn is_format(c: char) -> bool {
     matches!(c,
-        '\u{00AD}' | '\u{061C}' | '\u{180E}'
+        '\u{00AD}'
+        | '\u{0600}'..='\u{0605}'
+        | '\u{061C}'
+        | '\u{06DD}'
+        | '\u{070F}'
+        | '\u{0890}'..='\u{0891}'
+        | '\u{08E2}'
+        | '\u{180E}'
         | '\u{200B}'..='\u{200F}'
         | '\u{202A}'..='\u{202E}'
         | '\u{2060}'..='\u{2064}'
         | '\u{2066}'..='\u{206F}'
         | '\u{FEFF}'
         | '\u{FFF9}'..='\u{FFFB}'
+        | '\u{110BD}'
+        | '\u{110CD}'
+        | '\u{13430}'..='\u{1343F}'
+        | '\u{1BCA0}'..='\u{1BCA3}'
+        | '\u{1D173}'..='\u{1D17A}'
         | '\u{E0001}'
         | '\u{E0020}'..='\u{E007F}')
 }

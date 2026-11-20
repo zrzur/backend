@@ -126,7 +126,11 @@ pub async fn send(
         .iter()
         .map(|(name, value)| {
             let value = match *name {
-                "channel" | "privacy" | "days" => value.trim().to_string(),
+                // from the settings or made by the server (a channel
+                // mention, a link, a number, a date mark `<t:..:D>`)
+                "channel" | "privacy" | "days" | "until" => value.trim().to_string(),
+                // a status word: its text in the person's language
+                "state" => text(language, &format!("volunteer.state.{}", value.trim())),
                 _ => plain(value),
             };
             (*name, value)
@@ -368,6 +372,16 @@ mod tests {
         for c in shown.chars() {
             assert!(!is_format(c), "{:?} left in", c);
         }
+        // the rest of the Cf set: Arabic number signs, the end of ayah, the
+        // Syriac abbreviation mark, Kaithi, musical and tag characters
+        for c in [
+            '\u{0600}', '\u{0605}', '\u{06DD}', '\u{070F}', '\u{08E2}', '\u{110BD}',
+            '\u{110CD}', '\u{1D173}', '\u{1D17A}', '\u{E0001}', '\u{E0020}', '\u{E007F}',
+        ] {
+            assert!(is_format(c), "{:?}", c);
+            assert_eq!(plain(&format!("a{c}b")), "ab", "{:?}", c);
+        }
+        assert!(!is_format('a') && !is_format('\u{0627}') && !is_format(' '));
         // Arabic text itself stays as it is
         assert_eq!(plain("لينا حداد"), "لينا حداد");
         // the zero-width space plain() puts after `@` is its own, not the person's

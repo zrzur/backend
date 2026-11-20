@@ -357,7 +357,11 @@ async fn out_of_reach(
         .await
         .map(|all| all.iter().any(|m| m.is_current()))
         .unwrap_or(true);
-    !busy && !member && !team_activity::holds_reviewer_role(db, settings, person).await
+    // a failed lookup keeps the identity for now; it never grants anything
+    let reviewer = team_activity::holds_reviewer_role(db, settings, person)
+        .await
+        .unwrap_or(true);
+    !busy && !member && !reviewer
 }
 
 /// The identity of someone whose application ended, when nothing else
@@ -1178,7 +1182,10 @@ async fn about(
             .iter()
             .any(|a| a.is_open());
         if !member && !open {
-            reviewer = team_activity::holds_reviewer_role(db, &settings, &person.id).await;
+            // fails closed: a failed lookup is not a reviewer
+            reviewer = team_activity::grants_reviewer(
+                &team_activity::holds_reviewer_role(db, &settings, &person.id).await,
+            );
         }
         if (!member && !reviewer) || open {
             return refuse("not_a_volunteer");
@@ -2405,8 +2412,11 @@ async fn my_status(
     }
     let (from, to) = volunteers::month_bounds(staff_now());
     let days = db.fetch_team_activity(user_id, from, to).await?;
+    // fails closed: a failed lookup offers no button
     let can_add_details = !memberships.is_empty()
-        || team_activity::holds_reviewer_role(db, settings, user_id).await;
+        || team_activity::grants_reviewer(
+            &team_activity::holds_reviewer_role(db, settings, user_id).await,
+        );
     Ok(MyStatus {
         memberships,
         month: MyMonth {
