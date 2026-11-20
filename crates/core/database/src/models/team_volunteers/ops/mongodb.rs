@@ -88,13 +88,17 @@ impl AbstractTeamVolunteers for MongoDb {
         if let Some(status) = filter.status {
             query.insert("status", status_name(status));
         }
-        self.find_with_options(
-            MEMBERS,
-            query,
-            FindOptions::builder().sort(doc! { "_id": 1 }).limit(2000).build(),
-        )
-        .await
-        .map_err(|_| create_database_error!("find", MEMBERS))
+        if let Some(after) = &filter.after {
+            query.insert("_id", doc! { "$gt": after });
+        }
+        // no limit means everything, as in the reference driver
+        let options = FindOptions::builder()
+            .sort(doc! { "_id": 1 })
+            .limit(filter.limit.map(i64::from))
+            .build();
+        self.find_with_options(MEMBERS, query, options)
+            .await
+            .map_err(|_| create_database_error!("find", MEMBERS))
     }
 
     async fn update_team_member(&self, member: &TeamMember) -> Result<()> {

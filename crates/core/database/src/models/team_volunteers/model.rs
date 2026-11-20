@@ -86,11 +86,17 @@ auto_derived!(
         pub counts: Vec<TeamActivityCount>,
     }
 
-    /// Filter for listing members; `None` matches all
+    /// Filter for listing members; `None` matches all. Always sorted by
+    /// member id; `after` (exclusive) and `limit` page through the list the
+    /// same way in every database driver. No `limit` means everything.
     #[derive(Default)]
     pub struct TeamMemberFilter {
         pub role: Option<String>,
         pub status: Option<TeamMemberStatus>,
+        /// Only members whose id sorts after this one
+        pub after: Option<String>,
+        /// At most this many
+        pub limit: Option<u32>,
     }
 );
 

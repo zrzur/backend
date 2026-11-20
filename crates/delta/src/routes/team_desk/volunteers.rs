@@ -68,7 +68,7 @@ pub fn parse_days(text: &str) -> Option<i64> {
 ///
 /// The record is read again right before the write: one that was left in the
 /// meantime is not touched. Returns whether anything changed.
-pub(super) async fn set_away(
+pub(crate) async fn set_away(
     db: &Database,
     member: &mut TeamMember,
     actor: &str,
@@ -190,7 +190,7 @@ pub(super) async fn enrol(
 /// left anywhere (`team_activity::end_membership`, shared with crond).
 /// `action` is `left` (their own word) or `removed` (staff); it is the
 /// history word and picks the thank-you message.
-pub(super) async fn end_membership(
+pub(crate) async fn end_membership(
     db: &Database,
     settings: &FeaturesTeamApplications,
     member: &mut TeamMember,

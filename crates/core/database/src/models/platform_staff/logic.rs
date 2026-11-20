@@ -110,7 +110,7 @@ impl StaffRole {
 }
 
 impl StaffPermission {
-    pub const ALL: [StaffPermission; 28] = [
+    pub const ALL: [StaffPermission; 29] = [
         StaffPermission::DashboardRead,
         StaffPermission::AnalyticsRead,
         StaffPermission::UsersRead,
@@ -139,6 +139,7 @@ impl StaffPermission {
         StaffPermission::BadgesManage,
         StaffPermission::CreatorsManage,
         StaffPermission::OfficialManage,
+        StaffPermission::TeamManage,
     ];
 
     pub fn name(&self) -> &'static str {
@@ -172,6 +173,7 @@ impl StaffPermission {
             BadgesManage => "platform.badges.manage",
             CreatorsManage => "platform.creators.manage",
             OfficialManage => "platform.official.manage",
+            TeamManage => "platform.team.manage",
         }
     }
 

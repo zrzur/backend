@@ -569,15 +569,14 @@ impl TeamMessenger for OfficialMessenger<'_> {
     }
 }
 
-/// The staff accounts who look after the volunteers. Until the staff
-/// permission `TeamManage` exists (owner only by default) these are the
-/// active owner grants.
+/// The staff accounts who look after the volunteers: the holders of the staff
+/// permission `TeamManage` right now (the owner role only, by default).
 async fn team_managers(db: &Database, now: i64) -> Result<Vec<String>> {
     Ok(db
         .fetch_staff_grants()
         .await?
         .into_iter()
-        .filter(|grant| grant.is_owner(now))
+        .filter(|grant| grant.effective(now).contains(&crate::StaffPermission::TeamManage))
         .map(|grant| grant.id)
         .collect())
 }
@@ -894,8 +893,8 @@ async fn notify_trials(
     for status in [TeamMemberStatus::Trial, TeamMemberStatus::Away] {
         let found = db
             .fetch_team_members(&TeamMemberFilter {
-                role: None,
                 status: Some(status),
+                ..Default::default()
             })
             .await?;
         due.extend(found.into_iter().filter(|m| in_trial(m)));
@@ -955,8 +954,8 @@ async fn expire_away(db: &Database, now: i64) -> Result<u32> {
     let mut ended = 0;
     let away = db
         .fetch_team_members(&TeamMemberFilter {
-            role: None,
             status: Some(TeamMemberStatus::Away),
+            ..Default::default()
         })
         .await?;
     for member in away {

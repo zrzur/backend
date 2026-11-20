@@ -78,6 +78,12 @@ impl AbstractTeamVolunteers for ReferenceDb {
             .cloned()
             .collect();
         list.sort_by(|a, b| a.id.cmp(&b.id));
+        if let Some(after) = &filter.after {
+            list.retain(|m| m.id.as_str() > after.as_str());
+        }
+        if let Some(limit) = filter.limit {
+            list.truncate(limit as usize);
+        }
         Ok(list)
     }
 
@@ -223,15 +229,34 @@ mod tests {
         let active = TeamMemberFilter {
             role: Some("moderator".into()),
             status: Some(TeamMemberStatus::Active),
+            ..Default::default()
         };
         assert_eq!(db.fetch_team_members(&active).await.unwrap(), vec![m.clone()]);
         let trial = TeamMemberFilter {
             role: None,
             status: Some(TeamMemberStatus::Trial),
+            ..Default::default()
         };
         assert!(db.fetch_team_members(&trial).await.unwrap().is_empty());
         m.status = TeamMemberStatus::Left;
         assert!(!m.is_current());
+    }
+
+    #[tokio::test]
+    async fn members_page_by_id() {
+        let db = ReferenceDb::default();
+        for (id, user) in [("m3", "u3"), ("m1", "u1"), ("m2", "u2"), ("m4", "u4")] {
+            db.insert_team_member(&member(id, user, "moderator")).await.unwrap();
+        }
+        let ids = |list: Vec<TeamMember>| list.into_iter().map(|m| m.id).collect::<Vec<_>>();
+        let first = TeamMemberFilter { limit: Some(2), ..Default::default() };
+        assert_eq!(ids(db.fetch_team_members(&first).await.unwrap()), ["m1", "m2"]);
+        let next = TeamMemberFilter {
+            after: Some("m2".into()),
+            limit: Some(5),
+            ..Default::default()
+        };
+        assert_eq!(ids(db.fetch_team_members(&next).await.unwrap()), ["m3", "m4"]);
     }
 
     #[tokio::test]

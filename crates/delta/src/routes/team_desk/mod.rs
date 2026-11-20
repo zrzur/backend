@@ -68,7 +68,7 @@ use crate::util::team_texts::{self, RoleField};
 
 #[cfg(test)]
 mod tests;
-mod volunteers;
+pub(crate) mod volunteers;
 
 pub fn routes() -> Vec<Route> {
     routes![
@@ -289,6 +289,26 @@ pub(crate) mod test_settings {
     }
 }
 
+/// The settings for the admin console's Team page: the feature and the
+/// volunteer care are on. Tests register them under the staff member's id.
+pub(crate) async fn staff_desk(staff_id: &str) -> Result<FeaturesTeamApplications> {
+    #[cfg(test)]
+    let settings = match test_settings::get(staff_id) {
+        Some(settings) => settings,
+        None => (*config().await.features.team_applications).clone(),
+    };
+    #[cfg(not(test))]
+    let settings = {
+        let _ = staff_id;
+        (*config().await.features.team_applications).clone()
+    };
+    if settings.enabled() && settings.volunteers.enabled {
+        Ok(settings)
+    } else {
+        Err(create_error!(NotFound))
+    }
+}
+
 /// The settings, if the feature is switched on and `caller` is its bot.
 /// Anyone else gets "not found": the routes do not exist for them.
 async fn desk(caller: &User) -> Result<FeaturesTeamApplications> {
@@ -408,7 +428,7 @@ async fn name_of(db: &Database, user_id: &str) -> String {
 }
 
 /// The English name of a role, as the reviewers read it
-fn role_name(settings: &FeaturesTeamApplications, key: &str) -> String {
+pub(crate) fn role_name(settings: &FeaturesTeamApplications, key: &str) -> String {
     settings
         .role(key)
         .map(|role| team_texts::role_text(role, "en", RoleField::Name))
@@ -1051,7 +1071,7 @@ fn field<'a>(interaction: &'a Interaction, id: &str) -> &'a str {
         .unwrap_or_default()
 }
 
-fn length_problem(name: &str, min: usize, max: usize) -> revolt_result::Error {
+pub(crate) fn length_problem(name: &str, min: usize, max: usize) -> revolt_result::Error {
     revolt_result::failed_validation(vec![revolt_result::ValidationProblem::length(
         name, min, max,
     )])
@@ -1499,7 +1519,7 @@ async fn give_role(db: &Database, role: Option<&TeamRole>, user_id: &str) -> Tea
     }
 }
 
-async fn server_name(db: &Database, role: Option<&TeamRole>) -> String {
+pub(crate) async fn server_name(db: &Database, role: Option<&TeamRole>) -> String {
     match role {
         Some(role) => db
             .fetch_server(&role.server)
@@ -1957,12 +1977,8 @@ async fn identity(
         return refused("own application").await;
     }
     purge_due(db, staff_now()).await?;
-    let Some(stored) = db.fetch_team_identity(&application.user_id).await? else {
+    let Some(view) = identity_view(db, &application.user_id).await? else {
         return nothing().await;
-    };
-    let age_note = match db.fetch_user(&application.user_id).await {
-        Ok(applicant) => age_disagrees(stored.age, owner_band(db, &applicant).await),
-        Err(_) => false,
     };
     // the record first: no record, no view
     record_platform_audit(
@@ -1971,13 +1987,31 @@ async fn identity(
         AuditOutcome::Success,
     )
     .await?;
-    Ok(Json(IdentityView {
+    Ok(Json(view))
+}
+
+/// What is on file for a person, escaped; `None` when there is nothing. The
+/// caller logs the view first.
+pub(crate) async fn identity_view(db: &Database, user_id: &str) -> Result<Option<IdentityView>> {
+    let Some(stored) = db.fetch_team_identity(user_id).await? else {
+        return Ok(None);
+    };
+    let age_note = match db.fetch_user(user_id).await {
+        Ok(person) => age_disagrees(stored.age, owner_band(db, &person).await),
+        Err(_) => false,
+    };
+    Ok(Some(IdentityView {
         name: team_texts::plain(&stored.name),
         age: stored.age,
         country: team_texts::plain(&stored.country),
         age_note,
         missing: false,
     }))
+}
+
+/// The answer when nothing is on file
+pub(crate) fn no_identity() -> IdentityView {
+    missing_identity()
 }
 
 fn missing_identity() -> IdentityView {
@@ -2151,7 +2185,7 @@ pub struct MyStatus {
     pub confirm: Option<LeaveConfirm>,
 }
 
-fn member_word(status: revolt_database::TeamMemberStatus) -> &'static str {
+pub(crate) fn member_word(status: revolt_database::TeamMemberStatus) -> &'static str {
     use revolt_database::TeamMemberStatus as S;
     match status {
         S::Trial => "trial",
@@ -2442,7 +2476,7 @@ async fn report(db: &State<Database>, user: User, week: i32) -> Result<Json<Week
         let members = db
             .fetch_team_members(&revolt_database::TeamMemberFilter {
                 role: Some(role.key.clone()),
-                status: None,
+                ..Default::default()
             })
             .await?;
         let mut seen = std::collections::HashSet::new();
