@@ -3358,8 +3358,8 @@
     },
     {
       "path": "crates/core/database/src/util/team_activity.rs",
-      "sha256": "2c9a51794f6afdcf45ab1154aa7299202cf547a78663b93d060b94a71b7fbcc5",
-      "bytes": 58090,
+      "sha256": "390817cd3ae47ffb0d3acd03a18a85967d00f01a6a6237ac3f6ef8666bd6d8da",
+      "bytes": 72357,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4258,8 +4258,8 @@
     },
     {
       "path": "crates/daemons/crond/src/tasks/team_volunteers.rs",
-      "sha256": "949efff9b94624ed6b7b90fb16793ef30df89ca8d17328e7576539a938a7eef7",
-      "bytes": 1790,
+      "sha256": "67f654e1794405884bc8dab8f2d43f750a06fbdd148365f73899715c0d8dadee",
+      "bytes": 1911,
       "category": "product-source-or-build-manifest"
     },
     {
