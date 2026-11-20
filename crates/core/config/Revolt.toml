@@ -634,6 +634,19 @@ retention_days = 30
 accepted_retention_days = 90
 privacy_url = "https://zrzur.com/legal/privacy"
 
+# Looking after volunteers once accepted (off until switched on). Example:
+# [features.team_applications.volunteers]
+# enabled = false
+# trial_days = 30            # first period after acceptance
+# monthly_minimum = 2        # below this a month gets a kind check-in
+# away_max_days = 90         # longest "away"
+# identity_keep_days = 90    # name, age, country kept after leaving
+# activity_keep_days = 400   # monthly counts kept
+# rules_version = "1"
+# team_server = ""           # server of the team overview
+# report_channel = ""        # private channel for the weekly report
+# Each role may also list `work_channels = ["<channel id>", ...]`.
+
 # The team roles, in the order shown. A role is offered once `server` is set
 # and it has a `role` to give (or is manual) and `open` is true. Every role
 # is a volunteer role; anyone with an account (16 or over) may apply.

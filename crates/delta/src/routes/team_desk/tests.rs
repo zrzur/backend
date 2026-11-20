@@ -101,6 +101,7 @@ fn team_role(key: &str, server: &Server, role: &str) -> TeamRole {
         open: true,
         rules: format!("Rules of {key}"),
         questions: vec![],
+        work_channels: vec![],
     }
 }
 
