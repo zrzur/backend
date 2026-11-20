@@ -45,5 +45,13 @@
   "question.why.label": "你为什么想要这个角色？",
   "question.why.hint": "真诚地写几行就够了。",
   "accepted_notice.title": "你已通过一份申请",
-  "accepted_notice.body": "你已通过 {applicant} 对“{role}”的申请。如果这不是你的本意，请立即告知 Zrzur 的所有者。"
+  "accepted_notice.body": "你已通过 {applicant} 对“{role}”的申请。如果这不是你的本意，请立即告知 Zrzur 的所有者。",
+  "about_too_young.title": "We cannot take this further yet",
+  "about_too_young.body": "Volunteers on the Zrzur Team are 16 or older. Nothing you typed was stored. Thank you for your interest.",
+  "about_bad_age.title": "Please check your age",
+  "about_bad_age.body": "Please type your age as a number between 16 and 99, for example 24. Nothing was stored.",
+  "about_rules.title": "One tick is missing",
+  "about_rules.body": "Please tick that you read and accept the volunteer rules. Nothing was stored.",
+  "identity_missing.title": "Please tell us about you first",
+  "identity_missing.body": "Before you apply, press “Apply” and fill in “About you” (name, age, country) and accept the volunteer rules. It takes a minute."
 }

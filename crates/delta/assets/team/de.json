@@ -45,5 +45,13 @@
   "question.why.label": "Warum möchtest du diese Rolle?",
   "question.why.hint": "Ein paar ehrliche Zeilen genügen.",
   "accepted_notice.title": "Du hast eine Bewerbung angenommen",
-  "accepted_notice.body": "Du hast {applicant} für „{role}“ angenommen. Wenn du das nicht wolltest, sag sofort dem Betreiber von Zrzur Bescheid."
+  "accepted_notice.body": "Du hast {applicant} für „{role}“ angenommen. Wenn du das nicht wolltest, sag sofort dem Betreiber von Zrzur Bescheid.",
+  "about_too_young.title": "We cannot take this further yet",
+  "about_too_young.body": "Volunteers on the Zrzur Team are 16 or older. Nothing you typed was stored. Thank you for your interest.",
+  "about_bad_age.title": "Please check your age",
+  "about_bad_age.body": "Please type your age as a number between 16 and 99, for example 24. Nothing was stored.",
+  "about_rules.title": "One tick is missing",
+  "about_rules.body": "Please tick that you read and accept the volunteer rules. Nothing was stored.",
+  "identity_missing.title": "Please tell us about you first",
+  "identity_missing.body": "Before you apply, press “Apply” and fill in “About you” (name, age, country) and accept the volunteer rules. It takes a minute."
 }

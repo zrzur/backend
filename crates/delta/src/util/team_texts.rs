@@ -132,6 +132,27 @@ fn fill(template: &str, vars: &[(&str, String)]) -> String {
     out.trim().to_string()
 }
 
+/// An age typed by a person: ASCII digits or Arabic-Indic digits (`١٧`),
+/// trimmed, and nothing else (no words, signs, spaces inside or Persian
+/// digits). `None` for anything that is not a plain number up to 255; the
+/// range that counts is the caller's to check.
+pub fn parse_age(text: &str) -> Option<u8> {
+    let text = text.trim();
+    if text.is_empty() || text.chars().count() > 3 {
+        return None;
+    }
+    let mut value: u32 = 0;
+    for c in text.chars() {
+        let digit = match c {
+            '0'..='9' => c as u32 - '0' as u32,
+            '\u{0660}'..='\u{0669}' => c as u32 - 0x0660,
+            _ => return None,
+        };
+        value = value * 10 + digit;
+    }
+    u8::try_from(value).ok()
+}
+
 /// The kind a role key belongs to: the key itself or its part before a
 /// `-suffix`, the longest that fits
 pub fn kind_of(key: &str) -> Option<&'static str> {
@@ -247,6 +268,21 @@ mod tests {
             .collect();
         found.sort();
         found
+    }
+
+    #[test]
+    fn an_age_is_digits_and_nothing_else() {
+        assert_eq!(parse_age("17"), Some(17));
+        assert_eq!(parse_age(" 25 "), Some(25));
+        assert_eq!(parse_age("\u{0661}\u{0667}"), Some(17));
+        assert_eq!(parse_age("17 years"), None);
+        assert_eq!(parse_age("1 7"), None);
+        assert_eq!(parse_age("-5"), None);
+        assert_eq!(parse_age("+17"), None);
+        assert_eq!(parse_age("1.5"), None);
+        assert_eq!(parse_age(""), None);
+        assert_eq!(parse_age("256"), None);
+        assert_eq!(parse_age("\u{06F1}\u{06F7}"), None);
     }
 
     #[test]

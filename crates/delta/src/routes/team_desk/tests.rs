@@ -1466,3 +1466,297 @@ fn a_banned_account_is_not_taken_into_the_team() {
         assert!(d.roles_of(&d.lounge, &d.applicant).await.is_empty());
     });
 }
+
+// ---- "About you" ----
+
+impl Desk {
+    /// Switch the volunteer care on, with the rules at `version`
+    fn volunteers_on(&self, version: &str) {
+        let mut settings = super::test_settings::get(&self.bot.id).unwrap();
+        settings.volunteers.enabled = true;
+        settings.volunteers.rules_version = version.to_string();
+        super::test_settings::register(settings);
+    }
+
+    /// A person presses Apply, gets "About you" and sends it; gives what the
+    /// server answered to the hand-back
+    async fn about_with(&mut self, session: &str, role: &str, fields: Value) -> (Status, Value) {
+        let channel = self.apply.clone();
+        let panel = self.panel.clone();
+        let parent = self.press(session, &channel, &panel, "ta:start").await;
+        let text = |id: &str| {
+            json!({ "type": "Field", "label": id, "component": {
+                "type": "TextInput", "custom_id": id, "style": "Short", "label": id, "required": true
+            }})
+        };
+        let modal = json!({
+            "custom_id": format!("ta:about:{role}"),
+            "title": "About you",
+            "components": [
+                text("name"),
+                text("age"),
+                text("country"),
+                { "type": "Field", "label": "Rules", "component": {
+                    "type": "CheckboxGroup", "custom_id": "rules", "required": false,
+                    "options": [{ "label": "I accept the volunteer rules", "value": "accept" }]
+                }},
+            ]
+        });
+        let sent = self.form(session, &channel, &parent, modal, fields).await;
+        self.hand("about", &sent).await
+    }
+
+    async fn about_as(&mut self, session: &str, age: &str) -> (Status, Value) {
+        self.about_with(session, "support", about_fields(age, &["accept"])).await
+    }
+
+    async fn identity_of(&self, user: &User) -> Option<revolt_database::TeamIdentity> {
+        self.harness.db.fetch_team_identity(&user.id).await.unwrap()
+    }
+
+    /// The person takes the application `id` back
+    async fn withdraw_as(&mut self, session: &str, id: &str) -> (Status, Value) {
+        let channel = self.apply.clone();
+        let withdraw = self.message(&channel, &[&format!("ta:withdraw:{id}")]).await;
+        let pressed = self.press(session, &channel, &withdraw, &format!("ta:withdraw:{id}")).await;
+        self.hand("withdraw", &pressed).await
+    }
+}
+
+fn about_fields(age: &str, rules: &[&str]) -> Value {
+    json!([
+        { "custom_id": "name", "value": "Lina Haddad" },
+        { "custom_id": "age", "value": age },
+        { "custom_id": "country", "value": "Austria" },
+        { "custom_id": "rules", "values": rules },
+    ])
+}
+
+#[test]
+fn about_saves_identity_and_rules_version() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        d.volunteers_on("3");
+        let session = d.applicant_session.clone();
+        let (status, outcome) = d.about_as(&session, " 24 ").await;
+        assert_eq!(status, Status::Ok, "{outcome}");
+        assert_eq!(outcome["saved"], true);
+        let identity = d.identity_of(&d.applicant).await.unwrap();
+        assert_eq!(identity.id, d.applicant.id);
+        assert_eq!(identity.name, "Lina Haddad");
+        assert_eq!(identity.age, 24);
+        assert_eq!(identity.country, "Austria");
+        assert_eq!(identity.rules_version, "3");
+        assert!(identity.rules_at > 0);
+        assert_eq!(identity.purge_at, None);
+        // a closed role takes nobody's answers
+        let (_, outcome) = d.about_with(&session, "closed", about_fields("24", &["accept"])).await;
+        assert_eq!(outcome["saved"], false);
+        assert_eq!(outcome["problem"], "role_closed");
+    });
+}
+
+#[test]
+fn about_under_16_stores_nothing() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        d.volunteers_on("1");
+        let session = d.applicant_session.clone();
+        for age in ["15", "12", "0"] {
+            let (status, outcome) = d.about_as(&session, age).await;
+            assert_eq!(status, Status::Ok, "{outcome}");
+            assert_eq!(outcome["saved"], false, "{age}");
+            assert_eq!(outcome["problem"], "too_young", "{age}");
+        }
+        assert!(d.identity_of(&d.applicant).await.is_none());
+    });
+}
+
+#[test]
+fn about_accepts_arabic_digits() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        d.volunteers_on("1");
+        let session = d.applicant_session.clone();
+        let (status, outcome) = d.about_as(&session, "\u{0661}\u{0667}").await;
+        assert_eq!(status, Status::Ok, "{outcome}");
+        assert_eq!(outcome["saved"], true, "{outcome}");
+        assert_eq!(d.identity_of(&d.applicant).await.unwrap().age, 17);
+    });
+}
+
+#[test]
+fn about_refuses_words_in_age() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        d.volunteers_on("1");
+        let session = d.applicant_session.clone();
+        for age in ["17 years", "seventeen", "1 7", "100", "-20"] {
+            let (status, outcome) = d.about_as(&session, age).await;
+            assert_eq!(status, Status::Ok, "{outcome}");
+            assert_eq!(outcome["saved"], false, "{age}");
+            assert_eq!(outcome["problem"], "bad_age", "{age}");
+        }
+        assert!(d.identity_of(&d.applicant).await.is_none());
+    });
+}
+
+#[test]
+fn about_needs_the_rules_tick() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        d.volunteers_on("1");
+        let session = d.applicant_session.clone();
+        for rules in [vec![], vec!["something-else"]] {
+            let (status, outcome) = d.about_with(&session, "support", about_fields("30", &rules)).await;
+            assert_eq!(status, Status::Ok, "{outcome}");
+            assert_eq!(outcome["saved"], false);
+            assert_eq!(outcome["problem"], "rules_not_accepted");
+        }
+        assert!(d.identity_of(&d.applicant).await.is_none());
+    });
+}
+
+#[test]
+fn apply_needs_identity_when_enabled() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        d.volunteers_on("1");
+        let session = d.applicant_session.clone();
+        let (status, outcome) = d.apply_as(&session, "support").await;
+        assert_eq!(status, Status::Ok);
+        assert_eq!(outcome["applied"], false);
+        assert_eq!(outcome["problem"], "identity_missing");
+        assert!(d.harness.db.fetch_team_applications_of(&d.applicant.id).await.unwrap().is_empty());
+
+        d.about_as(&session, "24").await;
+        // the rules changed since: "About you" is asked again
+        d.volunteers_on("2");
+        let (_, outcome) = d.apply_as(&session, "support").await;
+        assert_eq!(outcome["problem"], "identity_missing");
+        d.about_as(&session, "24").await;
+        let (_, outcome) = d.apply_as(&session, "support").await;
+        assert_eq!(outcome["applied"], true, "{outcome}");
+    });
+}
+
+#[test]
+fn apply_works_without_identity_when_disabled() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let session = d.applicant_session.clone();
+        let (_, outcome) = d.apply_as(&session, "support").await;
+        assert_eq!(outcome["applied"], true, "{outcome}");
+        assert!(d.identity_of(&d.applicant).await.is_none());
+        let entry = d.queue().await.remove(0);
+        assert_eq!(entry["has_identity"], false);
+        assert_eq!(entry["age_note"], false);
+        // and "About you" does not exist while it is off
+        let (status, _) = d.about_as(&session, "24").await;
+        assert_ne!(status, Status::Ok);
+        assert!(d.identity_of(&d.applicant).await.is_none());
+    });
+}
+
+#[test]
+fn age_note_when_band_disagrees() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        d.volunteers_on("1");
+        // an account that states it is 17 ...
+        let (mut account, young_session, young) = d.harness.new_user().await;
+        let year: i32 = iso8601_timestamp::Timestamp::now_utc().format().to_string()[0..4]
+            .parse()
+            .unwrap();
+        account.age.as_mut().unwrap().birth_month = format!("{}-01", year - 17);
+        d.harness.db.save_account(&account).await.unwrap();
+        Member::create(&d.harness.db, &d.lounge, &young, None).await.unwrap();
+        // ... but says 25 in "About you"
+        let (_, outcome) = d.about_with(&young_session.token, "designer", about_fields("25", &["accept"])).await;
+        assert_eq!(outcome["saved"], true, "{outcome}");
+        let (_, outcome) = d.apply_as(&young_session.token, "designer").await;
+        assert_eq!(outcome["applied"], true, "{outcome}");
+        let queue = d.queue().await;
+        let entry = queue.iter().find(|e| e["user_id"] == young.id.as_str()).unwrap();
+        assert_eq!(entry["has_identity"], true);
+        assert_eq!(entry["age_note"], true);
+
+        // an adult account that agrees has no note
+        let session = d.applicant_session.clone();
+        d.about_as(&session, "25").await;
+        d.apply_as(&session, "support").await;
+        let queue = d.queue().await;
+        let entry = queue.iter().find(|e| e["user_id"] == d.applicant.id.as_str()).unwrap();
+        assert_eq!(entry["has_identity"], true);
+        assert_eq!(entry["age_note"], false);
+        // the card never carries the values
+        assert!(!entry.to_string().contains("Lina Haddad"));
+    });
+}
+
+#[test]
+fn withdraw_erases_identity_without_membership() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        d.volunteers_on("1");
+        let session = d.applicant_session.clone();
+        d.about_as(&session, "24").await;
+        let (_, outcome) = d.apply_as(&session, "support").await;
+        let (status, outcome) = d.withdraw_as(&session, &id_of(&outcome)).await;
+        assert_eq!(status, Status::Ok, "{outcome}");
+        assert_eq!(outcome["applied"], true);
+        assert!(d.identity_of(&d.applicant).await.is_none());
+
+        // a current volunteer in another role keeps theirs
+        let (_, other_session, other) = d.harness.new_user().await;
+        Member::create(&d.harness.db, &d.lounge, &other, None).await.unwrap();
+        d.about_as(&other_session.token, "40").await;
+        d.harness
+            .db
+            .insert_team_member(&revolt_database::TeamMember {
+                id: ulid::Ulid::new().to_string(),
+                user_id: other.id.clone(),
+                role: "designer".to_string(),
+                server: d.lounge.id.clone(),
+                status: revolt_database::TeamMemberStatus::Active,
+                joined_at: 1,
+                trial_ends_at: 2,
+                confirmed_at: None,
+                away_until: None,
+                left_at: None,
+                low_months: 0,
+                notes: None,
+                history: vec![],
+            })
+            .await
+            .unwrap();
+        let (_, outcome) = d.apply_as(&other_session.token, "support").await;
+        let (_, outcome) = d.withdraw_as(&other_session.token, &id_of(&outcome)).await;
+        assert_eq!(outcome["applied"], true, "{outcome}");
+        assert!(d.identity_of(&other).await.is_some());
+    });
+}
+
+#[test]
+fn reject_sets_identity_purge_with_the_application() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        d.volunteers_on("1");
+        let session = d.applicant_session.clone();
+        let reviewer_session = d.reviewer_session.clone();
+        d.about_as(&session, "24").await;
+        let (_, outcome) = d.apply_as(&session, "support").await;
+        let id = id_of(&outcome);
+        let card = d.card(&id).await;
+        let (status, outcome) = d.reject(&reviewer_session, &card, &id, "Not a fit right now.").await;
+        assert_eq!(status, Status::Ok, "{outcome}");
+        assert_eq!(outcome["applied"], true, "{outcome}");
+        let purge_at = d.stored(&id).await.purge_at;
+        assert!(purge_at.is_some());
+        let identity = d.identity_of(&d.applicant).await.unwrap();
+        assert_eq!(identity.purge_at, purge_at);
+        // "About you" again brings the person back: no deletion time
+        d.about_as(&session, "24").await;
+        assert_eq!(d.identity_of(&d.applicant).await.unwrap().purge_at, None);
+    });
+}

@@ -41,9 +41,12 @@
 //! all.
 //!
 //! Every team role is a volunteer role in a volunteer project, and every
-//! text says so. No age is asked or kept: anyone with an account may apply,
-//! unless a role is marked `adult` in the settings (none is by default);
-//! then the age group the account already states is read.
+//! text says so. Anyone with an account may apply, unless a role is marked
+//! `adult` in the settings (none is by default); then the age group the
+//! account already states is read. Only while the volunteer care is on
+//! (`[features.team_applications.volunteers]`) a first step, "About you",
+//! asks name, age (16 or over) and country and the tick for the volunteer
+//! rules; they are kept as the person's identity until the application ends.
 //!
 //! What a person reads (the roles, the questions, the messages) exists in
 //! the app's seven languages (`util::team_texts`); what the reviewers read
@@ -53,7 +56,7 @@ use revolt_config::{config, FeaturesTeamApplications, TeamRole};
 use revolt_database::{
     record_platform_audit, staff_now, util::age::owner_band, AuditOutcome, AuditRecord, Channel,
     Database, Interaction, InteractionSource, PartialChannel, PartialMember, Server, TeamAnswer,
-    TeamApplication, TeamApplicationStatus, TeamGrant, User,
+    TeamApplication, TeamApplicationStatus, TeamGrant, TeamIdentity, User,
 };
 use revolt_models::v0::{self, InteractionType};
 use revolt_permissions::ChannelPermission;
@@ -67,7 +70,7 @@ use crate::util::team_texts::{self, RoleField};
 mod tests;
 
 pub fn routes() -> Vec<Route> {
-    routes![desk_config, queue, application_state, mine, apply, withdraw, act, settle]
+    routes![desk_config, queue, application_state, mine, about, apply, withdraw, act, settle]
 }
 
 const MIN_REASON: usize = 3;
@@ -77,6 +80,12 @@ const MAX_ANSWER: usize = 1000;
 const MIN_LANGUAGES: usize = 2;
 const MAX_LANGUAGES: usize = 200;
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
+const MIN_AGE: u8 = 16;
+const MAX_AGE: u8 = 99;
+const MIN_NAME: usize = 2;
+const MAX_NAME: usize = 80;
+const MIN_COUNTRY: usize = 2;
+const MAX_COUNTRY: usize = 56;
 /// After withdrawing, a person waits `withdraw_wait_minutes` before applying
 /// again; the record without answers lives exactly as long
 fn withdraw_wait_ms(settings: &FeaturesTeamApplications) -> i64 {
@@ -257,6 +266,61 @@ async fn desk(caller: &User) -> Result<FeaturesTeamApplications> {
 }
 
 // ---- small helpers ----
+
+/// Everything whose time is up goes: applications, and the identities of
+/// people who are not volunteers any more
+async fn purge_due(db: &Database, now: i64) -> Result<()> {
+    db.delete_team_applications_due(now).await?;
+    db.delete_team_identities_due(now).await?;
+    Ok(())
+}
+
+/// The person has no other open application and no current membership
+async fn out_of_reach(db: &Database, person: &str, except: &str) -> bool {
+    let busy = db
+        .fetch_team_applications_of(person)
+        .await
+        .map(|all| all.iter().any(|a| a.is_open() && a.id != except))
+        .unwrap_or(true);
+    let member = db
+        .fetch_team_members_of(person)
+        .await
+        .map(|all| all.iter().any(|m| m.is_current()))
+        .unwrap_or(true);
+    !busy && !member
+}
+
+/// The identity of someone whose application ended, when nothing else
+/// keeps them in the team's reach: erased at once (`purge_at` `None`) or set
+/// to go when the application's own time is up
+async fn release_identity(db: &Database, application: &TeamApplication, purge_at: Option<i64>) {
+    if !out_of_reach(db, &application.user_id, &application.id).await {
+        return;
+    }
+    let Ok(Some(mut identity)) = db.fetch_team_identity(&application.user_id).await else {
+        return;
+    };
+    match purge_at {
+        None => {
+            let _ = db.delete_team_identity(&application.user_id).await;
+        }
+        Some(at) => {
+            identity.purge_at = Some(at);
+            let _ = db.upsert_team_identity(&identity).await;
+        }
+    }
+}
+
+/// The identity of a person who is in the team's reach again keeps no
+/// deletion time
+async fn keep_identity(db: &Database, person: &str) {
+    if let Ok(Some(mut identity)) = db.fetch_team_identity(person).await {
+        if identity.purge_at.is_some() {
+            identity.purge_at = None;
+            let _ = db.upsert_team_identity(&identity).await;
+        }
+    }
+}
 
 fn status_word(status: TeamApplicationStatus) -> &'static str {
     match status {
@@ -508,6 +572,12 @@ pub struct DeskEntry {
     pub adult: bool,
     /// Names of the official servers the person is a member of
     pub servers: Vec<String>,
+    /// The person gave name, age and country in "About you" (the values
+    /// themselves are never part of a card)
+    pub has_identity: bool,
+    /// The age stated in "About you" and the account's own age group
+    /// disagree about being 18 or over; a reviewer looks twice
+    pub age_note: bool,
     pub answers: Vec<TeamAnswer>,
     pub submitted_at: i64,
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -568,6 +638,11 @@ async fn entry(
         None => None,
     };
     let channel = settings.review_channel(&application.role).to_string();
+    let identity = db.fetch_team_identity(&person.id).await.ok().flatten();
+    let age_note = match &identity {
+        Some(identity) => age_disagrees(identity.age, owner_band(db, &person).await),
+        None => false,
+    };
     Some(DeskEntry {
         id: application.id.clone(),
         status: status_word(application.status).to_string(),
@@ -587,6 +662,8 @@ async fn entry(
         account_created_at: created_at(&person.id),
         adult: application.adult,
         servers,
+        has_identity: identity.is_some(),
+        age_note,
         answers: application.answers.clone(),
         submitted_at: application.submitted_at,
         interviewer_name,
@@ -611,7 +688,7 @@ async fn entry(
 async fn queue(db: &State<Database>, user: User) -> Result<Json<Vec<DeskEntry>>> {
     let settings = desk(&user).await?;
     // nothing outlives its time, whether or not the clean-up task ran
-    db.delete_team_applications_due(staff_now()).await?;
+    purge_due(db, staff_now()).await?;
     let mut entries = Vec::new();
     for application in db.fetch_open_team_applications().await? {
         if let Some(entry) = entry(db, &settings, &application).await {
@@ -642,7 +719,7 @@ pub struct DeskState {
 #[get("/applications/<id>")]
 async fn application_state(db: &State<Database>, user: User, id: &str) -> Result<Json<DeskState>> {
     desk(&user).await?;
-    db.delete_team_applications_due(staff_now()).await?;
+    purge_due(db, staff_now()).await?;
     let Ok(application) = db.fetch_team_application(id).await else {
         return Ok(Json(DeskState {
             status: "Gone".to_string(),
@@ -770,6 +847,16 @@ async fn reviewer(
     Ok(person)
 }
 
+/// Stated 18 or over while the account says otherwise, or the other way
+/// round. An account with no age on record disagrees with nothing.
+fn age_disagrees(stated: u8, band: v0::AgeBand) -> bool {
+    match band {
+        v0::AgeBand::Unknown => false,
+        v0::AgeBand::AdultDeclared => stated < 18,
+        _ => stated >= 18,
+    }
+}
+
 async fn is_adult(db: &Database, person: &User) -> bool {
     owner_band(db, person).await == v0::AgeBand::AdultDeclared
 }
@@ -842,7 +929,7 @@ fn mine_application(settings: &FeaturesTeamApplications, a: &TeamApplication) ->
 
 async fn mine_of(db: &Database, settings: &FeaturesTeamApplications, person: &User) -> Result<Mine> {
     let now = staff_now();
-    db.delete_team_applications_due(now).await?;
+    purge_due(db, now).await?;
     let applications = db.fetch_team_applications_of(&person.id).await?;
     let (application, wait_until) = standing(settings, &applications, now);
     let offered_roles: Vec<_> = settings.roles.iter().filter(|role| offered(role)).collect();
@@ -894,6 +981,7 @@ async fn mine(db: &State<Database>, user: User, data: Json<DataDeskAct>) -> Resu
 pub struct ApplyOutcome {
     pub applied: bool,
     /// Why not: `already_open`, `wait`, `role_closed`, `adult_only`,
+    /// `identity_missing` ("About you" not done for the current rules),
     /// `not_open` (withdrawing something already decided)
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub problem: Option<String>,
@@ -917,6 +1005,101 @@ fn length_problem(name: &str, min: usize, max: usize) -> revolt_result::Error {
     revolt_result::failed_validation(vec![revolt_result::ValidationProblem::length(
         name, min, max,
     )])
+}
+
+/// What came of "About you"
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct AboutOutcome {
+    pub saved: bool,
+    /// Why not: `too_young`, `bad_age`, `rules_not_accepted`, `role_closed`
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub problem: Option<String>,
+}
+
+/// What a person chose in a group (`values`), or the one value of a field,
+/// trimmed
+fn chosen<'a>(interaction: &'a Interaction, id: &str) -> Vec<&'a str> {
+    let Some(field) = interaction.modal_fields.iter().find(|field| field.custom_id == id) else {
+        return Vec::new();
+    };
+    field
+        .values
+        .iter()
+        .flatten()
+        .map(String::as_str)
+        .chain(field.value.as_deref())
+        .map(str::trim)
+        .collect()
+}
+
+/// # Team desk: "About you"
+///
+/// The bot hands back the submitted form `ta:about:<role>`: name, age,
+/// country and the tick for the volunteer rules. They are kept as the
+/// person's identity, seen only through "Show identity". Problems with the
+/// answers come back in the outcome and store nothing.
+#[post("/about", data = "<data>")]
+async fn about(
+    db: &State<Database>,
+    user: User,
+    data: Json<DataDeskAct>,
+) -> Result<Json<AboutOutcome>> {
+    let settings = desk(&user).await?;
+    if !settings.volunteers.enabled {
+        return Err(create_error!(InvalidOperation));
+    }
+    let interaction = genuine(db, &settings, &data, Some(&settings.channel_apply)).await?;
+    let role_key = match (interaction.kind, pressed(&interaction)) {
+        (InteractionType::ModalSubmit, Some(("about", key))) => key.to_string(),
+        _ => return Err(create_error!(InvalidOperation)),
+    };
+    let person = applicant(db, &settings, &interaction).await?;
+    let refuse = |problem: &str| {
+        Ok(Json(AboutOutcome {
+            saved: false,
+            problem: Some(problem.to_string()),
+        }))
+    };
+    if !settings.role(&role_key).is_some_and(offered) {
+        return refuse("role_closed");
+    }
+
+    let age = match team_texts::parse_age(field(&interaction, "age")) {
+        Some(age) if (MIN_AGE..=MAX_AGE).contains(&age) => age,
+        Some(age) if age < MIN_AGE => return refuse("too_young"),
+        _ => return refuse("bad_age"),
+    };
+    if !chosen(&interaction, "rules").contains(&"accept") {
+        return refuse("rules_not_accepted");
+    }
+    let name = field(&interaction, "name");
+    if !(MIN_NAME..=MAX_NAME).contains(&name.chars().count()) {
+        return Err(length_problem("name", MIN_NAME, MAX_NAME));
+    }
+    let country = field(&interaction, "country");
+    if !(MIN_COUNTRY..=MAX_COUNTRY).contains(&country.chars().count()) {
+        return Err(length_problem("country", MIN_COUNTRY, MAX_COUNTRY));
+    }
+
+    purge_due(db, staff_now()).await?;
+    // one form, one save
+    if !db.claim_interaction_use(&interaction.id).await? {
+        return Err(create_error!(InteractionExpired));
+    }
+    db.upsert_team_identity(&TeamIdentity {
+        id: person.id.clone(),
+        name: name.to_string(),
+        age,
+        country: country.to_string(),
+        rules_version: settings.volunteers.rules_version.clone(),
+        rules_at: staff_now(),
+        purge_at: None,
+    })
+    .await?;
+    Ok(Json(AboutOutcome {
+        saved: true,
+        problem: None,
+    }))
 }
 
 /// # Team desk: file an application
@@ -951,6 +1134,16 @@ async fn apply(
     // the stated age is read only for a role that asks for it
     if role.adult && !is_adult(db, &person).await {
         return refuse("adult_only", None, None);
+    }
+
+    // "About you" first, when the volunteer care is on
+    let identity = db.fetch_team_identity(&person.id).await?;
+    if settings.volunteers.enabled
+        && !identity
+            .as_ref()
+            .is_some_and(|identity| identity.rules_version == settings.volunteers.rules_version)
+    {
+        return refuse("identity_missing", None, None);
     }
 
     // the answers, as the person sent them
@@ -990,7 +1183,7 @@ async fn apply(
     }
 
     let now = staff_now();
-    db.delete_team_applications_due(now).await?;
+    purge_due(db, now).await?;
     let existing = db.fetch_team_applications_of(&person.id).await?;
     match standing(&settings, &existing, now) {
         (Some(open), None) => {
@@ -1023,6 +1216,9 @@ async fn apply(
         purge_at: None,
     };
     db.insert_team_application(&application).await?;
+    if identity.is_some_and(|identity| identity.purge_at.is_some()) {
+        keep_identity(db, &person.id).await;
+    }
     // two forms sent in the same moment: this one goes if another is open
     let open: Vec<_> = db
         .fetch_team_applications_of(&person.id)
@@ -1110,6 +1306,8 @@ async fn withdraw(
             Err(_) => Err(create_error!(NotFound)),
         };
     }
+    // withdrawing erases what the person gave, identity included
+    release_identity(db, &withdrawn, None).await;
     team_texts::send(
         db,
         &withdrawn.user_id,
@@ -1291,7 +1489,7 @@ async fn act(
         _ => return Err(create_error!(InvalidOperation)),
     };
 
-    db.delete_team_applications_due(staff_now()).await?;
+    purge_due(db, staff_now()).await?;
     let found = db.fetch_team_application(&id).await.ok();
     // an application that is gone is judged as one of no role: only the
     // common reviewers get an answer about it, in the common channel
@@ -1443,6 +1641,12 @@ async fn act(
     }
 
     match action.as_str() {
+        "reject" => release_identity(db, &decided, decided.purge_at).await,
+        "accept" => keep_identity(db, &application.user_id).await,
+        _ => {}
+    }
+
+    match action.as_str() {
         "interview" => {
             // the conversation the reviewer writes in; opened for both
             if let Ok(mut channel) = Channel::create_dm(db, &person, &applicant).await {
@@ -1570,7 +1774,7 @@ pub struct Settled {
 #[post("/settle")]
 async fn settle(db: &State<Database>, user: User) -> Result<Json<Vec<Settled>>> {
     let settings = desk(&user).await?;
-    db.delete_team_applications_due(staff_now()).await?;
+    purge_due(db, staff_now()).await?;
     let mut settled = Vec::new();
     for mut application in db.fetch_team_applications_pending_grant().await? {
         let role = settings.role(&application.role);
