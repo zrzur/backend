@@ -1797,6 +1797,10 @@ async fn identity(
         return Err(create_error!(InvalidOperation));
     }
     let interaction = genuine(db, &settings, &data, None).await?;
+    // one press, one look
+    if !db.claim_interaction_use(&interaction.id).await? {
+        return Err(create_error!(InteractionExpired));
+    }
     let id = match (interaction.kind, pressed(&interaction)) {
         (InteractionType::Component, Some(("identity", id))) if !id.is_empty() => id.to_string(),
         _ => return Err(create_error!(InvalidOperation)),
@@ -1854,8 +1858,17 @@ async fn identity(
     }
     let person = allowed?;
 
+    let nothing = || async {
+        record_platform_audit(
+            db,
+            record(format!("nothing on file: {note}")),
+            AuditOutcome::Success,
+        )
+        .await?;
+        Ok::<_, revolt_result::Error>(Json(missing_identity()))
+    };
     let Some(application) = found else {
-        return Ok(Json(missing_identity()));
+        return nothing().await;
     };
     // nobody reads their own
     if application.user_id == person.id {
@@ -1863,7 +1876,7 @@ async fn identity(
     }
     purge_due(db, staff_now()).await?;
     let Some(stored) = db.fetch_team_identity(&application.user_id).await? else {
-        return Ok(Json(missing_identity()));
+        return nothing().await;
     };
     let age_note = match db.fetch_user(&application.user_id).await {
         Ok(applicant) => age_disagrees(stored.age, owner_band(db, &applicant).await),

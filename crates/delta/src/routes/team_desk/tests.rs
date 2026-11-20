@@ -1888,7 +1888,38 @@ fn identity_is_off_while_the_switch_is_off() {
         let (_, outcome) = d.apply_as(&d.applicant_session.clone(), "support").await;
         let id = id_of(&outcome);
         let (status, _) = d.identity_press(&session, &id).await;
+        assert_eq!(status, Status::BadRequest);
+        assert!(d
+            .audit(&d.applicant)
+            .await
+            .iter()
+            .all(|(action, _, _)| action != "team.identity.view"));
+    });
+}
+
+#[test]
+fn identity_press_is_single_use() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.applied_as("Lina Haddad").await;
+        let session = d.reviewer_session.clone();
+        let channel = d.review.clone();
+        let card = d.message(&channel, &[&format!("ta:identity:{id}")]).await;
+        let pressed = d.press(&session, &channel, &card, &format!("ta:identity:{id}")).await;
+        let (status, view) = d.hand("identity", &pressed).await;
+        assert_eq!(status, Status::Ok, "{view}");
+        assert_eq!(view["name"], "Lina Haddad");
+        let (status, body) = d.hand("identity", &pressed).await;
         assert_ne!(status, Status::Ok);
+        assert!(!body.to_string().contains("Lina"));
+        let views: Vec<_> = d
+            .audit(&d.applicant)
+            .await
+            .into_iter()
+            .filter(|(action, _, _)| action == "team.identity.view")
+            .collect();
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0].2, "Success");
     });
 }
 
@@ -1906,6 +1937,14 @@ fn identity_missing_when_never_filled_or_unknown_application() {
         assert_eq!(view["missing"], true);
         assert_eq!(view["name"], "");
         assert_eq!(view["age"], 0);
+        let seen: Vec<_> = d
+            .audit(&d.applicant)
+            .await
+            .into_iter()
+            .filter(|(action, _, _)| action == "team.identity.view")
+            .collect();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].2, "Success");
         // an application that does not exist
         let (status, view) = d.identity_press(&session, "01ZZZZZZZZZZZZZZZZZZZZZZZZ").await;
         assert_eq!(status, Status::Ok, "{view}");
