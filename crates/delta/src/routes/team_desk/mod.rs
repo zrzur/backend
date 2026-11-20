@@ -2269,7 +2269,7 @@ async fn away(
     }
     let mut first: Option<String> = None;
     for mut member in db.fetch_team_members_of(&interaction.user_id).await? {
-        if volunteers::set_away(db, &mut member, &interaction.user_id, days).await?
+        if volunteers::set_away(db, &mut member, &interaction.user_id, days, max).await?
             && first.is_none()
         {
             first = Some(member.role.clone());

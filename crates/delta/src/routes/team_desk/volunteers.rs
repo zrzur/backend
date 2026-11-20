@@ -71,23 +71,63 @@ pub fn parse_days(text: &str) -> Option<i64> {
 
 /// Set this membership away for `days` days, or (`days` = 0) bring it back
 /// to the status before: a trial while the trial is not over and not
-/// confirmed, otherwise active. Returns whether anything changed.
+/// confirmed, otherwise active; one who was inactive before stays inactive.
+/// One away period lasts at most `max_days` in all, counted from its start
+/// (the latest `away` / `away_from_inactive` entry of the history; a renewal
+/// is the entry `away_renewed` and does not move the start).
+///
+/// The record is read again right before the write: one that was left in the
+/// meantime is not touched. Returns whether anything changed.
 pub(super) async fn set_away(
     db: &Database,
     member: &mut TeamMember,
     actor: &str,
     days: i64,
+    max_days: i64,
 ) -> Result<bool> {
+    let Some(fresh) = db
+        .fetch_team_members_of(&member.user_id)
+        .await?
+        .into_iter()
+        .find(|other| other.id == member.id)
+    else {
+        return Ok(false);
+    };
+    *member = fresh;
     if !member.is_current() {
         return Ok(false);
     }
     let now = staff_now();
     if days > 0 {
-        member.status = TeamMemberStatus::Away;
-        member.away_until = Some(now + days_ms(days));
-        member.history.push(history(actor, "away"));
+        if member.status == TeamMemberStatus::Away {
+            let start = member
+                .history
+                .iter()
+                .rev()
+                .find(|h| h.action == "away" || h.action == "away_from_inactive")
+                .map(|h| h.at)
+                .unwrap_or(now);
+            let limit = start + days_ms(max_days);
+            member.away_until = Some((now + days_ms(days)).min(limit));
+            member.history.push(history(actor, "away_renewed"));
+        } else {
+            let from_inactive = member.status == TeamMemberStatus::Inactive;
+            member.status = TeamMemberStatus::Away;
+            member.away_until = Some(now + days_ms(days));
+            member
+                .history
+                .push(history(actor, if from_inactive { "away_from_inactive" } else { "away" }));
+        }
     } else if member.status == TeamMemberStatus::Away {
-        member.status = if now < member.trial_ends_at && member.confirmed_at.is_none() {
+        let was_inactive = member
+            .history
+            .iter()
+            .rev()
+            .find(|h| h.action == "away" || h.action == "away_from_inactive")
+            .is_some_and(|h| h.action == "away_from_inactive");
+        member.status = if was_inactive {
+            TeamMemberStatus::Inactive
+        } else if now < member.trial_ends_at && member.confirmed_at.is_none() {
             TeamMemberStatus::Trial
         } else {
             TeamMemberStatus::Active

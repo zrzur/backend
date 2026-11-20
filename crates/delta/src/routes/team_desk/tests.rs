@@ -2603,6 +2603,60 @@ fn away_zero_ends_away() {
 }
 
 #[test]
+fn away_keeps_inactive_on_return() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.volunteer().await;
+        let session = d.applicant_session.clone();
+        let mut member = d.member(&id).await;
+        member.status = revolt_database::TeamMemberStatus::Inactive;
+        d.harness.db.update_team_member(&member).await.unwrap();
+        d.away_as(&session, "5").await;
+        assert_eq!(d.member(&id).await.status, revolt_database::TeamMemberStatus::Away);
+        d.away_as(&session, "0").await;
+        let back = d.member(&id).await;
+        assert_eq!(back.status, revolt_database::TeamMemberStatus::Inactive);
+        assert_eq!(back.away_until, None);
+    });
+}
+
+#[test]
+fn away_cannot_be_renewed_past_the_max() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.volunteer().await;
+        let session = d.applicant_session.clone();
+        d.away_as(&session, "80").await;
+        // the away began 50 days ago
+        let mut member = d.member(&id).await;
+        let start = revolt_database::staff_now() - 50 * super::DAY_MS;
+        member.history.last_mut().unwrap().at = start;
+        d.harness.db.update_team_member(&member).await.unwrap();
+
+        let (status, _) = d.away_as(&session, "90").await;
+        assert_eq!(status, Status::Ok);
+        let member = d.member(&id).await;
+        assert_eq!(member.away_until, Some(start + 90 * super::DAY_MS));
+        assert_eq!(member.history.last().unwrap().action, "away_renewed");
+        // a shorter renewal is taken as asked
+        let before = revolt_database::staff_now();
+        d.away_as(&session, "5").await;
+        let until = d.member(&id).await.away_until.unwrap();
+        assert!(until >= before + 5 * super::DAY_MS && until <= start + 90 * super::DAY_MS);
+        // a left membership is not touched by a late away
+        let mut gone = d.member(&id).await;
+        let settings = super::test_settings::get(&d.bot.id).unwrap();
+        super::volunteers::end_membership(&d.harness.db, &settings, &mut gone, "x", "left", None)
+            .await
+            .unwrap();
+        let mut stale = member;
+        let changed = super::volunteers::set_away(&d.harness.db, &mut stale, "x", 5, 90).await.unwrap();
+        assert!(!changed);
+        assert_eq!(d.member(&id).await.status, revolt_database::TeamMemberStatus::Left);
+    });
+}
+
+#[test]
 fn leave_needs_the_servers_confirm() {
     on_big_stack(|| async {
         let mut d = desk().await;
