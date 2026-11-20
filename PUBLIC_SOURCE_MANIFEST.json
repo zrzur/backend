@@ -6226,8 +6226,8 @@
     },
     {
       "path": "crates/delta/src/routes/team_desk/mod.rs",
-      "sha256": "6eb29adc9de0e36b1ec483b9397e338a742aafc3bb559066ad906169013afab8",
-      "bytes": 91162,
+      "sha256": "ae2a1023a3f6a7a0244341f69862ecadc8d563276a18fb50d2df40d32ab70936",
+      "bytes": 91969,
       "category": "product-source-or-build-manifest"
     },
     {
