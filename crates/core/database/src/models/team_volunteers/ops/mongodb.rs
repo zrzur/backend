@@ -44,6 +44,27 @@ impl AbstractTeamVolunteers for MongoDb {
             .map_err(|_| create_database_error!("delete_one", IDENTITIES))
     }
 
+    async fn mark_team_identity_purge(&self, user_id: &str, purge_at: i64) -> Result<bool> {
+        // `null` matches a field never written too; no upsert: a record
+        // deleted in between stays deleted
+        self.col::<TeamIdentity>(IDENTITIES)
+            .update_one(
+                doc! { "_id": user_id, "purge_at": null },
+                doc! { "$set": { "purge_at": purge_at } },
+            )
+            .await
+            .map(|r| r.modified_count == 1)
+            .map_err(|_| create_database_error!("update_one", IDENTITIES))
+    }
+
+    async fn clear_team_identity_purge(&self, user_id: &str) -> Result<bool> {
+        self.col::<TeamIdentity>(IDENTITIES)
+            .update_one(doc! { "_id": user_id }, doc! { "$unset": { "purge_at": 1 } })
+            .await
+            .map(|r| r.matched_count == 1)
+            .map_err(|_| create_database_error!("update_one", IDENTITIES))
+    }
+
     async fn fetch_team_identities_kept(&self) -> Result<Vec<TeamIdentity>> {
         // a field never written and one written as null both mean "kept"
         self.find_with_options(
@@ -126,11 +147,16 @@ impl AbstractTeamVolunteers for MongoDb {
         }
     }
 
-    async fn delete_team_member(&self, id: &str) -> Result<()> {
+    async fn delete_team_member_if_left(&self, id: &str, cutoff: i64) -> Result<u64> {
+        // the condition is part of the write: a rejoin in between is not deleted
         self.col::<TeamMember>(MEMBERS)
-            .delete_one(doc! { "_id": id })
+            .delete_one(doc! {
+                "_id": id,
+                "status": status_name(TeamMemberStatus::Left),
+                "left_at": { "$lte": cutoff },
+            })
             .await
-            .map(|_| ())
+            .map(|r| r.deleted_count)
             .map_err(|_| create_database_error!("delete_one", MEMBERS))
     }
 

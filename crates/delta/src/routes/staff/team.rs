@@ -16,7 +16,9 @@ use std::collections::HashMap;
 
 use revolt_database::{
     record_platform_audit,
-    util::team_activity::{day_of, previous_month},
+    util::team_activity::{
+        counting_stopped, day_of, previous_month, COUNTING_RESUMED, COUNTING_STOPPED,
+    },
     AuditOutcome, AuditRecord, Database, StaffPermission, TeamHistory, TeamMember, TeamMemberFilter,
     TeamMemberStatus,
 };
@@ -87,6 +89,9 @@ pub struct StaffTeamPerson {
     pub notes: Option<String>,
     /// Same value as `row.monthly_minimum`
     pub monthly_minimum: i64,
+    /// The person objected and is not counted (staff stopped it)
+    #[serde(default)]
+    pub counting_stopped: bool,
 }
 
 #[derive(Deserialize)]
@@ -97,6 +102,12 @@ pub struct DataAway {
 #[derive(Deserialize)]
 pub struct DataNote {
     pub text: String,
+}
+
+#[derive(Deserialize)]
+pub struct DataCounting {
+    /// `false` stops the counting (an objection), `true` starts it again
+    pub on: bool,
 }
 
 #[derive(Deserialize)]
@@ -194,12 +205,14 @@ async fn person(
             total
         })
         .collect();
+    let all = db.fetch_team_members_of(&member.user_id).await?;
     Ok(StaffTeamPerson {
         row,
         months,
         history: member.history.clone(),
         notes: member.notes.clone(),
         monthly_minimum: settings.volunteers.monthly_minimum.max(0),
+        counting_stopped: counting_stopped(&all),
     })
 }
 
@@ -316,6 +329,50 @@ pub async fn confirm(db: &State<Database>, staff: StaffContext, id: &str) -> Res
         action: "confirmed".to_string(),
     });
     db.update_team_member(&member).await?;
+    Ok(Json(person(db, &settings, &member, staff.now).await?))
+}
+
+/// # Team: stop or resume counting a person
+///
+/// A volunteer who objects to the counting (GDPR Art. 21) tells the owner;
+/// `on: false` stops it for the person, in every current membership
+/// (history `counting_stopped`), and the daily job counts none of their days
+/// until `on: true` starts it again (`counting_resumed`, from the next day).
+/// Logged before it takes effect; asking for the state it is already in
+/// changes nothing and logs nothing.
+#[post("/team/<id>/counting", data = "<data>")]
+pub async fn counting(
+    db: &State<Database>,
+    staff: StaffContext,
+    id: &str,
+    data: Json<DataCounting>,
+) -> Result<Json<StaffTeamPerson>> {
+    staff.require(db, StaffPermission::TeamManage).await?;
+    let settings = team_desk::staff_desk(&staff.user.id).await?;
+    let member = member_of(db, id).await?;
+    if !member.is_current() {
+        return Err(create_error!(InvalidOperation));
+    }
+    let all = db.fetch_team_members_of(&member.user_id).await?;
+    if counting_stopped(&all) != data.on {
+        return Ok(Json(person(db, &settings, &member, staff.now).await?));
+    }
+    let word = if data.on { COUNTING_RESUMED } else { COUNTING_STOPPED };
+    log(db, &staff, "team.member.counting", &member, None, format!("member {}, {word}", member.id)).await?;
+    for other in all.iter().filter(|m| m.is_current()) {
+        // read again right before the write: a leave in between wins
+        let mut other = member_of(db, &other.id).await?;
+        if !other.is_current() {
+            continue;
+        }
+        other.history.push(TeamHistory {
+            at: staff.now,
+            actor: staff.user.id.clone(),
+            action: word.to_string(),
+        });
+        db.update_team_member(&other).await?;
+    }
+    let member = member_of(db, id).await?;
     Ok(Json(person(db, &settings, &member, staff.now).await?))
 }
 

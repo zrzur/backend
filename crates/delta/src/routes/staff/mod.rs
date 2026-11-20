@@ -139,6 +139,7 @@ pub fn routes() -> Vec<Route> {
         team::confirm,
         team::away,
         team::note,
+        team::counting,
         team::remove,
         open_session,
         close_session,

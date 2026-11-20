@@ -25,6 +25,27 @@ impl AbstractTeamVolunteers for ReferenceDb {
         Ok(())
     }
 
+    async fn mark_team_identity_purge(&self, user_id: &str, purge_at: i64) -> Result<bool> {
+        let mut store = self.team_identities.lock().await;
+        match store.get_mut(user_id) {
+            Some(identity) if identity.purge_at.is_none() => {
+                identity.purge_at = Some(purge_at);
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+
+    async fn clear_team_identity_purge(&self, user_id: &str) -> Result<bool> {
+        match self.team_identities.lock().await.get_mut(user_id) {
+            Some(identity) => {
+                identity.purge_at = None;
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
     async fn fetch_team_identities_kept(&self) -> Result<Vec<TeamIdentity>> {
         let mut kept: Vec<TeamIdentity> = self
             .team_identities
@@ -111,9 +132,15 @@ impl AbstractTeamVolunteers for ReferenceDb {
         }
     }
 
-    async fn delete_team_member(&self, id: &str) -> Result<()> {
-        self.team_members.lock().await.remove(id);
-        Ok(())
+    async fn delete_team_member_if_left(&self, id: &str, cutoff: i64) -> Result<u64> {
+        let mut store = self.team_members.lock().await;
+        let due = store.get(id).is_some_and(|m| {
+            m.status == crate::TeamMemberStatus::Left && m.left_at.is_some_and(|at| at <= cutoff)
+        });
+        if due {
+            store.remove(id);
+        }
+        Ok(u64::from(due))
     }
 
     async fn delete_team_members_of(&self, user_id: &str) -> Result<u64> {
@@ -221,6 +248,52 @@ mod tests {
                 tickets: 2,
             }],
         }
+    }
+
+    #[tokio::test]
+    async fn ended_membership_is_deleted_only_while_ended_and_due() {
+        let db = ReferenceDb::default();
+        let mut left = member("m1", "u1", "support");
+        left.status = TeamMemberStatus::Left;
+        left.left_at = Some(100);
+        db.insert_team_member(&left).await.unwrap();
+        // not due yet
+        assert_eq!(db.delete_team_member_if_left("m1", 99).await.unwrap(), 0);
+        // reopened in between: never deleted
+        let mut rejoined = left.clone();
+        rejoined.status = TeamMemberStatus::Trial;
+        rejoined.left_at = None;
+        db.update_team_member(&rejoined).await.unwrap();
+        assert_eq!(db.delete_team_member_if_left("m1", 1_000).await.unwrap(), 0);
+        assert!(db.fetch_team_member("m1").await.is_ok());
+        // ended without a date: not deleted by this rule
+        let mut undated = left.clone();
+        undated.left_at = None;
+        db.update_team_member(&undated).await.unwrap();
+        assert_eq!(db.delete_team_member_if_left("m1", 1_000).await.unwrap(), 0);
+        // ended and due
+        db.update_team_member(&left).await.unwrap();
+        assert_eq!(db.delete_team_member_if_left("m1", 100).await.unwrap(), 1);
+        assert!(db.fetch_team_member("m1").await.is_err());
+        assert_eq!(db.delete_team_member_if_left("m1", 100).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn purge_marks_never_create_or_overwrite() {
+        let db = ReferenceDb::default();
+        // no record: nothing comes back
+        assert!(!db.mark_team_identity_purge("u1", 5).await.unwrap());
+        assert!(!db.clear_team_identity_purge("u1").await.unwrap());
+        assert_eq!(db.fetch_team_identity("u1").await.unwrap(), None);
+        // set only while none is set
+        db.upsert_team_identity(&identity("u1", None)).await.unwrap();
+        assert!(db.mark_team_identity_purge("u1", 5).await.unwrap());
+        assert!(!db.mark_team_identity_purge("u1", 9).await.unwrap());
+        assert_eq!(db.fetch_team_identity("u1").await.unwrap().unwrap().purge_at, Some(5));
+        assert!(db.clear_team_identity_purge("u1").await.unwrap());
+        assert_eq!(db.fetch_team_identity("u1").await.unwrap().unwrap().purge_at, None);
+        // the rest of the record is never written
+        assert_eq!(db.fetch_team_identity("u1").await.unwrap().unwrap().name, "Sara");
     }
 
     #[tokio::test]

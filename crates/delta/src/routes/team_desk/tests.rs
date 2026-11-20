@@ -1520,9 +1520,10 @@ impl Desk {
                 text("name"),
                 text("age"),
                 text("country"),
+                // as the bot draws it (team-bot `card.mjs` `aboutForm`)
                 { "type": "Field", "label": "Rules", "component": {
-                    "type": "CheckboxGroup", "custom_id": "rules", "required": false,
-                    "min_values": 0, "max_values": 1,
+                    "type": "CheckboxGroup", "custom_id": "rules", "required": true,
+                    "min_values": 1, "max_values": 1,
                     "options": [{ "label": "I accept the volunteer rules", "value": "accept" }]
                 }},
             ]
@@ -1657,20 +1658,18 @@ fn about_needs_the_rules_tick() {
         let mut d = desk().await;
         d.volunteers_on("1");
         let session = d.applicant_session.clone();
-        // not ticked: a valid form, which "About you" refuses
-        let (status, outcome) = d.about_with(&session, "support", about_fields("30", &[])).await;
-        assert_eq!(status, Status::Ok, "{outcome}");
-        assert_eq!(outcome["saved"], false);
-        assert_eq!(outcome["problem"], "rules_not_accepted");
-        // a value that is not one of the options is refused by the form check
-        // itself, before anything reaches the bot
+        // with the bot's form, neither an empty tick nor a forged value gets
+        // past the form check: nothing reaches the bot or "About you" (which
+        // refuses a missing tick on its own, `rules_not_accepted`)
         let channel = d.apply.clone();
-        let (parent, modal) = d.about_modal(&session, "support").await;
-        let (status, body) = d
-            .form_raw(&session, &channel, &parent, modal, about_fields("30", &["something-else"]))
-            .await;
-        assert_eq!(status, Status::BadRequest, "{body}");
-        assert_eq!(body["type"], "FailedValidation");
+        for rules in [vec![], vec!["something-else"]] {
+            let (parent, modal) = d.about_modal(&session, "support").await;
+            let (status, body) = d
+                .form_raw(&session, &channel, &parent, modal, about_fields("30", &rules))
+                .await;
+            assert_eq!(status, Status::BadRequest, "{rules:?}: {body}");
+            assert_eq!(body["type"], "FailedValidation");
+        }
         assert!(d.identity_of(&d.applicant).await.is_none());
     });
 }
@@ -3278,9 +3277,12 @@ fn report_left_member_counted_in_volunteers_only() {
         let (_, report) = d.the_report("20261109").await;
         let team = team_of(&report, "support");
         assert_eq!(team["volunteers"], 1, "{report}");
-        for bucket in ["trial", "active", "away", "inactive"] {
+        for bucket in ["trial", "active", "away"] {
             assert_eq!(team[bucket], 0, "{bucket}");
         }
+        // a team of one gets no totals
+        assert_eq!(team["inactive"], Value::Null);
+        assert_eq!(team["contributions"], Value::Null);
         assert!(team["new_names"].as_array().unwrap().is_empty());
     });
 }
@@ -3295,6 +3297,11 @@ fn report_contributions_only_for_that_teams_server() {
         let other = d.other.id.clone();
         d.place(&d.applicant, "support", &lounge, S::Active, WEEK_START - WEEK_DAY, None).await;
         d.place(&d.guest, "elsewhere", &other, S::Active, WEEK_START - WEEK_DAY, None).await;
+        // two more in support, so the team shows totals (three or more)
+        for _ in 0..2 {
+            let (_, _, more) = d.harness.new_user().await;
+            d.place(&more, "support", &lounge, S::Active, WEEK_START - WEEK_DAY, None).await;
+        }
         // n = 1 gives 5 (five kinds) on Monday, n = 2 gives 10 on Sunday;
         // days outside the week count for nothing
         d.counted(&d.applicant, 20261109, &lounge, 1).await;
@@ -3308,6 +3315,33 @@ fn report_contributions_only_for_that_teams_server() {
         d.counted(&d.reviewer, 20261110, &lounge, 4).await;
         let (_, report) = d.the_report("20261109").await;
         assert_eq!(team_of(&report, "support")["contributions"], 15, "{report}");
-        assert_eq!(team_of(&report, "elsewhere")["contributions"], 15, "{report}");
+        // the other team has one volunteer: its total would be that person's number
+        assert_eq!(team_of(&report, "elsewhere")["contributions"], Value::Null, "{report}");
+        assert_eq!(team_of(&report, "elsewhere")["volunteers"], 1, "{report}");
+    });
+}
+
+#[test]
+fn report_hides_totals_of_teams_under_three() {
+    on_big_stack(|| async {
+        use revolt_database::TeamMemberStatus as S;
+        let d = desk().await;
+        d.volunteers_on("1");
+        let lounge = d.lounge.id.clone();
+        d.place(&d.applicant, "support", &lounge, S::Inactive, WEEK_START - WEEK_DAY, None).await;
+        d.place(&d.guest, "support", &lounge, S::Active, WEEK_START - WEEK_DAY, None).await;
+        d.counted(&d.applicant, 20261110, &lounge, 1).await;
+        let (_, report) = d.the_report("20261109").await;
+        let team = team_of(&report, "support");
+        assert_eq!(team["volunteers"], 2, "{report}");
+        assert_eq!(team["inactive"], Value::Null, "{report}");
+        assert_eq!(team["contributions"], Value::Null, "{report}");
+        // a third: the totals are there
+        let (_, _, third) = d.harness.new_user().await;
+        d.place(&third, "support", &lounge, S::Active, WEEK_START - WEEK_DAY, None).await;
+        let (_, report) = d.the_report("20261109").await;
+        let team = team_of(&report, "support");
+        assert_eq!(team["inactive"], 1, "{report}");
+        assert_eq!(team["contributions"], 5, "{report}");
     });
 }

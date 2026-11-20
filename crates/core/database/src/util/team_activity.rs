@@ -547,8 +547,9 @@ fn has_action(member: &TeamMember, action: &str) -> bool {
 /// Who sends the job's DMs
 #[async_trait]
 pub trait TeamMessenger: Sync + Send {
-    /// Best effort: a failure is logged by the sender, nothing is retried
-    async fn send(&self, user_id: &str, content: String);
+    /// Best effort: a failure is logged by the sender, nothing is retried.
+    /// Returns whether the message went out.
+    async fn send(&self, user_id: &str, content: String) -> bool;
 }
 
 /// DMs from the official Zrzur account
@@ -559,12 +560,15 @@ pub struct OfficialMessenger<'a> {
 
 #[async_trait]
 impl TeamMessenger for OfficialMessenger<'_> {
-    async fn send(&self, user_id: &str, content: String) {
-        if let Err(error) =
-            send_official_message(self.db, self.amqp, OfficialAccount::Zrzur, user_id, content)
-                .await
+    async fn send(&self, user_id: &str, content: String) -> bool {
+        match send_official_message(self.db, self.amqp, OfficialAccount::Zrzur, user_id, content)
+            .await
         {
-            log::warn!("team volunteer message not sent: {:?}", error.error_type);
+            Ok(_) => true,
+            Err(error) => {
+                log::warn!("team volunteer message not sent: {:?}", error.error_type);
+                false
+            }
         }
     }
 }
@@ -719,11 +723,11 @@ pub async fn end_membership(
         leave_team_server(db, settings, &member.user_id).await;
         // the details are deleted after the keeping time, unless an open
         // application still holds them
+        // (one conditional write: a record erased or renewed in between is
+        // never written back)
         if out_of_reach(db, &member.user_id).await {
-            if let Ok(Some(mut identity)) = db.fetch_team_identity(&member.user_id).await {
-                identity.purge_at = Some(now + days_ms(settings.volunteers.identity_keep_days));
-                let _ = db.upsert_team_identity(&identity).await;
-            }
+            let at = now + days_ms(settings.volunteers.identity_keep_days);
+            let _ = db.mark_team_identity_purge(&member.user_id, at).await;
         }
     }
     Ok(true)
@@ -769,26 +773,30 @@ async fn retention(db: &Database, settings: &FeaturesTeamApplications, now: i64)
     db.delete_team_identities_due(now).await?;
 
     // an identity that nothing holds is not kept for ever
-    for mut identity in db.fetch_team_identities_kept().await? {
+    // (one conditional write, never the whole record: a withdrawal, a
+    // rejection or a fresh "About you" in between is not undone)
+    for identity in db.fetch_team_identities_kept().await? {
         if out_of_reach(db, &identity.id).await {
-            identity.purge_at = Some(now + ORPHAN_IDENTITY_MS);
-            db.upsert_team_identity(&identity).await?;
+            db.mark_team_identity_purge(&identity.id, now + ORPHAN_IDENTITY_MS)
+                .await?;
         }
     }
 
     let keep = days_ms(settings.volunteers.identity_keep_days);
     let people = group_by_person(db.fetch_team_members(&TeamMemberFilter::default()).await?);
     for (user, members) in people {
-        let mut remaining = members.len();
+        let mut remaining = members.len() as u64;
         for member in &members {
-            // an ended membership goes whole once its keeping time is over
-            if !member.is_current() && member.left_at.unwrap_or(0) + keep <= now {
-                db.delete_team_member(&member.id).await?;
-                remaining -= 1;
+            // an ended membership goes whole once its keeping time is over;
+            // the database checks it is still ended and due in the same
+            // write, so one reopened in between stays. One ended without a
+            // date is left alone.
+            if !member.is_current() && member.left_at.is_some_and(|at| at + keep <= now) {
+                remaining -= db.delete_team_member_if_left(&member.id, now - keep).await?;
             }
         }
-        if remaining == 0 {
-            // nothing left of the person in the team: their counts go too
+        // nothing left of the person in the team (read again): their counts go too
+        if remaining == 0 && db.fetch_team_members_of(&user).await?.is_empty() {
             db.delete_team_activity_of(&user).await?;
         }
     }
@@ -868,11 +876,39 @@ fn told_at(members: &[TeamMember]) -> Option<i64> {
         .min()
 }
 
+/// The history words staff write when a person objects to the counting,
+/// and when the counting starts again (`POST /staff/team/<id>/counting`)
+pub const COUNTING_STOPPED: &str = "counting_stopped";
+pub const COUNTING_RESUMED: &str = "counting_resumed";
+
+/// Whether the person objected and is not counted: the newest of the two
+/// words on their current memberships is `counting_stopped`
+pub fn counting_stopped(members: &[TeamMember]) -> bool {
+    members
+        .iter()
+        .filter(|m| m.is_current())
+        .flat_map(|m| m.history.iter())
+        .filter(|entry| entry.action == COUNTING_STOPPED || entry.action == COUNTING_RESUMED)
+        .max_by_key(|entry| entry.at)
+        .is_some_and(|entry| entry.action == COUNTING_STOPPED)
+}
+
+/// When counting last started again after an objection, if ever
+fn resumed_at(members: &[TeamMember]) -> Option<i64> {
+    members
+        .iter()
+        .filter(|m| m.is_current())
+        .flat_map(|m| m.history.iter())
+        .filter(|entry| entry.action == COUNTING_RESUMED)
+        .map(|entry| entry.at)
+        .max()
+}
+
 /// Every current volunteer who was never told that their contributions are
 /// counted (people who were volunteers before the counting existed) gets
 /// one notice DM, in their language, with the right to object. The history
-/// word is written first: the notice never goes twice. Nobody is counted
-/// before it went out.
+/// word is written only once the DM went out (a failed one is tried again
+/// the next day). Nobody is counted before it went out.
 async fn send_counting_notices(
     db: &Database,
     settings: &FeaturesTeamApplications,
@@ -882,32 +918,15 @@ async fn send_counting_notices(
     let people = group_by_person(db.fetch_team_members(&TeamMemberFilter::default()).await?);
     let mut sent = 0;
     for (user, members) in people {
-        if !members.iter().any(|m| m.is_current()) || told_at(&members).is_some() {
-            continue;
-        }
-        // dated with the run: counting starts from this day
-        let entry = TeamHistory {
-            at: now,
-            actor: SYSTEM.to_string(),
-            action: COUNTING_NOTICE.to_string(),
-        };
-        let mut written = false;
-        for member in members.iter().filter(|m| m.is_current()) {
-            // read again right before the write
-            let mut member = db.fetch_team_member(&member.id).await?;
-            if !member.is_current() || has_action(&member, COUNTING_NOTICE) {
-                continue;
-            }
-            member.history.push(entry.clone());
-            db.update_team_member(&member).await?;
-            written = true;
-        }
-        if !written {
+        if !members.iter().any(|m| m.is_current())
+            || told_at(&members).is_some()
+            || counting_stopped(&members)
+        {
             continue;
         }
         let locale = db.fetch_user(&user).await.ok().and_then(|u| u.locale);
         let language = team_texts::language_of(locale.as_deref());
-        messenger
+        let went = messenger
             .send(
                 &user,
                 team_texts::message(
@@ -920,14 +939,33 @@ async fn send_counting_notices(
                 ),
             )
             .await;
+        if !went {
+            continue;
+        }
+        // dated with the run: counting starts the day after
+        let entry = TeamHistory {
+            at: now,
+            actor: SYSTEM.to_string(),
+            action: COUNTING_NOTICE.to_string(),
+        };
+        for member in members.iter().filter(|m| m.is_current()) {
+            // read again right before the write
+            let mut member = db.fetch_team_member(&member.id).await?;
+            if !member.is_current() || has_action(&member, COUNTING_NOTICE) {
+                continue;
+            }
+            member.history.push(entry.clone());
+            db.update_team_member(&member).await?;
+        }
         sent += 1;
     }
     Ok(sent)
 }
 
 /// Count the days not counted yet: yesterday and up to six days before,
-/// never before the person joined and never before the day they were told
-/// that their contributions are counted
+/// never before the person joined and only from the day after they were
+/// told that their contributions are counted (nothing of the notice day
+/// itself). A person who objected is not counted.
 async fn count_missing_days(
     db: &Database,
     settings: &FeaturesTeamApplications,
@@ -946,18 +984,24 @@ async fn count_missing_days(
         else {
             continue;
         };
-        // not told yet: nothing is counted
+        // not told yet, or objected: nothing is counted
         let Some(told) = told_at(&members) else {
             continue;
         };
-        let joined = joined.max(told);
+        if counting_stopped(&members) {
+            continue;
+        }
         let have: HashSet<i32> = db
             .fetch_team_activity(&user, first, yesterday)
             .await?
             .into_iter()
             .map(|row| row.day)
             .collect();
-        let mut day = first.max(day_of(joined));
+        let mut day = first.max(day_of(joined)).max(add_days(day_of(told), 1));
+        // the days while counting was stopped are never counted afterwards
+        if let Some(resumed) = resumed_at(&members) {
+            day = day.max(add_days(day_of(resumed), 1));
+        }
         while day <= yesterday {
             if !have.contains(&day) {
                 match store_day(db, settings, &user, day).await {
@@ -1277,8 +1321,19 @@ mod tests {
 
     #[async_trait]
     impl TeamMessenger for Recorder {
-        async fn send(&self, user_id: &str, content: String) {
+        async fn send(&self, user_id: &str, content: String) -> bool {
             self.0.lock().await.push((user_id.to_string(), content));
+            true
+        }
+    }
+
+    /// A messenger whose messages never go out
+    struct Unreachable;
+
+    #[async_trait]
+    impl TeamMessenger for Unreachable {
+        async fn send(&self, _user_id: &str, _content: String) -> bool {
+            false
         }
     }
 
@@ -1911,6 +1966,9 @@ mod tests {
         still.role = "support".to_string();
         db.insert_team_member(&still).await.unwrap();
         db.upsert_team_activity_day(&row("u3", 20261020)).await.unwrap();
+        // u5 ended with no date (an old record): left alone, never guessed
+        let undated = member("m5", "u5", TeamMemberStatus::Left);
+        db.insert_team_member(&undated).await.unwrap();
 
         let run = run_daily(&db, &settings, &Recorder::default(), NOV_10 + 3_600_000)
             .await
@@ -1923,6 +1981,7 @@ mod tests {
         assert!(db.fetch_team_member("m3").await.is_err());
         assert!(db.fetch_team_member("m4").await.is_ok());
         assert_eq!(db.fetch_team_activity("u3", 20250101, 20271231).await.unwrap().len(), 1);
+        assert!(db.fetch_team_member("m5").await.is_ok());
     }
 
     #[tokio::test]
@@ -1989,8 +2048,15 @@ mod tests {
         before.history = vec![];
         db.insert_team_member(&before).await.unwrap();
         message(&db, day_start(20261108) + 5_000, HELP, "u1", None).await;
-        let recorder = Recorder::default();
+        // on the notice day, before the notice went out
+        message(&db, NOV_10 + 60_000, HELP, "u1", None).await;
 
+        // the DM does not go out: no marker, nothing counted, tried again
+        let run = run_daily(&db, &settings, &Unreachable, NOV_10 + 1_800_000).await.unwrap();
+        assert_eq!(run.counting_notices, 0);
+        assert!(!has_action(&db.fetch_team_member("m1").await.unwrap(), COUNTING_NOTICE));
+
+        let recorder = Recorder::default();
         let run = run_daily(&db, &settings, &recorder, NOV_10 + 3_600_000).await.unwrap();
         assert_eq!(run.counting_notices, 1);
         assert_eq!(run.days_counted, 0, "nothing is counted before the notice");
@@ -1999,7 +2065,7 @@ mod tests {
         assert_eq!(told.len(), 1);
         assert!(told[0].contains("190"), "{}", told[0]);
         assert!(told[0].contains("https://zrzur.com/privacy"), "{}", told[0]);
-        assert!(told[0].contains("object"), "{}", told[0]);
+        assert!(told[0].contains("tell the owner and your counting stops"), "{}", told[0]);
         assert!(has_action(&db.fetch_team_member("m1").await.unwrap(), COUNTING_NOTICE));
 
         // again the same day: no second notice
@@ -2007,13 +2073,43 @@ mod tests {
         assert_eq!(run.counting_notices, 0);
         assert_eq!(recorder.to("u1").await.len(), 1);
 
-        // the next day: only the day of the notice is counted, nothing before it
+        // the next day: the notice day itself is not counted
         let run = run_daily(&db, &settings, &recorder, NOV_10 + DAY_MS + 3_600_000)
+            .await
+            .unwrap();
+        assert_eq!(run.days_counted, 0);
+        assert!(db.fetch_team_activity("u1", 20250101, 20271231).await.unwrap().is_empty());
+        // the day after: the first full day after the notice
+        let run = run_daily(&db, &settings, &recorder, NOV_10 + 2 * DAY_MS + 3_600_000)
             .await
             .unwrap();
         assert_eq!(run.days_counted, 1);
         let rows = db.fetch_team_activity("u1", 20250101, 20271231).await.unwrap();
-        assert_eq!(rows.iter().map(|r| r.day).collect::<Vec<_>>(), vec![20261110]);
+        assert_eq!(rows.iter().map(|r| r.day).collect::<Vec<_>>(), vec![20261111]);
+    }
+
+    #[tokio::test]
+    async fn an_objection_stops_the_counting_until_resumed() {
+        let db = db();
+        holder(&db, "u1", vec![MOD_ROLE.to_string()]).await;
+        let mut m = member("m1", "u1", TeamMemberStatus::Active);
+        m.history.push(TeamHistory { at: NOV_10 - 20 * DAY_MS, actor: "boss".to_string(), action: COUNTING_STOPPED.to_string() });
+        db.insert_team_member(&m).await.unwrap();
+        let recorder = Recorder::default();
+        let run = run_daily(&db, &settings(), &recorder, NOV_10 + 3_600_000).await.unwrap();
+        assert_eq!(run.days_counted, 0);
+        assert!(db.fetch_team_activity("u1", 20250101, 20271231).await.unwrap().is_empty());
+        assert!(recorder.0.lock().await.is_empty());
+
+        // resumed later: counted again
+        let mut m = db.fetch_team_member("m1").await.unwrap();
+        m.history.push(TeamHistory { at: day_start(20261107) + 3_600_000, actor: "boss".to_string(), action: COUNTING_RESUMED.to_string() });
+        db.update_team_member(&m).await.unwrap();
+        let run = run_daily(&db, &settings(), &recorder, NOV_10 + 7_200_000).await.unwrap();
+        // only the days after it, never the stopped ones
+        assert_eq!(run.days_counted, 2);
+        let rows = db.fetch_team_activity("u1", 20250101, 20271231).await.unwrap();
+        assert_eq!(rows.iter().map(|r| r.day).collect::<Vec<_>>(), vec![20261108, 20261109]);
     }
 
     // ---- review fixes ----

@@ -8,13 +8,14 @@ use revolt_database::{
 };
 use rocket::http::Method::Post;
 
-const TEAM_ROUTES: [(&str, &str); 7] = [
+const TEAM_ROUTES: [(&str, &str); 8] = [
     ("GET", "/staff/team"),
     ("GET", "/staff/team/MEMBER"),
     ("POST", "/staff/team/MEMBER/identity"),
     ("POST", "/staff/team/MEMBER/confirm"),
     ("POST", "/staff/team/MEMBER/away"),
     ("POST", "/staff/team/MEMBER/note"),
+    ("POST", "/staff/team/MEMBER/counting"),
     ("POST", "/staff/team/MEMBER/remove"),
 ];
 
@@ -403,6 +404,38 @@ async fn notes_in_own_export_never_in_log() {
 }
 
 #[rocket::async_test]
+async fn counting_stops_on_objection_and_resumes() {
+    let harness = TestHarness::new().await;
+    let (_, _, person) = harness.new_user().await;
+    let (owner, token) = owner_signed_in(&harness).await;
+    let server = desk_on(&harness, &owner, &person).await;
+    let m = volunteer(&harness, &person, &server, TeamMemberStatus::Active).await;
+    let path = format!("/staff/team/{}/counting", m.id);
+
+    let (status, body) = send(&harness, &owner, &token, Post, &path, json!({ "on": false })).await;
+    assert_eq!(status, Status::Ok, "{body}");
+    assert_eq!(body["counting_stopped"], true);
+    let last = stored(&harness, &m.id).await.history.last().cloned().unwrap();
+    assert_eq!((last.action.as_str(), last.actor.as_str()), ("counting_stopped", owner.user.id.as_str()));
+    assert!(audit_actions(&harness).await.contains(&("team.member.counting".into(), "Success".into())));
+
+    // asked again: nothing changes, nothing more is logged
+    let records = all_audit(&harness).await.iter().filter(|e| e.action == "team.member.counting").count();
+    let length = stored(&harness, &m.id).await.history.len();
+    let (status, body) = send(&harness, &owner, &token, Post, &path, json!({ "on": false })).await;
+    assert_eq!(status, Status::Ok, "{body}");
+    assert_eq!(stored(&harness, &m.id).await.history.len(), length);
+    assert_eq!(all_audit(&harness).await.iter().filter(|e| e.action == "team.member.counting").count(), records);
+
+    // resumed
+    let (_, body) = send(&harness, &owner, &token, Post, &path, json!({ "on": true })).await;
+    assert_eq!(body["counting_stopped"], false);
+    assert_eq!(stored(&harness, &m.id).await.history.last().unwrap().action, "counting_resumed");
+    let (_, body) = get(&harness, &owner, &token, &format!("/staff/team/{}", m.id)).await;
+    assert_eq!(body["counting_stopped"], false);
+}
+
+#[rocket::async_test]
 async fn every_team_route_refuses_without_team_manage() {
     let harness = TestHarness::new().await;
     let (_, _, person) = harness.new_user().await;
@@ -418,7 +451,7 @@ async fn every_team_route_refuses_without_team_manage() {
         step_up(&harness, &who, &token).await;
         for (method, template) in TEAM_ROUTES {
             let path = template.replace("MEMBER", &m.id);
-            let body = json!({ "days": 1, "text": "x", "reason": "a long enough reason" });
+            let body = json!({ "days": 1, "text": "x", "reason": "a long enough reason", "on": false });
             let (status, answer) = if method == "GET" {
                 get(&harness, &who, &token, &path).await
             } else {

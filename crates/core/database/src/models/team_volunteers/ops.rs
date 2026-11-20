@@ -14,6 +14,14 @@ pub trait AbstractTeamVolunteers: Sync + Send {
 
     async fn delete_team_identity(&self, user_id: &str) -> Result<()>;
 
+    /// Give an identity a deletion time, only while it has none, in one
+    /// write that never creates a record. Returns whether it was set.
+    async fn mark_team_identity_purge(&self, user_id: &str, purge_at: i64) -> Result<bool>;
+
+    /// Take the deletion time off an identity, in one write that never
+    /// creates a record. Returns whether a record was there.
+    async fn clear_team_identity_purge(&self, user_id: &str) -> Result<bool>;
+
     /// Identities with no deletion time set (`purge_at` empty)
     async fn fetch_team_identities_kept(&self) -> Result<Vec<TeamIdentity>>;
 
@@ -32,9 +40,10 @@ pub trait AbstractTeamVolunteers: Sync + Send {
 
     async fn update_team_member(&self, member: &TeamMember) -> Result<()>;
 
-    /// Delete one membership (an ended one past its keeping time); no error
-    /// when it is already gone
-    async fn delete_team_member(&self, id: &str) -> Result<()>;
+    /// Delete one membership only while it is ended (`Left`) with a
+    /// `left_at` at or before `cutoff`, checked in the same write: a
+    /// membership reopened in between stays. Returns how many went (0 or 1).
+    async fn delete_team_member_if_left(&self, id: &str, cutoff: i64) -> Result<u64>;
 
     /// Delete every membership of a person (account deletion)
     async fn delete_team_members_of(&self, user_id: &str) -> Result<u64>;

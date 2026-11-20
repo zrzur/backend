@@ -367,18 +367,16 @@ async fn release_identity(
     if !out_of_reach(db, &application.user_id, &application.id).await {
         return;
     }
-    let Ok(Some(mut identity)) = db.fetch_team_identity(&application.user_id).await else {
-        return;
-    };
     match erase {
         true => {
             let _ = db.delete_team_identity(&application.user_id).await;
         }
         false => {
-            identity.purge_at = Some(application.purge_at.unwrap_or_else(|| {
+            // one conditional write: never a whole record written back
+            let at = application.purge_at.unwrap_or_else(|| {
                 staff_now() + days_ms(settings.volunteers.identity_keep_days)
-            }));
-            let _ = db.upsert_team_identity(&identity).await;
+            });
+            let _ = db.mark_team_identity_purge(&application.user_id, at).await;
         }
     }
 }
@@ -386,12 +384,8 @@ async fn release_identity(
 /// The identity of a person who is in the team's reach again keeps no
 /// deletion time
 async fn keep_identity(db: &Database, person: &str) {
-    if let Ok(Some(mut identity)) = db.fetch_team_identity(person).await {
-        if identity.purge_at.is_some() {
-            identity.purge_at = None;
-            let _ = db.upsert_team_identity(&identity).await;
-        }
-    }
+    // one write that never creates a record: one erased in between stays erased
+    let _ = db.clear_team_identity_purge(person).await;
 }
 
 fn status_word(status: TeamApplicationStatus) -> &'static str {
@@ -1834,7 +1828,7 @@ async fn act(
             // that is the notice the daily job waits for
             let counting = if enrolled.is_some() { "yes" } else { "" };
             let days = team_activity::activity_keep_days(&settings).to_string();
-            team_texts::send(
+            let went = team_texts::send(
                 db,
                 &applicant.id,
                 key,
@@ -1848,7 +1842,9 @@ async fn act(
                 ],
             )
             .await;
-            if let Some(member) = enrolled {
+            // noted only when the welcome went out; otherwise the daily job
+            // sends the notice
+            if let (Some(member), true) = (enrolled, went) {
                 volunteers::mark_counting_notice(db, &member.id).await;
             }
             // the invite to the team server goes with the welcome, in private
@@ -2569,13 +2565,20 @@ pub struct TeamWeek {
     pub trial: u32,
     pub active: u32,
     pub away: u32,
-    pub inactive: u32,
+    /// `None` for a team of fewer than [`MIN_TEAM_FOR_TOTALS`]: there it
+    /// would name one person's status
+    pub inactive: Option<u32>,
     /// The five kinds of count in the team's own server over the week, for
-    /// the team's volunteers only
-    pub contributions: u32,
+    /// the team's volunteers only; `None` for a team of fewer than
+    /// [`MIN_TEAM_FOR_TOTALS`], where a total is one person's number
+    pub contributions: Option<u32>,
     /// Account display names (escaped) of volunteers who joined this week
     pub new_names: Vec<String>,
 }
+
+/// The weekly report shows totals (contributions, inactive) only for teams
+/// with at least this many volunteers
+pub const MIN_TEAM_FOR_TOTALS: u32 = 3;
 
 /// The weekly report for the staff channel
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -2605,7 +2608,8 @@ fn is_monday(week: i32) -> bool {
 /// counts in `volunteers` only. `contributions` are the five counts in the
 /// team's own server, for those volunteers only, each person once per team.
 /// `new_names` are account display names of those who joined that week;
-/// never name, age, country or anything of their identity.
+/// never name, age, country or anything of their identity. A team of fewer
+/// than three volunteers gets no totals (`contributions`, `inactive`).
 #[get("/report?<week>")]
 async fn report(db: &State<Database>, user: User, week: i32) -> Result<Json<WeekReport>> {
     use revolt_database::util::team_activity::{add_days, contributions, day_start};
@@ -2643,8 +2647,8 @@ async fn report(db: &State<Database>, user: User, week: i32) -> Result<Json<Week
             trial: 0,
             active: 0,
             away: 0,
-            inactive: 0,
-            contributions: 0,
+            inactive: Some(0),
+            contributions: Some(0),
             new_names: Vec::new(),
         };
         for member in members {
@@ -2658,12 +2662,13 @@ async fn report(db: &State<Database>, user: User, week: i32) -> Result<Json<Week
                 S::Trial => team.trial += 1,
                 S::Active => team.active += 1,
                 S::Away => team.away += 1,
-                S::Inactive => team.inactive += 1,
+                S::Inactive => team.inactive = team.inactive.map(|n| n + 1),
                 S::Left => {}
             }
             for day in db.fetch_team_activity(&member.user_id, week, last).await? {
                 for count in day.counts.iter().filter(|count| count.server == role.server) {
-                    team.contributions = team.contributions.saturating_add(contributions(count));
+                    team.contributions =
+                        team.contributions.map(|n| n.saturating_add(contributions(count)));
                 }
             }
             if member.joined_at >= from {
@@ -2674,6 +2679,11 @@ async fn report(db: &State<Database>, user: User, week: i32) -> Result<Json<Week
             }
         }
         team.new_names.sort();
+        // a small team's totals would be one person's numbers
+        if team.volunteers < MIN_TEAM_FOR_TOTALS {
+            team.inactive = None;
+            team.contributions = None;
+        }
         teams.push(team);
     }
     Ok(Json(WeekReport { week, teams }))

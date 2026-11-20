@@ -101,7 +101,8 @@ pub fn questions(role: &TeamRole, language: &str) -> Vec<TeamQuestion> {
 /// Send the message `key` about an application to one person, in their
 /// language, from the official Zrzur account. `{role}`, `{rules}` and
 /// `{terms}` are filled here; `role_key` names the role when the settings
-/// no longer have it. Best effort: the decision is already saved.
+/// no longer have it. Best effort: the decision is already saved. Returns
+/// whether the message went out.
 pub async fn send(
     db: &Database,
     user_id: &str,
@@ -109,7 +110,7 @@ pub async fn send(
     role: Option<&TeamRole>,
     role_key: &str,
     vars: &[(&str, &str)],
-) {
+) -> bool {
     let locale = db.fetch_user(user_id).await.ok().and_then(|user| user.locale);
     let language = language_of(locale.as_deref());
     let name = role
@@ -147,10 +148,12 @@ pub async fn send(
         all.push(("counting", String::new()));
     }
     let message = message(language, key, &all);
-    if let Err(error) =
-        send_official_message(db, None, OfficialAccount::Zrzur, user_id, message).await
-    {
-        log::warn!("team message to {user_id} not sent: {:?}", error.error_type);
+    match send_official_message(db, None, OfficialAccount::Zrzur, user_id, message).await {
+        Ok(_) => true,
+        Err(error) => {
+            log::warn!("team message to {user_id} not sent: {:?}", error.error_type);
+            false
+        }
     }
 }
 
