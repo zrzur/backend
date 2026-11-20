@@ -58,7 +58,7 @@ auto_derived!(
         /// Months in a row below the monthly minimum
         #[serde(default)]
         pub low_months: u8,
-        /// Staff notes. Never part of the person's export.
+        /// Staff notes. Part of the person's own export (GDPR Art. 15).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub notes: Option<String>,
         #[serde(default)]

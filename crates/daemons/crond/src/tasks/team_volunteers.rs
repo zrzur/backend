@@ -26,7 +26,8 @@ pub async fn task(db: Database, amqp: AMQP) -> Result<()> {
         };
         match run_daily(&db, &settings, &messenger, staff_now()).await {
             Ok(run) if run.ran => log::info!(
-                "team volunteers: {} days counted, {} ended (role removed), {} trial notices, {} aways ended, {} reminders, {} inactive, {} active again, {} months not judged (days missing)",
+                "team volunteers: {} counting notices, {} days counted, {} ended (role removed), {} trial notices, {} aways ended, {} reminders, {} inactive, {} active again, {} months not judged (days missing)",
+                run.counting_notices,
                 run.days_counted,
                 run.ended,
                 run.trial_notices,

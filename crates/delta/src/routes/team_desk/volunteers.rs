@@ -184,6 +184,30 @@ pub(super) async fn enrol(
     }
 }
 
+/// The welcome that says contributions are counted went out: the membership
+/// keeps the history word the daily job waits for before it counts anyone
+/// (`team_activity::COUNTING_NOTICE`). Read again right before the write;
+/// best effort, as the welcome itself.
+pub(super) async fn mark_counting_notice(db: &Database, member_id: &str) {
+    let Ok(mut member) = db.fetch_team_member(member_id).await else {
+        return;
+    };
+    if !member.is_current()
+        || member
+            .history
+            .iter()
+            .any(|h| h.action == team_activity::COUNTING_NOTICE)
+    {
+        return;
+    }
+    member
+        .history
+        .push(history(team_activity::SYSTEM, team_activity::COUNTING_NOTICE));
+    if let Err(error) = db.update_team_member(&member).await {
+        log::warn!("counting notice not noted: {:?}", error.error_type);
+    }
+}
+
 /// End one membership. The role of the team role goes; the server's "Zrzur
 /// Team" role goes only when no other current membership is left in that
 /// server; the person leaves the team server only when nothing current is

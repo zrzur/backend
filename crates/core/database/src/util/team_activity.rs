@@ -737,6 +737,8 @@ pub struct DailyRun {
     pub ran: bool,
     pub days_counted: u32,
     pub ended: u32,
+    /// One-time notices that contributions are counted
+    pub counting_notices: u32,
     pub trial_notices: u32,
     pub reminders: u32,
     pub marked_inactive: u32,
@@ -754,33 +756,45 @@ fn group_by_person(members: Vec<TeamMember>) -> BTreeMap<String, Vec<TeamMember>
     people
 }
 
-/// Identities whose time is up, the staff notes of people whose identity
-/// went, and activity days older than `activity_keep_days`
+/// How long "About you" stays when nothing holds it (no open application,
+/// no current membership): a form filled in without sending step 2
+pub const ORPHAN_IDENTITY_MS: i64 = DAY_MS;
+
+/// Identities whose time is up, identities nothing holds any more (set to
+/// go after one day), ended memberships past `identity_keep_days` (with
+/// their history and staff notes, the same time the identity goes), and
+/// activity days older than `activity_keep_days` or of people with no
+/// membership left at all
 async fn retention(db: &Database, settings: &FeaturesTeamApplications, now: i64) -> Result<()> {
     db.delete_team_identities_due(now).await?;
+
+    // an identity that nothing holds is not kept for ever
+    for mut identity in db.fetch_team_identities_kept().await? {
+        if out_of_reach(db, &identity.id).await {
+            identity.purge_at = Some(now + ORPHAN_IDENTITY_MS);
+            db.upsert_team_identity(&identity).await?;
+        }
+    }
 
     let keep = days_ms(settings.volunteers.identity_keep_days);
     let people = group_by_person(db.fetch_team_members(&TeamMemberFilter::default()).await?);
     for (user, members) in people {
-        if members.iter().any(|m| m.is_current())
-            || !members.iter().any(|m| m.notes.is_some())
-            || db.fetch_team_identity(&user).await?.is_some()
-        {
-            continue;
-        }
-        for mut member in members {
-            if member.notes.is_some() && member.left_at.unwrap_or(0) + keep <= now {
-                member.notes = None;
-                db.update_team_member(&member).await?;
+        let mut remaining = members.len();
+        for member in &members {
+            // an ended membership goes whole once its keeping time is over
+            if !member.is_current() && member.left_at.unwrap_or(0) + keep <= now {
+                db.delete_team_member(&member.id).await?;
+                remaining -= 1;
             }
+        }
+        if remaining == 0 {
+            // nothing left of the person in the team: their counts go too
+            db.delete_team_activity_of(&user).await?;
         }
     }
 
     // never fewer days than the monthly rule still reads (last month whole)
-    let activity_keep = settings
-        .volunteers
-        .activity_keep_days
-        .clamp(MIN_ACTIVITY_KEEP_DAYS, 3650);
+    let activity_keep = activity_keep_days(settings);
     db.delete_team_activity_before(add_days(day_of(now), -activity_keep))
         .await?;
     Ok(())
@@ -830,8 +844,90 @@ async fn follow_roles(db: &Database, settings: &FeaturesTeamApplications) -> Res
     Ok(ended)
 }
 
+/// The history word of the notice that contributions are counted: written
+/// when the welcome (which says it) or the one-time notice DM went out
+pub const COUNTING_NOTICE: &str = "counting_notice";
+
+/// Days the counts are kept, as the texts state it
+pub fn activity_keep_days(settings: &FeaturesTeamApplications) -> i64 {
+    settings
+        .volunteers
+        .activity_keep_days
+        .clamp(MIN_ACTIVITY_KEEP_DAYS, 3650)
+}
+
+/// When the person was told that their contributions are counted: the
+/// earliest notice on a current membership, `None` when never
+fn told_at(members: &[TeamMember]) -> Option<i64> {
+    members
+        .iter()
+        .filter(|m| m.is_current())
+        .flat_map(|m| m.history.iter())
+        .filter(|entry| entry.action == COUNTING_NOTICE)
+        .map(|entry| entry.at)
+        .min()
+}
+
+/// Every current volunteer who was never told that their contributions are
+/// counted (people who were volunteers before the counting existed) gets
+/// one notice DM, in their language, with the right to object. The history
+/// word is written first: the notice never goes twice. Nobody is counted
+/// before it went out.
+async fn send_counting_notices(
+    db: &Database,
+    settings: &FeaturesTeamApplications,
+    messenger: &dyn TeamMessenger,
+    now: i64,
+) -> Result<u32> {
+    let people = group_by_person(db.fetch_team_members(&TeamMemberFilter::default()).await?);
+    let mut sent = 0;
+    for (user, members) in people {
+        if !members.iter().any(|m| m.is_current()) || told_at(&members).is_some() {
+            continue;
+        }
+        // dated with the run: counting starts from this day
+        let entry = TeamHistory {
+            at: now,
+            actor: SYSTEM.to_string(),
+            action: COUNTING_NOTICE.to_string(),
+        };
+        let mut written = false;
+        for member in members.iter().filter(|m| m.is_current()) {
+            // read again right before the write
+            let mut member = db.fetch_team_member(&member.id).await?;
+            if !member.is_current() || has_action(&member, COUNTING_NOTICE) {
+                continue;
+            }
+            member.history.push(entry.clone());
+            db.update_team_member(&member).await?;
+            written = true;
+        }
+        if !written {
+            continue;
+        }
+        let locale = db.fetch_user(&user).await.ok().and_then(|u| u.locale);
+        let language = team_texts::language_of(locale.as_deref());
+        messenger
+            .send(
+                &user,
+                team_texts::message(
+                    language,
+                    "volunteer.counting_notice",
+                    &[
+                        ("days", activity_keep_days(settings).to_string()),
+                        ("privacy", settings.privacy_url.trim().to_string()),
+                    ],
+                ),
+            )
+            .await;
+        sent += 1;
+    }
+    Ok(sent)
+}
+
 /// Count the days not counted yet: yesterday and up to six days before,
-/// never before the person joined
+/// never before the person joined and never before the day they were told
+/// that their contributions are counted
 async fn count_missing_days(
     db: &Database,
     settings: &FeaturesTeamApplications,
@@ -850,6 +946,11 @@ async fn count_missing_days(
         else {
             continue;
         };
+        // not told yet: nothing is counted
+        let Some(told) = told_at(&members) else {
+            continue;
+        };
+        let joined = joined.max(told);
         let have: HashSet<i32> = db
             .fetch_team_activity(&user, first, yesterday)
             .await?
@@ -1140,6 +1241,7 @@ pub async fn run_daily(
     }
     run.ran = true;
     run.ended = follow_roles(db, settings).await?;
+    run.counting_notices = send_counting_notices(db, settings, messenger, now).await?;
     // before the away ends: an away trial that ran out is told about once
     run.trial_notices = notify_trials(db, settings, messenger, now).await?;
     run.away_ended = expire_away(db, now).await?;
@@ -1226,7 +1328,12 @@ mod tests {
             left_at: None,
             low_months: 0,
             notes: None,
-            history: vec![],
+            // told at once that contributions are counted
+            history: vec![TeamHistory {
+                at: day_start(20260101),
+                actor: SYSTEM.to_string(),
+                action: COUNTING_NOTICE.to_string(),
+            }],
         }
     }
 
@@ -1765,11 +1872,148 @@ mod tests {
         run_daily(&db, &settings(), &Recorder::default(), NOV_10 + 3_600_000)
             .await
             .unwrap();
-        assert_eq!(db.fetch_team_member("m1").await.unwrap().notes, None);
+        // the ended membership went whole, notes included
+        assert!(db.fetch_team_member("m1").await.is_err());
         assert_eq!(
             db.fetch_team_member("m2").await.unwrap().notes.as_deref(),
             Some("kept")
         );
+    }
+
+    #[tokio::test]
+    async fn ended_membership_and_its_days_go_after_the_keeping_time() {
+        let db = db();
+        let mut settings = settings();
+        // the retention is a duty: it runs with the care switched off too
+        settings.volunteers.enabled = false;
+        let row = |user: &str, day: i32| TeamActivityDay {
+            id: format!("{user}:{day}"),
+            user_id: user.to_string(),
+            day,
+            counts: vec![],
+        };
+        // u1 left 91 days ago: the record, its history and the days go
+        let mut old = member("m1", "u1", TeamMemberStatus::Left);
+        old.left_at = Some(NOV_10 - 91 * DAY_MS);
+        old.history.push(entry(NOV_10 - 91 * DAY_MS, "removed"));
+        db.insert_team_member(&old).await.unwrap();
+        db.upsert_team_activity_day(&row("u1", 20261020)).await.unwrap();
+        // u2 left 89 days ago: still within the keeping time
+        let mut recent = member("m2", "u2", TeamMemberStatus::Left);
+        recent.left_at = Some(NOV_10 - 89 * DAY_MS);
+        db.insert_team_member(&recent).await.unwrap();
+        db.upsert_team_activity_day(&row("u2", 20261020)).await.unwrap();
+        // u3 left one team long ago and is still in another: only the old one goes
+        let mut gone = member("m3", "u3", TeamMemberStatus::Left);
+        gone.left_at = Some(NOV_10 - 200 * DAY_MS);
+        db.insert_team_member(&gone).await.unwrap();
+        let mut still = member("m4", "u3", TeamMemberStatus::Active);
+        still.role = "support".to_string();
+        db.insert_team_member(&still).await.unwrap();
+        db.upsert_team_activity_day(&row("u3", 20261020)).await.unwrap();
+
+        let run = run_daily(&db, &settings, &Recorder::default(), NOV_10 + 3_600_000)
+            .await
+            .unwrap();
+        assert!(!run.ran);
+        assert!(db.fetch_team_member("m1").await.is_err());
+        assert!(db.fetch_team_activity("u1", 20250101, 20271231).await.unwrap().is_empty());
+        assert!(db.fetch_team_member("m2").await.is_ok());
+        assert_eq!(db.fetch_team_activity("u2", 20250101, 20271231).await.unwrap().len(), 1);
+        assert!(db.fetch_team_member("m3").await.is_err());
+        assert!(db.fetch_team_member("m4").await.is_ok());
+        assert_eq!(db.fetch_team_activity("u3", 20250101, 20271231).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn identity_nothing_holds_goes_after_a_day() {
+        let db = db();
+        let mut settings = settings();
+        settings.volunteers.enabled = false;
+        let identity = |id: &str| TeamIdentity {
+            id: id.to_string(),
+            name: "Sara".to_string(),
+            age: 24,
+            country: "Austria".to_string(),
+            rules_version: "1".to_string(),
+            rules_at: 0,
+            purge_at: None,
+        };
+        // "About you" without step 2, one of a current volunteer, one of an open applicant
+        db.upsert_team_identity(&identity("alone")).await.unwrap();
+        db.upsert_team_identity(&identity("volunteer")).await.unwrap();
+        db.insert_team_member(&member("m1", "volunteer", TeamMemberStatus::Active))
+            .await
+            .unwrap();
+        db.upsert_team_identity(&identity("applicant")).await.unwrap();
+        db.insert_team_application(&TeamApplication {
+            id: "a1".to_string(),
+            user_id: "applicant".to_string(),
+            role: "moderator".to_string(),
+            status: TeamApplicationStatus::Open,
+            adult: false,
+            answers: vec![],
+            submitted_at: NOV_10,
+            acted_by: None,
+            acted_at: None,
+            interviewer: None,
+            reason: None,
+            grant: None,
+            purge_at: None,
+        })
+        .await
+        .unwrap();
+
+        let recorder = Recorder::default();
+        run_daily(&db, &settings, &recorder, NOV_10).await.unwrap();
+        let alone = db.fetch_team_identity("alone").await.unwrap().unwrap();
+        assert_eq!(alone.purge_at, Some(NOV_10 + ORPHAN_IDENTITY_MS));
+        assert_eq!(db.fetch_team_identity("volunteer").await.unwrap().unwrap().purge_at, None);
+        assert_eq!(db.fetch_team_identity("applicant").await.unwrap().unwrap().purge_at, None);
+        // a day later it is gone; the held ones stay
+        run_daily(&db, &settings, &recorder, NOV_10 + ORPHAN_IDENTITY_MS + 1).await.unwrap();
+        assert!(db.fetch_team_identity("alone").await.unwrap().is_none());
+        assert!(db.fetch_team_identity("volunteer").await.unwrap().is_some());
+        assert!(db.fetch_team_identity("applicant").await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn counting_waits_for_the_one_time_notice() {
+        let db = db();
+        let mut settings = settings();
+        settings.privacy_url = "https://zrzur.com/privacy".to_string();
+        settings.volunteers.activity_keep_days = 190;
+        holder(&db, "u1", vec![MOD_ROLE.to_string()]).await;
+        // a volunteer from before the counting: never told
+        let mut before = member("m1", "u1", TeamMemberStatus::Active);
+        before.history = vec![];
+        db.insert_team_member(&before).await.unwrap();
+        message(&db, day_start(20261108) + 5_000, HELP, "u1", None).await;
+        let recorder = Recorder::default();
+
+        let run = run_daily(&db, &settings, &recorder, NOV_10 + 3_600_000).await.unwrap();
+        assert_eq!(run.counting_notices, 1);
+        assert_eq!(run.days_counted, 0, "nothing is counted before the notice");
+        assert!(db.fetch_team_activity("u1", 20250101, 20271231).await.unwrap().is_empty());
+        let told = recorder.to("u1").await;
+        assert_eq!(told.len(), 1);
+        assert!(told[0].contains("190"), "{}", told[0]);
+        assert!(told[0].contains("https://zrzur.com/privacy"), "{}", told[0]);
+        assert!(told[0].contains("object"), "{}", told[0]);
+        assert!(has_action(&db.fetch_team_member("m1").await.unwrap(), COUNTING_NOTICE));
+
+        // again the same day: no second notice
+        let run = run_daily(&db, &settings, &recorder, NOV_10 + 7_200_000).await.unwrap();
+        assert_eq!(run.counting_notices, 0);
+        assert_eq!(recorder.to("u1").await.len(), 1);
+
+        // the next day: only the day of the notice is counted, nothing before it
+        let run = run_daily(&db, &settings, &recorder, NOV_10 + DAY_MS + 3_600_000)
+            .await
+            .unwrap();
+        assert_eq!(run.days_counted, 1);
+        let rows = db.fetch_team_activity("u1", 20250101, 20271231).await.unwrap();
+        assert_eq!(rows.iter().map(|r| r.day).collect::<Vec<_>>(), vec![20261110]);
     }
 
     // ---- review fixes ----

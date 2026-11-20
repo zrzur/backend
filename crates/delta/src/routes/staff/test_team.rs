@@ -204,6 +204,8 @@ async fn identity_needs_step_up_and_is_logged() {
     let (status, body) = send(&harness, &owner, &token, Post, &path, json!({})).await;
     assert_eq!(status, Status::Ok, "{body}");
     assert_eq!(body["age"], 24);
+    // and when the age was given
+    assert_eq!(body["age_given_at"], 1);
     assert_eq!(body["country"], "Austria");
     // escaped: the mention is dead text
     assert!(!body["name"].as_str().unwrap().contains("<@everyone>"), "{body}");
@@ -244,6 +246,14 @@ async fn remove_needs_step_up_and_ends_membership() {
     assert_eq!(last.action, "removed");
     assert_eq!(last.actor, owner.user.id);
     assert!(audit_actions(&harness).await.contains(&("team.member.remove".into(), "Success".into())));
+    // the log keeps that there was a reason, never what it said
+    let entries = all_audit(&harness).await;
+    let removal = entries.iter().find(|e| e.action == "team.member.remove").expect("a record");
+    assert_eq!(removal.reason, None);
+    assert!(removal.summary.as_deref().unwrap_or_default().contains("reason of 27 characters"), "{:?}", removal.summary);
+    for e in &entries {
+        assert!(!format!("{:?}{:?}", e.summary, e.reason).contains("Not active"), "{:?}", e.summary);
+    }
 
     // already gone: refused
     let (status, _) = send(&harness, &owner, &token, Post, &path, body).await;
@@ -339,7 +349,7 @@ async fn away_uses_the_volunteers_rules() {
 }
 
 #[rocket::async_test]
-async fn notes_never_in_export() {
+async fn notes_in_own_export_never_in_log() {
     let harness = TestHarness::new().await;
     let (account, _, person) = harness.new_user().await;
     let (owner, token) = owner_signed_in(&harness).await;
@@ -360,11 +370,32 @@ async fn notes_never_in_export() {
     assert_eq!(status, Status::BadRequest);
     assert_eq!(stored(&harness, &m.id).await.notes.as_deref(), Some(note));
 
-    // not in the person's own export, and not in the audit log
+    // the daily counts are the person's data too
+    harness
+        .db
+        .upsert_team_activity_day(&TeamActivityDay {
+            id: format!("{}:20261109", person.id),
+            user_id: person.id.clone(),
+            day: 20261109,
+            counts: vec![TeamActivityCount {
+                server: server.clone(),
+                messages: 7731,
+                replies: 0,
+                moderation: 0,
+                reviews: 0,
+                tickets: 0,
+            }],
+        })
+        .await
+        .unwrap();
+
+    // in the person's own export (GDPR Art. 15), never in the audit log
     let zip = revolt_database::build_export_zip(&harness.db, &account, &person).await.unwrap();
     let text = String::from_utf8_lossy(&zip);
-    assert!(!text.contains("unmistakable-note-text-5521"));
+    assert!(text.contains("unmistakable-note-text-5521"));
     assert!(text.contains("team_memberships.json"));
+    assert!(text.contains("team_activity.json"));
+    assert!(text.contains("20261109") && text.contains("7731"), "the counted day is in the export");
     assert!(all_audit(&harness)
         .await
         .iter()

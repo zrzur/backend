@@ -134,6 +134,18 @@ pub async fn send(
     all.push(("role", name));
     all.push(("rules", rules));
     all.push(("terms", text(language, "terms")));
+    // `counting` asks for the counting notice (`volunteer.counting`, with
+    // `{days}` and `{privacy}` of the same call); left out or empty, the
+    // blank stays empty
+    if let Some(at) = all.iter().position(|(name, _)| *name == "counting") {
+        all[at].1 = if all[at].1.is_empty() {
+            String::new()
+        } else {
+            fill(&text(language, "volunteer.counting"), &all)
+        };
+    } else {
+        all.push(("counting", String::new()));
+    }
     let message = message(language, key, &all);
     if let Err(error) =
         send_official_message(db, None, OfficialAccount::Zrzur, user_id, message).await

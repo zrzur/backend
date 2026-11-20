@@ -14,6 +14,9 @@ pub trait AbstractTeamVolunteers: Sync + Send {
 
     async fn delete_team_identity(&self, user_id: &str) -> Result<()>;
 
+    /// Identities with no deletion time set (`purge_at` empty)
+    async fn fetch_team_identities_kept(&self) -> Result<Vec<TeamIdentity>>;
+
     /// Delete identities whose `purge_at` lies before `now` (milliseconds
     /// since the epoch); returns how many went
     async fn delete_team_identities_due(&self, now: i64) -> Result<u64>;
@@ -28,6 +31,10 @@ pub trait AbstractTeamVolunteers: Sync + Send {
     async fn fetch_team_members(&self, filter: &TeamMemberFilter) -> Result<Vec<TeamMember>>;
 
     async fn update_team_member(&self, member: &TeamMember) -> Result<()>;
+
+    /// Delete one membership (an ended one past its keeping time); no error
+    /// when it is already gone
+    async fn delete_team_member(&self, id: &str) -> Result<()>;
 
     /// Delete every membership of a person (account deletion)
     async fn delete_team_members_of(&self, user_id: &str) -> Result<u64>;

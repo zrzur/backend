@@ -2433,10 +2433,12 @@ pub struct FeaturesTeamVolunteers {
     /// Longest "away" a volunteer may set, in days
     #[serde(default = "default_volunteers_away_max_days")]
     pub away_max_days: i64,
-    /// Days name, age and country are kept after a volunteer leaves
+    /// Days name, age and country, and an ended membership with its
+    /// history and notes, are kept after a volunteer leaves
     #[serde(default = "default_volunteers_identity_keep_days")]
     pub identity_keep_days: i64,
-    /// Days the monthly counts are kept
+    /// Days the daily counts are kept (at least 62: the monthly rule reads
+    /// the whole month before)
     #[serde(default = "default_volunteers_activity_keep_days")]
     pub activity_keep_days: i64,
     /// Version of the volunteer rules people confirm
@@ -2463,7 +2465,7 @@ fn default_volunteers_identity_keep_days() -> i64 {
     90
 }
 fn default_volunteers_activity_keep_days() -> i64 {
-    400
+    190
 }
 fn default_volunteers_rules_version() -> String {
     "1".to_string()
@@ -3014,7 +3016,7 @@ manual = true
         assert_eq!(v.monthly_minimum, 2);
         assert_eq!(v.away_max_days, 90);
         assert_eq!(v.identity_keep_days, 90);
-        assert_eq!(v.activity_keep_days, 400);
+        assert_eq!(v.activity_keep_days, 190);
         assert_eq!(v.rules_version, "1");
         assert_eq!(v.team_server, "");
         assert_eq!(v.report_channel, "");

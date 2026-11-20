@@ -9,8 +9,8 @@
 //!
 //! Only counts are shown (`month_contributions`, `months`): no message
 //! content, no channel names. Names and servers are escaped
-//! (`team_texts::plain`). Notes are shown only here and are never part of a
-//! person's export.
+//! (`team_texts::plain`). Notes are shown to staff only here; the person
+//! gets them in their own data export (GDPR Art. 15).
 
 use std::collections::HashMap;
 
@@ -347,8 +347,8 @@ pub async fn away(
 
 /// # Team: write the staff note
 ///
-/// Up to 2000 characters, trimmed, empty clears it. Never in the person's
-/// export and never in the audit log.
+/// Up to 2000 characters, trimmed, empty clears it. Part of the person's
+/// own data export; never in the audit log.
 #[post("/team/<id>/note", data = "<data>")]
 pub async fn note(
     db: &State<Database>,
@@ -378,7 +378,8 @@ pub async fn note(
 /// # Team: remove a volunteer
 ///
 /// Needs a fresh step-up and a reason of 10 to 500 characters. The person
-/// gets the polite message from the official account, with the reason.
+/// gets the polite message from the official account, with the reason;
+/// the audit log keeps only its length.
 #[post("/team/<id>/remove", data = "<data>")]
 pub async fn remove(
     db: &State<Database>,
@@ -398,7 +399,9 @@ pub async fn remove(
     if !member.is_current() {
         return Err(create_error!(InvalidOperation));
     }
-    log(db, &staff, "team.member.remove", &member, Some(reason.to_string()), format!("member {}", member.id)).await?;
+    // the reason is about a person and goes only to them: the log keeps
+    // that there was one, not what it said
+    log(db, &staff, "team.member.remove", &member, None, format!("member {}, reason of {} characters", member.id, length)).await?;
     // end_membership reads the record again and does nothing if it is gone
     volunteers::end_membership(db, &settings, &mut member, &staff.user.id, "removed", Some(reason)).await?;
     let member = member_of(db, id).await?;

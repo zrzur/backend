@@ -342,6 +342,21 @@ impl Desk {
         modal: Value,
         fields: Value,
     ) -> (String, String) {
+        let (status, accepted) = self.form_raw(session, channel, parent, modal, fields).await;
+        assert_eq!(status, Status::Ok, "{accepted}");
+        let id = accepted["_id"].as_str().unwrap().to_string();
+        (id.clone(), self.token_of(&id).await)
+    }
+
+    /// As `form`, giving what the interaction check answered
+    async fn form_raw(
+        &mut self,
+        session: &str,
+        channel: &Channel,
+        parent: &(String, String),
+        modal: Value,
+        fields: Value,
+    ) -> (Status, Value) {
         let custom_id = modal["custom_id"].as_str().unwrap().to_string();
         let status = self
             .harness
@@ -366,9 +381,7 @@ impl Desk {
                 }),
             )
             .await;
-        assert_eq!(status, Status::Ok, "{accepted}");
-        let id = accepted["_id"].as_str().unwrap().to_string();
-        (id.clone(), self.token_of(&id).await)
+        (status, accepted)
     }
 
     /// A person presses Apply, gets the form of `role` and sends it; gives
@@ -625,6 +638,8 @@ fn the_routes_exist_only_for_the_desk_bot() {
         // the desk's bot: only roles that are open and set up, in order
         let (status, config) = d.as_bot(&d.bot.token, "/team/desk/config", None).await;
         assert_eq!(status, Status::Ok);
+        // the bot states how long counts are kept: never fewer than the 62 days kept anyway
+        assert!(config["volunteers"]["activity_keep_days"].as_i64().unwrap() >= 62, "{config}");
         let keys: Vec<&str> = config["roles"]
             .as_array()
             .unwrap()
@@ -1482,6 +1497,15 @@ impl Desk {
     /// server answered to the hand-back
     async fn about_with(&mut self, session: &str, role: &str, fields: Value) -> (Status, Value) {
         let channel = self.apply.clone();
+        let (parent, modal) = self.about_modal(session, role).await;
+        let sent = self.form(session, &channel, &parent, modal, fields).await;
+        self.hand("about", &sent).await
+    }
+
+    /// The person opens "About you" for `role`: the form as the bot sends it
+    /// (the rules tick may be left empty; the server says what is missing)
+    async fn about_modal(&mut self, session: &str, role: &str) -> ((String, String), Value) {
+        let channel = self.apply.clone();
         let panel = self.panel.clone();
         let parent = self.press(session, &channel, &panel, "ta:start").await;
         let text = |id: &str| {
@@ -1498,12 +1522,30 @@ impl Desk {
                 text("country"),
                 { "type": "Field", "label": "Rules", "component": {
                     "type": "CheckboxGroup", "custom_id": "rules", "required": false,
+                    "min_values": 0, "max_values": 1,
                     "options": [{ "label": "I accept the volunteer rules", "value": "accept" }]
                 }},
             ]
         });
-        let sent = self.form(session, &channel, &parent, modal, fields).await;
-        self.hand("about", &sent).await
+        (parent, modal)
+    }
+
+    /// The reviewer accepted today's volunteer rules ("About you" on file)
+    async fn reviewer_accepts_rules(&self) {
+        let version = super::test_settings::get(&self.bot.id).unwrap().volunteers.rules_version;
+        self.harness
+            .db
+            .upsert_team_identity(&revolt_database::TeamIdentity {
+                id: self.reviewer.id.clone(),
+                name: "Rami Reviewer".to_string(),
+                age: 30,
+                country: "Jordan".to_string(),
+                rules_version: version,
+                rules_at: revolt_database::staff_now(),
+                purge_at: None,
+            })
+            .await
+            .unwrap();
     }
 
     async fn about_as(&mut self, session: &str, age: &str) -> (Status, Value) {
@@ -1548,7 +1590,15 @@ fn about_saves_identity_and_rules_version() {
         assert_eq!(identity.country, "Austria");
         assert_eq!(identity.rules_version, "3");
         assert!(identity.rules_at > 0);
-        assert_eq!(identity.purge_at, None);
+        // step 2 not sent yet: nothing holds it, it goes after one day
+        assert_eq!(
+            identity.purge_at,
+            Some(identity.rules_at + revolt_database::util::team_activity::ORPHAN_IDENTITY_MS)
+        );
+        // sending the application claims it
+        let (_, outcome) = d.apply_as(&session, "support").await;
+        assert_eq!(outcome["applied"], true, "{outcome}");
+        assert_eq!(d.identity_of(&d.applicant).await.unwrap().purge_at, None);
         // a closed role takes nobody's answers
         let (_, outcome) = d.about_with(&session, "closed", about_fields("24", &["accept"])).await;
         assert_eq!(outcome["saved"], false);
@@ -1607,12 +1657,20 @@ fn about_needs_the_rules_tick() {
         let mut d = desk().await;
         d.volunteers_on("1");
         let session = d.applicant_session.clone();
-        for rules in [vec![], vec!["something-else"]] {
-            let (status, outcome) = d.about_with(&session, "support", about_fields("30", &rules)).await;
-            assert_eq!(status, Status::Ok, "{outcome}");
-            assert_eq!(outcome["saved"], false);
-            assert_eq!(outcome["problem"], "rules_not_accepted");
-        }
+        // not ticked: a valid form, which "About you" refuses
+        let (status, outcome) = d.about_with(&session, "support", about_fields("30", &[])).await;
+        assert_eq!(status, Status::Ok, "{outcome}");
+        assert_eq!(outcome["saved"], false);
+        assert_eq!(outcome["problem"], "rules_not_accepted");
+        // a value that is not one of the options is refused by the form check
+        // itself, before anything reaches the bot
+        let channel = d.apply.clone();
+        let (parent, modal) = d.about_modal(&session, "support").await;
+        let (status, body) = d
+            .form_raw(&session, &channel, &parent, modal, about_fields("30", &["something-else"]))
+            .await;
+        assert_eq!(status, Status::BadRequest, "{body}");
+        assert_eq!(body["type"], "FailedValidation");
         assert!(d.identity_of(&d.applicant).await.is_none());
     });
 }
@@ -1738,7 +1796,7 @@ fn withdraw_erases_identity_without_membership() {
 }
 
 #[test]
-fn reject_sets_identity_purge_with_the_application() {
+fn reject_erases_identity_at_once() {
     on_big_stack(|| async {
         let mut d = desk().await;
         d.volunteers_on("1");
@@ -1751,13 +1809,12 @@ fn reject_sets_identity_purge_with_the_application() {
         let (status, outcome) = d.reject(&reviewer_session, &card, &id, "Not a fit right now.").await;
         assert_eq!(status, Status::Ok, "{outcome}");
         assert_eq!(outcome["applied"], true, "{outcome}");
-        let purge_at = d.stored(&id).await.purge_at;
-        assert!(purge_at.is_some());
-        let identity = d.identity_of(&d.applicant).await.unwrap();
-        assert_eq!(identity.purge_at, purge_at);
-        // "About you" again brings the person back: no deletion time
+        // the application stays for the cooldown; "About you" does not
+        assert!(d.stored(&id).await.purge_at.is_some());
+        assert!(d.identity_of(&d.applicant).await.is_none());
+        // "About you" again, with nothing to hold it: kept for a day only
         d.about_as(&session, "24").await;
-        assert_eq!(d.identity_of(&d.applicant).await.unwrap().purge_at, None);
+        assert!(d.identity_of(&d.applicant).await.unwrap().purge_at.is_some());
     });
 }
 
@@ -1773,7 +1830,9 @@ fn a_stale_identity_does_not_pass_apply() {
         let id = id_of(&outcome);
         let card = d.card(&id).await;
         d.reject(&reviewer_session, &card, &id, "Not a fit right now.").await;
-        // time is up for both, but the clean-up task has not run
+        // "About you" again; time is up for it and the application, but the
+        // clean-up task has not run
+        d.about_as(&session, "24").await;
         let mut identity = d.identity_of(&d.applicant).await.unwrap();
         identity.purge_at = Some(1);
         d.harness.db.upsert_team_identity(&identity).await.unwrap();
@@ -1817,7 +1876,15 @@ impl Desk {
         let (_, outcome) = self.about_with(&session, "support", fields).await;
         assert_eq!(outcome["saved"], true, "{outcome}");
         let (_, outcome) = self.apply_as(&session, "support").await;
+        self.reviewer_accepts_rules().await;
         id_of(&outcome)
+    }
+
+    fn identity_views(entries: Vec<(String, String, String)>) -> Vec<(String, String, String)> {
+        entries
+            .into_iter()
+            .filter(|(action, _, _)| action == "team.identity.view")
+            .collect()
     }
 }
 
@@ -1831,9 +1898,13 @@ fn reviewer_sees_identity_and_view_is_logged() {
         assert_eq!(status, Status::Ok, "{view}");
         assert_eq!(view["name"], "Lina Haddad");
         assert_eq!(view["age"], 24);
+        // P-128: when the age was given
+        let given = d.identity_of(&d.applicant).await.unwrap().rules_at;
+        assert_eq!(view["age_given_at"], given);
         assert_eq!(view["country"], "Austria");
         assert_eq!(view["age_note"], false);
         assert_eq!(view["missing"], false);
+        assert_eq!(view["rules_needed"], false);
         let views: Vec<_> = d
             .audit(&d.applicant)
             .await
@@ -1931,6 +2002,7 @@ fn identity_missing_when_never_filled_or_unknown_application() {
         let (_, outcome) = d.apply_as(&d.applicant_session.clone(), "support").await;
         let id = id_of(&outcome);
         d.volunteers_on("1");
+        d.reviewer_accepts_rules().await;
         // the person never filled "About you"
         let (status, view) = d.identity_press(&session, &id).await;
         assert_eq!(status, Status::Ok, "{view}");
@@ -2015,12 +2087,127 @@ fn identity_carries_the_age_note() {
         assert_eq!(outcome["saved"], true, "{outcome}");
         let (_, outcome) = d.apply_as(&young_session.token, "designer").await;
         let id = id_of(&outcome);
+        d.reviewer_accepts_rules().await;
         let session = d.reviewer_session.clone();
         let (status, view) = d.identity_press(&session, &id).await;
         assert_eq!(status, Status::Ok, "{view}");
         assert_eq!(view["age"], 25);
         assert_eq!(view["age_note"], true);
         assert_eq!(view["missing"], false);
+    });
+}
+
+#[test]
+fn identity_ages_with_the_years_since_it_was_given() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        d.volunteers_on("1");
+        // an adult account that said "17" two years ago is 19 now: no note
+        let (mut account, adult_session, adult) = d.harness.new_user().await;
+        let year: i32 = iso8601_timestamp::Timestamp::now_utc().format().to_string()[0..4]
+            .parse()
+            .unwrap();
+        account.age.as_mut().unwrap().birth_month = format!("{}-01", year - 30);
+        d.harness.db.save_account(&account).await.unwrap();
+        Member::create(&d.harness.db, &d.lounge, &adult, None).await.unwrap();
+        let (_, outcome) = d.about_with(&adult_session.token, "designer", about_fields("17", &["accept"])).await;
+        assert_eq!(outcome["saved"], true, "{outcome}");
+        let (_, outcome) = d.apply_as(&adult_session.token, "designer").await;
+        let id = id_of(&outcome);
+        d.reviewer_accepts_rules().await;
+        let session = d.reviewer_session.clone();
+        // given today: 17 against an adult account disagrees
+        let (_, view) = d.identity_press(&session, &id).await;
+        assert_eq!(view["age_note"], true, "{view}");
+        // given two years ago: 19 today, no note; the stated age and its date are shown
+        let mut identity = d.identity_of(&adult).await.unwrap();
+        identity.rules_at -= 2 * 366 * super::DAY_MS;
+        d.harness.db.upsert_team_identity(&identity).await.unwrap();
+        let (status, view) = d.identity_press(&session, &id).await;
+        assert_eq!(status, Status::Ok, "{view}");
+        assert_eq!(view["age"], 17);
+        assert_eq!(view["age_given_at"], identity.rules_at);
+        assert_eq!(view["age_note"], false, "{view}");
+    });
+}
+
+#[test]
+fn identity_needs_the_viewer_to_have_accepted_the_rules() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.applied_as("Lina Haddad").await;
+        let session = d.reviewer_session.clone();
+        // the rules changed since the reviewer accepted them
+        d.volunteers_on("2");
+        let (status, view) = d.identity_press(&session, &id).await;
+        assert_eq!(status, Status::Ok, "{view}");
+        assert_eq!(view["rules_needed"], true);
+        assert_eq!(view["missing"], true);
+        assert!(!view.to_string().contains("Lina"), "{view}");
+        let views = Desk::identity_views(d.audit(&d.applicant).await);
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0].2, "Failed");
+        // a reviewer with no "About you" at all: the same
+        d.harness.db.delete_team_identity(&d.reviewer.id).await.unwrap();
+        let (_, view) = d.identity_press(&session, &id).await;
+        assert_eq!(view["rules_needed"], true);
+        // accepting today's rules opens it
+        d.reviewer_accepts_rules().await;
+        let (_, view) = d.identity_press(&session, &id).await;
+        assert_eq!(view["name"], "Lina Haddad", "{view}");
+        assert_eq!(view["rules_needed"], false);
+
+        // the owner of the desk server may look without "About you"
+        d.harness.db.delete_team_identity(&d.reviewer.id).await.unwrap();
+        d.harness
+            .db
+            .update_server(
+                &d.lounge.id,
+                &revolt_database::PartialServer {
+                    owner: Some(d.reviewer.id.clone()),
+                    ..Default::default()
+                },
+                vec![],
+            )
+            .await
+            .unwrap();
+        let (_, view) = d.identity_press(&session, &id).await;
+        assert_eq!(view["name"], "Lina Haddad", "{view}");
+    });
+}
+
+#[test]
+fn identity_only_while_the_application_is_open() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.applied_as("Lina Haddad").await;
+        let session = d.reviewer_session.clone();
+        // in interview: still shown
+        let mut application = d.stored(&id).await;
+        application.status = TeamApplicationStatus::Interview;
+        assert!(d
+            .harness
+            .db
+            .replace_team_application_if(&application, TeamApplicationStatus::Open)
+            .await
+            .unwrap());
+        let (status, view) = d.identity_press(&session, &id).await;
+        assert_eq!(status, Status::Ok, "{view}");
+        assert_eq!(view["name"], "Lina Haddad");
+        // decided: refused and logged, even from a stale card
+        application.status = TeamApplicationStatus::Accepted;
+        assert!(d
+            .harness
+            .db
+            .replace_team_application_if(&application, TeamApplicationStatus::Interview)
+            .await
+            .unwrap());
+        let (status, body) = d.identity_press(&session, &id).await;
+        assert_eq!(status, Status::Forbidden, "{body}");
+        assert!(!body.to_string().contains("Lina"));
+        let views = Desk::identity_views(d.audit(&d.applicant).await);
+        assert_eq!(views.len(), 2);
+        assert_eq!(views.iter().filter(|v| v.2 == "Failed").count(), 1);
     });
 }
 
@@ -2109,9 +2296,18 @@ fn accept_creates_trial_member() {
         assert_eq!(member.server, d.lounge.id);
         assert_eq!(member.status, revolt_database::TeamMemberStatus::Trial);
         assert_eq!(member.trial_ends_at - member.joined_at, 30 * super::DAY_MS);
-        assert_eq!(member.history.len(), 1);
+        assert_eq!(member.history.len(), 2);
         assert_eq!(member.history[0].action, "accepted");
         assert_eq!(member.history[0].actor, d.reviewer.id);
+        // P-114: the welcome says contributions are counted, and that is noted
+        assert_eq!(member.history[1].action, "counting_notice");
+        let told = d.told(&d.applicant).await;
+        assert!(
+            told.iter().any(|m| m.contains("Welcome") && m.contains("we count how often you help") && m.contains("object at any time")),
+            "{told:?}"
+        );
+        // P-116: the receipt names "About you" while the care is on
+        assert!(told.iter().any(|m| m.contains("name, age and country you gave in “About you”")), "{told:?}");
     });
 }
 
@@ -2164,7 +2360,7 @@ fn accept_twice_keeps_one_member() {
             .await
             .unwrap();
         assert_eq!(d.members_of(&d.applicant).await.len(), 1);
-        assert_eq!(again.history.len(), 1);
+        assert_eq!(again.history.len(), 2, "accepted, counting_notice");
 
         // one who left is reopened as a trial, with a history entry
         let mut member = again;
@@ -2199,6 +2395,10 @@ fn existing_accepted_get_a_member_on_settle() {
         assert!(members[0].history.iter().any(|h| h.action == "identity_requested"));
         let told = d.told(&d.applicant).await;
         assert!(told.iter().any(|m| m.contains("Add my details")), "{told:?}");
+        // P-115: why, voluntary, how long
+        let request = told.iter().find(|m| m.contains("Add my details")).unwrap();
+        assert!(request.contains("voluntary") && request.contains("nothing changes for you"), "{request}");
+        assert!(request.contains("days kept after leaving: 90"), "{request}");
 
         // once: a second look sends nothing more
         let before = d.told(&d.applicant).await.len();
@@ -2209,7 +2409,8 @@ fn existing_accepted_get_a_member_on_settle() {
         // they fill it in with the bot's "Add my details"
         let (_, outcome) = d.about_with(&session, "me", about_fields("30", &["accept"])).await;
         assert_eq!(outcome["saved"], true, "{outcome}");
-        assert!(d.identity_of(&d.applicant).await.is_some());
+        // held by the membership: no deletion time
+        assert_eq!(d.identity_of(&d.applicant).await.unwrap().purge_at, None);
         // someone who is not a volunteer cannot
         let guest = d.guest_session.clone();
         let (_, outcome) = d.about_with(&guest, "me", about_fields("30", &["accept"])).await;
@@ -2233,7 +2434,16 @@ fn leaving_one_of_two_teams_keeps_zrzur_team_role() {
         super::test_settings::register(settings.clone());
 
         let session = d.applicant_session.clone();
-        d.accepted_as(&session, "support").await;
+        let first = d.accepted_as(&session, "support").await;
+        // a decision starts the cooldown, an acceptance too: it is over
+        let mut accepted = d.stored(&first).await;
+        accepted.acted_at = Some(1);
+        assert!(d
+            .harness
+            .db
+            .replace_team_application_if(&accepted, TeamApplicationStatus::Accepted)
+            .await
+            .unwrap());
         d.accepted_as(&session, "designer").await;
         let mut members = d.members_of(&d.applicant).await;
         assert_eq!(members.len(), 2);
@@ -2578,7 +2788,7 @@ fn away_zero_ends_away() {
         // zero while not away changes nothing
         let (status, _) = d.away_as(&session, "0").await;
         assert_eq!(status, Status::Ok);
-        assert_eq!(d.member(&id).await.history.len(), 1);
+        assert_eq!(d.member(&id).await.history.len(), 2, "accepted, counting_notice");
 
         d.away_as(&session, "10").await;
         let (status, shown) = d.away_as(&session, "0").await;
@@ -2795,7 +3005,7 @@ fn leave_ends_membership() {
         // the press is single-use, and a left membership cannot be left again
         let (status, _) = d.hand("leave", &pressed).await;
         assert_ne!(status, Status::Ok);
-        assert_eq!(d.member(&id).await.history.len(), 2);
+        assert_eq!(d.member(&id).await.history.len(), 3, "accepted, counting_notice, left");
     });
 }
 
@@ -2815,7 +3025,7 @@ fn someone_else_cannot_leave_for_me() {
         assert_eq!(status, Status::NotFound);
         let member = d.member(&id).await;
         assert!(member.is_current());
-        assert_eq!(member.history.len(), 1);
+        assert_eq!(member.history.len(), 2, "accepted, counting_notice");
     });
 }
 

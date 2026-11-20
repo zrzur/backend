@@ -44,6 +44,17 @@ impl AbstractTeamVolunteers for MongoDb {
             .map_err(|_| create_database_error!("delete_one", IDENTITIES))
     }
 
+    async fn fetch_team_identities_kept(&self) -> Result<Vec<TeamIdentity>> {
+        // a field never written and one written as null both mean "kept"
+        self.find_with_options(
+            IDENTITIES,
+            doc! { "purge_at": null },
+            FindOptions::builder().sort(doc! { "_id": 1 }).build(),
+        )
+        .await
+        .map_err(|_| create_database_error!("find", IDENTITIES))
+    }
+
     async fn delete_team_identities_due(&self, now: i64) -> Result<u64> {
         self.col::<TeamIdentity>(IDENTITIES)
             .delete_many(doc! { "purge_at": { "$lt": now } })
@@ -113,6 +124,14 @@ impl AbstractTeamVolunteers for MongoDb {
         } else {
             Err(create_error!(NotFound))
         }
+    }
+
+    async fn delete_team_member(&self, id: &str) -> Result<()> {
+        self.col::<TeamMember>(MEMBERS)
+            .delete_one(doc! { "_id": id })
+            .await
+            .map(|_| ())
+            .map_err(|_| create_database_error!("delete_one", MEMBERS))
     }
 
     async fn delete_team_members_of(&self, user_id: &str) -> Result<u64> {

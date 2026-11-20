@@ -25,6 +25,19 @@ impl AbstractTeamVolunteers for ReferenceDb {
         Ok(())
     }
 
+    async fn fetch_team_identities_kept(&self) -> Result<Vec<TeamIdentity>> {
+        let mut kept: Vec<TeamIdentity> = self
+            .team_identities
+            .lock()
+            .await
+            .values()
+            .filter(|i| i.purge_at.is_none())
+            .cloned()
+            .collect();
+        kept.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(kept)
+    }
+
     async fn delete_team_identities_due(&self, now: i64) -> Result<u64> {
         let mut store = self.team_identities.lock().await;
         let count = store.len();
@@ -96,6 +109,11 @@ impl AbstractTeamVolunteers for ReferenceDb {
             }
             None => Err(create_error!(NotFound)),
         }
+    }
+
+    async fn delete_team_member(&self, id: &str) -> Result<()> {
+        self.team_members.lock().await.remove(id);
+        Ok(())
     }
 
     async fn delete_team_members_of(&self, user_id: &str) -> Result<u64> {
