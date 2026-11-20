@@ -320,6 +320,8 @@ impl AbstractAccounts for MongoDb {
             ExportSource::Settings => ("user_settings", doc! { "_id": user_id }, None, 0),
             ExportSource::SupportTickets => ("support_tickets", doc! { "user_id": user_id }, None, 0),
             ExportSource::TeamApplications => ("team_applications", doc! { "user_id": user_id }, None, 0),
+            ExportSource::TeamIdentity => ("team_identities", doc! { "_id": user_id }, None, 0),
+            ExportSource::TeamMemberships => ("team_members", doc! { "user_id": user_id }, None, 0),
         };
         let collection = self.col::<Document>(col);
         let mut find = collection.find(filter).limit(limit);

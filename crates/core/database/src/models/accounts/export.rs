@@ -81,6 +81,10 @@ auto_derived!(
         SupportTickets,
         /// Applications to join the team the person sent (reviewers removed later)
         TeamApplications,
+        /// The person's own volunteer identity (name, age, country)
+        TeamIdentity,
+        /// The person's volunteer memberships (notes and actor ids removed later)
+        TeamMemberships,
         /// The person's own settings
         Settings,
     }
@@ -438,6 +442,29 @@ pub async fn build_export_zip(db: &Database, account: &Account, user: &User) -> 
             a
         })
         .collect();
+    // Volunteer identity, and memberships without staff notes or the ids of
+    // those who acted
+    let team_identity: Vec<Value> = db
+        .export_documents(&user.id, ExportSource::TeamIdentity)
+        .await?;
+    let team_memberships: Vec<Value> = db
+        .export_documents(&user.id, ExportSource::TeamMemberships)
+        .await?
+        .into_iter()
+        .map(|mut m| {
+            if let Some(o) = m.as_object_mut() {
+                o.remove("notes");
+                if let Some(history) = o.get_mut("history").and_then(Value::as_array_mut) {
+                    for h in history {
+                        if let Some(h) = h.as_object_mut() {
+                            h.remove("actor");
+                        }
+                    }
+                }
+            }
+            m
+        })
+        .collect();
     let bots: Vec<Value> = db
         .fetch_bots_by_user(&user.id)
         .await?
@@ -464,7 +491,7 @@ pub async fn build_export_zip(db: &Database, account: &Account, user: &User) -> 
         "Zrzur data export
 Created: {}
 
-This ZIP holds your own data as JSON files: account.json (no password or secrets), profile.json, messages.json (messages you sent, up to {DATA_EXPORT_MAX_MESSAGES}; polls show how many chose each answer), poll_votes.json (the answers you chose in polls), files.json (files you uploaded, with links that work while the file exists), servers.json, events.json (your answers to events: going, maybe or not going, with the event's title and time and your place on a waiting list; the events you created, the ones you are invited to and the ones you help organise), purchases.json, reports.json (reports you filed), support.json (your support tickets), applications.json (your applications to join the Zrzur team), bots.json (bots you own, without tokens), creations.json (designs you made, with your rights confirmations), linked_accounts.json (accounts on other services you linked, such as Steam, and the copy we keep), saved.json (messages you saved and reminders you set: ids and times, not the messages) and settings.json. Other people appear as ids only.
+This ZIP holds your own data as JSON files: account.json (no password or secrets), profile.json, messages.json (messages you sent, up to {DATA_EXPORT_MAX_MESSAGES}; polls show how many chose each answer), poll_votes.json (the answers you chose in polls), files.json (files you uploaded, with links that work while the file exists), servers.json, events.json (your answers to events: going, maybe or not going, with the event's title and time and your place on a waiting list; the events you created, the ones you are invited to and the ones you help organise), purchases.json, reports.json (reports you filed), support.json (your support tickets), applications.json (your applications to join the Zrzur team), team_identity.json and team_memberships.json (the name, age and country you gave as a volunteer, and your places in the team, without staff notes),bots.json (bots you own, without tokens), creations.json (designs you made, with your rights confirmations), linked_accounts.json (accounts on other services you linked, such as Steam, and the copy we keep), saved.json (messages you saved and reminders you set: ids and times, not the messages) and settings.json. Other people appear as ids only.
 {cap_note}
 Why we use this data, who receives it, how long we keep it, your rights and how to complain to the Austrian data protection authority: https://zrzur.com/legal/privacy . Questions: {ACCOUNT_CONTACT_EMAIL}.
 ",
@@ -497,6 +524,8 @@ Why we use this data, who receives it, how long we keep it, your rights and how 
         ("reports.json".into(), compact(Value::Array(reports))),
         ("support.json".into(), compact(Value::Array(support))),
         ("applications.json".into(), compact(Value::Array(applications))),
+        ("team_identity.json".into(), compact(Value::Array(team_identity))),
+        ("team_memberships.json".into(), compact(Value::Array(team_memberships))),
         ("bots.json".into(), compact(Value::Array(bots))),
         ("creations.json".into(), compact(Value::Array(creations))),
         ("linked_accounts.json".into(), compact(Value::Array(linked_accounts))),

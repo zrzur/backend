@@ -1242,6 +1242,10 @@ impl User {
         db.scrub_user_fields(&self.id).await?;
         // Applications to join the team go with the account
         db.delete_team_applications_of(&self.id).await?;
+        // Volunteer identity, memberships and activity counts too
+        db.delete_team_identity(&self.id).await?;
+        db.delete_team_members_of(&self.id).await?;
+        db.delete_team_activity_of(&self.id).await?;
         self.locale = None;
         self.privacy = None;
         self.profile = None;
