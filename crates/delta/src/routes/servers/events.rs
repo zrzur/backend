@@ -2137,12 +2137,13 @@ pub async fn invitation_accept(
         .fetch_server_event_by_invitation(code)
         .await?
         .ok_or_else(|| create_error!(NotFound))?;
-    let now = Timestamp::now_utc();
+    // the link itself; whether it still works is asked below, after
+    // someone who already sees the event got their answer (opening a used-up
+    // link again must not say "not found" to the person who used it)
     let invitation = event
         .invitations
         .iter()
         .find(|link| link.code == code)
-        .filter(|link| link.works(now))
         .cloned()
         .ok_or_else(|| create_error!(NotFound))?;
     let upcoming = event.is_upcoming();
@@ -2157,7 +2158,12 @@ pub async fn invitation_accept(
         return Err(create_error!(NotFound));
     }
     let Ok(member) = db.fetch_member(&server.id, &user.id).await else {
-        return Err(create_error!(InvalidOperation));
+        // outside the server: "join first" only for a link that still works
+        return Err(if invitation.works(Timestamp::now_utc()) {
+            create_error!(InvalidOperation)
+        } else {
+            create_error!(NotFound)
+        });
     };
     let accepted = v0::ServerEventInvitationAccepted {
         server: server.id.clone(),
@@ -2170,6 +2176,9 @@ pub async fn invitation_accept(
         .await
     {
         return Ok(Json(accepted));
+    }
+    if !invitation.works(Timestamp::now_utc()) {
+        return Err(create_error!(NotFound));
     }
     if !db
         .use_server_event_invitation(

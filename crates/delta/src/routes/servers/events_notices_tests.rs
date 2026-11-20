@@ -7,14 +7,13 @@
 use std::collections::HashMap;
 
 use iso8601_timestamp::{Duration, Timestamp};
-use revolt_config::overwrite_config;
 use revolt_database::sent_notices;
 use revolt_database::{EventNotice, ServerEvent, Session};
 use rocket::http::{ContentType, Method, Status};
 use serde_json::{json, Value};
 
 use super::events_answers_tests::{answer, create_with, event_path, join, park};
-use super::events_tests::{at, call, create, setup, Setup};
+use super::events_tests::{at, call, create, setup, setup_with, Setup};
 
 fn id_of(event: &Value) -> String {
     event["_id"].as_str().expect("an id").to_string()
@@ -309,7 +308,7 @@ async fn a_freed_seat_tells_the_person_who_gets_it() {
 
 #[rocket::async_test]
 async fn a_share_link_shows_outsiders_a_little_and_only_when_opened() {
-    let s = setup(true).await;
+    let s = setup_with(true, |config| config.features.server_event_public_links = true).await;
     let event = create(&s, park()).await;
     let link_route = format!("{}/link", event_path(&s, &event));
     let (_, outsider_session, _) = s.harness.new_user().await;
@@ -364,19 +363,8 @@ async fn a_share_link_shows_outsiders_a_little_and_only_when_opened() {
     assert_eq!(status, Status::NotFound);
     assert_eq!(anonymous_get(&s, &path).await.0, Status::NotFound);
 
-    // opening it needs the platform switch
-    let (status, error) = call(
-        &s.harness,
-        Method::Put,
-        &link_route,
-        &s.owner_session,
-        Some(json!({ "public": true })),
-    )
-    .await;
-    assert_eq!(status, Status::BadRequest, "{error}");
-    assert_eq!(error["type"], "FeatureDisabled");
-
-    overwrite_config(|config| config.features.server_event_public_links = true).await;
+    // opening it to outsiders (the platform switch is on in this test;
+    // without it, see `a_share_link_cannot_be_opened_without_the_platform_switch`)
     let (status, opened) = call(
         &s.harness,
         Method::Put,
@@ -436,9 +424,29 @@ async fn a_share_link_shows_outsiders_a_little_and_only_when_opened() {
 }
 
 #[rocket::async_test]
-async fn an_opened_link_of_a_private_event_names_nobody_and_a_draft_stays_closed() {
+async fn a_share_link_cannot_be_opened_without_the_platform_switch() {
     let s = setup(true).await;
-    overwrite_config(|config| config.features.server_event_public_links = true).await;
+    let event = create(&s, park()).await;
+    let link_route = format!("{}/link", event_path(&s, &event));
+    let (status, linked) = call(&s.harness, Method::Put, &link_route, &s.owner_session, Some(json!({}))).await;
+    assert_eq!(status, Status::Ok, "{linked}");
+    let (status, error) = call(
+        &s.harness,
+        Method::Put,
+        &link_route,
+        &s.owner_session,
+        Some(json!({ "public": true })),
+    )
+    .await;
+    assert_eq!(status, Status::BadRequest, "{error}");
+    assert_eq!(error["type"], "FeatureDisabled");
+    let (_, stored) = call(&s.harness, Method::Get, &event_path(&s, &event), &s.owner_session, None).await;
+    assert_eq!(stored["event"]["link_public"], false, "{stored}");
+}
+
+#[rocket::async_test]
+async fn an_opened_link_of_a_private_event_names_nobody_and_a_draft_stays_closed() {
+    let s = setup_with(true, |config| config.features.server_event_public_links = true).await;
     let (other_session, _) = join(&s).await;
     let event = create_with(
         &s,

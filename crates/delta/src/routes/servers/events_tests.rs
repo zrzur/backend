@@ -53,7 +53,17 @@ pub(super) async fn channel(harness: &TestHarness, server: &Server, voice: bool,
 
 /// A server with events switched on by its owner (they start off)
 pub(super) async fn setup(enabled: bool) -> Setup {
-    let s = setup_off(enabled).await;
+    setup_with(enabled, |_| {}).await
+}
+
+/// `setup` with more settings changed. The settings of a test can be
+/// changed only once (`overwrite_config`), so a test that needs another one
+/// passes it here instead of calling `overwrite_config` again.
+pub(super) async fn setup_with(
+    enabled: bool,
+    more: impl FnOnce(&mut revolt_config::Settings) + Send + 'static,
+) -> Setup {
+    let s = setup_off_with(enabled, more).await;
     if enabled {
         let (status, body) = call(
             &s.harness,
@@ -71,7 +81,18 @@ pub(super) async fn setup(enabled: bool) -> Setup {
 
 /// A new server: events are off until its owner turns them on
 async fn setup_off(enabled: bool) -> Setup {
-    overwrite_config(move |config| config.features.server_events_enabled = enabled).await;
+    setup_off_with(enabled, |_| {}).await
+}
+
+async fn setup_off_with(
+    enabled: bool,
+    more: impl FnOnce(&mut revolt_config::Settings) + Send + 'static,
+) -> Setup {
+    overwrite_config(move |config| {
+        config.features.server_events_enabled = enabled;
+        more(config);
+    })
+    .await;
     let harness = TestHarness::new().await;
     let (_, owner_session, owner) = harness.new_user().await;
     let (_, member_session, member) = harness.new_user().await;

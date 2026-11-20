@@ -10,7 +10,34 @@ concurrency:
   group: images-${{ github.ref }}
   cancel-in-progress: false
 jobs:
+  # Owner, 2026-11-19 (audit step A): images are built only from a commit whose full CI passed.
+  # On 26.2.0-beta.1 the images built while the full CI of the same commit failed.
+  ci-passed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Full CI passed on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          runs="repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${GITHUB_SHA}&per_page=1"
+          for i in $(seq 1 85); do
+            state=$(gh api "$runs" --jq '.workflow_runs[0] | if . == null then "none" else .status + "/" + (.conclusion // "") end')
+            echo "CI for ${GITHUB_SHA}: $state"
+            case "$state" in
+              completed/success) exit 0 ;;
+              completed/*) echo "::error::Full CI did not pass on this commit ($state); no images are built."; exit 1 ;;
+              none) [ "$i" -ge 10 ] && { echo "::error::No CI run for this commit after 10 minutes."; exit 1; } ;;
+            esac
+            sleep 60
+          done
+          echo "::error::Full CI still running after 85 minutes."; exit 1
   backend:
+    needs: ci-passed
     runs-on: ubuntu-latest
     timeout-minutes: 300
     permissions:

@@ -29,12 +29,19 @@ struct Setup {
 
 /// Both features on, billing in its built-in test mode so Wings levels count
 async fn features_on() {
+    features_on_with(|_| {}).await;
+}
+
+/// The same, plus the test's own values, in one overwrite: the config can be
+/// overwritten only once per test process
+async fn features_on_with(extra: impl FnOnce(&mut revolt_config::Settings)) {
     overwrite_config(|config| {
         config.features.voice_clips_enabled = true;
         config.features.voice_recordings_enabled = true;
         config.features.billing.enabled = true;
         config.features.billing.test_mode = true;
         config.features.billing.provider.name = String::new();
+        extra(config);
     })
     .await;
 }
@@ -244,26 +251,30 @@ async fn everything_is_off_until_the_flags_are_set() {
             "{method} {tail}: {error:?}"
         );
     }
+    // and GET / says so
+    let root = root_config(&s.harness).await;
+    assert_eq!(root["features"]["voice_clips"], json!(false));
+    assert_eq!(root["features"]["voice_recordings"], json!(false));
+    assert_eq!(root["features"]["voice_weak_network"]["enabled"], json!(false));
 }
 
 #[rocket::async_test]
 async fn the_root_says_which_voice_features_are_on() {
-    let s = setup().await;
-    let before = root_config(&s.harness).await;
-    assert_eq!(before["features"]["voice_clips"], json!(false));
-    assert_eq!(before["features"]["voice_recordings"], json!(false));
-    assert_eq!(before["features"]["voice_weak_network"]["enabled"], json!(false));
-    assert_eq!(
-        before["features"]["voice_weak_network"]["weak_audio_bitrate"],
-        json!(24_000)
-    );
-
+    // the config is read once per process, so it is set before the first
+    // request; that everything is off by default is checked in
+    // everything_is_off_until_the_flags_are_set
     overwrite_config(|config| {
         config.features.voice_weak_network_enabled = true;
         config.features.voice_clips_enabled = true;
     })
     .await;
+    let s = setup().await;
     let after = root_config(&s.harness).await;
+    assert_eq!(after["features"]["voice_recordings"], json!(false));
+    assert_eq!(
+        after["features"]["voice_weak_network"]["weak_audio_bitrate"],
+        json!(24_000)
+    );
     assert_eq!(after["features"]["voice_clips"], json!(true));
     assert_eq!(after["features"]["voice_weak_network"]["enabled"], json!(true));
 }
@@ -506,8 +517,7 @@ async fn a_clip_must_be_the_persons_own_small_audio_file_of_the_right_length() {
 
 #[rocket::async_test]
 async fn clips_have_a_monthly_limit_that_deleting_does_not_reset() {
-    features_on().await;
-    overwrite_config(|config| {
+    features_on_with(|config| {
         config.features.voice_capture.clips_per_month = 2;
     })
     .await;
@@ -552,8 +562,7 @@ async fn clips_have_a_monthly_limit_that_deleting_does_not_reset() {
 
 #[rocket::async_test]
 async fn recording_needs_a_manager_time_left_and_the_room() {
-    features_on().await;
-    overwrite_config(|config| {
+    features_on_with(|config| {
         config.features.voice_capture.trial_minutes = 0;
     })
     .await;

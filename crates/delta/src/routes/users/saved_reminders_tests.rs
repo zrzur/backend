@@ -29,7 +29,17 @@ struct Setup {
 }
 
 async fn setup_with(enabled: bool) -> Setup {
-    overwrite_config(move |config| config.features.saved_reminders.enabled = enabled).await;
+    setup_config(move |config| config.features.saved_reminders.enabled = enabled).await
+}
+
+/// The feature on plus a test's own values, in one overwrite: the config can
+/// be overwritten only once per test process (a second call panics).
+async fn setup_config(f: impl FnOnce(&mut revolt_config::Settings) + Send + 'static) -> Setup {
+    overwrite_config(move |config| {
+        config.features.saved_reminders.enabled = true;
+        f(config);
+    })
+    .await;
     let harness = TestHarness::new().await;
     let (_, _, author) = harness.new_user().await;
     let (_, session, me) = harness.new_user().await;
@@ -467,8 +477,7 @@ async fn search_and_pages() {
 
 #[rocket::async_test]
 async fn the_saved_list_has_a_ceiling() {
-    overwrite_config(|config| config.features.saved_reminders.max_saved = 2).await;
-    let s = setup().await;
+    let s = setup_config(|config| config.features.saved_reminders.max_saved = 2).await;
     let a = message(&s, &s.open, "a").await;
     let b = message(&s, &s.open, "b").await;
     let c = message(&s, &s.open, "c").await;
@@ -568,7 +577,7 @@ async fn a_reminder_needs_a_time_ahead_within_the_range() {
 
 #[rocket::async_test]
 async fn waiting_reminders_are_limited_and_feather_raises_it() {
-    overwrite_config(|config| {
+    let s = setup_config(|config| {
         config.features.saved_reminders.max_active = 2;
         config.features.saved_reminders.max_active_plus = 4;
         // billing in test mode: a simulated Feather counts
@@ -576,7 +585,6 @@ async fn waiting_reminders_are_limited_and_feather_raises_it() {
         config.features.billing.test_mode = true;
     })
     .await;
-    let s = setup().await;
     let m = message(&s, &s.open, "many").await;
     let due = now_ms() + DAY;
 
@@ -624,8 +632,7 @@ async fn waiting_reminders_are_limited_and_feather_raises_it() {
 
 #[rocket::async_test]
 async fn a_due_reminder_is_delivered_once() {
-    overwrite_config(|config| config.features.saved_reminders.max_active = 1).await;
-    let s = setup().await;
+    let s = setup_config(|config| config.features.saved_reminders.max_active = 1).await;
     let m = message(&s, &s.open, "pay the rent").await;
     let now = now_ms();
     let (status, set) = remind(&s, &s.session, &m.id, now + 20 * MINUTE).await;
@@ -731,8 +738,8 @@ async fn a_reminder_for_a_closed_or_deleted_message_carries_nothing() {
 
 #[rocket::async_test]
 async fn old_delivered_reminders_are_removed_and_waiting_ones_stay() {
-    overwrite_config(|config| config.features.saved_reminders.keep_delivered_days = 30).await;
-    let s = setup().await;
+    let s =
+        setup_config(|config| config.features.saved_reminders.keep_delivered_days = 30).await;
     let m = message(&s, &s.open, "old").await;
     let now = now_ms();
     assert_eq!(remind(&s, &s.session, &m.id, now + MINUTE).await.0, Status::Ok);

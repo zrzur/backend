@@ -484,7 +484,9 @@ pub async fn finish_recording(
         file: file.id,
         shared_in: room.channel.id().to_string(),
         message: message.id,
-        duration: data.duration.min(longest as u32),
+        // the length checked above (it may run a few seconds past the
+        // server's own clock); clamping to `longest` counted a short episode as 0
+        duration: data.duration.min((longest + u64::from(SLACK_SECS)) as u32),
         included,
         title: recording.title,
         removed: false,

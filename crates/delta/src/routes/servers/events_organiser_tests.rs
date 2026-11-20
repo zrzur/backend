@@ -1783,6 +1783,22 @@ async fn the_push_at_the_start_of_a_private_event_goes_only_to_people_who_see_it
     )
     .await;
     let id = id_of(&event);
+    // first the notice that they are invited (same tag as the start's push):
+    // to the two invited people only, never the outsider
+    let invited = push_arrives(&mut pushes, &[&id], 15_000)
+        .await
+        .expect("no push was queued for the invitation");
+    let mut told: Vec<&str> = invited["users"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|user| user.as_str().unwrap())
+        .collect();
+    told.sort();
+    let mut expected = vec![guest.id.as_str(), s.member.id.as_str()];
+    expected.sort();
+    assert_eq!(told, expected, "{invited}");
+    assert!(!invited.to_string().contains(&outsider.id), "{invited}");
     answer(&s, &guest_session, &event, "Going").await;
     answer(&s, &s.member_session, &event, "Maybe").await;
     // a row of someone who cannot see the event, written behind the checks,

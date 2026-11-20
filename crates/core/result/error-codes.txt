@@ -56,6 +56,10 @@ GroupInvitesRestricted
 GroupTooLarge
 HeaderTooLarge
 ImageProcessingFailed
+ImportInvalid
+ImportSourceUnavailable
+ImportTargetNotEmpty
+ImportTemplateNotFound
 InSlowmode
 IncorrectData
 InteractionAlreadyAcknowledged
@@ -134,9 +138,11 @@ TooManyEmbeds
 TooManyEmoji
 TooManyFollowups
 TooManyPendingFriendRequests
+TooManyReminders
 TooManyReplies
 TooManyReports
 TooManyRoles
+TooManySavedMessages
 TooManyServerEventDrafts
 TooManyServerEvents
 TooManyServerWebhooks
