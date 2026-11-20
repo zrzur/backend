@@ -525,6 +525,19 @@ pub struct DeskConfig {
     pub limits: DeskLimits,
     /// Roles open for applications, in the order shown
     pub roles: Vec<DeskRole>,
+    /// The volunteer care: what the bot needs to know about it
+    pub volunteers: DeskVolunteers,
+}
+
+/// The volunteer care as the bot sees it (no numbers it does not draw)
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct DeskVolunteers {
+    pub enabled: bool,
+    pub rules_version: String,
+    /// The team server's id, empty when none is set
+    pub team_server: String,
+    /// The private channel of the weekly report, empty when none is set
+    pub report_channel: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -611,6 +624,12 @@ async fn desk_config(db: &State<Database>, user: User) -> Result<Json<DeskConfig
             max_reason: MAX_REASON,
         },
         roles,
+        volunteers: DeskVolunteers {
+            enabled: settings.volunteers.enabled,
+            rules_version: settings.volunteers.rules_version.clone(),
+            team_server: settings.volunteers.team_server.clone(),
+            report_channel: settings.volunteers.report_channel.clone(),
+        },
     }))
 }
 
