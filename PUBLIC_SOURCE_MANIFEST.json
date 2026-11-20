@@ -6196,14 +6196,14 @@
     },
     {
       "path": "crates/delta/src/routes/team_desk/mod.rs",
-      "sha256": "ea317697f5735a3b250f7c4fc846ba90c296e178e91ec00c136f0c7b86b5381f",
-      "bytes": 71015,
+      "sha256": "2ca4b709c34cb7d9ea4d826c0a2981f5fc019ed3e481cae3812f97e75724101c",
+      "bytes": 71401,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/delta/src/routes/team_desk/tests.rs",
-      "sha256": "e54bebbd2a78ace888221831e92a67fe35cae56233b64f842c9519fd0356c539",
-      "bytes": 86203,
+      "sha256": "38876edd9547a24cbbf8afad32c1dd9b11abe87067d339e8061bb16cb73fcf5f",
+      "bytes": 87678,
       "category": "product-source-or-build-manifest"
     },
     {
