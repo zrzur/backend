@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 26.2.0 (2026-11-20)
+
+The official release for everyone. It brings the work of 26.2.0-beta.1 and 26.2.0-beta.2 below.
 
 ### Arabic first: search finds what was typed (2026-11-19)
 
