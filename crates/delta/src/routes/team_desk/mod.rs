@@ -331,7 +331,7 @@ async fn desk(caller: &User) -> Result<FeaturesTeamApplications> {
 
 /// Everything whose time is up goes: applications, and the identities of
 /// people who are not volunteers any more
-async fn purge_due(db: &Database, now: i64) -> Result<()> {
+pub(crate) async fn purge_due(db: &Database, now: i64) -> Result<()> {
     db.delete_team_applications_due(now).await?;
     db.delete_team_identities_due(now).await?;
     Ok(())
@@ -1993,7 +1993,12 @@ async fn identity(
 /// What is on file for a person, escaped; `None` when there is nothing. The
 /// caller logs the view first.
 pub(crate) async fn identity_view(db: &Database, user_id: &str) -> Result<Option<IdentityView>> {
-    let Some(stored) = db.fetch_team_identity(user_id).await? else {
+    // one whose time is up is gone, whether or not the purge has run yet
+    let Some(stored) = db
+        .fetch_team_identity(user_id)
+        .await?
+        .filter(|stored| !stored.purge_at.is_some_and(|at| at <= staff_now()))
+    else {
         return Ok(None);
     };
     let age_note = match db.fetch_user(user_id).await {

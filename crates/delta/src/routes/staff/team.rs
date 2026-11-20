@@ -15,7 +15,7 @@
 use std::collections::HashMap;
 
 use revolt_database::{
-    record_platform_audit, staff_now,
+    record_platform_audit,
     util::team_activity::{day_of, previous_month},
     AuditOutcome, AuditRecord, Database, StaffPermission, TeamHistory, TeamMember, TeamMemberFilter,
     TeamMemberStatus,
@@ -146,7 +146,10 @@ async fn row(
         trial_ends_at: member.trial_ends_at,
         away_until: member.away_until,
         month_contributions: volunteers::month_total(&days),
-        has_identity: db.fetch_team_identity(&member.user_id).await?.is_some(),
+        has_identity: db
+            .fetch_team_identity(&member.user_id)
+            .await?
+            .is_some_and(|stored| !stored.purge_at.is_some_and(|at| at <= now)),
     })
 }
 
@@ -255,15 +258,31 @@ pub async fn detail(db: &State<Database>, staff: StaffContext, id: &str) -> Resu
     Ok(Json(person(db, &settings, &member, staff.now).await?))
 }
 
+/// `require_step_up`, and a missing step-up is written to the audit log too
+/// (`team.step_up.missing`; the path only)
+async fn step_up(db: &Database, staff: &StaffContext) -> Result<()> {
+    match staff.require_step_up(db, StaffPermission::TeamManage).await {
+        Err(error) if matches!(error.error_type, revolt_result::ErrorType::NotElevated) => {
+            let mut record = staff.record("team.step_up.missing", Some(StaffPermission::TeamManage));
+            record.summary = Some(staff.path.clone());
+            record_platform_audit(db, record, AuditOutcome::Denied).await?;
+            Err(error)
+        }
+        other => other,
+    }
+}
+
 /// # Team: show identity
 ///
 /// Needs a fresh step-up. Every view is logged: who looked at whom, never
 /// what was shown.
 #[post("/team/<id>/identity")]
 pub async fn identity(db: &State<Database>, staff: StaffContext, id: &str) -> Result<Json<IdentityView>> {
-    staff.require_step_up(db, StaffPermission::TeamManage).await?;
+    staff.require(db, StaffPermission::TeamManage).await?;
+    step_up(db, &staff).await?;
     let _ = team_desk::staff_desk(&staff.user.id).await?;
     let member = member_of(db, id).await?;
+    team_desk::purge_due(db, staff.now).await?;
     log(db, &staff, "team.identity.view", &member, None, format!("admin console, member {}", member.id)).await?;
     Ok(Json(identity_view(db, &member.user_id).await?.unwrap_or_else(no_identity)))
 }
@@ -273,16 +292,20 @@ pub async fn identity(db: &State<Database>, staff: StaffContext, id: &str) -> Re
 pub async fn confirm(db: &State<Database>, staff: StaffContext, id: &str) -> Result<Json<StaffTeamPerson>> {
     staff.require(db, StaffPermission::TeamManage).await?;
     let settings = team_desk::staff_desk(&staff.user.id).await?;
-    let mut member = member_of(db, id).await?;
+    let member = member_of(db, id).await?;
     if member.status != TeamMemberStatus::Trial {
         return Err(create_error!(InvalidOperation));
     }
     log(db, &staff, "team.member.confirm", &member, None, format!("member {}", member.id)).await?;
-    let now = staff_now();
+    // read again right before the write: a leave or removal in between wins
+    let mut member = member_of(db, id).await?;
+    if member.status != TeamMemberStatus::Trial {
+        return Err(create_error!(InvalidOperation));
+    }
     member.status = TeamMemberStatus::Active;
-    member.confirmed_at = Some(now);
+    member.confirmed_at = Some(staff.now);
     member.history.push(TeamHistory {
-        at: now,
+        at: staff.now,
         actor: staff.user.id.clone(),
         action: "confirmed".to_string(),
     });
@@ -293,7 +316,7 @@ pub async fn confirm(db: &State<Database>, staff: StaffContext, id: &str) -> Res
 /// # Team: set away, or bring back
 ///
 /// The same rules and the same longest stay as the volunteer's own "away";
-/// `days` of 0 brings the person back.
+/// `days` of 0 brings the person back. Logged once it took effect.
 #[post("/team/<id>/away", data = "<data>")]
 pub async fn away(
     db: &State<Database>,
@@ -308,17 +331,18 @@ pub async fn away(
         return Err(length_problem("days", 0, max as usize));
     }
     let mut member = member_of(db, id).await?;
-    log(db, &staff, "team.member.away", &member, None, format!("member {}, days {}", member.id, data.days)).await?;
+    // set_away reads the record again right before it writes
     if !volunteers::set_away(db, &mut member, &staff.user.id, data.days, max).await? {
         return Err(create_error!(InvalidOperation));
     }
+    log(db, &staff, "team.member.away", &member, None, format!("member {}, days {}", member.id, data.days)).await?;
     Ok(Json(person(db, &settings, &member, staff.now).await?))
 }
 
 /// # Team: write the staff note
 ///
-/// Up to 2000 characters, stored as written, empty clears it. Never in the
-/// person's export and never in the audit log.
+/// Up to 2000 characters, trimmed, empty clears it. Never in the person's
+/// export and never in the audit log.
 #[post("/team/<id>/note", data = "<data>")]
 pub async fn note(
     db: &State<Database>,
@@ -328,13 +352,19 @@ pub async fn note(
 ) -> Result<Json<StaffTeamPerson>> {
     staff.require(db, StaffPermission::TeamManage).await?;
     let settings = team_desk::staff_desk(&staff.user.id).await?;
-    let length = data.text.chars().count();
+    let text = data.text.trim();
+    let length = text.chars().count();
     if length > MAX_NOTE {
         return Err(length_problem("text", 0, MAX_NOTE));
     }
-    let mut member = member_of(db, id).await?;
+    let member = member_of(db, id).await?;
     log(db, &staff, "team.member.note", &member, None, format!("member {}, {} characters", member.id, length)).await?;
-    member.notes = if data.text.is_empty() { None } else { Some(data.text.clone()) };
+    // read again right before the write: a leave or removal in between wins
+    let mut member = member_of(db, id).await?;
+    if !member.is_current() {
+        return Err(create_error!(InvalidOperation));
+    }
+    member.notes = if text.is_empty() { None } else { Some(text.to_string()) };
     db.update_team_member(&member).await?;
     Ok(Json(person(db, &settings, &member, staff.now).await?))
 }
@@ -350,7 +380,8 @@ pub async fn remove(
     id: &str,
     data: Json<DataRemoveVolunteer>,
 ) -> Result<Json<StaffTeamPerson>> {
-    staff.require_step_up(db, StaffPermission::TeamManage).await?;
+    staff.require(db, StaffPermission::TeamManage).await?;
+    step_up(db, &staff).await?;
     let settings = team_desk::staff_desk(&staff.user.id).await?;
     let reason = data.reason.trim();
     let length = reason.chars().count();
@@ -362,6 +393,7 @@ pub async fn remove(
         return Err(create_error!(InvalidOperation));
     }
     log(db, &staff, "team.member.remove", &member, Some(reason.to_string()), format!("member {}", member.id)).await?;
+    // end_membership reads the record again and does nothing if it is gone
     volunteers::end_membership(db, &settings, &mut member, &staff.user.id, "removed", Some(reason)).await?;
     let member = member_of(db, id).await?;
     Ok(Json(person(db, &settings, &member, staff.now).await?))

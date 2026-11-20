@@ -57,7 +57,8 @@ async fn volunteer(
         status,
         joined_at: staff_now() - 1000,
         trial_ends_at: staff_now() + 100_000,
-        confirmed_at: None,
+        // a person who is not on trial any more was confirmed
+        confirmed_at: (status != TeamMemberStatus::Trial).then(|| staff_now() - 500),
         away_until: None,
         left_at: None,
         low_months: 0,
@@ -196,6 +197,8 @@ async fn identity_needs_step_up_and_is_logged() {
     assert_eq!(status, Status::Forbidden, "{body}");
     assert_eq!(body["type"], "NotElevated");
     assert!(!audit_actions(&harness).await.iter().any(|(a, _)| a == "team.identity.view"));
+    // the missing step-up is logged
+    assert!(audit_actions(&harness).await.contains(&("team.step_up.missing".into(), "Denied".into())));
 
     step_up(&harness, &owner, &token).await;
     let (status, body) = send(&harness, &owner, &token, Post, &path, json!({})).await;
@@ -307,7 +310,7 @@ async fn confirm_only_from_trial() {
         assert_eq!(code, Status::BadRequest, "{status:?}: {body}");
         let after = stored(&harness, &m.id).await;
         assert_eq!(after.status, status);
-        assert!(after.confirmed_at.is_none());
+        assert_eq!(after.confirmed_at, m.confirmed_at);
         tried += 1;
     }
     assert_eq!(tried, 4);
