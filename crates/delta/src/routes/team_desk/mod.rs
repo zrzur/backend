@@ -70,7 +70,7 @@ use crate::util::team_texts::{self, RoleField};
 mod tests;
 
 pub fn routes() -> Vec<Route> {
-    routes![desk_config, queue, application_state, mine, about, apply, withdraw, act, settle]
+    routes![desk_config, queue, application_state, mine, about, apply, withdraw, act, identity, settle]
 }
 
 const MIN_REASON: usize = 3;
@@ -1765,6 +1765,125 @@ async fn act(
     outcome.acted_by_name = Some(reviewer_name);
     outcome.acted_at = Some(now);
     Ok(Json(outcome))
+}
+
+/// What "Show identity" shows a reviewer. Name and country are already
+/// escaped (`team_texts::plain`): mentions, links and markdown are dead text.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct IdentityView {
+    pub name: String,
+    pub age: u8,
+    pub country: String,
+    /// The stated age and the account's own age group disagree
+    pub age_note: bool,
+    /// There is nothing to show: no "About you", or it was erased
+    pub missing: bool,
+}
+
+/// # Team desk: show identity
+///
+/// The bot hands back the press of `ta:identity:<application id>` in the
+/// role's review channel. The presser must be a reviewer for that role right
+/// now. Every view is logged (who looked at whom, never what was shown); a
+/// refused press is logged too.
+#[post("/identity", data = "<data>")]
+async fn identity(
+    db: &State<Database>,
+    user: User,
+    data: Json<DataDeskAct>,
+) -> Result<Json<IdentityView>> {
+    let settings = desk(&user).await?;
+    if !settings.volunteers.enabled {
+        return Err(create_error!(InvalidOperation));
+    }
+    let interaction = genuine(db, &settings, &data, None).await?;
+    if !settings
+        .review_channels()
+        .iter()
+        .any(|channel| channel == &interaction.channel_id)
+    {
+        return Err(no_permission());
+    }
+    let id = match (interaction.kind, pressed(&interaction)) {
+        (InteractionType::Component, Some(("identity", id))) if !id.is_empty() => id.to_string(),
+        _ => return Err(create_error!(InvalidOperation)),
+    };
+
+    let found = db.fetch_team_application(&id).await.ok();
+    let key = found.as_ref().map(|a| a.role.as_str()).unwrap_or_default();
+    let target = found.as_ref().map(|a| a.user_id.clone());
+    // the same words for a view and a refusal: the log says who, about whom
+    let record = |action: &str, summary: String| AuditRecord {
+        actor_id: interaction.user_id.clone(),
+        action: action.to_string(),
+        target_kind: target.as_ref().map(|_| "user".to_string()),
+        target_id: target.clone(),
+        reason: None,
+        summary: Some(summary),
+        ..Default::default()
+    };
+    let note = format!(
+        "application {} via bot {} interaction {}",
+        id, settings.bot, interaction.id
+    );
+
+    let allowed = reviewer(db, &settings, &interaction, settings.role(key)).await;
+    if allowed.is_err() || interaction.channel_id != settings.review_channel(key) {
+        let _ = record_platform_audit(
+            db,
+            record("team.identity.view", format!("refused: {note}")),
+            AuditOutcome::Failed,
+        )
+        .await;
+        return Err(no_permission());
+    }
+    let person = allowed?;
+
+    let Some(application) = found else {
+        return Ok(Json(missing_identity()));
+    };
+    // nobody reads their own
+    if application.user_id == person.id {
+        let _ = record_platform_audit(
+            db,
+            record("team.identity.view", format!("refused, own application: {note}")),
+            AuditOutcome::Failed,
+        )
+        .await;
+        return Err(no_permission());
+    }
+    purge_due(db, staff_now()).await?;
+    let Some(stored) = db.fetch_team_identity(&application.user_id).await? else {
+        return Ok(Json(missing_identity()));
+    };
+    let age_note = match db.fetch_user(&application.user_id).await {
+        Ok(applicant) => age_disagrees(stored.age, owner_band(db, &applicant).await),
+        Err(_) => false,
+    };
+    // the record first: no record, no view
+    record_platform_audit(
+        db,
+        record("team.identity.view", note),
+        AuditOutcome::Success,
+    )
+    .await?;
+    Ok(Json(IdentityView {
+        name: team_texts::plain(&stored.name),
+        age: stored.age,
+        country: team_texts::plain(&stored.country),
+        age_note,
+        missing: false,
+    }))
+}
+
+fn missing_identity() -> IdentityView {
+    IdentityView {
+        name: String::new(),
+        age: 0,
+        country: String::new(),
+        age_note: false,
+        missing: true,
+    }
 }
 
 /// A role given after the person joined the server

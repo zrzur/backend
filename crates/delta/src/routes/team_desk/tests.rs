@@ -1792,3 +1792,145 @@ fn a_stale_identity_does_not_pass_apply() {
         assert!(d.identity_of(&d.applicant).await.is_none());
     });
 }
+
+// ---- "Show identity" ----
+
+impl Desk {
+    /// A reviewer presses "Show identity" on the card of `id`
+    async fn identity_press(&mut self, session: &str, id: &str) -> (Status, Value) {
+        let channel = self.review.clone();
+        let card = self.message(&channel, &[&format!("ta:identity:{id}")]).await;
+        let pressed = self.press(session, &channel, &card, &format!("ta:identity:{id}")).await;
+        self.hand("identity", &pressed).await
+    }
+
+    /// An application with an identity of `name`, ready to be looked at
+    async fn applied_as(&mut self, name: &str) -> String {
+        self.volunteers_on("1");
+        let session = self.applicant_session.clone();
+        let fields = json!([
+            { "custom_id": "name", "value": name },
+            { "custom_id": "age", "value": "24" },
+            { "custom_id": "country", "value": "Austria" },
+            { "custom_id": "rules", "values": ["accept"] },
+        ]);
+        let (_, outcome) = self.about_with(&session, "support", fields).await;
+        assert_eq!(outcome["saved"], true, "{outcome}");
+        let (_, outcome) = self.apply_as(&session, "support").await;
+        id_of(&outcome)
+    }
+}
+
+#[test]
+fn reviewer_sees_identity_and_view_is_logged() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.applied_as("Lina Haddad").await;
+        let session = d.reviewer_session.clone();
+        let (status, view) = d.identity_press(&session, &id).await;
+        assert_eq!(status, Status::Ok, "{view}");
+        assert_eq!(view["name"], "Lina Haddad");
+        assert_eq!(view["age"], 24);
+        assert_eq!(view["country"], "Austria");
+        assert_eq!(view["age_note"], false);
+        assert_eq!(view["missing"], false);
+        let views: Vec<_> = d
+            .audit(&d.applicant)
+            .await
+            .into_iter()
+            .filter(|(action, _, _)| action == "team.identity.view")
+            .collect();
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0].1, d.reviewer.id);
+        assert_eq!(views[0].2, "Success");
+        // the record names nobody's details
+        let log = format!("{:?}", d.harness.db.fetch_platform_audit(revolt_database::PlatformAuditQuery {
+            limit: 500,
+            ..Default::default()
+        }).await.unwrap());
+        for secret in ["Lina Haddad", "Austria"] {
+            assert!(!log.contains(secret), "{secret} in the log");
+        }
+    });
+}
+
+#[test]
+fn former_reviewer_is_refused_and_logged() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.applied_as("Lina Haddad").await;
+        let session = d.reviewer_session.clone();
+        // the card was drawn while they were a reviewer; the role is gone now
+        let channel = d.review.clone();
+        let card = d.message(&channel, &[&format!("ta:identity:{id}")]).await;
+        give_role(&d.harness, &d.lounge, &d.reviewer.clone(), vec![]).await;
+        let pressed = d.press(&session, &channel, &card, &format!("ta:identity:{id}")).await;
+        let (status, body) = d.hand("identity", &pressed).await;
+        assert_eq!(status, Status::Forbidden);
+        assert!(!body.to_string().contains("Lina"));
+        let refused: Vec<_> = d
+            .audit(&d.applicant)
+            .await
+            .into_iter()
+            .filter(|(action, _, _)| action == "team.identity.view")
+            .collect();
+        assert_eq!(refused.len(), 1);
+        assert_eq!(refused[0].1, d.reviewer.id);
+        assert_eq!(refused[0].2, "Failed");
+    });
+}
+
+#[test]
+fn identity_needs_the_switch_and_a_stored_identity() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let session = d.reviewer_session.clone();
+        // off: the route does not do anything
+        let (_, outcome) = d.apply_as(&d.applicant_session.clone(), "support").await;
+        let id = id_of(&outcome);
+        let (status, _) = d.identity_press(&session, &id).await;
+        assert_ne!(status, Status::Ok);
+        // on, but the person never filled "About you"
+        d.volunteers_on("1");
+        let (status, view) = d.identity_press(&session, &id).await;
+        assert_eq!(status, Status::Ok, "{view}");
+        assert_eq!(view["missing"], true);
+        assert_eq!(view["name"], "");
+        assert_eq!(view["age"], 0);
+    });
+}
+
+#[test]
+fn identity_never_in_queue_or_card_entry() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.applied_as("Lina Haddad").await;
+        let queue = d.queue().await;
+        let entry = queue.iter().find(|e| e["id"] == id.as_str()).unwrap();
+        assert_eq!(entry["has_identity"], true);
+        let text = Value::Array(queue.clone()).to_string();
+        for secret in ["Lina", "Haddad", "Austria"] {
+            assert!(!text.contains(secret), "{secret} in the queue");
+        }
+        let (_, state) = d
+            .as_bot(&d.bot.token, &format!("/team/desk/applications/{id}"), None)
+            .await;
+        assert!(!state.to_string().contains("Haddad"));
+    });
+}
+
+#[test]
+fn identity_escaped() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.applied_as("@everyone [x](http://a)").await;
+        let session = d.reviewer_session.clone();
+        let (status, view) = d.identity_press(&session, &id).await;
+        assert_eq!(status, Status::Ok, "{view}");
+        let name = view["name"].as_str().unwrap();
+        assert!(name.contains("@\u{200b}everyone"), "mention alive: {name}");
+        assert!(name.contains("\\[x\\]"), "link brackets alive: {name}");
+        assert!(!name.contains("://"), "link alive: {name}");
+        assert_eq!(name, crate::util::team_texts::plain("@everyone [x](http://a)"));
+    });
+}
