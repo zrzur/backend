@@ -5,7 +5,7 @@
 ### Member channel overrides when someone leaves (2026-11-21)
 
 - A member who leaves, is kicked or is banned loses their own entry in `member_permissions` on every channel of the server (a `ChannelUpdate` per channel changed). Before, the entry stayed: the app could not remove it and it let the person back into a private channel when they rejoined.
-- `PUT /channels/{id}/permissions/members/{user_id}` takes an empty override (allow 0, deny 0) for a user who is no longer a member, so an entry left behind can always be removed. Any other override for a non-member is still `404 NotFound`.
+- `PUT /channels/{id}/permissions/members/{user_id}` takes an empty override (allow 0, deny 0) for a user who is no longer a member, so an entry left behind can always be removed. Any other override for a non-member is still `404 NotFound`. An empty override where nothing is stored returns the channel as it is: no write, no `ChannelUpdate`, no audit-log entry. On leave only the channels holding the person's entry are read.
 
 ### Bot platform: fixes from the audit of 2026-11-21
 
