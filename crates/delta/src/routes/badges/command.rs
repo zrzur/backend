@@ -233,6 +233,11 @@ async fn registered_as_offered(db: &Database, interaction: &Interaction, sub: &s
     if command.application_id != interaction.application_id || command.name != COMMAND {
         return false;
     }
+    // the command the person saw, not one registered since: a bot could
+    // show a relabelled command, take the press, then put the honest one back
+    if interaction.command_version.as_deref() != Some(command.version.as_str()) {
+        return false;
+    }
     let Some(chosen) = command
         .options
         .iter()

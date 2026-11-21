@@ -536,3 +536,84 @@ async fn only_the_badge_bots_badge_command_keeps_its_options() {
     let stored = s.harness.db.fetch_interaction(&status_and_id.1).await.unwrap();
     assert!(stored.command_options.is_empty());
 }
+
+impl Stage {
+    /// The bot replaces its commands through the registration route, as the library does
+    async fn sync(&self, commands: Value) -> (Status, Value) {
+        let response = self
+            .harness
+            .client
+            .put(format!("/applications/{}/commands", self.bot.id))
+            .header(Header::new("x-bot-token", self.bot.token.clone()))
+            .header(ContentType::JSON)
+            .body(commands.to_string())
+            .dispatch()
+            .await;
+        let status = response.status();
+        (status, response.into_json().await.unwrap_or(Value::Null))
+    }
+}
+
+#[rocket::async_test]
+async fn a_command_changed_between_the_press_and_the_grant_is_refused() {
+    // the bot shows a relabelled command and takes the owner's press ...
+    let mut choices = offered_choices();
+    let founder = choices.as_array_mut().unwrap().iter_mut().find(|c| c["value"] == "founder").unwrap();
+    founder["name"] = json!("Partner badge");
+    let mut s = stage_with(choices, "User").await;
+    let (subject, owner) = (s.subject.clone(), s.owner.clone());
+    let session = s.owner_session.clone();
+    let pressed = s.press(&session, "give", &subject.id, "founder", None).await;
+    let stored = s.harness.db.fetch_interaction(&pressed.0).await.unwrap();
+    assert_eq!(stored.command_version.as_deref(), Some(s.command.version.as_str()));
+
+    // ... then puts the honest command back before handing the press over
+    let honest = offered_choices();
+    let (status, synced) = s
+        .sync(json!([{
+            "name": "badge",
+            "description": "Give or take a badge",
+            "options": [sub("give", &honest, "User"), sub("remove", &honest, "User")]
+        }]))
+        .await;
+    assert_eq!(status, Status::Ok, "{synced}");
+    assert_eq!(synced[0]["_id"], s.command.id.as_str());
+    assert_ne!(synced[0]["version"], s.command.version.as_str());
+
+    let (status, body) = s.hand("grant", &pressed).await;
+    assert_eq!(status, Status::BadRequest, "{body}");
+    assert!(!s.holds(&subject, "founder").await);
+    assert_eq!(
+        s.audit_full(&subject).await,
+        vec![(
+            "badge.command.grant".to_string(),
+            owner.id.clone(),
+            "Denied".to_string(),
+            "founder (command not as offered)".to_string()
+        )]
+    );
+
+    // a press on the honest command works
+    let command: v0::ApplicationCommand = serde_json::from_value(synced[0].clone()).unwrap();
+    s.command = command;
+    let pressed = s.press(&session, "give", &subject.id, "founder", None).await;
+    let (status, outcome) = s.hand("grant", &pressed).await;
+    assert_eq!((status, outcome["result"].as_str()), (Status::Ok, Some("done")), "{outcome}");
+}
+
+#[rocket::async_test]
+async fn the_command_registers_with_manage_server_as_the_bot_sends_it() {
+    let s = stage().await;
+    let honest = offered_choices();
+    let (status, synced) = s
+        .sync(json!([{
+            "type": "ChatInput",
+            "name": "badge",
+            "description": "Give or take a Zrzur badge (owner only)",
+            "default_member_permissions": 2,
+            "options": [sub("give", &honest, "User"), sub("remove", &honest, "User")]
+        }]))
+        .await;
+    assert_eq!(status, Status::Ok, "{synced}");
+    assert_eq!(synced[0]["default_member_permissions"], 2);
+}

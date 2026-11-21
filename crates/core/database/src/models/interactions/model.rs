@@ -52,6 +52,11 @@ pub struct Interaction {
     /// Gone with the interaction when it expires.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub command_options: Vec<InteractionDataOption>,
+    /// The command's version when the person used it, kept with
+    /// `command_options`: a route acting later checks the command was not
+    /// changed in between
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub command_version: Option<String>,
     pub nonce: String,
     pub token_hash: String,
     pub status: InteractionStatus,
@@ -154,6 +159,7 @@ impl Interaction {
                 command_id: None,
                 command_name: None,
                 command_options: vec![],
+                command_version: None,
                 nonce,
                 token_hash: hash_interaction_token(&token),
                 status: InteractionStatus::Pending,

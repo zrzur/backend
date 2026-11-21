@@ -346,6 +346,7 @@ async fn command(
     // are stored, and an autocomplete's half-typed text never is
     if !autocomplete && crate::routes::badges::command::keeps_options(&scope.bot.id, &command.name).await {
         interaction.command_options = options.clone();
+        interaction.command_version = Some(command.version.clone());
     }
 
     let mut payload = payload(db, user, &scope, &interaction, token, data.locale).await;
