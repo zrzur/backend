@@ -132,6 +132,7 @@ pub fn routes() -> (Vec<Route>, OpenApi) {
         lobby_answer::answer,
         lobby_answer::remove,
         vanity::claim,
+        vanity::eligibility,
         vanity::remove,
         member_experimental_query::member_experimental_query,
         ban_create::ban,

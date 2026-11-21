@@ -2,7 +2,9 @@
 //! do (removing a Discover listing):
 //!
 //! - `platform.servers.restrict` + a fresh step-up: give or take away the
-//!   verified mark, mark a server 18+ or take that away
+//!   verified mark or the partner mark (flag bit 4: a partner may hold a
+//!   custom invite link without the member and activity rule), mark a
+//!   server 18+ or take that away
 //! - Owner only, + a fresh step-up: hand a server to another member (for an
 //!   owner who lost their account; the support team checks who asks)
 //!
@@ -16,13 +18,13 @@ use serde::{Deserialize, Serialize};
 
 use super::{reason, StaffContext};
 
-/// `flags` values the app shows
-const FLAG_OFFICIAL: i32 = 1;
-const FLAG_VERIFIED: i32 = 2;
+/// `flags` bits: 1 official, 2 verified, 4 partner. Each action changes its
+/// own bit and keeps the others.
+use revolt_database::{SERVER_FLAG_OFFICIAL as FLAG_OFFICIAL, SERVER_FLAG_PARTNER as FLAG_PARTNER, SERVER_FLAG_VERIFIED as FLAG_VERIFIED};
 
 #[derive(Deserialize)]
 pub struct DataServerAction {
-    /// verify, unverify, mark_nsfw, unmark_nsfw or transfer
+    /// verify, unverify, partner, unpartner, mark_nsfw, unmark_nsfw or transfer
     pub action: String,
     pub reason: String,
     /// transfer: the member who becomes the owner
@@ -55,19 +57,32 @@ pub async fn act(
     let why = reason(&data.reason)?;
     let mut server = db.fetch_server(id).await?;
     let mut partial = PartialServer::default();
+    let flags = server.flags.unwrap_or_default();
     let mut summary = data.action.clone();
     match data.action.as_str() {
         "verify" => {
-            if server.flags.is_some_and(|f| f == FLAG_OFFICIAL || f == FLAG_VERIFIED) {
+            if flags & (FLAG_OFFICIAL | FLAG_VERIFIED) != 0 {
                 return Err(create_error!(InvalidOperation));
             }
-            partial.flags = Some(FLAG_VERIFIED);
+            partial.flags = Some(flags | FLAG_VERIFIED);
         }
         "unverify" => {
-            if server.flags != Some(FLAG_VERIFIED) {
+            if flags & FLAG_VERIFIED == 0 {
                 return Err(create_error!(InvalidOperation));
             }
-            partial.flags = Some(0);
+            partial.flags = Some(flags & !FLAG_VERIFIED);
+        }
+        "partner" => {
+            if flags & FLAG_PARTNER != 0 {
+                return Err(create_error!(InvalidOperation));
+            }
+            partial.flags = Some(flags | FLAG_PARTNER);
+        }
+        "unpartner" => {
+            if flags & FLAG_PARTNER == 0 {
+                return Err(create_error!(InvalidOperation));
+            }
+            partial.flags = Some(flags & !FLAG_PARTNER);
         }
         "mark_nsfw" | "unmark_nsfw" => {
             let nsfw = data.action == "mark_nsfw";
@@ -125,6 +140,8 @@ pub async fn act(
         "unverify" => "server.unverified",
         "mark_nsfw" => "server.nsfw",
         "unmark_nsfw" => "server.not_nsfw",
+        "partner" => "server.partnered",
+        "unpartner" => "server.unpartnered",
         _ => "server.transferred_from",
     };
     crate::util::official::server(db, &previous_owner, key, &server.name, &why).await;

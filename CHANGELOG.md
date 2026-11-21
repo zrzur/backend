@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Who may hold a custom invite link (2026-11-21, owner's rule)
+
+- A server may hold a custom invite link (zrzur.cc/<name>) when it is official (flag 1), a Zrzur partner (new flag bit 4), or has at least 1000 members and is active: at least 100 messages from at least 20 different members in the last 30 days (bots, webhooks and system messages not counted). With billing on, the Wings level that unlocks the link is still a second way in. Before, every server could take one while billing was off. The numbers are settings: `[features.vanity]` `min_members`, `active_messages`, `active_authors`, `active_days`, `notice_days`, `activity_cache_hours`.
+- `PUT /servers/{target}/vanity` refuses any other server with the new error `403 VanityNotEligible` (`missing`: `Members`, `Activity` or `Both`, with the counts and the numbers needed). New `GET /servers/{target}/vanity/eligibility` (Manage Server) gives the same numbers, the way the server qualifies (`via`) and, while a link counts down, `link_ends_at`.
+- The activity count is one aggregation over `messages` on the `{channel, _id}` index (the id range starts at the ULID of 30 days ago), grouped by author with bots dropped by a users lookup; kept 6 hours per server.
+- crond checks every custom link once a day. A server that stops meeting the rule is marked (`below_level_since`), its owner gets a message from the official Zrzur account (ar, en, de) saying the link works for 30 more days and is then released unless the server reaches the rule; the link keeps working those 30 days and the name is then released, with no 90-day reserve. A server that meets the rule again is unmarked. Official and partner servers are never marked. Links held by the Wings level keep their 7-day grace and 90-day reserve. `ServerVanityInvite` gains optional `via` and `notice_sent_at`.
+- Staff can give and take the partner mark (`POST /staff/servers/{id}/actions`, `partner` / `unpartner`, with `platform.servers.restrict` and a step-up); the owner hears about it. Verify, unverify and the verified-server-owner badge now read the flags as bits, so a verified partner keeps both marks.
+
 ### Member channel overrides when someone leaves (2026-11-21)
 
 - A member who leaves, is kicked or is banned loses their own entry in `member_permissions` on every channel of the server (a `ChannelUpdate` per channel changed). Before, the entry stayed: the app could not remove it and it let the person back into a private channel when they rejoined.
