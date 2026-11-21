@@ -202,8 +202,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "76555bf1ae48870b258734c3ca54fc19194e7bf6939c30b3681d89afbbcf6459",
-      "bytes": 133409,
+      "sha256": "be0b7b43a14e309fc8c3d31456c754e346d54077befc8fa45403a2019e49a93c",
+      "bytes": 133969,
       "category": "public-documentation"
     },
     {
@@ -4342,8 +4342,8 @@
     },
     {
       "path": "crates/daemons/pushd/src/consumers/outbound/apn.rs",
-      "sha256": "248843520f46fbb594da5be2b71c5034eec4624bad3e5f2aad32bf1729d4d804",
-      "bytes": 14455,
+      "sha256": "dc9a16cb06049fb3d493c331fa3a65f74b06d4b901288fa72effb094667073d2",
+      "bytes": 15317,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4360,8 +4360,8 @@
     },
     {
       "path": "crates/daemons/pushd/src/consumers/outbound/vapid.rs",
-      "sha256": "fe91ed654cea2d342db3b8bf7cdb97d2bdaf07ce5a76e6b11d5a88235d6865c9",
-      "bytes": 9124,
+      "sha256": "d488f8a4490b47fd3115e0ea422047c2c091a0441d27a1e77405d070194394c7",
+      "bytes": 12742,
       "category": "product-source-or-build-manifest"
     },
     {
