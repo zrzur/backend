@@ -6,6 +6,8 @@
 //! - `platform.reports.resolve`: disable a bot
 //! - `platform.servers.read`: see the verification queue
 //! - `platform.servers.restrict`: verify, deny, take the mark away
+//! - `platform.servers.restrict`, step-up and the Owner role: delete a bot
+//!   (never an official one; see `deletion.rs`)
 //!
 //! Every change is written to the platform audit log first.
 
@@ -436,4 +438,44 @@ pub async fn unverify(
     let name = db.fetch_user(&bot.id).await.map(|u| u.username).unwrap_or_default();
     crate::util::official::bot(db, &bot.owner, "bot.unverified", &name, Some(&why)).await;
     Ok(())
+}
+
+#[derive(Deserialize)]
+pub struct DataDeleteBot {
+    pub reason: String,
+}
+
+#[derive(Serialize)]
+pub struct DeletedBot {
+    pub id: String,
+    pub username: Option<String>,
+    pub owner_id: String,
+    pub deleted: bool,
+}
+
+/// # Delete a bot
+///
+/// The same deletion its owner can do: it leaves its servers and groups,
+/// its commands and installs go and its token stops working. A bot that is
+/// already gone answers `NotFound` every time.
+#[post("/bots/<id>/delete", data = "<data>")]
+pub async fn delete(
+    db: &State<Database>,
+    voice_client: &State<revolt_database::voice::VoiceClient>,
+    staff: StaffContext,
+    id: &str,
+    data: Json<DataDeleteBot>,
+) -> Result<Json<DeletedBot>> {
+    super::deletion::require_delete_gate(db, &staff, "staff.bot.delete", "bot", id).await?;
+    let why = reason(&data.reason)?;
+    let bot = db.fetch_bot(id).await?;
+    let username = db.fetch_user(&bot.id).await.ok().map(|u| u.username);
+    super::deletion::delete_bot(db, voice_client, &staff, &bot, &why, None).await?;
+    crate::util::official::bot(db, &bot.owner, "bot.deleted", username.as_deref().unwrap_or_default(), Some(&why)).await;
+    Ok(Json(DeletedBot {
+        id: bot.id,
+        username,
+        owner_id: bot.owner,
+        deleted: true,
+    }))
 }

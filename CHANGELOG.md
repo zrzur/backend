@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Staff can delete servers and bots (2026-11-21)
+
+- `POST /staff/servers/{id}/actions` takes `"action": "delete"`, `POST /staff/bots/{id}/delete` deletes a bot, and `POST /staff/users/{id}/delete-owned` deletes every server and bot of an account that is already banned (or disabled without a timed suspension). All three need `platform.servers.restrict`, a fresh step-up and the Owner staff role (the gate of a server transfer), and a reason. Official servers and bots are refused (`403 NotPrivileged`), and `delete-owned` lists them under `skipped`. A server or bot that is already gone answers `404 NotFound` every time. Deletion runs the owner's own code: members, channels, roles, invites, emojis and events go with the server and `ServerDelete` goes out; a bot leaves its servers and groups, its commands go and its token is refused. Every deletion writes one platform audit record (`staff.server.delete`, `staff.bot.delete`, `staff.user.delete_owned`), refusals included; a single deletion sends the owner an official message. Outside the public OpenAPI document.
+- Deleting a server frees its custom link (`zrzur.cc/<name>`) by its code, not only through the invites of its landing channel, so another server can claim the name at once (also with the in-memory test database).
+
 ## 26.3.0-beta.2 (2026-11-21)
 
 ### The owner's /badge command (2026-11-21)

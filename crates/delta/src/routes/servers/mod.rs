@@ -39,7 +39,7 @@ mod safety_pause;
 mod server_ack;
 mod server_create;
 mod server_import;
-mod server_delete;
+pub(crate) mod server_delete;
 mod server_edit;
 mod server_fetch;
 mod soundboard;

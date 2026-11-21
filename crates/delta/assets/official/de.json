@@ -71,6 +71,10 @@
     "title": "Wir haben einen deiner Bots deaktiviert",
     "body": "„{name}“ kann sich vorerst nicht anmelden.\n{note}"
   },
+  "bot.deleted": {
+    "title": "Wir haben einen deiner Bots gelöscht",
+    "body": "„{name}“ wurde auf Entscheidung des Plattform-Teams gelöscht. Er hat alle Server verlassen und kann sich nicht mehr anmelden.\n{note}"
+  },
   "discover.approved": {
     "title": "Du bist bei Discover",
     "body": "„{name}“ ist jetzt bei Discover gelistet."
@@ -146,6 +150,10 @@
   "server.transferred_to": {
     "title": "Dir gehört jetzt ein Server",
     "body": "Du bist jetzt Eigentümer:in von „{name}“."
+  },
+  "server.deleted": {
+    "title": "Wir haben einen deiner Server gelöscht",
+    "body": "„{name}“ wurde auf Entscheidung des Plattform-Teams gelöscht, zusammen mit seinen Kanälen, Einladungen und dem eigenen Link.\n{note}"
   },
   "creator.granted": {
     "title": "Du bist Design-Ersteller:in",
