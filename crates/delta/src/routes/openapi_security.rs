@@ -187,3 +187,39 @@ mod tests {
         );
     }
 }
+
+/// Writes the API's own documents for the SDK snapshot (`sdk-js/api/`),
+/// from whatever branch is built, without running any service:
+///
+///   touch /tmp/zrzur-openapi-export.want   (in WSL)
+///   internal/test-env/cargo-locked.sh <backend> test 'test(/export_api_documents/)'
+///
+/// then /tmp/zrzur-openapi.json and /tmp/zrzur-gateway-schema.json hold
+/// `GET /openapi.json` and `GET /gateway/schema`. Without the marker file
+/// the test does nothing, so a normal run writes nothing.
+#[cfg(test)]
+mod export {
+    use crate::util::test::TestHarness;
+    use rocket::http::Status;
+
+    #[rocket::async_test]
+    async fn export_api_documents() {
+        if !std::path::Path::new("/tmp/zrzur-openapi-export.want").exists() {
+            return;
+        }
+        revolt_config::overwrite_config(|config| {
+            config.features.webhooks_enabled = true;
+        })
+        .await;
+        let harness = TestHarness::new().await;
+        for (path, out) in [
+            ("/openapi.json", "/tmp/zrzur-openapi.json"),
+            ("/gateway/schema", "/tmp/zrzur-gateway-schema.json"),
+        ] {
+            let response = harness.client.get(path).dispatch().await;
+            assert_eq!(response.status(), Status::Ok, "{path}");
+            let body = response.into_string().await.expect("a body");
+            std::fs::write(out, body).expect("written");
+        }
+    }
+}

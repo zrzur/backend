@@ -5464,8 +5464,8 @@
     },
     {
       "path": "crates/delta/src/routes/openapi_security.rs",
-      "sha256": "43e1fd6e47415e4c4824b5e1b2efdfef1a36dc5879c3141fe3529762ac40a93f",
-      "bytes": 6041,
+      "sha256": "6071b967011761ecc1b7928823a3b8eadb71eb73e5c6b009b505466c2892a72b",
+      "bytes": 7428,
       "category": "product-source-or-build-manifest"
     },
     {
