@@ -17,6 +17,34 @@ pub enum ProtocolFormat {
     Msgpack,
 }
 
+/// Compression a client asked for with `?compression=` (JSON only)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameCompression {
+    /// Every frame is a text frame, as before
+    None,
+    /// A JSON frame of [`COMPRESS_FROM`] bytes or more is sent as a binary
+    /// frame holding its raw DEFLATE stream (RFC 1951, what a browser's
+    /// `DecompressionStream("deflate-raw")` reads); smaller frames stay text
+    Deflate,
+}
+
+/// Frames smaller than this stay text: compressing them saves little and
+/// costs both sides time. The first answer (Ready) is tens or hundreds of KB.
+pub const COMPRESS_FROM: usize = 4096;
+
+/// Raw DEFLATE of some bytes
+fn deflate_raw(bytes: &[u8]) -> Vec<u8> {
+    use std::io::Write;
+    let mut encoder = flate2::write::DeflateEncoder::new(
+        Vec::with_capacity(bytes.len() / 4),
+        flate2::Compression::default(),
+    );
+    encoder
+        .write_all(bytes)
+        .expect("Writing into a Vec cannot fail.");
+    encoder.finish().expect("Writing into a Vec cannot fail.")
+}
+
 /// User-provided protocol configuration
 #[derive(Debug, Clone)]
 pub struct ProtocolConfiguration {
@@ -29,6 +57,8 @@ pub struct ProtocolConfiguration {
     /// The client can resume this session after a drop (`?resumable=true`
     /// or `Authenticate { resumable: true }`)
     resumable: bool,
+    /// Compression the client asked for, and the server allows
+    compression: FrameCompression,
 }
 
 impl ProtocolConfiguration {
@@ -46,7 +76,28 @@ impl ProtocolConfiguration {
             ready_payload_fields,
             intents: None,
             resumable: false,
+            compression: FrameCompression::None,
         }
+    }
+
+    /// Ask for compressed frames (`?compression=deflate`)
+    pub fn set_compression(&mut self, compression: FrameCompression) {
+        self.compression = compression;
+    }
+
+    /// Keep the compression the client asked for only where the server
+    /// allows it (`features.gateway_compression_enabled`) and the format is
+    /// JSON: in msgpack every frame is already binary, so a compressed one
+    /// could not be told apart
+    pub fn allow_compression(&mut self, allowed: bool) {
+        if !allowed || !matches!(self.format, ProtocolFormat::Json) {
+            self.compression = FrameCompression::None;
+        }
+    }
+
+    /// The compression frames are sent with
+    pub fn get_compression(&self) -> FrameCompression {
+        self.compression
     }
 
     /// Ask for a session that can be resumed
@@ -83,7 +134,12 @@ impl ProtocolConfiguration {
     pub fn encode<T: Serialize>(&self, data: &T) -> Message {
         match self.format {
             ProtocolFormat::Json => {
-                Message::Text(serde_json::to_string(data).expect("Failed to serialise (as json)."))
+                let text = serde_json::to_string(data).expect("Failed to serialise (as json).");
+                if self.compression == FrameCompression::Deflate && text.len() >= COMPRESS_FROM {
+                    Message::Binary(deflate_raw(text.as_bytes()))
+                } else {
+                    Message::Text(text)
+                }
             }
             ProtocolFormat::Msgpack => Message::Binary(
                 rmp_serde::to_vec_named(data).expect("Failed to serialise (as msgpack)."),
@@ -158,6 +214,7 @@ impl handshake::server::Callback for WebsocketHandshakeCallback {
         let mut session_token = None;
         let mut intents = None;
         let mut resumable = false;
+        let mut compression = FrameCompression::None;
         let mut ready_payload_fields = if params.iter().any(|(k, _)| *k == "ready") {
             // If they pass the ready field, set all fields to false
 
@@ -192,6 +249,11 @@ impl handshake::server::Callback for WebsocketHandshakeCallback {
                 "token" => session_token = Some(value.into()),
                 "intents" => intents = value.parse().ok(),
                 "resumable" => resumable = matches!(value, "true" | "1"),
+                "compression" => {
+                    if value == "deflate" {
+                        compression = FrameCompression::Deflate;
+                    }
+                }
                 "ready" => {
                     // Re-enable all the fields the client specifies
                     if let Some(captures) = READY_PAYLOAD_FIELD_REGEX.captures(value) {
@@ -232,6 +294,7 @@ impl handshake::server::Callback for WebsocketHandshakeCallback {
                 ready_payload_fields,
                 intents,
                 resumable,
+                compression,
             })
             .is_ok()
         {
@@ -239,5 +302,136 @@ impl handshake::server::Callback for WebsocketHandshakeCallback {
         } else {
             Err(handshake::server::ErrorResponse::new(None))
         }
+    }
+}
+
+#[cfg(test)]
+mod compression_tests {
+    use std::io::Read;
+
+    use async_tungstenite::tungstenite::{handshake::server::Callback, Message};
+    use revolt_database::events::client::ReadyPayloadFields;
+    use serde_json::json;
+
+    use super::{
+        FrameCompression, ProtocolConfiguration, ProtocolFormat, WebsocketHandshakeCallback,
+        COMPRESS_FROM,
+    };
+
+    fn config(format: ProtocolFormat, compression: FrameCompression) -> ProtocolConfiguration {
+        let mut c = ProtocolConfiguration::from(1, format, None, ReadyPayloadFields::default());
+        c.set_compression(compression);
+        c
+    }
+
+    fn inflate(bytes: &[u8]) -> String {
+        let mut out = String::new();
+        flate2::read::DeflateDecoder::new(bytes)
+            .read_to_string(&mut out)
+            .expect("valid raw deflate");
+        out
+    }
+
+    /// Like a Ready: many similar channels
+    fn big() -> serde_json::Value {
+        json!({ "type": "Ready", "channels": (0..400).map(|i| json!({
+            "_id": format!("01ARZ3NDEKTSV4RRFFQ69G5F{i:03}"),
+            "channel_type": "TextChannel",
+            "name": format!("channel {i}"),
+            "server": "01ARZ3NDEKTSV4RRFFQ69G5FSV",
+        })).collect::<Vec<_>>() })
+    }
+
+    #[test]
+    fn a_large_json_frame_is_sent_deflated_and_inflates_to_the_same_json() {
+        let c = config(ProtocolFormat::Json, FrameCompression::Deflate);
+        let value = big();
+        let text = serde_json::to_string(&value).unwrap();
+        assert!(text.len() >= COMPRESS_FROM);
+        match c.encode(&value) {
+            Message::Binary(bytes) => {
+                assert!(
+                    bytes.len() * 4 < text.len(),
+                    "{} of {} bytes",
+                    bytes.len(),
+                    text.len()
+                );
+                assert_eq!(inflate(&bytes), text);
+            }
+            other => panic!("expected a binary frame, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_small_json_frame_stays_text() {
+        let c = config(ProtocolFormat::Json, FrameCompression::Deflate);
+        let value = json!({ "type": "Pong", "data": 1 });
+        assert_eq!(
+            c.encode(&value),
+            Message::Text(serde_json::to_string(&value).unwrap())
+        );
+    }
+
+    #[test]
+    fn without_compression_every_frame_is_text_as_before() {
+        let c = config(ProtocolFormat::Json, FrameCompression::None);
+        let value = big();
+        assert_eq!(
+            c.encode(&value),
+            Message::Text(serde_json::to_string(&value).unwrap())
+        );
+    }
+
+    #[test]
+    fn the_server_switch_and_msgpack_turn_compression_off() {
+        let mut off = config(ProtocolFormat::Json, FrameCompression::Deflate);
+        off.allow_compression(false);
+        assert_eq!(off.get_compression(), FrameCompression::None);
+        assert!(matches!(off.encode(&big()), Message::Text(_)));
+
+        let mut on = config(ProtocolFormat::Json, FrameCompression::Deflate);
+        on.allow_compression(true);
+        assert_eq!(on.get_compression(), FrameCompression::Deflate);
+
+        let mut msgpack = config(ProtocolFormat::Msgpack, FrameCompression::Deflate);
+        msgpack.allow_compression(true);
+        assert_eq!(msgpack.get_compression(), FrameCompression::None);
+        // msgpack frames are what they always were
+        let value = big();
+        assert_eq!(
+            msgpack.encode(&value),
+            Message::Binary(rmp_serde::to_vec_named(&value).unwrap())
+        );
+    }
+
+    fn handshake(query: &str) -> ProtocolConfiguration {
+        let (sender, mut receiver) = futures::channel::oneshot::channel();
+        let request = async_tungstenite::tungstenite::http::Request::builder()
+            .uri(format!("/?{query}"))
+            .body(())
+            .unwrap();
+        let response = async_tungstenite::tungstenite::http::Response::builder()
+            .body(())
+            .unwrap();
+        WebsocketHandshakeCallback::from(sender)
+            .on_request(&request, response)
+            .expect("accepted");
+        receiver.try_recv().unwrap().expect("a configuration")
+    }
+
+    #[test]
+    fn the_connect_parameter_asks_for_deflate_and_nothing_else() {
+        assert_eq!(
+            handshake("version=1&format=json&compression=deflate").get_compression(),
+            FrameCompression::Deflate
+        );
+        assert_eq!(
+            handshake("version=1&format=json").get_compression(),
+            FrameCompression::None
+        );
+        assert_eq!(
+            handshake("version=1&format=json&compression=zstd").get_compression(),
+            FrameCompression::None
+        );
     }
 }

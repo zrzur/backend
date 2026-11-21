@@ -230,11 +230,19 @@ async fn client_with_limits(
     let Ok(mut config) = receiver.await else {
         return;
     };
+    // compressed frames only where the server allows them
+    config.allow_compression(
+        revolt_config::config()
+            .await
+            .features
+            .gateway_compression_enabled,
+    );
 
     info!(
-        "User {addr:?} provided protocol configuration (version = {}, format = {:?})",
+        "User {addr:?} provided protocol configuration (version = {}, format = {:?}, compression = {:?})",
         config.get_protocol_version(),
-        config.get_protocol_format()
+        config.get_protocol_format(),
+        config.get_compression()
     );
 
     // Split the socket for simultaneously read and write.

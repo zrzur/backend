@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Speed: a compressed first answer and files that are not downloaded twice (2026-11-21)
+
+- **Gateway (bonfire):** a client that connects with `?compression=deflate` (JSON format only) gets every frame of 4 KB or more as a binary frame holding its raw DEFLATE stream (RFC 1951, what a browser's `DecompressionStream("deflate-raw")` reads); smaller frames stay text. The first answer (`Ready`) shrinks to about a sixth (349 KB of JSON to 63 KB for a large account). Clients that do not ask, msgpack clients and bots get exactly the frames they got before. Behind `features.gateway_compression_enabled` (off by default; `REVOLT__FEATURES__GATEWAY_COMPRESSION_ENABLED=true`). New dependency `flate2` (already in the lockfile, through image crates).
+- **File server (autumn):** public files and their previews carry an `ETag` (the content hash with the variant: original, preview, small preview, per tag), and a request whose `If-None-Match` holds it gets `304 Not Modified` without the file (and without reading it from storage). Before, a browser whose copy was older than `max-age` downloaded every avatar and icon again in full. Private files (drafts, designs under review) get no validator, as before they are never stored.
+
 ## 26.2.0 (2026-11-20)
 
 The official release for everyone. It brings the work of 26.2.0-beta.1 and 26.2.0-beta.2 below.

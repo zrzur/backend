@@ -24,6 +24,9 @@ async-channel = { workspace = true }
 querystring = { workspace = true }
 regex = { workspace = true }
 
+# compressed gateway frames (`?compression=deflate`)
+flate2 = "1.1"
+
 # serde
 bincode = { workspace = true }
 serde_json = { workspace = true }

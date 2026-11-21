@@ -1371,6 +1371,11 @@ pub struct Features {
     /// `voice_weak_network` reach it through `GET /`. Unset means off.
     #[serde(default)]
     pub voice_weak_network_enabled: bool,
+    /// The gateway may send large JSON frames compressed (raw DEFLATE in a
+    /// binary frame) to a client that connects with `?compression=deflate`.
+    /// Clients that do not ask get text frames as before. Unset means off.
+    #[serde(default)]
+    pub gateway_compression_enabled: bool,
     /// Voice clips: the last seconds of a voice room, saved by a person in
     /// it and shared as a message (`/channels/{target}/capture/...`). Unset
     /// means off.

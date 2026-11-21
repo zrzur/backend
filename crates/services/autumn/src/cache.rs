@@ -4,7 +4,8 @@
 //! longer. Anything not marked otherwise is not stored at all.
 
 use axum::{
-    http::{HeaderValue, header},
+    body::Body,
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::Response,
 };
 
@@ -37,6 +38,39 @@ pub fn file_cache_control(tag: &str, private: bool, purge_configured: bool) -> &
     } else {
         public_cache_control(tag, purge_configured)
     }
+}
+
+/// Validator of a stored file. The content hash names the bytes, so the hash
+/// and the variant (original, preview, small preview, per tag: tags render
+/// previews differently) are enough. A browser whose copy is older than its
+/// `max-age` asks again with `If-None-Match` and gets a 304 without the file.
+pub fn file_etag(hash_id: &str, variant: &str) -> String {
+    format!("\"{variant}-{hash_id}\"")
+}
+
+/// The request already holds this version: `If-None-Match` lists the
+/// validator (weak or strong, the comparison is weak as RFC 9110 asks for
+/// GET) or is `*`
+pub fn not_modified(headers: &HeaderMap, etag: &str) -> bool {
+    let bare = etag.trim_start_matches("W/");
+    headers
+        .get_all(header::IF_NONE_MATCH)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .map(str::trim)
+        .any(|candidate| candidate == "*" || candidate.trim_start_matches("W/") == bare)
+}
+
+/// 304 for a request that already holds this version: no body, the same
+/// validator and caching as the full answer
+pub fn not_modified_response(etag: &str, cache_control: &str) -> Response {
+    Response::builder()
+        .status(StatusCode::NOT_MODIFIED)
+        .header(header::ETAG, etag)
+        .header(header::CACHE_CONTROL, cache_control)
+        .body(Body::empty())
+        .expect("valid headers")
 }
 
 /// Last step of every answer: no cookies on files, and an answer that
@@ -127,6 +161,47 @@ mod tests {
             let sealed = seal_response(response).await;
             assert_eq!(sealed.headers()[header::CACHE_CONTROL], "private, no-store");
         }
+    }
+
+    #[test]
+    fn an_etag_names_the_content_and_the_variant() {
+        assert_eq!(file_etag("abc", "o"), "\"o-abc\"");
+        assert_ne!(file_etag("abc", "p-avatars"), file_etag("abc", "s-avatars"));
+        assert_ne!(file_etag("abc", "p-avatars"), file_etag("abc", "p-icons"));
+        assert_ne!(file_etag("abc", "o"), file_etag("abd", "o"));
+    }
+
+    fn asking(values: &[&str]) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        for value in values {
+            headers.append(header::IF_NONE_MATCH, value.parse().unwrap());
+        }
+        headers
+    }
+
+    #[test]
+    fn if_none_match_is_compared_weakly_in_lists_and_with_a_star() {
+        let tag = file_etag("abc", "o");
+        assert!(not_modified(&asking(&[&tag]), &tag));
+        assert!(not_modified(&asking(&[&format!("W/{tag}")]), &tag));
+        assert!(not_modified(&asking(&[&format!("\"x\", {tag}")]), &tag));
+        assert!(not_modified(&asking(&["\"x\"", &tag]), &tag));
+        assert!(not_modified(&asking(&["*"]), &tag));
+        assert!(!not_modified(&asking(&[]), &tag));
+        assert!(!not_modified(&asking(&["\"o-abd\""]), &tag));
+        assert!(!not_modified(&asking(&["\"p-abc\""]), &tag));
+    }
+
+    #[test]
+    fn a_304_has_no_body_and_the_same_validator_and_caching() {
+        let tag = file_etag("abc", "o");
+        let response = not_modified_response(&tag, public_cache_control("avatars", true));
+        assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+        assert_eq!(response.headers()[header::ETAG], tag.as_str());
+        assert_eq!(
+            response.headers()[header::CACHE_CONTROL],
+            "public, max-age=3600, s-maxage=2592000"
+        );
     }
 
     #[tokio::test]

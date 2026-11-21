@@ -35,7 +35,10 @@ use utoipa::ToSchema;
 
 use crate::{
     AppState,
-    cache::{PRIVATE_CACHE_CONTROL, file_cache_control, seal_response},
+    cache::{
+        PRIVATE_CACHE_CONTROL, file_cache_control, file_etag, not_modified,
+        not_modified_response, seal_response,
+    },
     effects::{check_upload, still_of, strip_hidden_data},
     webm::{WebmLimits, convert_webm, is_webm},
     exif::strip_metadata, metadata::generate_metadata, mime_type::determine_mime_type,
@@ -853,6 +856,7 @@ async fn fetch_preview(
     viewer: Option<User>,
     Path((tag, file_id)): Path<(Tag, String)>,
     Query(query): Query<PreviewQuery>,
+    headers: HeaderMap,
 ) -> Result<Response> {
     let small = query.small();
     let tag_str: &'static str = tag.clone().into();
@@ -911,6 +915,18 @@ async fn fetch_preview(
         );
     }
 
+    let cache_control =
+        file_cache_control(tag_str, private, config().await.files.purge.configured());
+    // Same file and tag, same preview: a browser that holds it gets a 304.
+    // Private files are never stored, so they get no validator.
+    let etag = (!private)
+        .then(|| file_etag(&hash.id, &format!("{}-{tag_str}", if small { "s" } else { "p" })));
+    if let Some(etag) = &etag {
+        if not_modified(&headers, etag) {
+            return Ok(not_modified_response(etag, cache_control));
+        }
+    }
+
     // Same file and tag, same preview: cached by content
     let preview = PREVIEWS
         .get_or_render(preview_key(tag_str, &hash.id, small), || async {
@@ -931,10 +947,8 @@ async fn fetch_preview(
         })
         .await?;
     let data = preview.as_ref().clone();
-    let cache_control =
-        file_cache_control(tag_str, private, config().await.files.purge.configured());
 
-    Ok((
+    let mut response = (
         [
             (header::CONTENT_TYPE, "image/webp"),
             (header::CONTENT_DISPOSITION, "inline"),
@@ -945,7 +959,13 @@ async fn fetch_preview(
         ],
         data,
     )
-        .into_response())
+        .into_response();
+    if let Some(etag) = etag {
+        response
+            .headers_mut()
+            .insert(header::ETAG, etag.parse().expect("an ETag is ASCII"));
+    }
+    Ok(response)
 }
 
 /// Fetch original file
@@ -1003,9 +1023,22 @@ async fn fetch_file(
     }
 
     let hash = file.as_hash(&db).await?;
-    let data = retrieve_file_by_hash(&hash).await?;
     let cache_control = file_cache_control(tag, private, config().await.files.purge.configured());
-    Ok(original_file_response(data, hash.content_type, cache_control, &headers))
+    // a browser that holds this file gets a 304, before the file is read
+    let etag = (!private).then(|| file_etag(&hash.id, "o"));
+    if let Some(etag) = &etag {
+        if not_modified(&headers, etag) {
+            return Ok(not_modified_response(etag, cache_control));
+        }
+    }
+    let data = retrieve_file_by_hash(&hash).await?;
+    let mut response = original_file_response(data, hash.content_type, cache_control, &headers);
+    if let Some(etag) = etag {
+        response
+            .headers_mut()
+            .insert(header::ETAG, etag.parse().expect("an ETag is ASCII"));
+    }
+    Ok(response)
 }
 
 /// Let browser media engines seek without repeatedly requesting the whole file.
@@ -1018,7 +1051,8 @@ fn original_file_response(
     use crate::byte_range::{ByteRange, parse_range};
     use axum::http::StatusCode;
     let size = data.len();
-    // No entity validator is advertised, so If-Range requests receive the complete entity.
+    // If-Range requests receive the complete entity: always correct, and the
+    // validator (ETag) is only for whole-file revalidation.
     let range = if headers.contains_key(header::IF_RANGE) {
         None
     } else {
