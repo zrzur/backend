@@ -364,21 +364,14 @@ impl Member {
         server: &Server,
         user_id: &str,
     ) -> Result<()> {
-        for mut channel in db.fetch_channels(&server.channels).await? {
-            let holds = matches!(
-                &channel,
-                Channel::TextChannel { member_permissions, .. }
-                    if member_permissions.contains_key(user_id)
-            );
-            if holds {
-                channel
-                    .set_member_permission(
-                        db,
-                        user_id,
-                        revolt_permissions::OverrideField { a: 0, d: 0 },
-                    )
-                    .await?;
-            }
+        // only the channels that hold an entry for them are read
+        for mut channel in db
+            .fetch_channels_with_member_override(&server.channels, user_id)
+            .await?
+        {
+            channel
+                .set_member_permission(db, user_id, revolt_permissions::OverrideField { a: 0, d: 0 })
+                .await?;
         }
         Ok(())
     }

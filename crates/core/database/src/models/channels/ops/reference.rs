@@ -42,6 +42,23 @@ impl AbstractChannels for ReferenceDb {
             .collect()
     }
 
+    async fn fetch_channels_with_member_override<'a>(
+        &self,
+        ids: &'a [String],
+        user_id: &str,
+    ) -> Result<Vec<Channel>> {
+        let channels = self.channels.lock().await;
+        Ok(ids
+            .iter()
+            .filter_map(|id| channels.get(id))
+            .filter(|channel| {
+                matches!(channel, Channel::TextChannel { member_permissions, .. }
+                    if member_permissions.contains_key(user_id))
+            })
+            .cloned()
+            .collect())
+    }
+
     /// Threads of a channel, newest first
     async fn fetch_threads(
         &self,

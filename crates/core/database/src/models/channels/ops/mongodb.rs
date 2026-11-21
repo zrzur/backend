@@ -45,6 +45,30 @@ impl AbstractChannels for MongoDb {
             .await)
     }
 
+    async fn fetch_channels_with_member_override<'a>(
+        &self,
+        ids: &'a [String],
+        user_id: &str,
+    ) -> Result<Vec<Channel>> {
+        // the id becomes part of a field path: ids are ULIDs, nothing else
+        if user_id.is_empty() || !user_id.chars().all(|c| c.is_ascii_alphanumeric()) {
+            return Ok(vec![]);
+        }
+        let mut filter = doc! { "_id": { "$in": ids } };
+        filter.insert(
+            format!("member_permissions.{user_id}"),
+            doc! { "$exists": true },
+        );
+        Ok(self
+            .col::<Channel>(COL)
+            .find(filter)
+            .await
+            .map_err(|_| create_database_error!("fetch", "channels"))?
+            .filter_map(|s| async { s.ok() })
+            .collect()
+            .await)
+    }
+
     /// Threads of a channel, newest first
     async fn fetch_threads(
         &self,
