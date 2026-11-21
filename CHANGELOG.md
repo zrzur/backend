@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Friend-request pushes open the profile
+
+- A web push for a friend request (received or accepted) carries `title`, `url`, `tag` and `icon` next to its `body`: the `url` is `/friends?profile=<user id>`, relative, so a click opens that person's profile instead of the app's front page. One notification per person (`tag: friend-<user id>`); the icon is their avatar. Apple pushes for the same two events carry the same `url`. Old fields are unchanged.
+
 ### Bot platform: fixes from the audit of 2026-11-21
 
 - A bot name may have one space between words ("Liro Bot", owner's report of 2026-11-21): on `POST /bots/create` and `PATCH /bots/{bot_id}` it becomes the bot's display name, and its username has `_` for the spaces (`Liro_Bot`), so mentions, uniqueness and the discriminator work as before. A name without a space is unchanged; a double space, a space at either end, a zero-width character or a new line is refused. Renaming to a name without a space drops the display name made from the old one.

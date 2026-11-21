@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use crate::utils::Consumer;
 
@@ -94,6 +94,8 @@ impl Consumer for VapidOutboundConsumer {
 
         let payload_body = match payload.notification {
             PayloadKind::FRReceived(alert) => {
+                // before the name takes its display name out of the user
+                let icon = avatar_url(&alert.from_user).await;
                 let name = alert
                     .from_user
                     .display_name
@@ -101,12 +103,15 @@ impl Consumer for VapidOutboundConsumer {
                     .clone()
                     .ok_or_else(|| anyhow!("missing name"))?;
 
-                let mut body = HashMap::new();
-                body.insert("body", format!("{} sent you a friend request", name));
-
-                serde_json::to_string(&body)?
+                friend_push_payload(
+                    &format!("{} sent you a friend request", name),
+                    &alert.from_user.id,
+                    Some(icon),
+                )?
             }
             PayloadKind::FRAccepted(alert) => {
+                // before the name takes its display name out of the user
+                let icon = avatar_url(&alert.accepted_user).await;
                 let name = alert
                     .accepted_user
                     .display_name
@@ -114,10 +119,11 @@ impl Consumer for VapidOutboundConsumer {
                     .clone()
                     .ok_or_else(|| anyhow!("missing name"))?;
 
-                let mut body = HashMap::new();
-                body.insert("body", format!("{} accepted your friend request", name));
-
-                serde_json::to_string(&body)?
+                friend_push_payload(
+                    &format!("{} accepted your friend request", name),
+                    &alert.accepted_user.id,
+                    Some(icon),
+                )?
             }
             PayloadKind::Generic(alert) => serde_json::to_string(&alert)?,
             PayloadKind::MessageNotification(alert) => serde_json::to_string(&alert)?,
@@ -176,6 +182,37 @@ impl Consumer for VapidOutboundConsumer {
     }
 }
 
+/// The link a friend-request notification opens: the Friends page, which
+/// opens this person's profile. Relative: the service worker resolves it
+/// against its own origin and opens nothing outside it.
+pub(crate) fn friend_profile_url(user_id: &str) -> String {
+    format!("/friends?profile={user_id}")
+}
+
+/// The picture of a person in a push, as message pushes have it
+async fn avatar_url(user: &revolt_database::User) -> String {
+    let config = revolt_config::config().await;
+    match &user.avatar {
+        Some(avatar) => format!("{}/avatars/{}", config.hosts.autumn, avatar.id),
+        None => format!("{}/users/{}/default_avatar", config.hosts.api, user.id),
+    }
+}
+
+/// The web push for a friend request, received or accepted. It used to carry
+/// only `body`, so a click opened the app's front page; now it opens the
+/// person's profile. One notification per person: a newer one replaces it.
+fn friend_push_payload(body: &str, user_id: &str, icon: Option<String>) -> Result<String> {
+    let mut payload = serde_json::Map::new();
+    payload.insert("title".into(), "Zrzur".into());
+    payload.insert("body".into(), body.into());
+    payload.insert("url".into(), friend_profile_url(user_id).into());
+    payload.insert("tag".into(), format!("friend-{user_id}").into());
+    if let Some(icon) = icon {
+        payload.insert("icon".into(), icon.into());
+    }
+    Ok(serde_json::to_string(&payload)?)
+}
+
 /// The web push for a DM or group call. Ringing and its end share a tag, so
 /// the end replaces the "is calling you" notification instead of adding a
 /// second one (it used to repeat "is calling you" when the call ended).
@@ -211,6 +248,44 @@ fn call_push_payload(
         if ended { "ended" } else { "ringing" }.into(),
     );
     Ok(serde_json::to_string(&payload)?)
+}
+
+#[cfg(test)]
+mod friend_tests {
+    use super::friend_push_payload;
+
+    const ID: &str = "01HZX5Q2N7V3K8M4P6R9T0W1YA";
+
+    fn payload(icon: Option<&str>) -> serde_json::Value {
+        serde_json::from_str(
+            &friend_push_payload("Lina sent you a friend request", ID, icon.map(String::from))
+                .unwrap(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_friend_request_opens_the_profile() {
+        let push = payload(None);
+        assert_eq!(push["url"], format!("/friends?profile={ID}"));
+        // relative: the service worker keeps it on its own origin
+        assert!(push["url"].as_str().unwrap().starts_with('/'));
+    }
+
+    #[test]
+    fn the_old_body_stays_and_a_title_and_tag_come_with_it() {
+        let push = payload(None);
+        assert_eq!(push["body"], "Lina sent you a friend request");
+        assert_eq!(push["title"], "Zrzur");
+        assert_eq!(push["tag"], format!("friend-{ID}"));
+        assert!(push.get("icon").is_none());
+    }
+
+    #[test]
+    fn the_icon_is_the_persons_picture_when_given() {
+        let push = payload(Some("https://cdn.example/avatars/A1"));
+        assert_eq!(push["icon"], "https://cdn.example/avatars/A1");
+    }
 }
 
 #[cfg(test)]
