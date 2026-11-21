@@ -1497,7 +1497,7 @@ pub struct FeaturesVanity {
 }
 
 fn vanity_min_members() -> usize {
-    1000
+    500
 }
 fn vanity_active_messages() -> usize {
     100

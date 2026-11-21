@@ -510,7 +510,7 @@ mod tests {
     }
 
     // ---- the member and activity rule (owner, 2026-11-21) ----
-    // Small numbers in the config stand in for 1000 members, 100 messages
+    // Small numbers in the config stand in for 500 members, 100 messages
     // and 20 authors; the defaults are checked in `the_rule_defaults`.
 
     /// Billing off, so only the rule counts: 3 members, 4 messages from 2 people
@@ -658,7 +658,7 @@ mod tests {
     #[test]
     fn the_rule_defaults() {
         let defaults = revolt_config::FeaturesVanity::default();
-        assert_eq!(defaults.min_members, 1000);
+        assert_eq!(defaults.min_members, 500);
         assert_eq!(defaults.active_messages, 100);
         assert_eq!(defaults.active_authors, 20);
         assert_eq!(defaults.active_days, 30);

@@ -554,7 +554,7 @@ mod tests {
             ("name", "Arab Gamers".to_string()),
             ("code", "arab-gamers".to_string()),
             ("date", "2026-12-21".to_string()),
-            ("members", "1000".to_string()),
+            ("members", "500".to_string()),
             ("messages", "100".to_string()),
             ("authors", "20".to_string()),
             ("days", "30".to_string()),
