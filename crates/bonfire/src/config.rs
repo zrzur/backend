@@ -29,15 +29,18 @@ pub enum FrameCompression {
 }
 
 /// Frames smaller than this stay text: compressing them saves little and
-/// costs both sides time. The first answer (Ready) is tens or hundreds of KB.
-pub const COMPRESS_FROM: usize = 4096;
+/// costs both sides time, and live events are serialised once per recipient.
+/// The first answer (Ready) of anyone in more than a few servers is larger.
+pub const COMPRESS_FROM: usize = 16 * 1024;
 
 /// Raw DEFLATE of some bytes
 fn deflate_raw(bytes: &[u8]) -> Vec<u8> {
     use std::io::Write;
+    // the fast level: about a fifth of the size instead of a sixth, at a
+    // fraction of the time (a reconnect storm deflates every Ready at once)
     let mut encoder = flate2::write::DeflateEncoder::new(
         Vec::with_capacity(bytes.len() / 4),
-        flate2::Compression::default(),
+        flate2::Compression::fast(),
     );
     encoder
         .write_all(bytes)

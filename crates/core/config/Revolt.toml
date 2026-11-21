@@ -369,9 +369,9 @@ join_confirm_hours = 72
 # video lowered, then video paused with audio kept) and shows a sign. Off,
 # calls behave as before. Numbers in [features.voice_weak_network].
 voice_weak_network_enabled = false
-# The live connection (gateway) sends frames of 4 KB or more, above all the
+# The live connection (gateway) sends frames of 16 KB or more, above all the
 # first answer (Ready, often 50 to 350 KB of JSON), compressed to about a
-# sixth, to clients that connect with ?compression=deflate. Other clients
+# fifth, to clients that connect with ?compression=deflate. Other clients
 # (older apps, bots) get text frames as before. Off, every client gets text.
 gateway_compression_enabled = false
 # Voice clips: a person in a voice room saves the last seconds and shares
