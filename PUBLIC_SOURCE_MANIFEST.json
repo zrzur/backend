@@ -202,8 +202,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "c974af4c760b9d4d19d8666cc04ad7beea6399dce7d6f718cfa60530808ae192",
-      "bytes": 125962,
+      "sha256": "53e911fc96c277e14342bd471ff9bbd1d939ea1608cd34f6119d01710bc48c42",
+      "bytes": 127204,
       "category": "public-documentation"
     },
     {
@@ -220,8 +220,8 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "2ae584a122bcd810c03f89ff6a32220892e3d9c1192ff56cfd1f8eb022942fa7",
-      "bytes": 269722,
+      "sha256": "be93a451207ad503a03a26b4603c93de82acfb53f6c475c2ffc68bbda00159cc",
+      "bytes": 269733,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -328,8 +328,8 @@
     },
     {
       "path": "crates/bonfire/Cargo.toml",
-      "sha256": "05139856275c31aeb974863d7f0c313390124ea3c34811aaac0159239c86c105",
-      "bytes": 1434,
+      "sha256": "381c7f314da12c2505116b1310188a29eb94fbe527801b077867c096b623c36d",
+      "bytes": 1503,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -346,8 +346,8 @@
     },
     {
       "path": "crates/bonfire/src/config.rs",
-      "sha256": "32b27f15dc4b33f9924234a4913fcb8bb6087b2970d0203d4ff5597c9e98dd3b",
-      "bytes": 8728,
+      "sha256": "0251a2a76c06969a706df8cae379ecd14f62899a793494c265268c366673da94",
+      "bytes": 15836,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -400,8 +400,8 @@
     },
     {
       "path": "crates/bonfire/src/websocket.rs",
-      "sha256": "269cd378df3c99de542c96e690b4bfeeb0dfa4e9c9839bddf74c373d0fd345e7",
-      "bytes": 77660,
+      "sha256": "d8c2ed1817339e4976f25b224aee953884e0a4290e6bfa60eed7ad28bff21f83",
+      "bytes": 77925,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -544,8 +544,8 @@
     },
     {
       "path": "crates/core/config/Revolt.toml",
-      "sha256": "d7bb01271344583c20b5c7f80efacd956e1d96048ae55f2896a04aaa283881bf",
-      "bytes": 30332,
+      "sha256": "16e61fbc4f33dc709885711f9acca3e7ffd5db555f36c250d70fd7381a78a481",
+      "bytes": 30669,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -574,8 +574,8 @@
     },
     {
       "path": "crates/core/config/src/settings.rs",
-      "sha256": "3a7822c5d08e42ae7920feea73b411e8a0688e2b7804342f8bd0fcd6e09a199d",
-      "bytes": 101140,
+      "sha256": "b8e1f07744e8b85b93d40d646a4fd7b959be75fc913bd26d5681e8ae2116bbfd",
+      "bytes": 101434,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6808,8 +6808,8 @@
     },
     {
       "path": "crates/services/autumn/src/api.rs",
-      "sha256": "2387f013b3babc2012f57316437dd0d0a188353dedf757a1aa50d62297fd3682",
-      "bytes": 45818,
+      "sha256": "406f4041706b560adc212ed7c36bf7d0ddc600d76abfe2c37b27aca6d100b627",
+      "bytes": 47053,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6820,8 +6820,8 @@
     },
     {
       "path": "crates/services/autumn/src/cache.rs",
-      "sha256": "2054adb291f627c556052d370ae5bb8a532bae3b44b89f7e2d8a0bee80f2abb5",
-      "bytes": 4985,
+      "sha256": "5d0551ee2d056da0e15d995b5eca2efffbb7e53c2227928870f6576e72df0db3",
+      "bytes": 8096,
       "category": "product-source-or-build-manifest"
     },
     {
