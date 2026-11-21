@@ -596,3 +596,79 @@ async fn the_consent_page_shows_the_default_permissions() {
     let installs = s.harness.db.fetch_app_installs(&s.server.id).await.unwrap();
     assert_eq!(installs[0].permissions, defaults);
 }
+
+/// Second review: an admin with Manage Server but not Manage Roles approves
+/// a link without `permissions`, as the consent page sends it: the bot
+/// joins without a role, as before default permissions; with a named value
+/// the strict check still refuses
+#[rocket::async_test]
+async fn an_installer_without_manage_roles_can_still_approve() {
+    use revolt_permissions::ChannelPermission;
+    let s = setup().await;
+    let defaults = ChannelPermission::SendMessage as i64;
+    s.harness
+        .db
+        .update_bot(
+            &s.bot.id,
+            &revolt_database::PartialBot {
+                public: Some(true),
+                default_permissions: Some(defaults),
+                ..Default::default()
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
+
+    // a server where everyone holds Manage Server, and nothing about roles
+    let (_, admin_session, admin) = s.harness.new_user().await;
+    let everyone = ChannelPermission::ManageServer as i64
+        | ChannelPermission::ViewChannel as i64
+        | ChannelPermission::SendMessage as i64;
+    let mut servers = vec![];
+    for _ in 0..2 {
+        let (server, _) = s.harness.new_server(&s.owner).await;
+        s.harness
+            .db
+            .update_server(
+                &server.id,
+                &revolt_database::PartialServer {
+                    default_permissions: Some(everyone),
+                    ..Default::default()
+                },
+                vec![],
+            )
+            .await
+            .unwrap();
+        let server = s.harness.db.fetch_server(&server.id).await.unwrap();
+        Member::create(&s.harness.db, &server, &admin, None).await.unwrap();
+        servers.push(server.id);
+    }
+
+    // what the consent page sends for a link without permissions
+    let (status, _) = s
+        .authorize(
+            &admin_session.token,
+            s.authorize_body("identify bot.install", true, json!({ "server_id": servers[0] })),
+        )
+        .await;
+    assert_eq!(status, Status::Ok, "the install goes through");
+    let member = s.harness.db.fetch_member(&servers[0], &s.bot.id).await.unwrap();
+    assert!(member.roles.is_empty(), "no role without Manage Roles");
+    let installs = s.harness.db.fetch_app_installs(&servers[0]).await.unwrap();
+    assert_eq!(installs[0].permissions, 0);
+
+    // a link that names permissions keeps the strict check
+    let (status, _) = s
+        .authorize(
+            &admin_session.token,
+            s.authorize_body(
+                "identify bot.install",
+                true,
+                json!({ "server_id": servers[1], "permissions": defaults }),
+            ),
+        )
+        .await;
+    assert_eq!(status, Status::Forbidden);
+    assert!(s.harness.db.fetch_member(&servers[1], &s.bot.id).await.is_err());
+}

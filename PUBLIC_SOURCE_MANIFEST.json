@@ -5434,8 +5434,8 @@
     },
     {
       "path": "crates/delta/src/routes/oauth/tests.rs",
-      "sha256": "942c121fbc08eb309ed662837ffed32c188711b7243874ab2d0fd2fbc62a1206",
-      "bytes": 20592,
+      "sha256": "512285c6d9d5dc75bcfd1018245b5fc4842a1f5e2991f2142b752ccbd05197ac",
+      "bytes": 23409,
       "category": "product-source-or-build-manifest"
     },
     {
