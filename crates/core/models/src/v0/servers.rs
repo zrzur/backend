@@ -54,7 +54,8 @@ auto_derived_partial!(
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
         pub banner: Option<File>,
 
-        /// Bitfield of server flags
+        /// Bitfield of server flags: 1 official (run by the Zrzur team),
+        /// 2 verified, 4 partner (set by platform staff only)
         #[cfg_attr(
             feature = "serde",
             serde(skip_serializing_if = "crate::if_zero_u32", default)
@@ -443,18 +444,75 @@ auto_derived!(
         pub role: String,
     }
 
-    /// A server's custom invite link. While the server is below the level
-    /// that unlocks it, the link works for 7 days, then pauses; the name
-    /// stays reserved for the server for 90 days after the drop.
+    /// A server's custom invite link. A server that stops meeting the rule
+    /// (official, partner, or enough members and activity) keeps the link for
+    /// 30 days, then the name is released. A server that held it by its Wings
+    /// level keeps the older timeline: the link works for 7 days after the
+    /// drop, then pauses; the name stays reserved for 90 days.
     pub struct ServerVanityInvite {
         /// Lowercase name after zrzur.cc/
         pub code: String,
         /// Channel new members land in
         pub channel: String,
         pub claimed_at: Timestamp,
-        /// When the server fell below the required level (none while it holds it)
+        /// When the server stopped meeting the rule (none while it meets it)
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
         pub below_level_since: Option<Timestamp>,
+        /// The way the server last met the rule; decides the timeline after a
+        /// drop (none on links from before the rule: the 30-day one)
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub via: Option<VanityPath>,
+        /// When the owner was told the link will end (none until then)
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub notice_sent_at: Option<Timestamp>,
+    }
+
+    /// How a server may hold a custom invite link
+    #[derive(Copy)]
+    pub enum VanityPath {
+        /// Run by the Zrzur team (server flag 1)
+        Official,
+        /// A Zrzur partner (server flag 4)
+        Partner,
+        /// Enough members and an active community
+        Community,
+        /// The Wings level that unlocks it (only while billing is on)
+        Wings,
+    }
+
+    /// What a server lacks for a custom invite link
+    #[derive(Copy)]
+    pub enum VanityMissing {
+        Members,
+        Activity,
+        Both,
+    }
+
+    /// Whether a server may hold a custom invite link, and the numbers behind it
+    pub struct VanityEligibility {
+        /// The server may claim or keep a custom link
+        pub eligible: bool,
+        /// The way it qualifies (none while not eligible)
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub via: Option<VanityPath>,
+        /// What it lacks (none while eligible)
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub missing: Option<VanityMissing>,
+        /// Members now, and the members needed
+        pub members: usize,
+        pub min_members: usize,
+        /// Messages from members (no bots, webhooks or system messages) in
+        /// the last `days` days, and the messages needed
+        pub messages: usize,
+        pub min_messages: usize,
+        /// Different members who wrote them, and the number needed
+        pub authors: usize,
+        pub min_authors: usize,
+        pub days: u32,
+        /// When the server's current link stops working, if it is counting
+        /// down (the 30-day notice, or the Wings grace)
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub link_ends_at: Option<Timestamp>,
     }
 
     /// Claim or change a custom invite link

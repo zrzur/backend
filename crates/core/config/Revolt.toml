@@ -753,6 +753,22 @@ recording_hours_by_level = [5, 20, 60]
 episode_max_minutes = 60
 episode_retention_days = 90
 
+[features.vanity]
+# Custom invite links (zrzur.cc/<name>). Official and partner servers may
+# always hold one. Any other server needs min_members members and must be
+# active: active_messages messages from active_authors different members in
+# the last active_days days (bots, webhooks and system messages not counted).
+# With billing on, the Wings level that unlocks the link is a second way in.
+min_members = 1000
+active_messages = 100
+active_authors = 20
+active_days = 30
+# A server that stops meeting the rule gets a notice; its link keeps working
+# this many days, then the name is released (unless it meets the rule again)
+notice_days = 30
+# An activity count is reused this long before crond or a claim counts again
+activity_cache_hours = 6
+
 [features.billing]
 # Zrzur Feather (member subscription) and Wings (server supercharges).
 # Only test mode exists: purchases are simulated and nothing is charged.

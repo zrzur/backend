@@ -447,6 +447,20 @@ pub enum ErrorType {
     VanityReserved,
     /// The server dropped below the required level; its custom link is paused
     VanityPaused,
+    /// The server may not hold a custom invite link: it is not official or a
+    /// partner, and lacks the members (`members` of `min_members`), the
+    /// activity (`messages` from `authors` members in the last `days` days),
+    /// or both. `missing` is `Members`, `Activity` or `Both`.
+    VanityNotEligible {
+        missing: String,
+        members: usize,
+        min_members: usize,
+        messages: usize,
+        min_messages: usize,
+        authors: usize,
+        min_authors: usize,
+        days: u32,
+    },
 
     // ? Bot related errors
     ReachedMaximumBots,
