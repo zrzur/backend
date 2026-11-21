@@ -341,6 +341,11 @@ async fn command(
     interaction.command_id = Some(command.id.clone());
     interaction.command_name = Some(command.name.clone());
     interaction.autocomplete_type = context.focused_type;
+    // kept for routes that act on what the person chose (`/badges/command`);
+    // an autocomplete carries half-typed text, which is not kept
+    if !autocomplete {
+        interaction.command_options = options.clone();
+    }
 
     let mut payload = payload(db, user, &scope, &interaction, token, data.locale).await;
     payload.command = Some(InteractionCommandData {

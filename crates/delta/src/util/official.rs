@@ -510,6 +510,22 @@ pub async fn creator(db: &Database, user_id: &str, action: &str, note: &str) {
     send(db, user_id, key, &[("note", note)]).await;
 }
 
+/// A badge's name in every language we have texts for (the id where a
+/// language lacks it)
+pub fn badge_names(badge_id: &str) -> std::collections::BTreeMap<&'static str, String> {
+    let key = format!("badge_name.{badge_id}");
+    LANGUAGES
+        .iter()
+        .map(|(code, _)| {
+            let name = TEXTS[code]
+                .get(&key)
+                .map(|t| t.title.clone())
+                .unwrap_or_else(|| badge_id.to_string());
+            (*code, name)
+        })
+        .collect()
+}
+
 pub async fn badge(db: &Database, user_id: &str, granted: bool, badge_id: &str, note: &str) {
     let language = language_for(db, user_id).await;
     let key = format!("badge_name.{badge_id}");

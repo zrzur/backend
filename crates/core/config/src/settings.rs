@@ -1364,6 +1364,9 @@ pub struct Features {
     pub team_applications: Box<FeaturesTeamApplications>,
     #[serde(default)]
     pub saved_reminders: FeaturesSavedReminders,
+    /// The owner's `/badge` command (off unless both ids are set)
+    #[serde(default)]
+    pub badge_command: FeaturesBadgeCommand,
 
     /// Voice rooms step down on a weak connection (lighter voice, video
     /// lowered, then video paused with audio kept) and show a sign. The
@@ -1424,6 +1427,25 @@ impl Default for FeaturesServerImport {
             template_endpoint: server_import_endpoint(),
             reads_per_hour: server_import_per_hour(),
         }
+    }
+}
+
+/// `/badge` in one bot: the owner's account gives and takes platform badges
+/// (routes under `/badges/command`). The bot only hands back the press; the
+/// server checks it came from `owner`. Either value empty switches it off.
+#[derive(Deserialize, Debug, Clone, Default, PartialEq, Eq)]
+pub struct FeaturesBadgeCommand {
+    /// The only account that may use the command
+    #[serde(default)]
+    pub owner: String,
+    /// The bot that offers the command
+    #[serde(default)]
+    pub bot: String,
+}
+
+impl FeaturesBadgeCommand {
+    pub fn enabled(&self) -> bool {
+        !self.owner.trim().is_empty() && !self.bot.trim().is_empty()
     }
 }
 
@@ -3121,5 +3143,58 @@ mod upload_limit_tests {
     #[test]
     fn purge_is_off_until_it_is_filled_in() {
         assert!(!shipped().files.purge.configured());
+    }
+}
+
+#[cfg(test)]
+mod badge_command_settings_tests {
+    use config::{Config, File, FileFormat};
+
+    use super::{FeaturesBadgeCommand, Settings};
+
+    fn settings(toml: &str) -> Settings {
+        Config::builder()
+            .add_source(File::from_str(include_str!("../Revolt.toml"), FileFormat::Toml))
+            .add_source(File::from_str(toml, FileFormat::Toml))
+            .build()
+            .unwrap()
+            .try_deserialize()
+            .unwrap()
+    }
+
+    #[test]
+    fn badge_command_ships_switched_off() {
+        let shipped = settings("");
+        assert_eq!(shipped.features.badge_command, FeaturesBadgeCommand::default());
+        assert!(!shipped.features.badge_command.enabled());
+    }
+
+    #[test]
+    fn old_config_without_the_block_still_parses() {
+        // the shipped file as it was before the command existed: no `badge_command` block
+        let shipped = include_str!("../Revolt.toml");
+        let start = shipped.find("[features.badge_command]").unwrap();
+        let end = start + shipped[start..].find("[features.team_applications]").unwrap();
+        let old = format!("{}{}", &shipped[..start], &shipped[end..]);
+        assert!(!old.contains("badge_command"));
+        let parsed: Settings = Config::builder()
+            .add_source(File::from_str(&old, FileFormat::Toml))
+            .build()
+            .unwrap()
+            .try_deserialize()
+            .unwrap();
+        assert_eq!(parsed.features.badge_command, FeaturesBadgeCommand::default());
+        assert!(!parsed.features.badge_command.enabled());
+    }
+
+    #[test]
+    fn badge_command_needs_both_ids() {
+        let both = settings("[features.badge_command]\nowner = \"01OWNER\"\nbot = \"01BOT\"\n");
+        assert!(both.features.badge_command.enabled());
+        assert_eq!(both.features.badge_command.owner, "01OWNER");
+        let owner_only = settings("[features.badge_command]\nowner = \"01OWNER\"\n");
+        assert!(!owner_only.features.badge_command.enabled());
+        let blank = settings("[features.badge_command]\nowner = \" \"\nbot = \"01BOT\"\n");
+        assert!(!blank.features.badge_command.enabled());
     }
 }

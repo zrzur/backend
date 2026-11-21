@@ -611,6 +611,16 @@ role = ""
 remove_role = ""
 bot = ""
 
+[features.badge_command]
+# `/badge give` and `/badge remove` in one bot (the Apply bot): the owner's
+# account gives and takes platform badges, the privileged ones included.
+# The bot decides nothing (routes under /badges/command): the server checks
+# that the press is genuine, used once and made by `owner`, and writes every
+# try, refused ones included, to the platform audit log.
+# Leave either value empty to keep the routes switched off.
+owner = ""
+bot = ""
+
 [features.team_applications]
 # "Join the Zrzur team": people apply for a team role through one bot in one
 # server; holders of one role there review the applications. The bot itself

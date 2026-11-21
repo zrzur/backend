@@ -1,7 +1,7 @@
 use iso8601_timestamp::{Duration, Timestamp};
 use revolt_models::v0::{
-    interaction_limits, CommandOptionType, EphemeralMessage, InteractionType, Modal,
-    ModalFieldValue,
+    interaction_limits, CommandOptionType, EphemeralMessage, InteractionDataOption,
+    InteractionType, Modal, ModalFieldValue,
 };
 use sha2::{Digest, Sha256};
 use ulid::Ulid;
@@ -47,6 +47,11 @@ pub struct Interaction {
     /// Command name, for the "used /name" line on the answer
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub command_name: Option<String>,
+    /// Commands: the options as the server checked them (never the bot's
+    /// copy), so a route acting on the person's behalf reads what they chose.
+    /// Gone with the interaction when it expires.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub command_options: Vec<InteractionDataOption>,
     pub nonce: String,
     pub token_hash: String,
     pub status: InteractionStatus,
@@ -148,6 +153,7 @@ impl Interaction {
                 channel_id,
                 command_id: None,
                 command_name: None,
+                command_options: vec![],
                 nonce,
                 token_hash: hash_interaction_token(&token),
                 status: InteractionStatus::Pending,

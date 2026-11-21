@@ -140,12 +140,13 @@ pub fn mount(config: Settings, mut rocket: Rocket<Build>) -> Rocket<Build> {
         };
     }
 
-    // platform staff and the Discover review desk: kept out of the public
-    // OpenAPI document
+    // platform staff, the Discover review desk, the team desk and the
+    // owner's badge command: kept out of the public OpenAPI document
     rocket
         .mount("/staff", staff::routes())
         .mount("/discover/review", discover_review::routes())
         .mount("/team/desk", team_desk::routes())
+        .mount("/badges/command", badges::command::routes())
 }
 
 fn custom_openapi_spec() -> OpenApi {
