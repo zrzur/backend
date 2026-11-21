@@ -202,8 +202,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "53e911fc96c277e14342bd471ff9bbd1d939ea1608cd34f6119d01710bc48c42",
-      "bytes": 127204,
+      "sha256": "0ee33cc88b402cabda2d5f14689dc29262b35c4c5d8961f4617da7ce30f10b44",
+      "bytes": 127416,
       "category": "public-documentation"
     },
     {
@@ -346,8 +346,8 @@
     },
     {
       "path": "crates/bonfire/src/config.rs",
-      "sha256": "0251a2a76c06969a706df8cae379ecd14f62899a793494c265268c366673da94",
-      "bytes": 15836,
+      "sha256": "1a006744b3534ecc8fa36719230e77bf0829ec1c5444c30e2bcd5cc6d57a94e5",
+      "bytes": 16065,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -400,8 +400,8 @@
     },
     {
       "path": "crates/bonfire/src/websocket.rs",
-      "sha256": "d8c2ed1817339e4976f25b224aee953884e0a4290e6bfa60eed7ad28bff21f83",
-      "bytes": 77925,
+      "sha256": "826a2641ee053d6897ca95756f2dfdabb0b686421443e0b2205034fcc8aca8ce",
+      "bytes": 79416,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -544,8 +544,8 @@
     },
     {
       "path": "crates/core/config/Revolt.toml",
-      "sha256": "16e61fbc4f33dc709885711f9acca3e7ffd5db555f36c250d70fd7381a78a481",
-      "bytes": 30669,
+      "sha256": "3880792dd6b84c95888ff86fa9bfb1e94a19eb3220f23f1f5bb7f33c965d00b3",
+      "bytes": 30670,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6808,8 +6808,8 @@
     },
     {
       "path": "crates/services/autumn/src/api.rs",
-      "sha256": "406f4041706b560adc212ed7c36bf7d0ddc600d76abfe2c37b27aca6d100b627",
-      "bytes": 47053,
+      "sha256": "5570af510b240a6c870ef5558ae6507655bb61c6ae345a3c1adf813a6b7f0bb0",
+      "bytes": 47160,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6820,8 +6820,8 @@
     },
     {
       "path": "crates/services/autumn/src/cache.rs",
-      "sha256": "5d0551ee2d056da0e15d995b5eca2efffbb7e53c2227928870f6576e72df0db3",
-      "bytes": 8096,
+      "sha256": "349775862612c42a343c23bdcb0b400d458f741a53dd6648eeaf8f7b3c5690f0",
+      "bytes": 11094,
       "category": "product-source-or-build-manifest"
     },
     {
