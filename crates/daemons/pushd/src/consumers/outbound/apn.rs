@@ -212,7 +212,15 @@ impl Consumer for ApnsOutboundConsumer {
                     },
                     device_token: &payload.token,
                     options: payload_options.clone(),
-                    data: BTreeMap::new(),
+                    // the link the web push opens (this person's profile), whole,
+                    // like the url of a message push
+                    data: BTreeMap::from([(
+                        "url",
+                        serde_json::Value::String(super::vapid::friend_profile_app_url(
+                            &revolt_config::config().await.hosts.app,
+                            &alert.from_user.id,
+                        )),
+                    )]),
                 };
 
                 debug!(
@@ -252,7 +260,15 @@ impl Consumer for ApnsOutboundConsumer {
                     },
                     device_token: &payload.token,
                     options: payload_options.clone(),
-                    data: BTreeMap::new(),
+                    // the link the web push opens (this person's profile), whole,
+                    // like the url of a message push
+                    data: BTreeMap::from([(
+                        "url",
+                        serde_json::Value::String(super::vapid::friend_profile_app_url(
+                            &revolt_config::config().await.hosts.app,
+                            &alert.accepted_user.id,
+                        )),
+                    )]),
                 };
 
                 debug!(
