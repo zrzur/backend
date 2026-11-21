@@ -17,12 +17,16 @@ async fn owned_server(harness: &TestHarness, owner: &User) -> Server {
 }
 
 async fn make_official(harness: &TestHarness, server: &Server) {
+    set_flags(harness, server, 1).await;
+}
+
+async fn set_flags(harness: &TestHarness, server: &Server, flags: i32) {
     let mut server = harness.db.fetch_server(&server.id).await.unwrap();
     server
         .update(
             &harness.db,
             PartialServer {
-                flags: Some(1),
+                flags: Some(flags),
                 ..Default::default()
             },
             vec![],
@@ -117,7 +121,57 @@ async fn an_official_server_is_never_deleted() {
     let (status, body) = send(&harness, &owner, &token, Post, &format!("/staff/servers/{}/actions", server.id), delete_body("Testing the guard")).await;
     assert_eq!(status, Status::Forbidden, "{body}");
     assert!(harness.db.fetch_server(&server.id).await.is_ok());
-    assert_eq!(count(&audit_actions(&harness).await, "staff.server.delete", "Denied"), 1);
+    // official and verified (flags 3) is still official
+    let both = owned_server(&harness, &team).await;
+    set_flags(&harness, &both, 3).await;
+    let (status, _) = send(&harness, &owner, &token, Post, &format!("/staff/servers/{}/actions", both.id), delete_body("Testing the guard")).await;
+    assert_eq!(status, Status::Forbidden);
+    assert!(harness.db.fetch_server(&both.id).await.is_ok());
+    assert_eq!(count(&audit_actions(&harness).await, "staff.server.delete", "Denied"), 2);
+}
+
+#[rocket::async_test]
+async fn deleting_a_server_never_frees_another_servers_link() {
+    overwrite_config(|config| {
+        config.features.billing.enabled = false;
+    })
+    .await;
+    let harness = TestHarness::new().await;
+    let (_, _, first_owner) = harness.new_user().await;
+    let stale = owned_server(&harness, &first_owner).await;
+    let (_, session, holder) = harness.new_user().await;
+    let theirs = owned_server(&harness, &holder).await;
+    let (status, body) = as_user(&harness, &session, Put, &format!("/servers/{}/vanity", theirs.id), json!({ "code": "quiet-garden-club" })).await;
+    assert_eq!(status, Status::Ok, "{body}");
+    // a field left stale on another server (a repoint that failed)
+    let mut stale_server = harness.db.fetch_server(&stale.id).await.unwrap();
+    stale_server
+        .update(
+            &harness.db,
+            PartialServer {
+                vanity_invite: Some(revolt_models::v0::ServerVanityInvite {
+                    code: "quiet-garden-club".to_string(),
+                    channel: stale.channels[0].clone(),
+                    claimed_at: iso8601_timestamp::Timestamp::now_utc(),
+                    below_level_since: None,
+                }),
+                ..Default::default()
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
+
+    let (owner, token) = stepped_up_owner(&harness).await;
+    let (status, body) = send(&harness, &owner, &token, Post, &format!("/staff/servers/{}/actions", stale.id), delete_body("Created to grab names")).await;
+    assert_eq!(status, Status::Ok, "{body}");
+    assert!(harness.db.fetch_server(&stale.id).await.is_err());
+    // the holder keeps its link
+    assert_eq!(harness.client.get("/invites/quiet-garden-club").dispatch().await.status(), Status::Ok);
+    match harness.db.fetch_invite("quiet-garden-club").await.unwrap() {
+        revolt_database::Invite::Server { server, .. } => assert_eq!(server, theirs.id),
+        _ => panic!("not a server invite"),
+    }
 }
 
 #[rocket::async_test]
@@ -149,11 +203,16 @@ async fn deleting_needs_the_owner_role_and_a_step_up() {
     // Trust & Safety may verify servers, but not delete
     let ts = member(&harness, vec![StaffRole::TrustSafety]).await;
     let ts_token = sign_in(&harness, &ts, 0).await;
-    step_up(&harness, &ts, &ts_token).await;
-    for (path, body) in [(&server_path, delete_body("Created to grab names")), (&bot_path, reason.clone()), (&owned_path, reason.clone())] {
-        let (status, body) = send(&harness, &ts, &ts_token, Post, path, body).await;
-        assert_eq!(status, Status::Forbidden, "{body}");
-        assert_eq!(body["type"], "NotPrivileged");
+    // the same refusal with or without a fresh code, recorded each time
+    for stepped_up in [false, true] {
+        if stepped_up {
+            step_up(&harness, &ts, &ts_token).await;
+        }
+        for (path, body) in [(&server_path, delete_body("Created to grab names")), (&bot_path, reason.clone()), (&owned_path, reason.clone())] {
+            let (status, body) = send(&harness, &ts, &ts_token, Post, path, body).await;
+            assert_eq!(status, Status::Forbidden, "{body}");
+            assert_eq!(body["type"], "NotPrivileged");
+        }
     }
 
     // the Owner, but without a fresh step-up
@@ -168,9 +227,9 @@ async fn deleting_needs_the_owner_role_and_a_step_up() {
     assert!(harness.db.fetch_server(&server.id).await.is_ok());
     assert!(harness.db.fetch_bot(&bot.id).await.is_ok());
     let actions = audit_actions(&harness).await;
-    assert_eq!(count(&actions, "staff.server.delete", "Denied"), 1);
-    assert_eq!(count(&actions, "staff.bot.delete", "Denied"), 1);
-    assert_eq!(count(&actions, "staff.user.delete_owned", "Denied"), 1);
+    assert_eq!(count(&actions, "staff.server.delete", "Denied"), 2);
+    assert_eq!(count(&actions, "staff.bot.delete", "Denied"), 2);
+    assert_eq!(count(&actions, "staff.user.delete_owned", "Denied"), 2);
     assert_eq!(count(&actions, "staff.server.delete", "Success"), 0);
 }
 
@@ -220,10 +279,26 @@ async fn staff_delete_removes_a_bot_and_its_token_stops_working() {
     let (status, _) = send(&harness, &owner, &token, Post, &format!("/staff/bots/{}/delete", official.id), json!({ "reason": "Testing the guard" })).await;
     assert_eq!(status, Status::Forbidden);
     assert!(harness.db.fetch_bot(&official.id).await.is_ok());
+    // verified and official (flags 3) is still official
+    let (mut both, _) = harness.new_bot(&developer).await;
+    both
+        .update(
+            &harness.db,
+            PartialBot {
+                flags: Some(BotFlags::Verified as i32 | BotFlags::Official as i32),
+                ..Default::default()
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
+    let (status, _) = send(&harness, &owner, &token, Post, &format!("/staff/bots/{}/delete", both.id), json!({ "reason": "Testing the guard" })).await;
+    assert_eq!(status, Status::Forbidden);
+    assert!(harness.db.fetch_bot(&both.id).await.is_ok());
 
     let actions = audit_actions(&harness).await;
     assert_eq!(count(&actions, "staff.bot.delete", "Success"), 1);
-    assert_eq!(count(&actions, "staff.bot.delete", "Denied"), 1);
+    assert_eq!(count(&actions, "staff.bot.delete", "Denied"), 2);
 }
 
 #[rocket::async_test]
@@ -249,6 +324,21 @@ async fn delete_owned_needs_a_banned_account_and_removes_everything_but_official
     assert_eq!(status, Status::BadRequest);
     assert!(harness.db.fetch_server(&first.id).await.is_ok());
     assert!(harness.db.fetch_bot(&bot.id).await.is_ok());
+    // an account its owner disabled, or one waiting for its deletion, is
+    // not a removed account: refused, its servers stay
+    let (_, _, resting) = harness.new_user().await;
+    let resting_server = owned_server(&harness, &resting).await;
+    let mut account = harness.db.fetch_account(&resting.id).await.unwrap();
+    account.disable(&harness.db).await.unwrap();
+    let (_, _, leaving) = harness.new_user().await;
+    let leaving_server = owned_server(&harness, &leaving).await;
+    let mut account = harness.db.fetch_account(&leaving.id).await.unwrap();
+    account.schedule_deletion(&harness.db).await.unwrap();
+    for (user, server) in [(&resting, &resting_server), (&leaving, &leaving_server)] {
+        let (status, _) = send(&harness, &owner, &token, Post, &format!("/staff/users/{}/delete-owned", user.id), body.clone()).await;
+        assert_eq!(status, Status::BadRequest);
+        assert!(harness.db.fetch_server(&server.id).await.is_ok());
+    }
     // a timed suspension is not enough either
     let mut user = harness.db.fetch_user(&squatter.id).await.unwrap();
     user.suspend(&harness.db, Some(3), None).await.unwrap();
@@ -288,7 +378,7 @@ async fn delete_owned_needs_a_banned_account_and_removes_everything_but_official
     let actions = audit_actions(&harness).await;
     assert_eq!(count(&actions, "staff.server.delete", "Success"), 2);
     assert_eq!(count(&actions, "staff.bot.delete", "Success"), 1);
-    assert_eq!(count(&actions, "staff.user.delete_owned", "Denied"), 2);
+    assert_eq!(count(&actions, "staff.user.delete_owned", "Denied"), 4);
     assert_eq!(count(&actions, "staff.user.delete_owned", "Success"), 2);
 
     // the account view still opens

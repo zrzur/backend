@@ -4,11 +4,11 @@
 //! - `POST /staff/servers/<id>/actions` with `"action": "delete"`
 //! - `POST /staff/bots/<id>/delete`
 //! - `POST /staff/users/<id>/delete-owned`: every server and bot of an
-//!   account that is already banned or disabled, in one step
+//!   account that staff already banned, in one step
 //!
 //! Gate, the strictest one staff actions have (the same as handing a
-//! server over): `platform.servers.restrict`, a fresh step-up, and the
-//! Owner role. Every deletion needs a reason and writes one audit record
+//! server over): the Owner role, `platform.servers.restrict` and a fresh
+//! step-up. Every deletion needs a reason and writes one audit record
 //! per server or bot before anything is removed. Official servers and bots
 //! are never deleted here. Deletion goes through the same code the owner's
 //! own delete uses, so members, roles, channels, invites (the custom link
@@ -31,7 +31,6 @@ use crate::routes::{bots::delete::remove_bot, servers::server_delete::remove_ser
 const SERVER_OFFICIAL: i32 = 1;
 const BOT_OFFICIAL: i32 = BotFlags::Official as i32;
 const BANNED: i32 = UserFlags::Banned as i32;
-const SUSPENDED: i32 = UserFlags::SuspendedUntil as i32;
 
 pub(super) const PERMISSION: StaffPermission = StaffPermission::ServersRestrict;
 
@@ -43,8 +42,9 @@ pub(super) fn is_official_bot(bot: &Bot) -> bool {
     bot.flags.is_some_and(|f| f & BOT_OFFICIAL != 0)
 }
 
-/// Permission, step-up and the Owner role. A staff member without the
-/// Owner role is refused and the attempt is written to the audit log.
+/// The Owner role first, then the permission and a fresh step-up. A staff
+/// member without the Owner role gets one clear refusal, written to the
+/// audit log on every attempt, whether or not they stepped up.
 pub(super) async fn require_delete_gate(
     db: &Database,
     staff: &StaffContext,
@@ -52,16 +52,15 @@ pub(super) async fn require_delete_gate(
     target_kind: &str,
     target_id: &str,
 ) -> Result<()> {
-    staff.require_step_up(db, PERMISSION).await?;
-    if staff.grant.is_owner(staff.now) {
-        return Ok(());
+    if !staff.grant.is_owner(staff.now) {
+        let mut record = staff.record(action, Some(PERMISSION));
+        record.target_kind = Some(target_kind.to_string());
+        record.target_id = Some(target_id.to_string());
+        record.summary = Some("owner role required".to_string());
+        record_platform_audit(db, record, AuditOutcome::Denied).await?;
+        return Err(create_error!(NotPrivileged));
     }
-    let mut record = staff.record(action, Some(PERMISSION));
-    record.target_kind = Some(target_kind.to_string());
-    record.target_id = Some(target_id.to_string());
-    record.summary = Some("owner role required".to_string());
-    record_platform_audit(db, record, AuditOutcome::Denied).await?;
-    Err(create_error!(NotPrivileged))
+    staff.require_step_up(db, PERMISSION).await
 }
 
 /// Delete one server, audited first. An official server is refused.
@@ -161,22 +160,16 @@ pub struct DeleteOwnedResult {
     pub failed: Vec<SkippedItem>,
 }
 
-/// Banned, or switched off by staff (a disabled account that is not on a
-/// timed suspension)
-pub(super) async fn is_banned_or_disabled(db: &Database, user: &revolt_database::User) -> Result<bool> {
-    let flags = user.flags.unwrap_or_default();
-    if flags & BANNED != 0 {
-        return Ok(true);
-    }
-    if flags & SUSPENDED != 0 {
-        return Ok(false);
-    }
-    Ok(db.fetch_account(&user.id).await.map(|a| a.disabled).unwrap_or(false))
+/// Banned by staff. A disabled account alone is not enough: people
+/// disable their own account, and an account waiting for its deletion is
+/// disabled too; a staff ban sets the flag and disables the account.
+pub(super) fn is_banned(user: &revolt_database::User) -> bool {
+    user.flags.unwrap_or_default() & BANNED != 0
 }
 
 /// # Delete every server and bot an account owns
 ///
-/// Only for an account that is already banned or disabled. Official
+/// Only for an account that staff already banned. Official
 /// servers and bots are kept and listed under `skipped`. Bots go first, so
 /// they leave the servers before those are deleted.
 #[post("/users/<id>/delete-owned", data = "<data>")]
@@ -197,8 +190,8 @@ pub async fn delete_owned(
     record.target_kind = Some("user".to_string());
     record.target_id = Some(user.id.clone());
     record.reason = Some(why.clone());
-    if !is_banned_or_disabled(db, &user).await? {
-        record.summary = Some("account is not banned or disabled".to_string());
+    if !is_banned(&user) {
+        record.summary = Some("account is not banned".to_string());
         record_platform_audit(db, record, AuditOutcome::Denied).await?;
         return Err(create_error!(InvalidOperation));
     }
