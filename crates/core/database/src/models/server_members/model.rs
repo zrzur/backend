@@ -357,6 +357,25 @@ impl Member {
         }
     }
 
+    /// Clear one user's entry from `member_permissions` on every channel of
+    /// the server, publishing a ChannelUpdate for each channel changed
+    pub async fn forget_channel_overrides(
+        db: &Database,
+        server: &Server,
+        user_id: &str,
+    ) -> Result<()> {
+        // only the channels that hold an entry for them are read
+        for mut channel in db
+            .fetch_channels_with_member_override(&server.channels, user_id)
+            .await?
+        {
+            channel
+                .set_member_permission(db, user_id, revolt_permissions::OverrideField { a: 0, d: 0 })
+                .await?;
+        }
+        Ok(())
+    }
+
     /// Remove member from server
     pub async fn remove(
         &self,
@@ -382,6 +401,13 @@ impl Member {
         }
         if let Err(error) = db.delete_command_permissions(&server.id, &self.id.user).await {
             log::warn!("Could not remove the command permissions of a member who left: {error:?}");
+        }
+
+        // their own channel overrides go too: an entry kept for someone who
+        // left can't be seen or removed in the app, and would let them back
+        // into a private channel on rejoin
+        if let Err(error) = Self::forget_channel_overrides(db, server, &self.id.user).await {
+            log::warn!("Could not remove the channel overrides of a member who left: {error:?}");
         }
 
         // supercharges leave with their owner

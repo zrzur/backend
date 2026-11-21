@@ -18,6 +18,14 @@ pub trait AbstractChannels: Sync + Send {
     /// Fetch all channels from the database
     async fn fetch_channels<'a>(&self, ids: &'a [String]) -> Result<Vec<Channel>>;
 
+    /// Of these channels, only the ones holding an override of this user's
+    /// own (`member_permissions.<user>`), so a leave reads no other channel
+    async fn fetch_channels_with_member_override<'a>(
+        &self,
+        ids: &'a [String],
+        user_id: &str,
+    ) -> Result<Vec<Channel>>;
+
     /// Threads of a channel, newest first: archived or active ones, before
     /// a thread id
     async fn fetch_threads(
