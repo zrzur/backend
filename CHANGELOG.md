@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 26.3.0-beta.2 (2026-11-21)
+
+### The owner's /badge command (2026-11-21)
+
+- `[features.badge_command]` (`owner`, `bot`; empty = off) lets one account give and take any platform badge, the privileged ones included, through one bot's `/badge give` and `/badge remove`. The bot hands the stored interaction back to `POST /badges/command/grant` or `/revoke`; the server checks the bot, a single use, that the presser is the configured owner, the option kinds, and that the command is exactly the version the owner pressed and offers exactly the catalogue's badges. Every press is written to the platform audit log; the owner gets an official message for each change. `GET /badges/command/catalogue` gives the bot the list. Outside the public OpenAPI document.
+- Command options and the command version are stored on an interaction only for that bot's `badge` command; a `/badge` press must say which command version it saw.
 
 ### Member channel overrides when someone leaves (2026-11-21)
 

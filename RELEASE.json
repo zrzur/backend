@@ -1,11 +1,11 @@
 {
   "product": "Zrzur",
   "family": 26,
-  "version": "26.3.0-beta.1",
+  "version": "26.3.0-beta.2",
   "component": "backend",
   "status": "released",
   "defaultBranch": "main",
   "releaseReady": true,
   "upstreamCompatibility": "Preserved; see original package/crate versions and licenses.",
-  "targetVersion": "26.3.0-beta.1"
+  "targetVersion": "26.3.0-beta.2"
 }
