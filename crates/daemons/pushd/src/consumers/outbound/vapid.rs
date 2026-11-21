@@ -189,6 +189,12 @@ pub(crate) fn friend_profile_url(user_id: &str) -> String {
     format!("/friends?profile={user_id}")
 }
 
+/// The same link in full, for Apple pushes, which have no origin to resolve
+/// it against (message pushes send `{app}/channel/...` the same way)
+pub(crate) fn friend_profile_app_url(app_host: &str, user_id: &str) -> String {
+    format!("{}{}", app_host.trim_end_matches('/'), friend_profile_url(user_id))
+}
+
 /// The picture of a person in a push, as message pushes have it
 async fn avatar_url(user: &revolt_database::User) -> String {
     let config = revolt_config::config().await;
@@ -252,7 +258,7 @@ fn call_push_payload(
 
 #[cfg(test)]
 mod friend_tests {
-    use super::friend_push_payload;
+    use super::{friend_profile_app_url, friend_push_payload};
 
     const ID: &str = "01HZX5Q2N7V3K8M4P6R9T0W1YA";
 
@@ -279,6 +285,14 @@ mod friend_tests {
         assert_eq!(push["title"], "Zrzur");
         assert_eq!(push["tag"], format!("friend-{ID}"));
         assert!(push.get("icon").is_none());
+    }
+
+    #[test]
+    fn the_apple_push_link_is_whole() {
+        let url = format!("https://app.zrzur.com/friends?profile={ID}");
+        assert_eq!(friend_profile_app_url("https://app.zrzur.com", ID), url);
+        // a host written with a closing slash gives no double slash
+        assert_eq!(friend_profile_app_url("https://app.zrzur.com/", ID), url);
     }
 
     #[test]

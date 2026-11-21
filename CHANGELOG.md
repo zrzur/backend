@@ -4,7 +4,7 @@
 
 ### Friend-request pushes open the profile
 
-- A web push for a friend request (received or accepted) carries `title`, `url`, `tag` and `icon` next to its `body`: the `url` is `/friends?profile=<user id>`, relative, so a click opens that person's profile instead of the app's front page. One notification per person (`tag: friend-<user id>`); the icon is their avatar. Apple pushes for the same two events carry the same `url`. Old fields are unchanged.
+- A web push for a friend request (received or accepted) carries `title`, `url`, `tag` and `icon` next to its `body`: the `url` is `/friends?profile=<user id>`, relative, so a click opens that person's profile instead of the app's front page. One notification per person (`tag: friend-<user id>`); the icon is their avatar. Apple pushes for the same two events carry the same link as a full `url` (`{hosts.app}/friends?profile=<user id>`, like message pushes); the web one stays relative. Old fields are unchanged.
 
 ### Bot platform: fixes from the audit of 2026-11-21
 
