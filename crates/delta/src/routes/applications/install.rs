@@ -43,8 +43,11 @@ pub async fn install_bot(
     // permissions, through a role of its own, as an install from the portal
     // does. The installer can only give what they hold, and only with Manage
     // Roles; the rest is left out instead of failing the install. An explicit
-    // value keeps the strict check below.
+    // value keeps the strict check below, and an explicit 0 ("no
+    // permissions", what the add dialog sends with everything unticked)
+    // gives no role at all.
     let permissions = match permissions {
+        Some(0) => None,
         Some(permissions) => Some(permissions),
         None => default_grant(bot.default_permissions, &user_permissions),
     };

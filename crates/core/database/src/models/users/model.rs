@@ -582,7 +582,7 @@ impl User {
                     .await
                     .map_err(User::token_lookup_error)?;
                 // a disabled bot, or one whose owner was suspended or banned
-                if !crate::bot_may_receive(db, &bot).await {
+                if !crate::bot_may_act(db, &bot).await? {
                     return Err(create_error!(InvalidSession));
                 }
                 let user = db.fetch_user(&bot.id).await?.confirm_privileged(db, None).await;
@@ -1338,6 +1338,18 @@ impl User {
 
 #[cfg(test)]
 mod tests {
+    /// A15: an unknown or reset token is an invalid session wherever it is
+    /// looked up (the API, and the file service through the same mapping);
+    /// other errors stay what they are
+    #[test]
+    fn an_unknown_token_is_an_invalid_session() {
+        use revolt_result::{create_error, ErrorType};
+        let mapped = super::User::token_lookup_error(create_error!(NotFound));
+        assert!(matches!(mapped.error_type, ErrorType::InvalidSession));
+        let mapped = super::User::token_lookup_error(create_error!(InternalError));
+        assert!(matches!(mapped.error_type, ErrorType::InternalError));
+    }
+
     use crate::{User, UserHint};
     use lapin::{options::ExchangeDeclareOptions, types::FieldTable, ExchangeKind};
     use revolt_result::{create_database_error, create_error, ErrorType};

@@ -976,6 +976,7 @@ mod statement_tests {
 /// The bots themselves are not changed, so they work again when the
 /// suspension ends.
 async fn log_out_bots_of(db: &revolt_database::Database, owner: &str) {
+    revolt_database::forget_owner_standing(owner);
     match db.fetch_bots_by_user(owner).await {
         Ok(bots) => {
             for bot in bots {

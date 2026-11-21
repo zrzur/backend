@@ -16,6 +16,24 @@ pub const USER_OR_BOT: &str = "Session or Bot Token";
 pub const SESSION: &str = "Session Token";
 pub const BOT: &str = "Bot Token";
 
+/// Operations whose MFA ticket is needed only sometimes (the route takes
+/// `Option<…Ticket>` and asks for it in some cases): signing in is enough,
+/// and the ticket is listed as one more alternative. Every other route with
+/// an optional ticket type refuses the request without one, so its ticket
+/// stays required here.
+pub const TICKET_SOMETIMES: &[(&str, &str)] = &[
+    // only to remove the token (deprecated)
+    ("patch", "/bots/{bot_id}"),
+    // only for some changes, and to delete a server with members
+    ("patch", "/servers/{target}"),
+    ("delete", "/servers/{target}"),
+    // only with MFA switched on
+    ("patch", "/auth/account/change/password"),
+    ("patch", "/auth/account/change/email"),
+    // an existing ticket is one way to get a new one
+    ("put", "/auth/mfa/ticket"),
+];
+
 fn is_ticket(name: &str) -> bool {
     name.ends_with("MFA Ticket")
 }
@@ -35,7 +53,7 @@ fn api_key(header: &str, description: &str) -> SecurityScheme {
     }
 }
 
-fn fix_operation(operation: &mut Operation) {
+fn fix_operation(operation: &mut Operation, ticket_sometimes: bool) {
     let Some(security) = operation.security.take() else {
         return;
     };
@@ -62,27 +80,34 @@ fn fix_operation(operation: &mut Operation) {
         // and never for a bot
         let mut both = vec![SESSION];
         both.extend(tickets);
-        vec![requirement(&both)]
+        let mut alternatives = vec![requirement(&both)];
+        if ticket_sometimes {
+            alternatives.push(requirement(&[SESSION]));
+            if user_or_bot {
+                alternatives.push(requirement(&[BOT]));
+            }
+        }
+        alternatives
     });
 }
 
 /// Rewrite the security of every operation, and the schemes they name
 pub fn fix_security(spec: &mut OpenApi) {
-    for item in spec.paths.values_mut() {
-        for operation in [
-            &mut item.get,
-            &mut item.put,
-            &mut item.post,
-            &mut item.delete,
-            &mut item.options,
-            &mut item.head,
-            &mut item.patch,
-            &mut item.trace,
-        ]
-        .into_iter()
-        .flatten()
-        {
-            fix_operation(operation);
+    for (path, item) in spec.paths.iter_mut() {
+        for (method, operation) in [
+            ("get", &mut item.get),
+            ("put", &mut item.put),
+            ("post", &mut item.post),
+            ("delete", &mut item.delete),
+            ("options", &mut item.options),
+            ("head", &mut item.head),
+            ("patch", &mut item.patch),
+            ("trace", &mut item.trace),
+        ] {
+            if let Some(operation) = operation {
+                let sometimes = TICKET_SOMETIMES.contains(&(method, path.as_str()));
+                fix_operation(operation, sometimes);
+            }
         }
     }
 
@@ -110,9 +135,13 @@ mod tests {
     use revolt_rocket_okapi::revolt_okapi::openapi3::PathItem;
 
     fn spec_with(security: Vec<SecurityRequirement>) -> OpenApi {
+        spec_at("/x", security)
+    }
+
+    fn spec_at(path: &str, security: Vec<SecurityRequirement>) -> OpenApi {
         let mut spec = OpenApi::default();
         spec.paths.insert(
-            "/x".to_owned(),
+            path.to_owned(),
             PathItem {
                 get: Some(Operation {
                     security: Some(security),
@@ -125,7 +154,11 @@ mod tests {
     }
 
     fn security_of(spec: &OpenApi) -> Vec<Vec<String>> {
-        let mut out: Vec<Vec<String>> = spec.paths["/x"]
+        security_at(spec, "/x")
+    }
+
+    fn security_at(spec: &OpenApi, path: &str) -> Vec<Vec<String>> {
+        let mut out: Vec<Vec<String>> = spec.paths[path]
             .get
             .as_ref()
             .unwrap()
@@ -167,6 +200,54 @@ mod tests {
         assert_eq!(
             security_of(&spec),
             vec![vec!["Session Token".to_string(), "Valid MFA Ticket".to_string()]]
+        );
+    }
+
+    /// PATCH /bots/{bot_id} needs a ticket only to remove the token
+    #[test]
+    fn a_ticket_needed_only_sometimes_leaves_signing_in_enough() {
+        let mut spec = OpenApi::default();
+        for path in ["/bots/{bot_id}", "/bots/{bot_id}/token/reset"] {
+            let operation = Operation {
+                security: Some(vec![
+                    requirement(&[USER_OR_BOT]),
+                    requirement(&["Valid MFA Ticket"]),
+                ]),
+                ..Default::default()
+            };
+            let item = if path == "/bots/{bot_id}" {
+                PathItem { patch: Some(operation), ..Default::default() }
+            } else {
+                PathItem { get: Some(operation), ..Default::default() }
+            };
+            spec.paths.insert(path.to_owned(), item);
+        }
+        fix_security(&mut spec);
+        let patch = spec.paths["/bots/{bot_id}"].patch.as_ref().unwrap();
+        let mut alternatives: Vec<Vec<String>> = patch
+            .security
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|r| {
+                let mut names: Vec<String> = r.keys().cloned().collect();
+                names.sort();
+                names
+            })
+            .collect();
+        alternatives.sort();
+        assert_eq!(
+            alternatives,
+            vec![
+                vec![BOT.to_string()],
+                vec![SESSION.to_string()],
+                vec![SESSION.to_string(), "Valid MFA Ticket".to_string()],
+            ]
+        );
+        // a route that always needs it keeps it required
+        assert_eq!(
+            security_at(&spec, "/bots/{bot_id}/token/reset"),
+            vec![vec![SESSION.to_string(), "Valid MFA Ticket".to_string()]]
         );
     }
 

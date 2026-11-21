@@ -23,7 +23,7 @@ where
                 .await
                 .map_err(User::token_lookup_error)?;
             // a disabled bot, or one whose owner was suspended or banned
-            if !crate::bot_may_receive(&db, &bot).await {
+            if !crate::bot_may_act(&db, &bot).await? {
                 return Err(create_error!(InvalidSession));
             }
             Ok(db

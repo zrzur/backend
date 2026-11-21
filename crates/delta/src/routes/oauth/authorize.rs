@@ -51,6 +51,12 @@ async fn installable_servers(db: &Database, user: &User, bot_id: &str) -> Result
     Ok(servers)
 }
 
+/// The permissions the consent page shows: the asked ones, else the bot's
+/// default permissions (what an install without a value would give)
+pub(crate) fn preview_permissions(asked: Option<i64>, defaults: Option<i64>) -> Option<i64> {
+    asked.or(defaults.filter(|p| *p > 0))
+}
+
 /// # Authorization Preview
 ///
 /// What the consent page shows: the application, the scopes it asks for, and
@@ -113,7 +119,9 @@ pub async fn authorize_preview(
         },
         scopes: request.scopes,
         redirect_uri: redirect_uri.to_string(),
-        permissions,
+        // what an install without `permissions` gives (the bot's default
+        // permissions), so the consent page shows it and sends it back
+        permissions: preview_permissions(permissions, request.bot.default_permissions),
         servers: if installs {
             installable_servers(db, &user, &request.bot.id).await?
         } else {

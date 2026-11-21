@@ -271,8 +271,6 @@ impl Bot {
         let user = db.fetch_user(&self.id).await?;
         // group DMs it was added to
         user.remove_from_all_groups(db).await?;
-        // its gateway connections end now, not at the next request
-        EventV1::Logout.p(self.id.clone()).await;
 
         let mut user = user;
         user.mark_deleted(db).await?;
@@ -281,7 +279,12 @@ impl Bot {
         // its slash commands go with it, in every server
         db.delete_all_application_commands(&self.id).await?;
         db.delete_oauth_application(&self.id).await?;
-        db.delete_bot(&self.id).await
+        db.delete_bot(&self.id).await?;
+        // its gateway connections end now, not at the next request. Only
+        // after the bot is gone: a connection that reconnects at once must
+        // find its token refused, not log in again.
+        EventV1::Logout.p(self.id.clone()).await;
+        Ok(())
     }
 }
 

@@ -303,7 +303,12 @@ pub async fn bot_for_token(db: &revolt_database::Database, token: &str) -> Optio
             return bot;
         }
     }
-    let bot = db.fetch_bot_by_token(token).await.ok().map(|bot| bot.id);
+    // only a bot that may act is "known": a disabled bot, or one whose owner
+    // was suspended or banned, is treated like any other caller
+    let bot = match db.fetch_bot_by_token(token).await {
+        Ok(bot) if revolt_database::bot_may_receive(db, &bot).await => Some(bot.id),
+        _ => None,
+    };
     if let Ok(mut cache) = BOT_TOKENS.lock() {
         if cache.len() > 50_000 {
             cache.clear();
@@ -322,9 +327,13 @@ pub fn counts_as_refused(status: u16) -> bool {
 
 /// Whether an answer counts towards blocking the caller's address. A bot
 /// with a real token is counted by its id: its 403s are answers about
-/// permissions, not guessing, and many bots share one hosting address.
+/// permissions, not guessing, and many bots share one hosting address. A
+/// 401 always counts, for bots too: it means the token did not work.
 pub fn counts_against_address(status: u16, known_bot: bool) -> bool {
-    counts_as_refused(status) && !known_bot
+    match status {
+        403 => !known_bot,
+        status => counts_as_refused(status),
+    }
 }
 
 /// Whether a blocked address stops this request: not for a bot with a real
@@ -459,8 +468,9 @@ mod tests {
         use super::{address_block_applies, counts_against_address};
         for status in [401, 403] {
             assert!(counts_against_address(status, false), "{status} without a bot counts");
-            assert!(!counts_against_address(status, true), "{status} of a known bot does not");
         }
+        assert!(!counts_against_address(403, true), "a permission 403 of a known bot does not");
+        assert!(counts_against_address(401, true), "a 401 counts, bot or not");
         assert!(!counts_against_address(429, false), "a 429 never counts");
         assert!(!counts_against_address(200, false));
         assert!(address_block_applies(false));

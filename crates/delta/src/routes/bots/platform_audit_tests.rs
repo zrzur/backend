@@ -72,6 +72,8 @@ async fn set_user_flags(harness: &TestHarness, user: &User, flags: i32) {
         )
         .await
         .unwrap();
+    // what the safety actions do after changing someone's standing
+    revolt_database::forget_owner_standing(&user.id);
 }
 
 /// A4: a suspended or banned owner's bot stops: its token is refused, it is
@@ -345,4 +347,78 @@ async fn a_kicked_bot_is_no_longer_installed() {
         apps(&harness, &owner_session, &server.id).await.is_empty(),
         "the Apps list does not show a bot that is gone"
     );
+}
+
+/// A server of `owner` where everyone holds only `everyone` (as its default
+/// permissions), with `installer` as a member
+async fn server_for_installer(harness: &TestHarness, owner: &User, installer: &User, everyone: i64) -> String {
+    let (server, _) = harness.new_server(owner).await;
+    harness
+        .db
+        .update_server(
+            &server.id,
+            &revolt_database::PartialServer {
+                default_permissions: Some(everyone),
+                ..Default::default()
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
+    let server = harness.db.fetch_server(&server.id).await.unwrap();
+    Member::create(&harness.db, &server, installer, None).await.unwrap();
+    server.id
+}
+
+/// A7, second review: "no permissions" ticked in the add dialog (an explicit
+/// 0) gives no role, and an installer without Manage Roles adds the bot
+/// without its defaults but cannot name permissions
+#[rocket::async_test]
+async fn an_install_with_nothing_ticked_gives_no_role() {
+    let harness = TestHarness::new().await;
+    let (_, owner_session, owner) = harness.new_user().await;
+    let (_, installer_session, installer) = harness.new_user().await;
+    let (bot, _) = harness.new_bot(&owner).await;
+    let defaults = ChannelPermission::SendMessage as i64;
+    harness
+        .db
+        .update_bot(
+            &bot.id,
+            &PartialBot {
+                public: Some(true),
+                default_permissions: Some(defaults),
+                ..Default::default()
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
+    let roles = |server: String| {
+        let db = harness.db.clone();
+        let bot = bot.id.clone();
+        async move { db.fetch_member(&server, &bot).await.expect("the bot joined").roles }
+    };
+
+    // everything unticked: no role, nothing recorded as given
+    let (server, _) = harness.new_server(&owner).await;
+    let (status, body) = invite(&harness, &owner_session, &bot, &server.id, Some(0)).await;
+    assert_eq!(status, Status::NoContent, "{body}");
+    assert!(roles(server.id.clone()).await.is_empty(), "no role for an explicit 0");
+    let installs = harness.db.fetch_app_installs(&server.id).await.unwrap();
+    assert_eq!(installs[0].permissions, 0);
+
+    // Manage Server without Manage Roles
+    let everyone = ChannelPermission::ManageServer as i64
+        | ChannelPermission::ViewChannel as i64
+        | ChannelPermission::SendMessage as i64;
+    for (permissions, expected) in [(None, Status::NoContent), (Some(0), Status::NoContent), (Some(defaults), Status::Forbidden)] {
+        let server = server_for_installer(&harness, &owner, &installer, everyone).await;
+        let (status, body) = invite(&harness, &installer_session, &bot, &server, permissions).await;
+        assert_eq!(status, expected, "permissions {permissions:?}: {body}");
+        if expected == Status::NoContent {
+            assert!(roles(server).await.is_empty(), "{permissions:?}: no role without Manage Roles");
+        } else {
+            assert!(body.contains("MissingPermission"), "{body}");
+        }
+    }
 }

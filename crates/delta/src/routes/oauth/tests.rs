@@ -540,3 +540,59 @@ async fn client_secret_needs_the_owner_and_reauthentication() {
         .await;
     assert_eq!(response.status(), Status::BadRequest);
 }
+
+/// A7, second review: a link without `permissions` shows the bot's default
+/// permissions, and approving with what was shown gives exactly those
+#[rocket::async_test]
+async fn the_consent_page_shows_the_default_permissions() {
+    let s = setup().await;
+    let defaults = revolt_permissions::ChannelPermission::SendMessage as i64;
+    s.harness
+        .db
+        .update_bot(
+            &s.bot.id,
+            &revolt_database::PartialBot {
+                default_permissions: Some(defaults),
+                ..Default::default()
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
+
+    let response = s
+        .harness
+        .client
+        .get(format!(
+            "/oauth2/authorize?{}",
+            query(&[
+                ("client_id", &s.bot.id),
+                ("redirect_uri", REDIRECT),
+                ("response_type", "code"),
+                ("scope", "identify bot.install"),
+                ("state", "xyz-state"),
+                ("code_challenge", CHALLENGE),
+                ("code_challenge_method", "S256"),
+            ])
+        ))
+        .header(Header::new("x-session-token", s.owner_session.clone()))
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Ok);
+    let preview: v0::AuthorizationPreview = response.into_json().await.unwrap();
+    assert_eq!(preview.permissions, Some(defaults), "the page names what the bot gets");
+
+    let (status, _) = s
+        .authorize(
+            &s.owner_session,
+            s.authorize_body(
+                "identify bot.install",
+                true,
+                json!({ "server_id": s.server.id, "permissions": preview.permissions }),
+            ),
+        )
+        .await;
+    assert_eq!(status, Status::Ok);
+    let installs = s.harness.db.fetch_app_installs(&s.server.id).await.unwrap();
+    assert_eq!(installs[0].permissions, defaults);
+}
