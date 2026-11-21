@@ -76,7 +76,29 @@ pub async fn edit_bot(
         return Err(create_error!(OfficialAccount));
     }
     if let Some(name) = data.name {
-        user.update_username(db, name).await?;
+        let previous = user.username.clone();
+        user.update_username(db, v0::bot_username(&name)).await?;
+        match v0::bot_display_name(&name) {
+            // a name with spaces is shown as typed
+            Some(display_name) => {
+                user.update(
+                    db,
+                    revolt_database::PartialUser {
+                        display_name: Some(display_name),
+                        ..Default::default()
+                    },
+                    vec![],
+                )
+                .await?
+            }
+            // a name without one: the display name made from the old name
+            // goes, so the new name shows; one set some other way stays
+            None if user.display_name.as_deref() == Some(previous.replace('_', " ").as_str()) => {
+                user.update(db, Default::default(), vec![revolt_database::FieldsUser::DisplayName])
+                    .await?
+            }
+            None => {}
+        }
     }
 
     if data.public.is_none()

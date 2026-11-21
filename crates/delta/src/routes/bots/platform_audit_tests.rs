@@ -422,3 +422,64 @@ async fn an_install_with_nothing_ticked_gives_no_role() {
         }
     }
 }
+
+/// The owner's report of 2026-11-21: a bot named "Liro Bot" could not be
+/// made. A name with single spaces is the bot's display name, its username
+/// has `_` for the spaces; anything else is refused as before
+#[rocket::async_test]
+async fn a_bot_name_may_have_spaces_between_words() {
+    let harness = TestHarness::new().await;
+    let (_, owner_session, _) = harness.new_user().await;
+    let create = |name: &str| {
+        call(
+            &harness,
+            "POST",
+            "/bots/create".into(),
+            session(&owner_session),
+            Some(json!({ "name": name })),
+        )
+    };
+
+    let (status, body) = create("Liro Bot").await;
+    assert_eq!(status, Status::Ok, "{body}");
+    let made: Value = serde_json::from_str(&body).unwrap();
+    let id = made["_id"].as_str().unwrap().to_string();
+    let user = harness.db.fetch_user(&id).await.unwrap();
+    assert_eq!(user.username, "Liro_Bot");
+    assert_eq!(user.display_name.as_deref(), Some("Liro Bot"));
+
+    // a plain name is as before: the username, no display name
+    let (status, body) = create("Plainbot").await;
+    assert_eq!(status, Status::Ok, "{body}");
+    let made: Value = serde_json::from_str(&body).unwrap();
+    let plain = harness.db.fetch_user(made["_id"].as_str().unwrap()).await.unwrap();
+    assert_eq!(plain.username, "Plainbot");
+    assert_eq!(plain.display_name, None);
+
+    for refused in ["Liro  Bot", " Liro", "Liro ", "Liro\u{200B}Bot", "Liro\nBot", "L"] {
+        let (status, body) = create(refused).await;
+        assert_eq!(status, Status::BadRequest, "{refused:?}: {body}");
+        assert!(body.contains("FailedValidation"), "{body}");
+    }
+
+    // renaming: spaces again, then a plain name clears the display name
+    let rename = |name: &str| {
+        call(
+            &harness,
+            "PATCH",
+            format!("/bots/{id}"),
+            session(&owner_session),
+            Some(json!({ "name": name })),
+        )
+    };
+    let (status, body) = rename("Mira Bot").await;
+    assert_eq!(status, Status::Ok, "{body}");
+    let user = harness.db.fetch_user(&id).await.unwrap();
+    assert_eq!((user.username.as_str(), user.display_name.as_deref()), ("Mira_Bot", Some("Mira Bot")));
+    let (status, body) = rename("Mira").await;
+    assert_eq!(status, Status::Ok, "{body}");
+    let user = harness.db.fetch_user(&id).await.unwrap();
+    assert_eq!((user.username.as_str(), user.display_name.as_deref()), ("Mira", None));
+    let (status, _) = rename("Mira  Bot").await;
+    assert_eq!(status, Status::BadRequest);
+}

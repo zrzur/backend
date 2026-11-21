@@ -21,7 +21,19 @@ pub async fn create_bot(
     let info = info.into_inner();
     info.validate().map_err(|error| revolt_database::util::validation::validation_failed(&error))?;
 
-    let (bot, user) = Bot::create(db, info.name, &user, None).await?;
+    // "Liro Bot": the username is Liro_Bot, people see the name as typed
+    let (bot, mut user) = Bot::create(db, v0::bot_username(&info.name), &user, None).await?;
+    if let Some(display_name) = v0::bot_display_name(&info.name) {
+        user.update(
+            db,
+            revolt_database::PartialUser {
+                display_name: Some(display_name),
+                ..Default::default()
+            },
+            vec![],
+        )
+        .await?;
+    }
     Ok(Json(v0::BotWithUserResponse {
         bot: bot.into(),
         user: user.into_self(false).await,
