@@ -26,7 +26,7 @@ struct MigrationInfo {
     revision: i32,
 }
 
-pub const LATEST_REVISION: i32 = 92; // MUST BE +1 to last migration
+pub const LATEST_REVISION: i32 = 93; // MUST BE +1 to last migration
 // Number given only in the release after the one above, once no old delta runs:
 // a session an old delta wrote during the rollout has no date and never expires.
 const PENDING_SESSION_EXPIRY_FILL: i32 = -1;
@@ -60,7 +60,7 @@ const PENDING_SAVED_REMINDER_INDEXES: i32 = 90;
 // Number given by the coordinator at merge (stream events-v5)
 const PENDING_SERVER_EVENT_ANSWERS: i32 = 91;
 // Stream team-volunteers: the coordinator gives the number at merge; -1 never runs
-const PENDING_TEAM_VOLUNTEER_INDEXES: i32 = -1;
+const PENDING_TEAM_VOLUNTEER_INDEXES: i32 = 92;
 
 /// The earliest day a session from before expiry can expire. At least 30
 /// days out, also with expiry switched off (0), for the day it is switched on.

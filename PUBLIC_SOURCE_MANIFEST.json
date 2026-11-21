@@ -58,8 +58,8 @@
     },
     {
       "path": ".github/workflows/source-check.yml",
-      "sha256": "c01b3b8beeb7bd8f551388f5880f6aa846b97e00896c4f0c85614792364a6a19",
-      "bytes": 952,
+      "sha256": "76f87f680282f1d87ea9a9e116d00a760569fb0a6d66a7f889506993b019fae3",
+      "bytes": 959,
       "category": "reviewed-build-and-ci"
     },
     {
@@ -202,8 +202,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "c974af4c760b9d4d19d8666cc04ad7beea6399dce7d6f718cfa60530808ae192",
-      "bytes": 125962,
+      "sha256": "45caf68ce4efb7df800eb1f112e52f28e4ae74a27a172a6214700a49b8e7aae5",
+      "bytes": 128681,
       "category": "public-documentation"
     },
     {
@@ -274,8 +274,8 @@
     },
     {
       "path": "RELEASE.json",
-      "sha256": "82258eca41f086b81136fbec55af7d66289919b6320f4bbc559b51684cf59212",
-      "bytes": 285,
+      "sha256": "062cca42ddd5212b5e032128a66c39941eb98897feef28f45b332f6be3549c8e",
+      "bytes": 299,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -298,14 +298,14 @@
     },
     {
       "path": "ZRZUR_RELEASE.md",
-      "sha256": "b9effdadfa1ca9c27b395536afe520c2096ff9dc5627606d86f63d5b6ad4e676",
-      "bytes": 1396,
+      "sha256": "64b4158fe4ac2f5e614eb46988b10dd80d90c579cbf96aa4344b546e380311a2",
+      "bytes": 1618,
       "category": "public-documentation"
     },
     {
       "path": "ZRZUR_VERSION",
-      "sha256": "68995e01e8de34ab7e28688abe2a311e79e70fe02b7a9aa82b0b453dc18e623d",
-      "bytes": 344,
+      "sha256": "d5634a479f40d30de7516930c324ff83931f43da63e0815a162a019edabf7461",
+      "bytes": 351,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -1558,7 +1558,7 @@
     },
     {
       "path": "crates/core/database/src/models/admin_migrations/ops/mongodb/scripts.rs",
-      "sha256": "508738e29cd55ccf9bd003c23b1b3bfbe1b226b27d5a1e0622076df48a011964",
+      "sha256": "24472b4f4061264c9c8b858a5a29c3cbba9fec263e82ff7cfc9f80d6894d7f13",
       "bytes": 178629,
       "category": "product-source-or-build-manifest"
     },
@@ -7384,8 +7384,8 @@
     },
     {
       "path": "scripts/check-version-selftest.sh",
-      "sha256": "aacb5d126bcaad9aab5dbef2270e30dcdf07c1a0aa93a3cd3903d0c3a522406c",
-      "bytes": 1299,
+      "sha256": "2bb821509b097aa3a41d7c51ec10a68a55f754b05ac63f12e6ac1ca8fbfdc4cf",
+      "bytes": 1327,
       "category": "reviewed-build-and-ci"
     },
     {

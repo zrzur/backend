@@ -1,5 +1,18 @@
 # Changelog
 
+## 26.3.0-beta.1 (2026-11-21)
+
+### Looking after team volunteers (2026-11-21)
+
+- Once an application to the team is accepted, the person becomes a volunteer of that team (`TeamMember`): a first period (`trial_days`, 30 by default), then active, away or inactive, and left. Every step is written to the membership's history. Off unless `[features.team_applications.volunteers]` sets `enabled = true`; the settings are `trial_days`, `monthly_minimum`, `away_max_days`, `identity_keep_days`, `activity_keep_days`, `rules_version`, `team_server`, `report_channel`, and `work_channels` per role.
+- New routes under `/team/desk`, called by the team bot from the stored interaction: `POST /about` (the "About you" step: the volunteer rules, name, age and country), `POST /identity`, `POST /status` ("My team status"), `POST /away` (away up to `away_max_days`), `POST /leave`, and `GET /report?week=` (the weekly report). Outside the public OpenAPI document.
+- Counting: a daily crond job counts helpful actions per volunteer and day in the role's work channels; counts only, no message content and no channel names are stored. Nobody is counted before they have received the one-time counting notice (what is counted, why, who sees it, how long it is kept, the right to object, the privacy link). An objection is recorded by staff (`POST /staff/team/{id}/counting`) and stops the counting for that person until it is resumed. A month below `monthly_minimum` gets one kind reminder; a row of low months sets the volunteer inactive. A month with days not counted is not judged. Counts are kept `activity_keep_days`.
+- Name, age and country are required to apply, are seen only by the owner and the reviewers, are kept while the person is on the team and `identity_keep_days` after they leave, then deleted. Showing them needs a reviewer's single-use press and is written to the platform audit log; every refusal is logged too.
+- The weekly report goes to a private channel: per team the number of volunteers, and for teams of three or more the counts of trial, active, away and inactive volunteers and of contributions.
+- New staff routes for the admin console (Team page): `GET /staff/team`, `GET /staff/team/{id}`, `POST /staff/team/{id}/identity`, `/confirm`, `/counting`, `/away`, `/note`, `/remove`. Each needs the `TeamManage` staff permission; every act is written to the platform audit log before it happens.
+- Texts for volunteers in seven languages (en, ar, de, fr, es, ru, zh-Hans) in `crates/delta/assets/team/<language>.json`. The account data export carries the person's own volunteer records.
+- One database migration: indexes for the volunteer collections (`PENDING_TEAM_VOLUNTEER_INDEXES`), safe to run twice.
+
 ## 26.2.0 (2026-11-20)
 
 The official release for everyone. It brings the work of 26.2.0-beta.1 and 26.2.0-beta.2 below.
