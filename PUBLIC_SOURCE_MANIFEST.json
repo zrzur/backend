@@ -2104,8 +2104,8 @@
     },
     {
       "path": "crates/core/database/src/models/interactions/model.rs",
-      "sha256": "299aedbf773b1f2d23e0e39cbf139b3dc9d2f147a8e6c0979a017aba4869396e",
-      "bytes": 7477,
+      "sha256": "a30df379384593b25bb623100c133ed2c1ab0415ad1e775323f438390e68ccdf",
+      "bytes": 7787,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4696,14 +4696,14 @@
     },
     {
       "path": "crates/delta/src/routes/badges/command.rs",
-      "sha256": "6ebc08f2471c429d033d10f6db59ec0fcbb20ad8d43c5f72f17d2cdda1534dc3",
-      "bytes": 17267,
+      "sha256": "66ed71425769622da35c7527b69c733dabb1e2ec47aed1fce4458d88b2e9b8bc",
+      "bytes": 17529,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/delta/src/routes/badges/command_tests.rs",
-      "sha256": "f3f1e680bbdf3195a1b937b03964d53b29b875021b7edb63fcf16672ea8293f2",
-      "bytes": 22800,
+      "sha256": "1e9aafc1421bd4cc01b0a48891a76fe3bf84d04a38973196a36c01bd7d377e88",
+      "bytes": 26145,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -5332,8 +5332,8 @@
     },
     {
       "path": "crates/delta/src/routes/interactions/create.rs",
-      "sha256": "04f353cc7ed35cba63eebd7b5cc0ad88b599de24d4e35711866095917dd964e9",
-      "bytes": 35074,
+      "sha256": "d1b11f99f01d4dbb98e448aa9210c5870980685aa44eafdd26bd085e3750a6ac",
+      "bytes": 35143,
       "category": "product-source-or-build-manifest"
     },
     {
