@@ -6,12 +6,12 @@ use crate::{
     util::test::{PubSubTestHelper, TestHarness},
 };
 use revolt_config::FeaturesBadgeCommand;
-use revolt_database::{events::client::EventV1, Bot, Channel, Member, User};
+use revolt_database::{events::client::EventV1, Bot, Channel, Member, Server, User};
 use revolt_models::v0;
 use rocket::http::{ContentType, Header, Status};
 use serde_json::{json, Value};
 
-use super::command::{test_settings, DEFAULT_REASON};
+use super::command::{offered_badges, test_settings, DEFAULT_REASON};
 
 struct Stage {
     harness: TestHarness,
@@ -24,19 +24,32 @@ struct Stage {
     other_session: String,
     /// Who gets and loses badges
     subject: User,
+    server: Server,
     channel: Channel,
     command: v0::ApplicationCommand,
+    /// Kind of the `user` option as registered (`User`, or `String` to forge)
+    user_kind: String,
     events: PubSubTestHelper,
 }
 
-fn sub(name: &str) -> Value {
-    let badge = json!({ "type": "String", "name": "badge", "description": "Badge", "required": true });
+/// The badge choices as the bot registers them: the catalogue, with the server's English names
+fn offered_choices() -> Value {
+    Value::Array(
+        offered_badges()
+            .into_iter()
+            .map(|b| json!({ "name": crate::util::official::badge_names(b.id)["en"], "value": b.id }))
+            .collect(),
+    )
+}
+
+fn sub(name: &str, choices: &Value, user_kind: &str) -> Value {
+    let badge = json!({ "type": "String", "name": "badge", "description": "Badge", "required": true, "choices": choices });
     json!({
         "type": "SubCommand",
         "name": name,
         "description": name,
         "options": [
-            { "type": "User", "name": "user", "description": "Who", "required": true },
+            { "type": user_kind, "name": "user", "description": "Who", "required": true },
             badge,
             { "type": "String", "name": "reason", "description": "Why", "max_length": 500 }
         ]
@@ -44,9 +57,14 @@ fn sub(name: &str) -> Value {
 }
 
 /// A server with the bot, the owner, another member and the subject; the
-/// bot registered `/badge give|remove` (without choices, so the tests can
-/// send a badge that does not exist) and the command is on for it
+/// bot registered `/badge give|remove` as the server offers it, and the
+/// command is on for it
 async fn stage() -> Stage {
+    stage_with(offered_choices(), "User").await
+}
+
+/// The same, with the badge choices and the `user` option's kind as given
+async fn stage_with(choices: Value, user_kind: &str) -> Stage {
     let harness = TestHarness::new().await;
     let (_, _, host) = harness.new_user().await;
     let (_, owner_session, owner) = harness.new_user().await;
@@ -65,7 +83,7 @@ async fn stage() -> Stage {
         serde_json::from_value(json!({
             "name": "badge",
             "description": "Give or take a badge",
-            "options": [sub("give"), sub("remove")]
+            "options": [sub("give", &choices, user_kind), sub("remove", &choices, user_kind)]
         }))
         .unwrap(),
     )
@@ -84,8 +102,10 @@ async fn stage() -> Stage {
         other,
         other_session: other_session.token,
         subject,
+        server,
         channel: channels.into_iter().next().unwrap(),
         command,
+        user_kind: user_kind.to_string(),
         events,
     }
 }
@@ -94,7 +114,7 @@ impl Stage {
     /// Someone uses `/badge <action>`; gives what the bot received: id and token
     async fn press(&mut self, session: &str, action: &str, user: &str, badge: &str, reason: Option<&str>) -> (String, String) {
         let mut options = vec![
-            json!({ "type": "User", "name": "user", "value": user }),
+            json!({ "type": self.user_kind, "name": "user", "value": user }),
             json!({ "type": "String", "name": "badge", "value": badge }),
         ];
         if let Some(reason) = reason {
@@ -169,6 +189,11 @@ impl Stage {
 
     /// (action, actor, outcome) of the audit records about one person
     async fn audit(&self, about: &User) -> Vec<(String, String, String)> {
+        self.audit_full(about).await.into_iter().map(|(a, b, c, _)| (a, b, c)).collect()
+    }
+
+    /// The same with each record's summary
+    async fn audit_full(&self, about: &User) -> Vec<(String, String, String, String)> {
         self.harness
             .db
             .fetch_platform_audit(revolt_database::PlatformAuditQuery {
@@ -179,7 +204,7 @@ impl Stage {
             .unwrap()
             .into_iter()
             .filter(|e| e.target_id.as_deref() == Some(about.id.as_str()) && e.action.starts_with("badge.command."))
-            .map(|e| (e.action, e.actor_id, format!("{:?}", e.outcome)))
+            .map(|e| (e.action, e.actor_id, format!("{:?}", e.outcome), e.summary.unwrap_or_default()))
             .collect()
     }
 }
@@ -233,10 +258,14 @@ async fn the_owner_gives_a_privileged_badge_and_takes_it_away() {
     assert_eq!((status, outcome["result"].as_str()), (Status::Ok, Some("done")), "{outcome}");
     assert!(s.holds(&subject, "paw").await);
 
-    // given twice: they already have it, nothing changes
+    // given twice: they already have it, nothing changes, and the press writes one record
     let pressed = s.press(&session, "give", &subject.id, "founder", None).await;
     let (status, outcome) = s.hand("grant", &pressed).await;
     assert_eq!((status, outcome["result"].as_str()), (Status::Ok, Some("already")), "{outcome}");
+    let log = s.audit_full(&subject).await;
+    assert_eq!(log.len(), 3, "{log:?}");
+    assert!(log.iter().all(|(_, _, outcome, _)| outcome == "Success"), "{log:?}");
+    assert!(log.iter().any(|(_, _, _, summary)| summary == "founder (no change: already)"), "{log:?}");
 
     // taken away
     let pressed = s.press(&session, "remove", &subject.id, "founder", Some("Test is over")).await;
@@ -251,6 +280,10 @@ async fn the_owner_gives_a_privileged_badge_and_takes_it_away() {
     let pressed = s.press(&session, "remove", &subject.id, "founder", None).await;
     let (status, outcome) = s.hand("revoke", &pressed).await;
     assert_eq!((status, outcome["result"].as_str()), (Status::Ok, Some("not_held")), "{outcome}");
+    // five presses, five records, none failed
+    let log = s.audit(&subject).await;
+    assert_eq!(log.len(), 5, "{log:?}");
+    assert!(!log.iter().any(|(_, _, outcome)| outcome == "Failed"), "{log:?}");
 
     // a removal handed to the give route is refused, and gives nothing
     let pressed = s.press(&session, "remove", &subject.id, "founder", None).await;
@@ -362,17 +395,144 @@ async fn the_command_is_off_without_settings() {
 }
 
 #[rocket::async_test]
-async fn an_unknown_badge_is_not_found() {
-    let mut s = stage().await;
-    let subject = s.subject.clone();
+async fn a_relabelled_choice_is_refused() {
+    // the bot shows another badge's name but sends `founder` (a registered
+    // command may not repeat a choice name, so the label is new)
+    let mut choices = offered_choices();
+    let founder = choices.as_array_mut().unwrap().iter_mut().find(|c| c["value"] == "founder").unwrap();
+    founder["name"] = json!("Partner badge");
+    let mut s = stage_with(choices, "User").await;
+    let (subject, owner) = (s.subject.clone(), s.owner.clone());
     let session = s.owner_session.clone();
-    let pressed = s.press(&session, "give", &subject.id, "no_such_badge", None).await;
+    let pressed = s.press(&session, "give", &subject.id, "founder", None).await;
     let (status, body) = s.hand("grant", &pressed).await;
-    assert_eq!(status, Status::NotFound, "{body}");
-    assert_eq!(body["type"], "NotFound");
-    // a badge that follows a record can't be given by hand, even by the owner
-    let pressed = s.press(&session, "give", &subject.id, "plus", None).await;
+    assert_eq!(status, Status::BadRequest, "{body}");
+    assert_eq!(body["type"], "InvalidOperation");
+    assert!(!s.holds(&subject, "founder").await);
+    assert_eq!(
+        s.audit_full(&subject).await,
+        vec![(
+            "badge.command.grant".to_string(),
+            owner.id.clone(),
+            "Denied".to_string(),
+            "founder (command not as offered)".to_string()
+        )]
+    );
+
+    // a translated label that says something else is refused too
+    let mut choices = offered_choices();
+    choices[0]["name_localizations"] = json!({ "ar": "شريك" });
+    let mut s = stage_with(choices, "User").await;
+    let (subject, session) = (s.subject.clone(), s.owner_session.clone());
+    let first = offered_badges()[0].id;
+    let pressed = s.press(&session, "give", &subject.id, first, None).await;
     let (status, _) = s.hand("grant", &pressed).await;
     assert_eq!(status, Status::BadRequest);
-    assert!(!s.holds(&subject, "plus").await);
+    assert!(!s.holds(&subject, first).await);
+}
+
+#[rocket::async_test]
+async fn a_user_asked_for_as_text_is_refused() {
+    let mut s = stage_with(offered_choices(), "String").await;
+    let (subject, owner) = (s.subject.clone(), s.owner.clone());
+    let session = s.owner_session.clone();
+    let pressed = s.press(&session, "give", &subject.id, "staff", None).await;
+    let (status, body) = s.hand("grant", &pressed).await;
+    assert_eq!(status, Status::BadRequest, "{body}");
+    assert!(!s.holds(&subject, "staff").await);
+    // the user came as text, so the record names nobody
+    let log: Vec<_> = s
+        .harness
+        .db
+        .fetch_platform_audit(revolt_database::PlatformAuditQuery {
+            limit: 500,
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|e| e.actor_id == owner.id && e.action == "badge.command.grant")
+        .map(|e| (format!("{:?}", e.outcome), e.target_id, e.summary))
+        .collect();
+    assert_eq!(log, vec![("Denied".to_string(), None, Some("staff (command not as offered)".to_string()))]);
+}
+
+#[rocket::async_test]
+async fn an_unknown_badge_is_logged_as_unknown() {
+    // a bot that adds a badge the server does not have
+    let mut choices = offered_choices();
+    choices.as_array_mut().unwrap().push(json!({ "name": "Gold", "value": "no_such_badge" }));
+    let mut s = stage_with(choices, "User").await;
+    let (subject, other, owner) = (s.subject.clone(), s.other.clone(), s.owner.clone());
+    let (other_session, owner_session) = (s.other_session.clone(), s.owner_session.clone());
+    let pressed = s.press(&other_session, "give", &subject.id, "no_such_badge", None).await;
+    let (status, _) = s.hand("grant", &pressed).await;
+    assert_eq!(status, Status::Forbidden);
+    let pressed = s.press(&owner_session, "give", &subject.id, "no_such_badge", None).await;
+    let (status, _) = s.hand("grant", &pressed).await;
+    assert_eq!(status, Status::BadRequest);
+    let mut log = s.audit_full(&subject).await;
+    log.sort();
+    let mut wanted = vec![
+        ("badge.command.grant".to_string(), other.id.clone(), "Denied".to_string(), "unknown (owner only)".to_string()),
+        ("badge.command.grant".to_string(), owner.id.clone(), "Denied".to_string(), "unknown (command not as offered)".to_string()),
+    ];
+    wanted.sort();
+    assert_eq!(log, wanted);
+}
+
+#[rocket::async_test]
+async fn only_the_badge_bots_badge_command_keeps_its_options() {
+    let mut s = stage().await;
+    let (subject, session) = (s.subject.clone(), s.owner_session.clone());
+    let pressed = s.press(&session, "give", &subject.id, "partner", None).await;
+    let stored = s.harness.db.fetch_interaction(&pressed.0).await.unwrap();
+    assert_eq!(stored.command_options.len(), 1);
+    assert_eq!(stored.command_options[0].name, "give");
+
+    // another bot with its own `/badge`: nothing of what the person chose is kept
+    let (other_bot, other_user) = s.harness.new_bot(&s.owner).await;
+    Member::create(&s.harness.db, &s.server, &other_user, None).await.unwrap();
+    revolt_presence::create_session(&other_bot.id, 0).await;
+    let command = revolt_database::create_application_command(
+        &s.harness.db,
+        &other_bot.id,
+        None,
+        serde_json::from_value(json!({
+            "name": "badge",
+            "description": "Something else",
+            "options": [{ "type": "String", "name": "note", "description": "Note" }]
+        }))
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+    let status_and_id = {
+        let response = s
+            .harness
+            .client
+            .post("/interactions")
+            .header(Header::new("x-session-token", session.clone()))
+            .header(ContentType::JSON)
+            .body(
+                json!({
+                    "type": "Command",
+                    "application_id": other_bot.id,
+                    "channel_id": s.channel.id(),
+                    "command_id": command.id,
+                    "command_version": command.version,
+                    "options": [{ "type": "String", "name": "note", "value": "private words" }],
+                    "nonce": ulid::Ulid::new().to_string(),
+                })
+                .to_string(),
+            )
+            .dispatch()
+            .await;
+        let status = response.status();
+        let accepted: Value = response.into_json().await.unwrap_or(Value::Null);
+        (status, accepted["_id"].as_str().unwrap_or_default().to_string())
+    };
+    assert_eq!(status_and_id.0, Status::Ok);
+    let stored = s.harness.db.fetch_interaction(&status_and_id.1).await.unwrap();
+    assert!(stored.command_options.is_empty());
 }

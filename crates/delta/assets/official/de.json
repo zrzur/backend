@@ -171,6 +171,14 @@
     "title": "Ein Abzeichen wurde entfernt",
     "body": "Das Abzeichen „{name}“ wurde aus deinem Profil entfernt.\n{note}"
   },
+  "badge.command_given": {
+    "title": "Ein Abzeichen wurde vergeben",
+    "body": "Du hast {user} das Abzeichen „{name}“ gegeben.\n{note}"
+  },
+  "badge.command_taken": {
+    "title": "Ein Abzeichen wurde entzogen",
+    "body": "Du hast {user} das Abzeichen „{name}“ entzogen.\n{note}"
+  },
   "bug.triage": {
     "title": "Wir sehen uns deinen Fehlerbericht an",
     "body": "„{title}“\n{note}"

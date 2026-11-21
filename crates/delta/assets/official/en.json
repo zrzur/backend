@@ -171,6 +171,14 @@
     "title": "A badge was removed",
     "body": "The badge “{name}” was removed from your profile.\n{note}"
   },
+  "badge.command_given": {
+    "title": "A badge was given",
+    "body": "You gave the badge “{name}” to {user}.\n{note}"
+  },
+  "badge.command_taken": {
+    "title": "A badge was taken away",
+    "body": "You took the badge “{name}” from {user}.\n{note}"
+  },
   "bug.triage": {
     "title": "We're looking at your bug report",
     "body": "“{title}”\n{note}"

@@ -341,9 +341,10 @@ async fn command(
     interaction.command_id = Some(command.id.clone());
     interaction.command_name = Some(command.name.clone());
     interaction.autocomplete_type = context.focused_type;
-    // kept for routes that act on what the person chose (`/badges/command`);
-    // an autocomplete carries half-typed text, which is not kept
-    if !autocomplete {
+    // kept only for `/badge` of the configured badge bot, whose route acts
+    // on what the person chose (`/badges/command`); no other bot's options
+    // are stored, and an autocomplete's half-typed text never is
+    if !autocomplete && crate::routes::badges::command::keeps_options(&scope.bot.id, &command.name).await {
         interaction.command_options = options.clone();
     }
 

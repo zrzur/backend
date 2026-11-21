@@ -171,6 +171,14 @@
     "title": "أُزيلت شارة",
     "body": "أُزيلت شارة «{name}» من ملفك الشخصي.\n{note}"
   },
+  "badge.command_given": {
+    "title": "مُنحت شارة",
+    "body": "منحتَ شارة «{name}» إلى {user}.\n{note}"
+  },
+  "badge.command_taken": {
+    "title": "سُحبت شارة",
+    "body": "سحبتَ شارة «{name}» من {user}.\n{note}"
+  },
   "bug.triage": {
     "title": "نراجع بلاغ الخطأ الذي أرسلته",
     "body": "«{title}»\n{note}"
