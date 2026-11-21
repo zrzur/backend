@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Member channel overrides when someone leaves (2026-11-21)
+
+- A member who leaves, is kicked or is banned loses their own entry in `member_permissions` on every channel of the server (a `ChannelUpdate` per channel changed). Before, the entry stayed: the app could not remove it and it let the person back into a private channel when they rejoined.
+- `PUT /channels/{id}/permissions/members/{user_id}` takes an empty override (allow 0, deny 0) for a user who is no longer a member, so an entry left behind can always be removed. Any other override for a non-member is still `404 NotFound`.
+
 ### Bot platform: fixes from the audit of 2026-11-21
 
 - A bot name may have one space between words ("Liro Bot", owner's report of 2026-11-21): on `POST /bots/create` and `PATCH /bots/{bot_id}` it becomes the bot's display name, and its username has `_` for the spaces (`Liro_Bot`), so mentions, uniqueness and the discriminator work as before. A name without a space is unchanged; a double space, a space at either end, a zero-width character or a new line is refused. Renaming to a name without a space drops the display name made from the old one.
