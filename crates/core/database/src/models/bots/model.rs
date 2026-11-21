@@ -125,6 +125,21 @@ impl Bot {
     where
         D: Into<Option<PartialBot>>,
     {
+        Bot::create_with_display_name(db, username, None, owner, data).await
+    }
+
+    /// [`Bot::create`] with the name people see set in the same write as the
+    /// bot's user, so a failure never leaves a bot without it
+    pub async fn create_with_display_name<D>(
+        db: &Database,
+        username: String,
+        display_name: Option<String>,
+        owner: &User,
+        data: D,
+    ) -> Result<(Bot, User)>
+    where
+        D: Into<Option<PartialBot>>,
+    {
         if owner.bot.is_some() {
             return Err(create_error!(IsBot));
         }
@@ -171,6 +186,7 @@ impl Bot {
                     owner: owner.id.to_string(),
                     verified: false,
                 }),
+                display_name,
                 ..Default::default()
             }),
         )

@@ -93,7 +93,11 @@ pub async fn edit_bot(
             }
             // a name without one: the display name made from the old name
             // goes, so the new name shows; one set some other way stays
-            None if user.display_name.as_deref() == Some(previous.replace('_', " ").as_str()) => {
+            None if user
+                .display_name
+                .as_deref()
+                .is_some_and(|shown| shown.replace(' ', "_") == previous) =>
+            {
                 user.update(db, Default::default(), vec![revolt_database::FieldsUser::DisplayName])
                     .await?
             }

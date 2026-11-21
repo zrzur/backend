@@ -482,4 +482,23 @@ async fn a_bot_name_may_have_spaces_between_words() {
     assert_eq!((user.username.as_str(), user.display_name.as_deref()), ("Mira", None));
     let (status, _) = rename("Mira  Bot").await;
     assert_eq!(status, Status::BadRequest);
+
+    // third review: an underscore of its own in the name, then a plain
+    // rename: the old display name goes too
+    let (status, body) = rename("a_b c").await;
+    assert_eq!(status, Status::Ok, "{body}");
+    let user = harness.db.fetch_user(&id).await.unwrap();
+    assert_eq!((user.username.as_str(), user.display_name.as_deref()), ("a_b_c", Some("a_b c")));
+    let (status, body) = rename("xy").await;
+    assert_eq!(status, Status::Ok, "{body}");
+    let user = harness.db.fetch_user(&id).await.unwrap();
+    assert_eq!((user.username.as_str(), user.display_name.as_deref()), ("xy", None));
+
+    // every decimal digit, as the web dialog takes it
+    let (status, body) = create("بوت ٢").await;
+    assert_eq!(status, Status::Ok, "{body}");
+    let made: Value = serde_json::from_str(&body).unwrap();
+    let arabic = harness.db.fetch_user(made["_id"].as_str().unwrap()).await.unwrap();
+    assert_eq!(arabic.username, "بوت_٢");
+    assert_eq!(arabic.display_name.as_deref(), Some("بوت ٢"));
 }
