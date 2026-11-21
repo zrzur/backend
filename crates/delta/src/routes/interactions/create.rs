@@ -264,11 +264,14 @@ async fn command(
     {
         return Err(create_error!(UnknownCommand));
     }
-    if data
-        .command_version
-        .as_ref()
-        .is_some_and(|version| version != &command.version)
-    {
+    // the badge bot's `/badge` keeps what the person chose for a later route:
+    // there the version the person saw is required, not only checked when sent
+    let keeps = !autocomplete && crate::routes::badges::command::keeps_options(&scope.bot.id, &command.name).await;
+    let version_differs = match data.command_version.as_ref() {
+        Some(version) => version != &command.version,
+        None => keeps,
+    };
+    if version_differs {
         return Err(invalid("this command changed, reload and try again"));
     }
     let channel_nsfw = matches!(&scope.channel, Channel::TextChannel { nsfw: true, .. });
@@ -344,7 +347,7 @@ async fn command(
     // kept only for `/badge` of the configured badge bot, whose route acts
     // on what the person chose (`/badges/command`); no other bot's options
     // are stored, and an autocomplete's half-typed text never is
-    if !autocomplete && crate::routes::badges::command::keeps_options(&scope.bot.id, &command.name).await {
+    if keeps {
         interaction.command_options = options.clone();
         interaction.command_version = Some(command.version.clone());
     }

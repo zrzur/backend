@@ -617,3 +617,48 @@ async fn the_command_registers_with_manage_server_as_the_bot_sends_it() {
     assert_eq!(status, Status::Ok, "{synced}");
     assert_eq!(synced[0]["default_member_permissions"], 2);
 }
+
+#[rocket::async_test]
+async fn a_badge_press_must_say_which_version_it_saw() {
+    let s = stage().await;
+    let send = |application: String, command: String, options: Value| {
+        s.harness
+            .client
+            .post("/interactions")
+            .header(Header::new("x-session-token", s.owner_session.clone()))
+            .header(ContentType::JSON)
+            .body(
+                json!({
+                    "type": "Command",
+                    "application_id": application,
+                    "channel_id": s.channel.id(),
+                    "command_id": command,
+                    "options": options,
+                    "nonce": ulid::Ulid::new().to_string(),
+                })
+                .to_string(),
+            )
+    };
+    // `/badge` of the badge bot without `command_version`: refused like a changed command
+    let options = json!([{ "type": "SubCommand", "name": "give", "options": [
+        { "type": "User", "name": "user", "value": s.subject.id },
+        { "type": "String", "name": "badge", "value": "partner" }
+    ]}]);
+    let status = send(s.bot.id.clone(), s.command.id.clone(), options).dispatch().await.status();
+    assert_eq!(status, Status::BadRequest);
+
+    // another bot's command without it still works
+    let (other_bot, other_user) = s.harness.new_bot(&s.owner).await;
+    Member::create(&s.harness.db, &s.server, &other_user, None).await.unwrap();
+    revolt_presence::create_session(&other_bot.id, 0).await;
+    let command = revolt_database::create_application_command(
+        &s.harness.db,
+        &other_bot.id,
+        None,
+        serde_json::from_value(json!({ "name": "badge", "description": "Something else" })).unwrap(),
+    )
+    .await
+    .unwrap();
+    let status = send(other_bot.id.clone(), command.id.clone(), json!([])).dispatch().await.status();
+    assert_eq!(status, Status::Ok);
+}
