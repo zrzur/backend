@@ -72,6 +72,11 @@ pub async fn set_member_permissions(
         } => member_permissions.get(&user_id).map(|value| (*value).into()),
         _ => None,
     };
+    // nothing stored and nothing asked for: no write, no event, no audit entry
+    if clearing && current_value.is_none() {
+        return Ok(Json(channel.into()));
+    }
+
     permissions
         .throw_permission_override(current_value, &data.permissions)
         .await?;
@@ -99,6 +104,7 @@ pub async fn set_member_permissions(
 #[cfg(test)]
 mod test {
     use crate::{rocket, util::test::TestHarness};
+    use revolt_database::{AuditLogEntryAction, AuditLogQuery};
     use revolt_database::{
         util::permissions::DatabasePermissionQuery, Channel, Member, PartialMember, Role, Server, User,
     };
@@ -331,6 +337,56 @@ mod test {
         assert_eq!(put(&s, &s.moderator_token, &s.outsider, 0, VIEW).await, Status::NotFound);
         assert_eq!(put(&s, &s.owner_token, &s.outsider, VIEW | SEND, 0).await, Status::NotFound);
         assert_eq!(stored(&s, &s.outsider).await, Some(OverrideField { a: VIEW, d: 0 }));
+    }
+
+    /// The server's audit entries for member overrides on this channel
+    async fn logged(s: &Setup) -> usize {
+        s.harness
+            .db
+            .get_server_audit_logs(
+                &s.server.id,
+                AuditLogQuery {
+                    user: None,
+                    target: None,
+                    r#type: None,
+                    before: None,
+                    after: None,
+                    limit: 100,
+                },
+            )
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|entry| {
+                matches!(&entry.action, AuditLogEntryAction::ChannelMemberPermissionsEdit { channel, .. } if channel == s.channel.id())
+            })
+            .count()
+    }
+
+    #[rocket::async_test]
+    async fn an_empty_override_with_nothing_stored_changes_nothing() {
+        let s = setup().await;
+        // a real change is logged (and shows the log is read)
+        assert_eq!(put(&s, &s.owner_token, &s.member, VIEW, 0).await, Status::Ok);
+        let mut before = 0;
+        for _ in 0..40 {
+            before = logged(&s).await;
+            if before >= 1 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        assert_eq!(before, 1);
+
+        // a member and a non-member with no entry: answered, nothing written
+        let (_, _, other) = s.harness.new_user().await;
+        join(&s.harness, &s.server, &other, None).await;
+        assert_eq!(put(&s, &s.owner_token, &other, 0, 0).await, Status::Ok);
+        assert_eq!(put(&s, &s.moderator_token, &s.outsider, 0, 0).await, Status::Ok);
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert_eq!(logged(&s).await, 1);
+        assert_eq!(stored(&s, &other).await, None);
+        assert_eq!(stored(&s, &s.member).await, Some(OverrideField { a: VIEW, d: 0 }));
     }
 
     #[rocket::async_test]
