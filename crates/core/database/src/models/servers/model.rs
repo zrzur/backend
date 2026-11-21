@@ -706,6 +706,11 @@ impl Server {
         .p(self.id.clone())
         .await;
 
+        // free its custom link (zrzur.cc/<name>) at once, so another server
+        // can claim the name; not only through its landing channel's invites
+        if let Some(vanity) = &self.vanity_invite {
+            db.delete_invite(&vanity.code).await.ok();
+        }
         db.unplace_supercharges_from_server(&self.id).await?;
         // its paid Discover places go to whoever waits next
         db.delete_promotions_for_target(&self.id).await?;
