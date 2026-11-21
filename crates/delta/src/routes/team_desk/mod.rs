@@ -41,9 +41,12 @@
 //! all.
 //!
 //! Every team role is a volunteer role in a volunteer project, and every
-//! text says so. No age is asked or kept: anyone with an account may apply,
-//! unless a role is marked `adult` in the settings (none is by default);
-//! then the age group the account already states is read.
+//! text says so. Anyone with an account may apply, unless a role is marked
+//! `adult` in the settings (none is by default); then the age group the
+//! account already states is read. Only while the volunteer care is on
+//! (`[features.team_applications.volunteers]`) a first step, "About you",
+//! asks name, age (16 or over) and country and the tick for the volunteer
+//! rules; they are kept as the person's identity until the application ends.
 //!
 //! What a person reads (the roles, the questions, the messages) exists in
 //! the app's seven languages (`util::team_texts`); what the reviewers read
@@ -51,9 +54,11 @@
 
 use revolt_config::{config, FeaturesTeamApplications, TeamRole};
 use revolt_database::{
-    record_platform_audit, staff_now, util::age::owner_band, AuditOutcome, AuditRecord, Channel,
+    record_platform_audit, staff_now,
+    util::{age::owner_band, team_activity},
+    AuditOutcome, AuditRecord, Channel,
     Database, Interaction, InteractionSource, PartialChannel, PartialMember, Server, TeamAnswer,
-    TeamApplication, TeamApplicationStatus, TeamGrant, User,
+    TeamApplication, TeamApplicationStatus, TeamGrant, TeamIdentity, User,
 };
 use revolt_models::v0::{self, InteractionType};
 use revolt_permissions::ChannelPermission;
@@ -65,9 +70,25 @@ use crate::util::team_texts::{self, RoleField};
 
 #[cfg(test)]
 mod tests;
+pub(crate) mod volunteers;
 
 pub fn routes() -> Vec<Route> {
-    routes![desk_config, queue, application_state, mine, apply, withdraw, act, settle]
+    routes![
+        desk_config,
+        queue,
+        application_state,
+        mine,
+        about,
+        apply,
+        withdraw,
+        act,
+        identity,
+        settle,
+        status,
+        away,
+        leave,
+        report
+    ]
 }
 
 const MIN_REASON: usize = 3;
@@ -77,6 +98,17 @@ const MAX_ANSWER: usize = 1000;
 const MIN_LANGUAGES: usize = 2;
 const MAX_LANGUAGES: usize = 200;
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
+
+/// Milliseconds of a number of days from the settings, kept within 0..=3650
+fn days_ms(days: i64) -> i64 {
+    days.clamp(0, 3650) * DAY_MS
+}
+const MIN_AGE: u8 = 16;
+const MAX_AGE: u8 = 99;
+const MIN_NAME: usize = 2;
+const MAX_NAME: usize = 80;
+const MIN_COUNTRY: usize = 2;
+const MAX_COUNTRY: usize = 56;
 /// After withdrawing, a person waits `withdraw_wait_minutes` before applying
 /// again; the record without answers lives exactly as long
 fn withdraw_wait_ms(settings: &FeaturesTeamApplications) -> i64 {
@@ -143,6 +175,27 @@ async fn confirmed(
     id: &str,
     expected: &str,
 ) -> bool {
+    confirmed_button(
+        db,
+        settings,
+        interaction,
+        expected,
+        ACCEPT_LABEL,
+        &format!("ta:accept:{id}"),
+    )
+    .await
+}
+
+/// The same check for any private confirmation: one row, one button with
+/// this `label` and `custom_id`, the server's words `expected` unchanged
+async fn confirmed_button(
+    db: &Database,
+    settings: &FeaturesTeamApplications,
+    interaction: &Interaction,
+    expected: &str,
+    want_label: &str,
+    want_custom_id: &str,
+) -> bool {
     let Some(InteractionSource::Ephemeral {
         interaction_id,
         message_id,
@@ -171,7 +224,7 @@ async fn confirmed(
                 label: Some(label),
                 custom_id: Some(custom_id),
                 ..
-            }] => label == ACCEPT_LABEL && custom_id == &format!("ta:accept:{id}"),
+            }] => label == want_label && custom_id == want_custom_id,
             _ => false,
         },
         _ => false,
@@ -238,6 +291,26 @@ pub(crate) mod test_settings {
     }
 }
 
+/// The settings for the admin console's Team page: the feature and the
+/// volunteer care are on. Tests register them under the staff member's id.
+pub(crate) async fn staff_desk(staff_id: &str) -> Result<FeaturesTeamApplications> {
+    #[cfg(test)]
+    let settings = match test_settings::get(staff_id) {
+        Some(settings) => settings,
+        None => (*config().await.features.team_applications).clone(),
+    };
+    #[cfg(not(test))]
+    let settings = {
+        let _ = staff_id;
+        (*config().await.features.team_applications).clone()
+    };
+    if settings.enabled() && settings.volunteers.enabled {
+        Ok(settings)
+    } else {
+        Err(create_error!(NotFound))
+    }
+}
+
 /// The settings, if the feature is switched on and `caller` is its bot.
 /// Anyone else gets "not found": the routes do not exist for them.
 async fn desk(caller: &User) -> Result<FeaturesTeamApplications> {
@@ -257,6 +330,73 @@ async fn desk(caller: &User) -> Result<FeaturesTeamApplications> {
 }
 
 // ---- small helpers ----
+
+/// Everything whose time is up goes: applications, and the identities of
+/// people who are not volunteers any more
+pub(crate) async fn purge_due(db: &Database, now: i64) -> Result<()> {
+    db.delete_team_applications_due(now).await?;
+    db.delete_team_identities_due(now).await?;
+    Ok(())
+}
+
+/// The person has no other open application, no current membership and no
+/// reviewer role
+async fn out_of_reach(
+    db: &Database,
+    settings: &FeaturesTeamApplications,
+    person: &str,
+    except: &str,
+) -> bool {
+    let busy = db
+        .fetch_team_applications_of(person)
+        .await
+        .map(|all| all.iter().any(|a| a.is_open() && a.id != except))
+        .unwrap_or(true);
+    let member = db
+        .fetch_team_members_of(person)
+        .await
+        .map(|all| all.iter().any(|m| m.is_current()))
+        .unwrap_or(true);
+    // a failed lookup keeps the identity for now; it never grants anything
+    let reviewer = team_activity::holds_reviewer_role(db, settings, person)
+        .await
+        .unwrap_or(true);
+    !busy && !member && !reviewer
+}
+
+/// The identity of someone whose application ended, when nothing else
+/// keeps them in the team's reach: erased at once (`erase`) or set to go when
+/// the application's own time is up (or after `identity_keep_days` when the
+/// application has none)
+async fn release_identity(
+    db: &Database,
+    settings: &FeaturesTeamApplications,
+    application: &TeamApplication,
+    erase: bool,
+) {
+    if !out_of_reach(db, settings, &application.user_id, &application.id).await {
+        return;
+    }
+    match erase {
+        true => {
+            let _ = db.delete_team_identity(&application.user_id).await;
+        }
+        false => {
+            // one conditional write: never a whole record written back
+            let at = application.purge_at.unwrap_or_else(|| {
+                staff_now() + days_ms(settings.volunteers.identity_keep_days)
+            });
+            let _ = db.mark_team_identity_purge(&application.user_id, at).await;
+        }
+    }
+}
+
+/// The identity of a person who is in the team's reach again keeps no
+/// deletion time
+async fn keep_identity(db: &Database, person: &str) {
+    // one write that never creates a record: one erased in between stays erased
+    let _ = db.clear_team_identity_purge(person).await;
+}
 
 fn status_word(status: TeamApplicationStatus) -> &'static str {
     match status {
@@ -294,7 +434,7 @@ async fn name_of(db: &Database, user_id: &str) -> String {
 }
 
 /// The English name of a role, as the reviewers read it
-fn role_name(settings: &FeaturesTeamApplications, key: &str) -> String {
+pub(crate) fn role_name(settings: &FeaturesTeamApplications, key: &str) -> String {
     settings
         .role(key)
         .map(|role| team_texts::role_text(role, "en", RoleField::Name))
@@ -391,6 +531,27 @@ pub struct DeskConfig {
     pub limits: DeskLimits,
     /// Roles open for applications, in the order shown
     pub roles: Vec<DeskRole>,
+    /// The volunteer care: what the bot needs to know about it
+    pub volunteers: DeskVolunteers,
+}
+
+/// The volunteer care as the bot sees it (no numbers it does not draw)
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct DeskVolunteers {
+    pub enabled: bool,
+    pub rules_version: String,
+    /// The team server's id, empty when none is set
+    pub team_server: String,
+    /// The private channel of the weekly report, empty when none is set
+    pub report_channel: String,
+    /// Days a volunteer's name, age and country are kept after they leave,
+    /// for the privacy lines of the Apply message
+    #[serde(default)]
+    pub identity_keep_days: i64,
+    /// Days the daily counts are kept, for the counting line of the Apply
+    /// message
+    #[serde(default)]
+    pub activity_keep_days: i64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -477,6 +638,14 @@ async fn desk_config(db: &State<Database>, user: User) -> Result<Json<DeskConfig
             max_reason: MAX_REASON,
         },
         roles,
+        volunteers: DeskVolunteers {
+            enabled: settings.volunteers.enabled,
+            rules_version: settings.volunteers.rules_version.clone(),
+            team_server: settings.volunteers.team_server.clone(),
+            report_channel: settings.volunteers.report_channel.clone(),
+            identity_keep_days: settings.volunteers.identity_keep_days.max(0),
+            activity_keep_days: team_activity::activity_keep_days(&settings),
+        },
     }))
 }
 
@@ -508,6 +677,12 @@ pub struct DeskEntry {
     pub adult: bool,
     /// Names of the official servers the person is a member of
     pub servers: Vec<String>,
+    /// The person gave name, age and country in "About you" (the values
+    /// themselves are never part of a card)
+    pub has_identity: bool,
+    /// The age stated in "About you" and the account's own age group
+    /// disagree about being 18 or over; a reviewer looks twice
+    pub age_note: bool,
     pub answers: Vec<TeamAnswer>,
     pub submitted_at: i64,
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -568,6 +743,11 @@ async fn entry(
         None => None,
     };
     let channel = settings.review_channel(&application.role).to_string();
+    let identity = db.fetch_team_identity(&person.id).await.ok().flatten();
+    let age_note = match &identity {
+        Some(identity) => age_disagrees(identity.age, owner_band(db, &person).await),
+        None => false,
+    };
     Some(DeskEntry {
         id: application.id.clone(),
         status: status_word(application.status).to_string(),
@@ -587,6 +767,8 @@ async fn entry(
         account_created_at: created_at(&person.id),
         adult: application.adult,
         servers,
+        has_identity: identity.is_some(),
+        age_note,
         answers: application.answers.clone(),
         submitted_at: application.submitted_at,
         interviewer_name,
@@ -611,7 +793,7 @@ async fn entry(
 async fn queue(db: &State<Database>, user: User) -> Result<Json<Vec<DeskEntry>>> {
     let settings = desk(&user).await?;
     // nothing outlives its time, whether or not the clean-up task ran
-    db.delete_team_applications_due(staff_now()).await?;
+    purge_due(db, staff_now()).await?;
     let mut entries = Vec::new();
     for application in db.fetch_open_team_applications().await? {
         if let Some(entry) = entry(db, &settings, &application).await {
@@ -642,7 +824,7 @@ pub struct DeskState {
 #[get("/applications/<id>")]
 async fn application_state(db: &State<Database>, user: User, id: &str) -> Result<Json<DeskState>> {
     desk(&user).await?;
-    db.delete_team_applications_due(staff_now()).await?;
+    purge_due(db, staff_now()).await?;
     let Ok(application) = db.fetch_team_application(id).await else {
         return Ok(Json(DeskState {
             status: "Gone".to_string(),
@@ -770,6 +952,16 @@ async fn reviewer(
     Ok(person)
 }
 
+/// Stated 18 or over while the account says otherwise, or the other way
+/// round. An account with no age on record disagrees with nothing.
+fn age_disagrees(stated: u8, band: v0::AgeBand) -> bool {
+    match band {
+        v0::AgeBand::Unknown => false,
+        v0::AgeBand::AdultDeclared => stated < 18,
+        _ => stated >= 18,
+    }
+}
+
 async fn is_adult(db: &Database, person: &User) -> bool {
     owner_band(db, person).await == v0::AgeBand::AdultDeclared
 }
@@ -818,7 +1010,7 @@ fn standing(
         let since = application.acted_at.unwrap_or(application.submitted_at);
         let until = match application.status {
             TeamApplicationStatus::Withdrawn => since + withdraw_wait_ms(settings),
-            _ => since + settings.cooldown_days.max(0) * DAY_MS,
+            _ => since + days_ms(settings.cooldown_days),
         };
         if until > now && latest.as_ref().is_none_or(|(_, other)| until > *other) {
             latest = Some((application.clone(), until));
@@ -842,7 +1034,7 @@ fn mine_application(settings: &FeaturesTeamApplications, a: &TeamApplication) ->
 
 async fn mine_of(db: &Database, settings: &FeaturesTeamApplications, person: &User) -> Result<Mine> {
     let now = staff_now();
-    db.delete_team_applications_due(now).await?;
+    purge_due(db, now).await?;
     let applications = db.fetch_team_applications_of(&person.id).await?;
     let (application, wait_until) = standing(settings, &applications, now);
     let offered_roles: Vec<_> = settings.roles.iter().filter(|role| offered(role)).collect();
@@ -894,6 +1086,7 @@ async fn mine(db: &State<Database>, user: User, data: Json<DataDeskAct>) -> Resu
 pub struct ApplyOutcome {
     pub applied: bool,
     /// Why not: `already_open`, `wait`, `role_closed`, `adult_only`,
+    /// `identity_missing` ("About you" not done for the current rules),
     /// `not_open` (withdrawing something already decided)
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub problem: Option<String>,
@@ -913,10 +1106,137 @@ fn field<'a>(interaction: &'a Interaction, id: &str) -> &'a str {
         .unwrap_or_default()
 }
 
-fn length_problem(name: &str, min: usize, max: usize) -> revolt_result::Error {
+pub(crate) fn length_problem(name: &str, min: usize, max: usize) -> revolt_result::Error {
     revolt_result::failed_validation(vec![revolt_result::ValidationProblem::length(
         name, min, max,
     )])
+}
+
+/// What came of "About you"
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct AboutOutcome {
+    pub saved: bool,
+    /// Why not: `too_young`, `bad_age`, `rules_not_accepted`, `role_closed`
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub problem: Option<String>,
+}
+
+/// What a person chose in a group (`values`), or the one value of a field,
+/// trimmed
+fn chosen<'a>(interaction: &'a Interaction, id: &str) -> Vec<&'a str> {
+    let Some(field) = interaction.modal_fields.iter().find(|field| field.custom_id == id) else {
+        return Vec::new();
+    };
+    field
+        .values
+        .iter()
+        .flatten()
+        .map(String::as_str)
+        .chain(field.value.as_deref())
+        .map(str::trim)
+        .collect()
+}
+
+/// # Team desk: "About you"
+///
+/// The bot hands back the submitted form `ta:about:<role>`: name, age,
+/// country and the tick for the volunteer rules. They are kept as the
+/// person's identity, seen only through "Show identity". Problems with the
+/// answers come back in the outcome and store nothing.
+#[post("/about", data = "<data>")]
+async fn about(
+    db: &State<Database>,
+    user: User,
+    data: Json<DataDeskAct>,
+) -> Result<Json<AboutOutcome>> {
+    let settings = desk(&user).await?;
+    if !settings.volunteers.enabled {
+        return Err(create_error!(InvalidOperation));
+    }
+    let interaction = genuine(db, &settings, &data, Some(&settings.channel_apply)).await?;
+    let role_key = match (interaction.kind, pressed(&interaction)) {
+        (InteractionType::ModalSubmit, Some(("about", key))) => key.to_string(),
+        _ => return Err(create_error!(InvalidOperation)),
+    };
+    let person = applicant(db, &settings, &interaction).await?;
+    let refuse = |problem: &str| {
+        Ok(Json(AboutOutcome {
+            saved: false,
+            problem: Some(problem.to_string()),
+        }))
+    };
+    // a reviewer with no membership gives their details here too (to accept
+    // the rules, which "Show identity" needs)
+    let mut reviewer = false;
+    if role_key == "me" {
+        // "Add my details": a current volunteer, or a holder of a reviewer
+        // role, with no application open (that one asks through it)
+        let member = db
+            .fetch_team_members_of(&person.id)
+            .await?
+            .iter()
+            .any(|m| m.is_current());
+        let open = db
+            .fetch_team_applications_of(&person.id)
+            .await?
+            .iter()
+            .any(|a| a.is_open());
+        if !member && !open {
+            // fails closed: a failed lookup is not a reviewer
+            reviewer = team_activity::grants_reviewer(
+                &team_activity::holds_reviewer_role(db, &settings, &person.id).await,
+            );
+        }
+        if (!member && !reviewer) || open {
+            return refuse("not_a_volunteer");
+        }
+    } else if !settings.role(&role_key).is_some_and(offered) {
+        return refuse("role_closed");
+    }
+
+    let age = match team_texts::parse_age(field(&interaction, "age")) {
+        Some(age) if (MIN_AGE..=MAX_AGE).contains(&age) => age,
+        Some(age) if age < MIN_AGE => return refuse("too_young"),
+        _ => return refuse("bad_age"),
+    };
+    if !chosen(&interaction, "rules").contains(&"accept") {
+        return refuse("rules_not_accepted");
+    }
+    let name = field(&interaction, "name");
+    if !(MIN_NAME..=MAX_NAME).contains(&name.chars().count()) {
+        return Err(length_problem("name", MIN_NAME, MAX_NAME));
+    }
+    let country = field(&interaction, "country");
+    if !(MIN_COUNTRY..=MAX_COUNTRY).contains(&country.chars().count()) {
+        return Err(length_problem("country", MIN_COUNTRY, MAX_COUNTRY));
+    }
+
+    purge_due(db, staff_now()).await?;
+    // one form, one save
+    if !db.claim_interaction_use(&interaction.id).await? {
+        return Err(create_error!(InteractionExpired));
+    }
+    let now = staff_now();
+    // held by nothing yet (step 2 not sent): gone after a day, unless an
+    // application or a membership claims it (`keep_identity`)
+    let purge_at = out_of_reach(db, &settings, &person.id, "")
+        .await
+        .then_some(now + team_activity::ORPHAN_IDENTITY_MS);
+    db.upsert_team_identity(&TeamIdentity {
+        id: person.id.clone(),
+        name: name.to_string(),
+        age,
+        country: country.to_string(),
+        rules_version: settings.volunteers.rules_version.clone(),
+        rules_at: now,
+        purge_at,
+        reviewer,
+    })
+    .await?;
+    Ok(Json(AboutOutcome {
+        saved: true,
+        problem: None,
+    }))
 }
 
 /// # Team desk: file an application
@@ -951,6 +1271,18 @@ async fn apply(
     // the stated age is read only for a role that asks for it
     if role.adult && !is_adult(db, &person).await {
         return refuse("adult_only", None, None);
+    }
+
+    // what is past its time goes first, so a stale identity cannot pass
+    purge_due(db, staff_now()).await?;
+    // "About you" first, when the volunteer care is on
+    let identity = db.fetch_team_identity(&person.id).await?;
+    if settings.volunteers.enabled
+        && !identity
+            .as_ref()
+            .is_some_and(|identity| identity.rules_version == settings.volunteers.rules_version)
+    {
+        return refuse("identity_missing", None, None);
     }
 
     // the answers, as the person sent them
@@ -990,7 +1322,7 @@ async fn apply(
     }
 
     let now = staff_now();
-    db.delete_team_applications_due(now).await?;
+    purge_due(db, now).await?;
     let existing = db.fetch_team_applications_of(&person.id).await?;
     match standing(&settings, &existing, now) {
         (Some(open), None) => {
@@ -1023,6 +1355,9 @@ async fn apply(
         purge_at: None,
     };
     db.insert_team_application(&application).await?;
+    if identity.is_some_and(|identity| identity.purge_at.is_some()) {
+        keep_identity(db, &person.id).await;
+    }
     // two forms sent in the same moment: this one goes if another is open
     let open: Vec<_> = db
         .fetch_team_applications_of(&person.id)
@@ -1037,10 +1372,17 @@ async fn apply(
         return refuse("already_open", Some(mine_application(&settings, other)), None);
     }
 
+    // with the volunteer care on, "About you" was stored too, and the
+    // receipt says so
+    let received = if settings.volunteers.enabled {
+        "received_volunteers"
+    } else {
+        "received"
+    };
     team_texts::send(
         db,
         &person.id,
-        "received",
+        received,
         Some(role),
         &role.key,
         &[
@@ -1110,6 +1452,8 @@ async fn withdraw(
             Err(_) => Err(create_error!(NotFound)),
         };
     }
+    // withdrawing erases what the person gave, identity included
+    release_identity(db, &settings, &withdrawn, true).await;
     team_texts::send(
         db,
         &withdrawn.user_id,
@@ -1233,7 +1577,7 @@ async fn give_role(db: &Database, role: Option<&TeamRole>, user_id: &str) -> Tea
     }
 }
 
-async fn server_name(db: &Database, role: Option<&TeamRole>) -> String {
+pub(crate) async fn server_name(db: &Database, role: Option<&TeamRole>) -> String {
     match role {
         Some(role) => db
             .fetch_server(&role.server)
@@ -1291,7 +1635,7 @@ async fn act(
         _ => return Err(create_error!(InvalidOperation)),
     };
 
-    db.delete_team_applications_due(staff_now()).await?;
+    purge_due(db, staff_now()).await?;
     let found = db.fetch_team_application(&id).await.ok();
     // an application that is gone is judged as one of no role: only the
     // common reviewers get an answer about it, in the common channel
@@ -1381,7 +1725,7 @@ async fn act(
         }
         "accept" => {
             decided.status = TeamApplicationStatus::Accepted;
-            decided.purge_at = Some(now + settings.accepted_retention_days.max(0) * DAY_MS);
+            decided.purge_at = Some(now + days_ms(settings.accepted_retention_days));
             // written with the decision: if the server stops before the role
             // is given, the next look gives it
             decided.grant = Some(TeamGrant::PendingJoin);
@@ -1389,7 +1733,7 @@ async fn act(
         _ => {
             decided.status = TeamApplicationStatus::Rejected;
             decided.reason = reason.clone();
-            decided.purge_at = Some(now + settings.rejected_days() * DAY_MS);
+            decided.purge_at = Some(now + days_ms(settings.rejected_days()));
         }
     }
 
@@ -1443,6 +1787,13 @@ async fn act(
     }
 
     match action.as_str() {
+        // only the date is needed for the cooldown: "About you" goes at once
+        "reject" => release_identity(db, &settings, &decided, true).await,
+        "accept" => keep_identity(db, &application.user_id).await,
+        _ => {}
+    }
+
+    match action.as_str() {
         "interview" => {
             // the conversation the reviewer writes in; opened for both
             if let Ok(mut channel) = Channel::create_dm(db, &person, &applicant).await {
@@ -1471,6 +1822,16 @@ async fn act(
             .await;
         }
         "accept" => {
+            // the acceptance is stored: the person is a volunteer now
+            let mut enrolled = None;
+            if settings.volunteers.enabled {
+                match volunteers::enrol(db, &settings, &application, &person.id).await {
+                    Ok(member) => enrolled = Some(member),
+                    Err(error) => {
+                        log::warn!("team member record not made: {:?}", error.error_type)
+                    }
+                }
+            }
             let grant = give_role(db, role, &applicant.id).await;
             decided.grant = Some(grant);
             // the status is ours now; only the grant is added
@@ -1483,15 +1844,54 @@ async fn act(
                 TeamGrant::PendingJoin => "accepted_join",
                 TeamGrant::Manual => "accepted_manual",
             };
-            team_texts::send(
+            // the welcome tells a volunteer that contributions are counted;
+            // that is the notice the daily job waits for
+            // a person who objected is not counted: no counting line, no notice
+            let counted = enrolled.as_ref().is_some_and(|member| {
+                !team_activity::counting_stopped(std::slice::from_ref(member))
+            });
+            let counting = if counted { "yes" } else { "" };
+            let days = team_activity::activity_keep_days(&settings).to_string();
+            let went = team_texts::send(
                 db,
                 &applicant.id,
                 key,
                 role,
                 &application.role,
-                &[("server", &server)],
+                &[
+                    ("server", &server),
+                    ("counting", counting),
+                    ("days", &days),
+                    ("privacy", &settings.privacy_url),
+                ],
             )
             .await;
+            // noted only when the welcome went out; otherwise the daily job
+            // sends the notice
+            let enrolled_id = enrolled.as_ref().map(|member| member.id.clone());
+            if let (Some(member), true) = (enrolled.filter(|_| counted), went) {
+                volunteers::mark_counting_notice(db, &member.id).await;
+            }
+            // the invite to the team server goes with the welcome, in private
+            if settings.volunteers.enabled {
+                if let Some(code) =
+                    volunteers::invite_to_team_server(db, &settings, &applicant.id).await
+                {
+                    // kept on the membership, so it goes when the membership ends
+                    if let Some(id) = &enrolled_id {
+                        volunteers::keep_invite(db, id, &code).await;
+                    }
+                    team_texts::send(
+                        db,
+                        &applicant.id,
+                        "volunteer.invite",
+                        role,
+                        &application.role,
+                        &[("invite", &code)],
+                    )
+                    .await;
+                }
+            }
             if grant == TeamGrant::Manual {
                 // the owner of the server gives such a role by hand
                 let owner = match role {
@@ -1553,6 +1953,244 @@ async fn act(
     Ok(Json(outcome))
 }
 
+/// What "Show identity" shows a reviewer. Name and country are already
+/// escaped (`team_texts::plain`): mentions, links and markdown are dead text.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct IdentityView {
+    pub name: String,
+    /// The age as the person stated it on `age_given_at`
+    pub age: u8,
+    /// When the age was stated (the time "About you" was sent),
+    /// milliseconds since the epoch; 0 when nothing is on file
+    #[serde(default)]
+    pub age_given_at: i64,
+    pub country: String,
+    /// The stated age, grown by the whole years since, and the account's
+    /// own age group disagree
+    pub age_note: bool,
+    /// There is nothing to show: no "About you", or it was erased
+    pub missing: bool,
+    /// Nothing is shown because the viewer has not accepted the current
+    /// volunteer rules (their confidentiality promise)
+    #[serde(default)]
+    pub rules_needed: bool,
+}
+
+/// Whether `viewer` may see identities: they accepted the current volunteer
+/// rules ("About you" with today's `rules_version`), or they own the desk
+/// server
+async fn viewer_bound(
+    db: &Database,
+    settings: &FeaturesTeamApplications,
+    viewer: &str,
+) -> Result<bool> {
+    let now = staff_now();
+    let accepted = db.fetch_team_identity(viewer).await?.is_some_and(|identity| {
+        identity.rules_version == settings.volunteers.rules_version
+            && !identity.purge_at.is_some_and(|at| at <= now)
+    });
+    if accepted {
+        return Ok(true);
+    }
+    Ok(db
+        .fetch_server(&settings.server)
+        .await
+        .is_ok_and(|server| server.owner == viewer))
+}
+
+/// Milliseconds of an average year
+const YEAR_MS: i64 = 31_556_952_000;
+
+/// The age stated at `given_at`, with the whole years since added
+fn age_now(stated: u8, given_at: i64, now: i64) -> u8 {
+    let years = ((now - given_at).max(0) / YEAR_MS).min(255);
+    u8::try_from(i64::from(stated) + years).unwrap_or(u8::MAX)
+}
+
+/// # Team desk: show identity
+///
+/// The bot hands back the press of `ta:identity:<application id>` in the
+/// role's review channel. The presser must be a reviewer for that role right
+/// now. Every view is logged (who looked at whom, never what was shown); a
+/// refused press is logged too.
+#[post("/identity", data = "<data>")]
+async fn identity(
+    db: &State<Database>,
+    user: User,
+    data: Json<DataDeskAct>,
+) -> Result<Json<IdentityView>> {
+    let settings = desk(&user).await?;
+    if !settings.volunteers.enabled {
+        return Err(create_error!(InvalidOperation));
+    }
+    let interaction = genuine(db, &settings, &data, None).await?;
+    // one press, one look
+    if !db.claim_interaction_use(&interaction.id).await? {
+        return Err(create_error!(InteractionExpired));
+    }
+    let id = match (interaction.kind, pressed(&interaction)) {
+        (InteractionType::Component, Some(("identity", id))) if !id.is_empty() => id.to_string(),
+        _ => return Err(create_error!(InvalidOperation)),
+    };
+
+    // only "not found" means gone; a database fault is an error, not an answer
+    let found = match db.fetch_team_application(&id).await {
+        Ok(application) => Some(application),
+        Err(error) if matches!(error.error_type, revolt_result::ErrorType::NotFound) => None,
+        Err(error) => return Err(error),
+    };
+    let key = found.as_ref().map(|a| a.role.as_str()).unwrap_or_default();
+    let target = found.as_ref().map(|a| a.user_id.clone());
+    // the same words for a view and a refusal: the log says who, about whom
+    let record = |summary: String| AuditRecord {
+        actor_id: interaction.user_id.clone(),
+        action: "team.identity.view".to_string(),
+        target_kind: target.as_ref().map(|_| "user".to_string()),
+        target_id: target.clone(),
+        reason: None,
+        summary: Some(summary),
+        ..Default::default()
+    };
+    let note = format!(
+        "application {} via bot {} interaction {}",
+        id, settings.bot, interaction.id
+    );
+    let refused = |why: &'static str| {
+        let record = record(format!("refused, {why}: {note}"));
+        async move {
+            let _ = record_platform_audit(db, record, AuditOutcome::Failed).await;
+            Err::<Json<IdentityView>, _>(no_permission())
+        }
+    };
+
+    // the press must come from a review channel of an official server
+    let in_official = interaction
+        .server_id
+        .as_deref()
+        .is_some_and(|server| official_servers(&settings).iter().any(|s| s == server));
+    if !in_official
+        || !settings
+            .review_channels()
+            .iter()
+            .any(|channel| channel == &interaction.channel_id)
+    {
+        return refused("not a review channel").await;
+    }
+    let allowed = reviewer(db, &settings, &interaction, settings.role(key)).await;
+    if allowed.is_err() {
+        return refused("not a reviewer").await;
+    }
+    if interaction.channel_id != settings.review_channel(key) {
+        return refused("wrong review channel").await;
+    }
+    let person = allowed?;
+
+    let nothing = || async {
+        record_platform_audit(
+            db,
+            record(format!("nothing on file: {note}")),
+            AuditOutcome::Success,
+        )
+        .await?;
+        Ok::<_, revolt_result::Error>(Json(missing_identity()))
+    };
+    let Some(application) = found else {
+        return nothing().await;
+    };
+    // nobody reads their own
+    if application.user_id == person.id {
+        return refused("own application").await;
+    }
+    // only while the application is being decided
+    if !application.is_open() {
+        return refused("application decided").await;
+    }
+    purge_due(db, staff_now()).await?;
+    // the confidentiality promise is in the volunteer rules: a reviewer who
+    // has not accepted the current ones sees nothing (the owner of the desk
+    // server always may)
+    if !viewer_bound(db, &settings, &person.id).await? {
+        let _ = record_platform_audit(
+            db,
+            record(format!("refused, rules not accepted: {note}")),
+            AuditOutcome::Failed,
+        )
+        .await;
+        let mut view = missing_identity();
+        view.rules_needed = true;
+        return Ok(Json(view));
+    }
+    let Some(view) = identity_view(db, &application.user_id, true).await? else {
+        return nothing().await;
+    };
+    // the record first: no record, no view
+    record_platform_audit(
+        db,
+        record(note),
+        AuditOutcome::Success,
+    )
+    .await?;
+    Ok(Json(view))
+}
+
+/// What is on file for a person; `None` when there is nothing. The caller
+/// logs the view first. `for_chat`: name and country made harmless for a
+/// chat message (`team_texts::plain`, the bot's reply); otherwise raw and
+/// trimmed, for the admin console, which shows them as text.
+pub(crate) async fn identity_view(
+    db: &Database,
+    user_id: &str,
+    for_chat: bool,
+) -> Result<Option<IdentityView>> {
+    // one whose time is up is gone, whether or not the purge has run yet
+    let Some(stored) = db
+        .fetch_team_identity(user_id)
+        .await?
+        .filter(|stored| !stored.purge_at.is_some_and(|at| at <= staff_now()))
+    else {
+        return Ok(None);
+    };
+    let shown = |text: &str| {
+        if for_chat {
+            team_texts::plain(text)
+        } else {
+            text.trim().to_string()
+        }
+    };
+    // the age goes out of date: compared as it is today
+    let age_today = age_now(stored.age, stored.rules_at, staff_now());
+    let age_note = match db.fetch_user(user_id).await {
+        Ok(person) => age_disagrees(age_today, owner_band(db, &person).await),
+        Err(_) => false,
+    };
+    Ok(Some(IdentityView {
+        name: shown(&stored.name),
+        age: stored.age,
+        age_given_at: stored.rules_at,
+        country: shown(&stored.country),
+        age_note,
+        missing: false,
+        rules_needed: false,
+    }))
+}
+
+/// The answer when nothing is on file
+pub(crate) fn no_identity() -> IdentityView {
+    missing_identity()
+}
+
+fn missing_identity() -> IdentityView {
+    IdentityView {
+        name: String::new(),
+        age: 0,
+        age_given_at: 0,
+        country: String::new(),
+        age_note: false,
+        missing: true,
+        rules_needed: false,
+    }
+}
+
 /// A role given after the person joined the server
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Settled {
@@ -1570,8 +2208,11 @@ pub struct Settled {
 #[post("/settle")]
 async fn settle(db: &State<Database>, user: User) -> Result<Json<Vec<Settled>>> {
     let settings = desk(&user).await?;
-    db.delete_team_applications_due(staff_now()).await?;
+    purge_due(db, staff_now()).await?;
     let mut settled = Vec::new();
+    if settings.volunteers.enabled {
+        enrol_accepted(db, &settings).await?;
+    }
     for mut application in db.fetch_team_applications_pending_grant().await? {
         let role = settings.role(&application.role);
         let grant = give_role(db, role, &application.user_id).await;
@@ -1607,4 +2248,508 @@ async fn settle(db: &State<Database>, user: User) -> Result<Json<Vec<Settled>>> 
         });
     }
     Ok(Json(settled))
+}
+
+/// People accepted before the records existed (or whose record was not
+/// written) get one now. Each who has not given their details yet is asked,
+/// once, to add them: the record being new is what makes it once.
+async fn enrol_accepted(db: &Database, settings: &FeaturesTeamApplications) -> Result<()> {
+    // one look at every record, not one per application
+    let mut known: std::collections::HashMap<(String, String), revolt_database::TeamMember> = db
+        .fetch_team_members(&Default::default())
+        .await?
+        .into_iter()
+        .map(|m| ((m.user_id.clone(), m.role.clone()), m))
+        .collect();
+    for application in db.fetch_team_applications_accepted().await? {
+        let key = (application.user_id.clone(), application.role.clone());
+        if settings.role(&application.role).is_none() || known.contains_key(&key) {
+            continue;
+        }
+        match volunteers::enrol(db, settings, &application, "system").await {
+            Ok(member) => {
+                known.insert(key, member);
+            }
+            Err(error) => log::warn!("team member record not made: {:?}", error.error_type),
+        }
+    }
+    // everyone current without details who was not asked yet is asked, once
+    for member in known.into_values() {
+        if !member.is_current()
+            || member.history.iter().any(|h| h.action == "identity_requested")
+            || settings.role(&member.role).is_none()
+        {
+            continue;
+        }
+        if matches!(db.fetch_team_identity(&member.user_id).await, Ok(Some(_))) {
+            continue;
+        }
+        // read again right before the write: a leave, a removal or another
+        // look in between wins
+        let Ok(mut member) = db.fetch_team_member(&member.id).await else {
+            continue;
+        };
+        if !member.is_current() || member.history.iter().any(|h| h.action == "identity_requested") {
+            continue;
+        }
+        member.history.push(revolt_database::TeamHistory {
+            at: staff_now(),
+            actor: "system".to_string(),
+            action: "identity_requested".to_string(),
+        });
+        if db.update_team_member(&member).await.is_err() {
+            continue;
+        }
+        team_texts::send(
+            db,
+            &member.user_id,
+            "volunteer.identity_request",
+            settings.role(&member.role),
+            &member.role,
+            &[
+                ("keep", &settings.volunteers.identity_keep_days.max(0).to_string()),
+                ("privacy", &settings.privacy_url),
+            ],
+        )
+        .await;
+    }
+    Ok(())
+}
+
+// ---- the volunteer's own buttons ----
+
+/// One current place of a person in the team
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct MyMembership {
+    pub id: String,
+    pub role: String,
+    pub role_name: String,
+    /// Escaped (`team_texts::plain`)
+    pub server_name: String,
+    /// `trial`, `active`, `away` or `inactive`
+    pub status: String,
+    pub trial_ends_at: i64,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub away_until: Option<i64>,
+}
+
+/// Counts of this UTC month against the minimum
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct MyMonth {
+    pub contributions: u32,
+    pub minimum: i64,
+}
+
+/// The private question before leaving, worded by the server: the bot shows
+/// `text` unchanged with one button (`label`, `custom_id`)
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct LeaveConfirm {
+    pub text: String,
+    pub label: String,
+    pub custom_id: String,
+}
+
+/// What a volunteer sees about themselves, and nobody else
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct MyStatus {
+    pub memberships: Vec<MyMembership>,
+    pub month: MyMonth,
+    /// Longest "away" in days, for the form
+    pub away_max_days: i64,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub confirm: Option<LeaveConfirm>,
+    /// The language the server writes to this person in (their stored
+    /// locale), so the bot's own lines match the server's question
+    #[serde(default)]
+    pub language: String,
+    /// The person may use "Add my details": a current volunteer, or a holder
+    /// of a reviewer role (who accepts the rules there for "Show identity")
+    #[serde(default)]
+    pub can_add_details: bool,
+}
+
+/// The language of the person's stored locale, English when unknown
+async fn person_language(db: &Database, user_id: &str) -> &'static str {
+    let locale = db.fetch_user(user_id).await.ok().and_then(|person| person.locale);
+    team_texts::language_of(locale.as_deref())
+}
+
+pub(crate) fn member_word(status: revolt_database::TeamMemberStatus) -> &'static str {
+    use revolt_database::TeamMemberStatus as S;
+    match status {
+        S::Trial => "trial",
+        S::Active => "active",
+        S::Away => "away",
+        S::Inactive => "inactive",
+        S::Left => "left",
+    }
+}
+
+async fn my_status(
+    db: &Database,
+    settings: &FeaturesTeamApplications,
+    user_id: &str,
+) -> Result<MyStatus> {
+    let mut memberships = Vec::new();
+    for member in db.fetch_team_members_of(user_id).await? {
+        if !member.is_current() {
+            continue;
+        }
+        let server = db
+            .fetch_server(&member.server)
+            .await
+            .map(|server| server.name)
+            .unwrap_or_default();
+        memberships.push(MyMembership {
+            role_name: role_name(settings, &member.role),
+            server_name: team_texts::plain(&server),
+            status: member_word(member.status).to_string(),
+            trial_ends_at: member.trial_ends_at,
+            away_until: member.away_until,
+            id: member.id,
+            role: member.role,
+        });
+    }
+    let (from, to) = volunteers::month_bounds(staff_now());
+    let days = db.fetch_team_activity(user_id, from, to).await?;
+    // fails closed: a failed lookup offers no button
+    let can_add_details = !memberships.is_empty()
+        || team_activity::grants_reviewer(
+            &team_activity::holds_reviewer_role(db, settings, user_id).await,
+        );
+    Ok(MyStatus {
+        memberships,
+        month: MyMonth {
+            contributions: volunteers::month_total(&days),
+            minimum: settings.volunteers.monthly_minimum,
+        },
+        away_max_days: settings.volunteers.away_max_days,
+        confirm: None,
+        language: person_language(db, user_id).await.to_string(),
+        can_add_details,
+    })
+}
+
+/// The settings and the stored interaction of a volunteer's own press: the
+/// switch is on, the hand-back is genuine, and it comes from a person (not a
+/// bot, not suspended or banned), who is the one the answer is about.
+async fn own_press(
+    db: &Database,
+    user: &User,
+    data: &DataDeskAct,
+) -> Result<(FeaturesTeamApplications, Interaction)> {
+    let settings = desk(user).await?;
+    if !settings.volunteers.enabled {
+        return Err(create_error!(InvalidOperation));
+    }
+    let interaction = genuine(db, &settings, data, None).await?;
+    let person = db
+        .fetch_user(&interaction.user_id)
+        .await
+        .map_err(|_| no_permission())?;
+    if barred(&person) {
+        return Err(no_permission());
+    }
+    Ok((settings, interaction))
+}
+
+/// # Team desk: my status
+///
+/// The bot hands back the press of `ta:status`, in a server channel or in a
+/// private message. The answer is always about the person who pressed.
+#[post("/status", data = "<data>")]
+async fn status(
+    db: &State<Database>,
+    user: User,
+    data: Json<DataDeskAct>,
+) -> Result<Json<MyStatus>> {
+    let (settings, interaction) = own_press(db, &user, &data).await?;
+    match (interaction.kind, pressed(&interaction)) {
+        (InteractionType::Component, Some(("status", ""))) => {}
+        _ => return Err(create_error!(InvalidOperation)),
+    }
+    if !db.claim_interaction_use(&interaction.id).await? {
+        return Err(create_error!(InteractionExpired));
+    }
+    Ok(Json(my_status(db, &settings, &interaction.user_id).await?))
+}
+
+/// # Team desk: away
+///
+/// The bot hands back the submitted form `ta:away`, field `days`: 1 up to the
+/// longest away the settings allow, or `0` to be back. It applies to every
+/// current place of the person.
+#[post("/away", data = "<data>")]
+async fn away(
+    db: &State<Database>,
+    user: User,
+    data: Json<DataDeskAct>,
+) -> Result<Json<MyStatus>> {
+    let (settings, interaction) = own_press(db, &user, &data).await?;
+    match (interaction.kind, pressed(&interaction)) {
+        (InteractionType::ModalSubmit, Some(("away", ""))) => {}
+        _ => return Err(create_error!(InvalidOperation)),
+    }
+    let max = settings.volunteers.away_max_days.max(0);
+    let days = match volunteers::parse_days(field(&interaction, "days")) {
+        Some(days) if days <= max => days,
+        _ => return Err(length_problem("days", 0, max as usize)),
+    };
+    if !db.claim_interaction_use(&interaction.id).await? {
+        return Err(create_error!(InteractionExpired));
+    }
+    let mut first: Option<String> = None;
+    for mut member in db.fetch_team_members_of(&interaction.user_id).await? {
+        if volunteers::set_away(db, &mut member, &interaction.user_id, days, max).await?
+            && first.is_none()
+        {
+            first = Some(member.role.clone());
+        }
+    }
+    if let Some(role) = first {
+        let key = if days > 0 { "volunteer.away" } else { "volunteer.back" };
+        team_texts::send(
+            db,
+            &interaction.user_id,
+            key,
+            settings.role(&role),
+            &role,
+            &[("days", &days.to_string())],
+        )
+        .await;
+    }
+    Ok(Json(my_status(db, &settings, &interaction.user_id).await?))
+}
+
+/// The words a person confirms before leaving, in their language
+/// (`volunteer.leave_confirm.text`). The server writes them, the bot shows
+/// them unchanged, and `leave` reads them back from the private message
+/// that was pressed. Both presses build them the same way from the
+/// person's stored locale; if it changed in between, the words differ and
+/// the confirmation simply fails, ending nothing.
+fn leave_text(language: &str, role: &str, server: &str) -> String {
+    let server = confirm_word(server);
+    let server = if server.is_empty() { "Zrzur".to_string() } else { server };
+    team_texts::fill(
+        &team_texts::text(language, "volunteer.leave_confirm.text"),
+        &[("role", confirm_word(role)), ("server", server)],
+    )
+}
+
+/// The one label a leaving may be confirmed with, in the person's language
+fn leave_label(language: &str) -> String {
+    team_texts::text(language, "volunteer.leave_confirm.label")
+}
+
+/// # Team desk: leave
+///
+/// Two steps. The press of `ta:leave:<member id>` is answered with the
+/// server's own question (`confirm`); the press of its one button,
+/// `ta:leave_confirm:<member id>`, from that unchanged private message, ends
+/// the membership. Only the person's own membership can be named.
+#[post("/leave", data = "<data>")]
+async fn leave(
+    db: &State<Database>,
+    user: User,
+    data: Json<DataDeskAct>,
+) -> Result<Json<MyStatus>> {
+    let (settings, interaction) = own_press(db, &user, &data).await?;
+    let (confirming, id) = match (interaction.kind, pressed(&interaction)) {
+        (InteractionType::Component, Some(("leave", id))) if !id.is_empty() => {
+            (false, id.to_string())
+        }
+        (InteractionType::Component, Some(("leave_confirm", id))) if !id.is_empty() => {
+            (true, id.to_string())
+        }
+        _ => return Err(create_error!(InvalidOperation)),
+    };
+    // someone else's, gone, or already left: the same answer for all
+    let Some(mut member) = db
+        .fetch_team_members_of(&interaction.user_id)
+        .await?
+        .into_iter()
+        .find(|member| member.id == id && member.is_current())
+    else {
+        return Err(create_error!(NotFound));
+    };
+    let server = db
+        .fetch_server(&member.server)
+        .await
+        .map(|server| server.name)
+        .unwrap_or_default();
+    let language = person_language(db, &interaction.user_id).await;
+    let role = settings
+        .role(&member.role)
+        .map(|role| team_texts::role_text(role, language, RoleField::Name))
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or_else(|| role_name(&settings, &member.role));
+    let expected = leave_text(language, &role, &server);
+    let label = leave_label(language);
+    let button = format!("ta:leave_confirm:{id}");
+
+    if !confirming {
+        if !db.claim_interaction_use(&interaction.id).await? {
+            return Err(create_error!(InteractionExpired));
+        }
+        let mut shown = my_status(db, &settings, &interaction.user_id).await?;
+        shown.confirm = Some(LeaveConfirm {
+            text: expected,
+            label,
+            custom_id: button,
+        });
+        return Ok(Json(shown));
+    }
+
+    if !confirmed_button(db, &settings, &interaction, &expected, &label, &button).await {
+        return Err(create_error!(InvalidOperation));
+    }
+    if !db.claim_interaction_use(&interaction.id).await? {
+        return Err(create_error!(InteractionExpired));
+    }
+    volunteers::end_membership(db, &settings, &mut member, &interaction.user_id, "left", None)
+        .await?;
+    Ok(Json(my_status(db, &settings, &interaction.user_id).await?))
+}
+
+// ---- the weekly report ----
+
+/// One team's week. Counts and display names only.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct TeamWeek {
+    pub role: String,
+    pub role_name: String,
+    /// Escaped (`team_texts::plain`)
+    pub server_name: String,
+    /// Volunteers who belonged to the team at any time during the week
+    pub volunteers: u32,
+    /// The four status counts are `None` for a team of fewer than
+    /// [`MIN_TEAM_FOR_TOTALS`]: there each would name one person's status
+    pub trial: Option<u32>,
+    pub active: Option<u32>,
+    pub away: Option<u32>,
+    pub inactive: Option<u32>,
+    /// The five kinds of count in the team's own server over the week, for
+    /// the team's volunteers only; `None` for a team of fewer than
+    /// [`MIN_TEAM_FOR_TOTALS`], where a total is one person's number
+    pub contributions: Option<u32>,
+    /// Account display names (escaped) of volunteers who joined this week
+    pub new_names: Vec<String>,
+}
+
+/// The weekly report shows the status counts and the contributions only for
+/// teams with at least this many volunteers; smaller ones show only how many
+/// volunteers they have
+pub const MIN_TEAM_FOR_TOTALS: u32 = 3;
+
+/// The weekly report for the staff channel
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct WeekReport {
+    /// The Monday, yyyymmdd
+    pub week: i32,
+    pub teams: Vec<TeamWeek>,
+}
+
+/// Whether `week` (yyyymmdd) is a real date and a Monday
+fn is_monday(week: i32) -> bool {
+    use revolt_database::util::team_activity::{day_of, day_start};
+    if week <= 0 || day_of(day_start(week)) != week {
+        return false;
+    }
+    // day 0 (1970-01-01) was a Thursday
+    (day_start(week) / DAY_MS + 3).rem_euclid(7) == 0
+}
+
+/// # Team desk: the weekly report
+///
+/// `week` is the Monday (yyyymmdd) of a completed week, Monday to Sunday
+/// UTC; the current or a future week is refused. Only the desk's bot, and
+/// only while the volunteer care is on. Per team role: `volunteers` are the
+/// memberships that were current at any time during the week; the four
+/// status counts are their status now, so someone who left during the week
+/// counts in `volunteers` only. `contributions` are the five counts in the
+/// team's own server, for those volunteers only, each person once per team.
+/// `new_names` are account display names of those who joined that week;
+/// never name, age, country or anything of their identity. A team of fewer
+/// than three volunteers shows only `volunteers` (no status counts, no
+/// `contributions`).
+#[get("/report?<week>")]
+async fn report(db: &State<Database>, user: User, week: i32) -> Result<Json<WeekReport>> {
+    use revolt_database::util::team_activity::{add_days, contributions, day_start};
+    use revolt_database::TeamMemberStatus as S;
+
+    let settings = desk(&user).await?;
+    if !settings.volunteers.enabled || !is_monday(week) {
+        return Err(create_error!(InvalidOperation));
+    }
+    let from = day_start(week);
+    let until = from + 7 * DAY_MS;
+    // only a finished week
+    if until > staff_now() {
+        return Err(create_error!(InvalidOperation));
+    }
+    let last = add_days(week, 6);
+
+    let mut teams = Vec::new();
+    for role in settings.roles.iter().filter(|role| role.ready()) {
+        if role.server.trim().is_empty() {
+            continue;
+        }
+        let members = db
+            .fetch_team_members(&revolt_database::TeamMemberFilter {
+                role: Some(role.key.clone()),
+                ..Default::default()
+            })
+            .await?;
+        let mut seen = std::collections::HashSet::new();
+        let mut team = TeamWeek {
+            role: role.key.clone(),
+            role_name: role_name(&settings, &role.key),
+            server_name: team_texts::plain(&server_name(db, Some(role)).await),
+            volunteers: 0,
+            trial: Some(0),
+            active: Some(0),
+            away: Some(0),
+            inactive: Some(0),
+            contributions: Some(0),
+            new_names: Vec::new(),
+        };
+        for member in members {
+            let current =
+                member.joined_at < until && member.left_at.is_none_or(|left| left >= from);
+            if !current || !seen.insert(member.user_id.clone()) {
+                continue;
+            }
+            team.volunteers += 1;
+            match member.status {
+                S::Trial => team.trial = team.trial.map(|n| n + 1),
+                S::Active => team.active = team.active.map(|n| n + 1),
+                S::Away => team.away = team.away.map(|n| n + 1),
+                S::Inactive => team.inactive = team.inactive.map(|n| n + 1),
+                S::Left => {}
+            }
+            for day in db.fetch_team_activity(&member.user_id, week, last).await? {
+                for count in day.counts.iter().filter(|count| count.server == role.server) {
+                    team.contributions =
+                        team.contributions.map(|n| n.saturating_add(contributions(count)));
+                }
+            }
+            if member.joined_at >= from {
+                if let Ok(person) = db.fetch_user(&member.user_id).await {
+                    let shown = person.display_name.clone().unwrap_or(person.username.clone());
+                    team.new_names.push(team_texts::plain(&shown));
+                }
+            }
+        }
+        team.new_names.sort();
+        // a small team's totals would be one person's numbers
+        if team.volunteers < MIN_TEAM_FOR_TOTALS {
+            team.trial = None;
+            team.active = None;
+            team.away = None;
+            team.inactive = None;
+            team.contributions = None;
+        }
+        teams.push(team);
+    }
+    Ok(Json(WeekReport { week, teams }))
 }

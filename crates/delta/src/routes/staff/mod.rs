@@ -24,6 +24,7 @@ mod safety;
 mod security;
 mod servers;
 mod support;
+mod team;
 mod words;
 #[cfg(test)]
 mod test;
@@ -132,6 +133,14 @@ pub fn routes() -> Vec<Route> {
         beta::save,
         beta::members,
         beta::member,
+        team::list,
+        team::detail,
+        team::identity,
+        team::confirm,
+        team::away,
+        team::note,
+        team::counting,
+        team::remove,
         open_session,
         close_session,
         step_up,

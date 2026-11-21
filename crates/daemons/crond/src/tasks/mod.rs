@@ -16,4 +16,5 @@ pub mod expire_statuses;
 pub mod server_insights;
 pub mod support_retention;
 pub mod team_applications_retention;
+pub mod team_volunteers;
 pub mod voice_episodes;

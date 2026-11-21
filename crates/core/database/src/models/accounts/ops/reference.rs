@@ -259,6 +259,22 @@ impl AbstractAccounts for ReferenceDb {
                 .filter(|a| a.user_id == user_id)
                 .filter_map(|a| serde_json::to_value(a).ok())
                 .collect(),
+            ExportSource::TeamIdentity => self
+                .team_identities
+                .lock()
+                .await
+                .get(user_id)
+                .and_then(|i| serde_json::to_value(i).ok())
+                .into_iter()
+                .collect(),
+            ExportSource::TeamMemberships => self
+                .team_members
+                .lock()
+                .await
+                .values()
+                .filter(|m| m.user_id == user_id)
+                .filter_map(|m| serde_json::to_value(m).ok())
+                .collect(),
             ExportSource::Settings => self
                 .user_settings
                 .lock()

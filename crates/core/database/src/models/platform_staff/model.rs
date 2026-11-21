@@ -88,6 +88,9 @@ auto_derived!(
         /// Propose and confirm the official mark (two different people)
         #[serde(rename = "platform.official.manage")]
         OfficialManage,
+        /// The volunteer team: list, notes, identity, confirm, away, remove
+        #[serde(rename = "platform.team.manage")]
+        TeamManage,
     }
 
     /// Staff roles of one user (`platform_staff`)

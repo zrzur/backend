@@ -2411,6 +2411,80 @@ pub struct FeaturesTeamApplications {
     /// The team roles people can apply for, in the order shown
     #[serde(default)]
     pub roles: Vec<TeamRole>,
+    /// Looking after the volunteers once they are accepted
+    #[serde(default)]
+    pub volunteers: FeaturesTeamVolunteers,
+}
+
+/// Volunteer care after acceptance: a first month of getting to know each
+/// other, a gentle monthly look at who has had time, and a weekly report.
+/// Counts only; no message content and no channel names are stored.
+#[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct FeaturesTeamVolunteers {
+    /// Off by default: nothing here runs until the owner switches it on
+    #[serde(default)]
+    pub enabled: bool,
+    /// Days of the first period after acceptance
+    #[serde(default = "default_volunteers_trial_days")]
+    pub trial_days: i64,
+    /// Helpful actions a month below which a volunteer gets a kind check-in
+    #[serde(default = "default_volunteers_monthly_minimum")]
+    pub monthly_minimum: i64,
+    /// Longest "away" a volunteer may set, in days
+    #[serde(default = "default_volunteers_away_max_days")]
+    pub away_max_days: i64,
+    /// Days name, age and country, and an ended membership with its
+    /// history and notes, are kept after a volunteer leaves
+    #[serde(default = "default_volunteers_identity_keep_days")]
+    pub identity_keep_days: i64,
+    /// Days the daily counts are kept (at least 62: the monthly rule reads
+    /// the whole month before)
+    #[serde(default = "default_volunteers_activity_keep_days")]
+    pub activity_keep_days: i64,
+    /// Version of the volunteer rules people confirm
+    #[serde(default = "default_volunteers_rules_version")]
+    pub rules_version: String,
+    /// Id of the server the "Zrzur Team" overview lives in
+    #[serde(default)]
+    pub team_server: String,
+    /// Id of the private channel the weekly report is posted in
+    #[serde(default)]
+    pub report_channel: String,
+}
+
+fn default_volunteers_trial_days() -> i64 {
+    30
+}
+fn default_volunteers_monthly_minimum() -> i64 {
+    2
+}
+fn default_volunteers_away_max_days() -> i64 {
+    90
+}
+fn default_volunteers_identity_keep_days() -> i64 {
+    90
+}
+fn default_volunteers_activity_keep_days() -> i64 {
+    190
+}
+fn default_volunteers_rules_version() -> String {
+    "1".to_string()
+}
+
+impl Default for FeaturesTeamVolunteers {
+    fn default() -> Self {
+        FeaturesTeamVolunteers {
+            enabled: false,
+            trial_days: default_volunteers_trial_days(),
+            monthly_minimum: default_volunteers_monthly_minimum(),
+            away_max_days: default_volunteers_away_max_days(),
+            identity_keep_days: default_volunteers_identity_keep_days(),
+            activity_keep_days: default_volunteers_activity_keep_days(),
+            rules_version: default_volunteers_rules_version(),
+            team_server: String::new(),
+            report_channel: String::new(),
+        }
+    }
 }
 
 fn default_team_cooldown_days() -> i64 {
@@ -2443,6 +2517,7 @@ impl Default for FeaturesTeamApplications {
             accepted_retention_days: default_team_accepted_retention_days(),
             privacy_url: default_team_privacy_url(),
             roles: Vec::new(),
+            volunteers: FeaturesTeamVolunteers::default(),
         }
     }
 }
@@ -2501,6 +2576,10 @@ pub struct TeamRole {
     /// "experience" and "why".
     #[serde(default)]
     pub questions: Vec<TeamQuestion>,
+    /// Ids of the channels in `server` where this role's volunteers do
+    /// their work; only counts of actions there are kept. Empty: none.
+    #[serde(default)]
+    pub work_channels: Vec<String>,
 }
 
 /// One free-text question of the form
@@ -2550,6 +2629,8 @@ impl TeamRole {
                 && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
         };
         word(&self.key)
+            // `me` is the button of "Add my details", not a role
+            && self.key != "me"
             && (self.has_kind() || !self.name.trim().is_empty())
             && !self.server.trim().is_empty()
             && (self.is_manual() || !self.role.trim().is_empty())
@@ -2612,6 +2693,11 @@ impl FeaturesTeamApplications {
 
     pub fn role(&self, key: &str) -> Option<&TeamRole> {
         self.roles.iter().find(|role| role.key == key)
+    }
+
+    /// Every configured team role that belongs to `server`, in the order shown
+    pub fn member_roles(&self, server: &str) -> Vec<&TeamRole> {
+        self.roles.iter().filter(|role| role.server == server).collect()
     }
 
     /// Days a rejected application is kept: the cooldown needs its date
@@ -2841,6 +2927,150 @@ mod release_integrity_tests {
         s.refuse_default_secrets();
         s.files.encryption_key = shipped().files.encryption_key;
         assert_eq!(s.default_secrets_in_use(), vec!["files.encryption_key"]);
+    }
+}
+
+#[cfg(test)]
+mod team_volunteers_tests {
+    use config::{Config, File, FileFormat};
+
+    use super::{FeaturesTeamApplications, FeaturesTeamVolunteers, TeamRole};
+
+    /// The block prepared for the live server on 2026-11-19, as it stands
+    /// (no `volunteers` table, no `work_channels`)
+    const OLD_BLOCK: &str = r#"
+[features.team_applications]
+server = "01M7AD5WEYHG4GVN2BP4PBQRN6"
+channel_apply = "01M7T4WAQZ0RHCWQEV5XRF1E02"
+channel_review = "01M7T4VQXS5VNXS4K8W2GJ4M21"
+reviewer_role = "01M7T36TKR42AB8KAP32ZSR6HA"
+bot = "01M7T4PQEXD73ADF561K99QAEZ"
+cooldown_days = 30
+withdraw_wait_minutes = 60
+retention_days = 30
+accepted_retention_days = 90
+privacy_url = "https://zrzur.com/legal/privacy"
+
+[[features.team_applications.roles]]
+key = "support"
+server = "01M7AD5WEYHG4GVN2BP4PBQRN6"
+role = "01M7T35Q0BG7RSXHJ8CKW0K14J"
+team_role = "01M7AF4JRCWC7YJWYDRJN4M2Q1"
+
+[[features.team_applications.roles]]
+key = "moderator-lounge"
+server = "01M7AD5WEYHG4GVN2BP4PBQRN6"
+role = "01M7AD5WEYBHQDF7KG5HY8TKCX"
+team_role = "01M7AF4JRCWC7YJWYDRJN4M2Q1"
+
+[[features.team_applications.roles]]
+key = "community-manager"
+server = "01M7AD5WEYHG4GVN2BP4PBQRN6"
+role = "01M7T366Z9W8C4QATWPWZZ8ZQG"
+team_role = "01M7AF4JRCWC7YJWYDRJN4M2Q1"
+
+[[features.team_applications.roles]]
+key = "discover-reviewer"
+server = "01M7R6QRNYYA4K72SB43GX5GAA"
+role = "01M7R8RK30YE83QB31KXWC4RWN"
+team_role = "01M7R8RA5WQVHXYQVDV4V087PJ"
+
+[[features.team_applications.roles]]
+key = "moderator-discover"
+server = "01M7R6QRNYYA4K72SB43GX5GAA"
+role = "01M7R6QRNYAQ5QQKP4TED529JH"
+team_role = "01M7R8RA5WQVHXYQVDV4V087PJ"
+
+[[features.team_applications.roles]]
+key = "designer"
+server = "01M7R6Q1RBM0Y8SV0FXHYYVW19"
+role = "01M7T38NC82M5W0KNTKM8X1VY3"
+team_role = "01M7T3846PC0A8RF4RB7PDHZVG"
+
+[[features.team_applications.roles]]
+key = "developer"
+server = "01M7R6RHBHYW6RM8RSADVK6H9X"
+role = "01M7T3A203H84H8K9392MB6G3N"
+team_role = "01M7T39HNGVFPSEFRDCKTYWVTD"
+
+[[features.team_applications.roles]]
+key = "administrator"
+server = "01M7AD5WEYHG4GVN2BP4PBQRN6"
+manual = true
+"#;
+
+    fn parse(toml: &str) -> FeaturesTeamApplications {
+        Config::builder()
+            .add_source(File::from_str(toml, FileFormat::Toml))
+            .build()
+            .unwrap()
+            .get("features.team_applications")
+            .unwrap()
+    }
+
+    #[test]
+    fn volunteers_default_off_with_spec_values() {
+        let v = FeaturesTeamApplications::default().volunteers;
+        assert!(!v.enabled);
+        assert_eq!(v.trial_days, 30);
+        assert_eq!(v.monthly_minimum, 2);
+        assert_eq!(v.away_max_days, 90);
+        assert_eq!(v.identity_keep_days, 90);
+        assert_eq!(v.activity_keep_days, 190);
+        assert_eq!(v.rules_version, "1");
+        assert_eq!(v.team_server, "");
+        assert_eq!(v.report_channel, "");
+        assert_eq!(v, FeaturesTeamVolunteers::default());
+    }
+
+    #[test]
+    fn work_channels_default_empty() {
+        assert!(TeamRole::default().work_channels.is_empty());
+        let parsed = parse(
+            r#"
+[features.team_applications]
+[[features.team_applications.roles]]
+key = "support"
+"#,
+        );
+        assert!(parsed.roles[0].work_channels.is_empty());
+    }
+
+    #[test]
+    fn old_block_without_volunteers_still_parses() {
+        let parsed = parse(OLD_BLOCK);
+        assert!(parsed.enabled());
+        assert_eq!(parsed.roles.len(), 8);
+        assert_eq!(parsed.cooldown_days, 30);
+        assert_eq!(parsed.volunteers, FeaturesTeamVolunteers::default());
+        assert!(parsed.roles.iter().all(|role| role.work_channels.is_empty()));
+    }
+
+    #[test]
+    fn volunteers_table_overrides_and_member_roles_filter_by_server() {
+        let parsed = parse(
+            r#"
+[features.team_applications.volunteers]
+enabled = true
+trial_days = 14
+
+[[features.team_applications.roles]]
+key = "support"
+server = "A"
+work_channels = ["c1", "c2"]
+
+[[features.team_applications.roles]]
+key = "designer"
+server = "B"
+"#,
+        );
+        assert!(parsed.volunteers.enabled);
+        assert_eq!(parsed.volunteers.trial_days, 14);
+        assert_eq!(parsed.volunteers.monthly_minimum, 2);
+        let in_a = parsed.member_roles("A");
+        assert_eq!(in_a.len(), 1);
+        assert_eq!(in_a[0].work_channels, vec!["c1", "c2"]);
+        assert!(parsed.member_roles("Z").is_empty());
     }
 }
 

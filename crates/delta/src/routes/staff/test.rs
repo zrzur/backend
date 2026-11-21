@@ -2607,3 +2607,6 @@ async fn a_few_wrong_staff_codes_do_not_lock() {
     }
     let _ = sign_in(&harness, &m, 0).await;
 }
+
+#[path = "test_team.rs"]
+mod team_page;

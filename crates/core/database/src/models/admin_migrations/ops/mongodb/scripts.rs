@@ -26,7 +26,7 @@ struct MigrationInfo {
     revision: i32,
 }
 
-pub const LATEST_REVISION: i32 = 92; // MUST BE +1 to last migration
+pub const LATEST_REVISION: i32 = 93; // MUST BE +1 to last migration
 // Number given only in the release after the one above, once no old delta runs:
 // a session an old delta wrote during the rollout has no date and never expires.
 const PENDING_SESSION_EXPIRY_FILL: i32 = -1;
@@ -59,6 +59,8 @@ const PENDING_LINKED_ACCOUNT_INDEXES: i32 = 89;
 const PENDING_SAVED_REMINDER_INDEXES: i32 = 90;
 // Number given by the coordinator at merge (stream events-v5)
 const PENDING_SERVER_EVENT_ANSWERS: i32 = 91;
+// Stream team-volunteers: the coordinator gives the number at merge; -1 never runs
+const PENDING_TEAM_VOLUNTEER_INDEXES: i32 = 92;
 
 /// The earliest day a session from before expiry can expire. At least 30
 /// days out, also with expiry switched off (0), for the day it is switched on.
@@ -2655,8 +2657,44 @@ pub async fn run_migrations(db: &MongoDb, revision: i32) -> i32 {
         info!("Event answers: {report:?}");
     }
 
+    if revision <= PENDING_TEAM_VOLUNTEER_INDEXES {
+        info!("Running migration [revision {PENDING_TEAM_VOLUNTEER_INDEXES} / 20-11-2026]: Indexes for team volunteers");
+        create_team_volunteer_indexes(&db.db()).await;
+    }
+
     // Reminder to update LATEST_REVISION when adding new migrations.
     LATEST_REVISION.max(revision)
+}
+
+/// Team volunteers: one membership per person and role, activity days by
+/// person and day. Only indexes, no data moves. Safe to run twice: creating
+/// an index that exists is a no-op.
+pub async fn create_team_volunteer_indexes(db: &mongodb::Database) {
+    db.run_command(doc! {
+        "createIndexes": "team_members",
+        "indexes": [
+            { "key": { "user_id": 1_i32, "role": 1_i32 }, "name": "user_role", "unique": true }
+        ]
+    })
+    .await
+    .expect("Failed to create the team member index");
+    db.run_command(doc! {
+        "createIndexes": "team_activity_days",
+        "indexes": [
+            { "key": { "user_id": 1_i32, "day": 1_i32 }, "name": "user_day" },
+            { "key": { "day": 1_i32 }, "name": "day" }
+        ]
+    })
+    .await
+    .expect("Failed to create the team activity indexes");
+    db.run_command(doc! {
+        "createIndexes": "team_identities",
+        "indexes": [
+            { "key": { "purge_at": 1_i32 }, "name": "purge_at", "sparse": true }
+        ]
+    })
+    .await
+    .expect("Failed to create the team identity index");
 }
 
 /// Saved messages are listed by person, newest first. Reminders are listed
@@ -3736,6 +3774,34 @@ mod community_migration_tests {
 #[cfg(test)]
 mod statement_migration_tests {
     use crate::mongodb::bson::{doc, Document};
+
+    /// MongoDB only: the team volunteer indexes can be made twice
+    #[tokio::test]
+    async fn team_volunteer_indexes_run_twice_on_mongodb() {
+        let db = crate::DatabaseInfo::Test("team_volunteer_indexes".to_string())
+            .connect()
+            .await
+            .expect("Database connection failed.");
+        let crate::Database::MongoDb(mongo) = &db else {
+            return;
+        };
+        for _ in 0..2 {
+            super::create_team_volunteer_indexes(&mongo.db()).await;
+        }
+        for (collection, wanted) in [
+            ("team_members", 2),
+            ("team_activity_days", 3),
+            ("team_identities", 2),
+        ] {
+            let names = mongo
+                .db()
+                .collection::<Document>(collection)
+                .list_index_names()
+                .await
+                .unwrap();
+            assert_eq!(names.len(), wanted, "{collection}: {names:?}");
+        }
+    }
 
     /// MongoDB only: the saved message and reminder indexes can be made twice
     #[tokio::test]
