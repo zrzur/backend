@@ -135,6 +135,18 @@
     "title": "Your server is marked 18+",
     "body": "“{name}” is now for adults only.\n{note}"
   },
+  "server.partnered": {
+    "title": "Your server is a Zrzur partner",
+    "body": "“{name}” is now a Zrzur partner. It may keep a custom invite link without the member and activity rule."
+  },
+  "server.unpartnered": {
+    "title": "Partner status removed",
+    "body": "“{name}” is no longer a Zrzur partner.\n{note}"
+  },
+  "vanity.ending": {
+    "title": "Your custom link zrzur.cc/{code} will end",
+    "body": "“{name}” no longer meets the rule for a custom invite link. The link keeps working until {date}, then it is released and anyone can take the name.\n\nTo keep it, the server needs at least {members} members and must be active: at least {messages} messages from {authors} different members in the last {days} days. Official and partner servers always keep their link."
+  },
   "server.not_nsfw": {
     "title": "18+ mark removed",
     "body": "“{name}” is no longer marked 18+."
