@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Bot platform: fixes from the audit of 2026-11-21
+
+- A public interaction answer the server refuses (the bot may not write in the channel, a message that is gone) no longer uses up the interaction: it goes back to the state it had, so the same interaction still takes a private answer. The same for `UpdateMessage` and for finishing a deferred answer through `PATCH /interactions/{id}/{token}/original`.
+- Bots of a suspended or banned owner stop: their token is refused (`401 InvalidSession`) on the API, the file service and the gateway, open connections close, and they are added to no server or group (`404 NotFound`). They work again when the owner's standing is restored.
+- Deleting a bot takes it out of its group DMs, closes its connections at once, and is no longer stopped by a membership left behind by a server that is gone.
+- An install without `?permissions=` (`POST /bots/{id}/invite`, OAuth2) gives the bot its `default_permissions` through a role of its own, as an install from the Developer Portal does. The installer gives the part they hold, with Manage Roles; an explicit `?permissions=` keeps its strict check. (Owner decision, 2026-11-21.)
+- A bot with a real token is counted by its id only: its refusals no longer count towards blocking its hosting address, and a blocked address no longer stops it. The file service counts refusals like the API (a 429 no longer counts).
+- A command sync (`PUT /applications/{id}/commands`, and per server) that changes nothing no longer sends `ApplicationCommandsUpdate` to every server.
+- `PATCH /bots/{id}`: who may edit is checked first (someone else gets `404` whatever else is wrong), everything is validated before anything changes (a refused request no longer renames the bot), and `default_permissions` refuses unknown bits.
+- The file service answers an unknown or reset bot token with `401 InvalidSession` (was `404 NotFound`).
+- Public follow-ups sent at the same moment can no longer pass the limit of 5.
+- Making a new webhook token and sending a test delivery have their own bucket (`webhook_manage`, 5 per 10 s per webhook); they shared the 100 of the posts through webhooks.
+- A bot that leaves, is kicked or is banned loses its install record and command permissions, so the Apps list no longer shows it.
+- OpenAPI: a `Bot Token` security scheme (`x-bot-token`); routes behind the user guard list a session token or a bot token; an MFA ticket is listed on top of signing in, no longer as an alternative to it.
+- The Discover bot routes answer `404 NotFound` for someone else's bot, like every other bot route (was `403 NotOwner`).
+
 ## 26.2.0 (2026-11-20)
 
 The official release for everyone. It brings the work of 26.2.0-beta.1 and 26.2.0-beta.2 below.

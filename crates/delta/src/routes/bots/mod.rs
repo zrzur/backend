@@ -43,3 +43,5 @@ mod verification_tests;
 mod group_tests;
 #[cfg(test)]
 mod owner_privacy_tests;
+#[cfg(test)]
+mod platform_audit_tests;

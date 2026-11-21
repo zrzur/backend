@@ -320,6 +320,19 @@ pub fn counts_as_refused(status: u16) -> bool {
     matches!(status, 401 | 403)
 }
 
+/// Whether an answer counts towards blocking the caller's address. A bot
+/// with a real token is counted by its id: its 403s are answers about
+/// permissions, not guessing, and many bots share one hosting address.
+pub fn counts_against_address(status: u16, known_bot: bool) -> bool {
+    counts_as_refused(status) && !known_bot
+}
+
+/// Whether a blocked address stops this request: not for a bot with a real
+/// token, which has its own limits by id
+pub fn address_block_applies(known_bot: bool) -> bool {
+    !known_bot
+}
+
 fn address_key(kind: &str, ip: &str) -> String {
     let mut hash = DefaultHasher::new();
     hash.write(address_group(ip).as_bytes());
@@ -437,6 +450,23 @@ pub fn retry_after_seconds(reset_ms: u128) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    /// Many bots share one hosting address: a bot with a real token is never
+    /// stopped by the address block, and its refusals (permission 403s)
+    /// never count towards it; requests without a known bot still do
+    /// (audit 2026-11-21, A10)
+    #[test]
+    fn bots_with_real_tokens_do_not_count_against_their_address() {
+        use super::{address_block_applies, counts_against_address};
+        for status in [401, 403] {
+            assert!(counts_against_address(status, false), "{status} without a bot counts");
+            assert!(!counts_against_address(status, true), "{status} of a known bot does not");
+        }
+        assert!(!counts_against_address(429, false), "a 429 never counts");
+        assert!(!counts_against_address(200, false));
+        assert!(address_block_applies(false));
+        assert!(!address_block_applies(true));
+    }
+
     #[test]
     fn one_ipv6_slash_64_counts_as_one_address() {
         use super::{address_group, identifier, identifier_for_bucket};

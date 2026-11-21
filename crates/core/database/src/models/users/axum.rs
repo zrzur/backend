@@ -16,15 +16,28 @@ where
         let db = Database::from_ref(state);
 
         if let Some(Ok(bot_token)) = parts.headers.get("x-bot-token").map(|v| v.to_str()) {
-            let bot = db.fetch_bot_by_token(bot_token).await?;
-            if crate::bot_suspended(&bot) {
+            // a token nobody knows (reset, or never valid) is an invalid
+            // session, as in the API, not a missing file
+            let bot = db
+                .fetch_bot_by_token(bot_token)
+                .await
+                .map_err(User::token_lookup_error)?;
+            // a disabled bot, or one whose owner was suspended or banned
+            if !crate::bot_may_receive(&db, &bot).await {
                 return Err(create_error!(InvalidSession));
             }
-            Ok(db.fetch_user(&bot.id).await?.confirm_privileged(&db, None).await)
+            Ok(db
+                .fetch_user(&bot.id)
+                .await
+                .map_err(User::token_lookup_error)?
+                .confirm_privileged(&db, None)
+                .await)
         } else if let Some(Ok(session_token)) =
             parts.headers.get("x-session-token").map(|v| v.to_str())
         {
-            let session = Session::from_token(&db, session_token).await?;
+            let session = Session::from_token(&db, session_token)
+                .await
+                .map_err(User::token_lookup_error)?;
             Ok(db
                 .fetch_user(&session.user_id)
                 .await?

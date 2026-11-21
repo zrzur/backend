@@ -52,7 +52,14 @@ where
             let (bucket, resource) = storage.resolver.resolve_bucket(parts);
             let limit = storage.resolver.resolve_bucket_limit(bucket);
 
-            let ratelimiter = if let Some(seconds) = address_blocked(&ip).await {
+            // a blocked address stops guessers, not a bot with a real token
+            // (many bots share one hosting address)
+            let blocked = if crate::ratelimiter::address_block_applies(bot.is_some()) {
+                address_blocked(&ip).await
+            } else {
+                None
+            };
+            let ratelimiter = if let Some(seconds) = blocked {
                 Err(Ratelimiter {
                     key: 0,
                     limit: 0,
@@ -134,6 +141,12 @@ pub async fn ratelimit_middleware(
 
     let (mut parts, body) = request.into_parts();
     let ip = to_real_ip(&parts).await;
+    let known_bot = match parts.headers.get("x-bot-token").and_then(|v| v.to_str().ok()) {
+        Some(token) => crate::ratelimiter::bot_for_token(&state.database, token)
+            .await
+            .is_some(),
+        None => false,
+    };
 
     let res = Ratelimiter::from_request_parts(&mut parts, &state).await;
 
@@ -157,8 +170,10 @@ pub async fn ratelimit_middleware(
         global,
     } = ratelimiter;
 
-    // refused requests count against the address (token guessing, floods)
-    if matches!(response.status().as_u16(), 401 | 403 | 429) {
+    // refused requests count against the address (token guessing, floods),
+    // as in the API: a 429 does not (it is refused already), nor a bot with
+    // a real token (its 403s are permission answers)
+    if crate::ratelimiter::counts_against_address(response.status().as_u16(), known_bot) {
         crate::ratelimiter::count_refused(&ip).await;
     }
 

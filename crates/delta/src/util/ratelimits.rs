@@ -158,6 +158,13 @@ impl<'a> RatelimitResolver<Request<'a>> for DeltaRatelimits {
                 // Posting through a webhook has limits per webhook and per
                 // channel in the route; this one only stops floods from one
                 // address, which may serve many webhooks (a CI, a forge)
+                // a new token and a test delivery are management, not sending:
+                // they must not share the 100-per-10-s room of the posts
+                ("webhooks", Some(id), Method::Post)
+                    if matches!(extra, Some("token") | Some("test")) =>
+                {
+                    ("webhook_manage", Some(id))
+                }
                 ("webhooks", Some(_), Method::Post) if extra.is_some() => ("webhook_send", None),
                 ("safety", Some("report"), _) => ("safety_report", Some("report")),
                 // new reports and appeals share the strict bucket
@@ -195,6 +202,7 @@ impl<'a> RatelimitResolver<Request<'a>> for DeltaRatelimits {
             "typing" => 5,
             "poll_votes" => 10,
             "webhook_send" => 100,
+            "webhook_manage" => 5,
             "channels" => 15,
             "soundboard_play" => 4,
             "stage" => 20,
@@ -272,6 +280,38 @@ mod test {
             .header(Header::new("access-control-request-headers", "content-type,x-session-token"))
             .dispatch()
             .await
+    }
+
+    /// Making a new webhook token and sending a test delivery are counted in
+    /// a small bucket of their own (5 per 10 s per webhook), not in the 100
+    /// of the posts through the webhook (audit 2026-11-21, A21)
+    #[rocket::async_test]
+    async fn webhook_management_has_its_own_bucket() {
+        let harness = TestHarness::new().await;
+        let limit_of = |path: String| {
+            let harness = &harness;
+            async move {
+                let res = harness
+                    .client
+                    .post(path.clone())
+                    .header(Header::new("content-type", "application/json"))
+                    .body("{}")
+                    .dispatch()
+                    .await;
+                (
+                    res.headers().get_one("x-ratelimit-limit").map(str::to_string),
+                    res.headers().get_one("x-ratelimit-bucket").map(str::to_string),
+                )
+            }
+        };
+        let id = "01HWEBHOOK0000000000000000";
+        let (token_limit, token_bucket) = limit_of(format!("/webhooks/{id}/token")).await;
+        let (test_limit, _) = limit_of(format!("/webhooks/{id}/test")).await;
+        let (send_limit, send_bucket) = limit_of(format!("/webhooks/{id}/some-secret-token")).await;
+        assert_eq!(token_limit.as_deref(), Some("5"));
+        assert_eq!(test_limit.as_deref(), Some("5"));
+        assert_eq!(send_limit.as_deref(), Some("100"));
+        assert_ne!(token_bucket, send_bucket);
     }
 
     /// The default stays strict whatever a test stack sets

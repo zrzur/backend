@@ -167,7 +167,10 @@ pub async fn answer(
                 },
             )
             .await?;
-            update_source(db, &interaction, content).await?;
+            if let Err(error) = update_source(db, &interaction, content).await {
+                release(db, &interaction).await;
+                return Err(error);
+            }
             state_update(&interaction, InteractionState::Responded, None)
                 .p(interaction.user_id.clone())
                 .await;
@@ -213,6 +216,28 @@ pub async fn answer(
     }
 
     Ok(())
+}
+
+/// Give back an interaction that was claimed for an answer the server then
+/// refused (no permission to write, a message that is gone): it returns to
+/// the state it had, so the bot can still answer it, for example privately.
+/// Only a claim this request made is undone.
+async fn release(db: &Database, interaction: &Interaction) {
+    if let Err(error) = db
+        .transition_interaction(
+            &interaction.id,
+            &[InteractionStatus::Responded],
+            interaction.status,
+            InteractionTransition {
+                ephemeral: Some(interaction.ephemeral),
+                updates_source: Some(interaction.updates_source),
+                ..Default::default()
+            },
+        )
+        .await
+    {
+        log::warn!("could not release interaction {}: {error:?}", interaction.id);
+    }
 }
 
 /// Deliver a new message as the answer, claiming the interaction first so it happens once
@@ -274,7 +299,15 @@ pub async fn respond(
         return Err(create_error!(InteractionAlreadyAcknowledged));
     }
 
-    let message = send_public_message(db, amqp, &interaction, data).await?;
+    let message = match send_public_message(db, amqp, &interaction, data).await {
+        Ok(message) => message,
+        Err(error) => {
+            // e.g. the bot may not write here: the answer did not happen, so
+            // the interaction is not used up and a private answer still works
+            release(db, &interaction).await;
+            return Err(error);
+        }
+    };
     db.transition_interaction(
         &interaction.id,
         &[InteractionStatus::Responded],
@@ -322,7 +355,10 @@ pub async fn edit_original_response(
             {
                 return Err(create_error!(InteractionAlreadyAcknowledged));
             }
-            update_source(db, &interaction, data).await?;
+            if let Err(error) = update_source(db, &interaction, data).await {
+                release(db, &interaction).await;
+                return Err(error);
+            }
             state_update(&interaction, InteractionState::Responded, None)
                 .p(interaction.user_id.clone())
                 .await;

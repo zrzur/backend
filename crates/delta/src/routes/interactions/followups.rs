@@ -82,8 +82,19 @@ pub async fn send_followup(
     }
 
     let message = send_public_message(db, amqp, &interaction, data).await?;
-    db.push_interaction_followup(&interaction.id, None, Some(message.id.clone()))
-        .await?;
+    // the count is checked again where it is kept: of two follow-ups sent at
+    // the same moment for the last slot, the second is taken back at once
+    if !db
+        .push_interaction_followup(&interaction.id, None, Some(message.id.clone()))
+        .await?
+    {
+        if let Ok(sent) = db.fetch_message(&message.id).await {
+            sent.delete(db).await.ok();
+        }
+        return Err(create_error!(TooManyFollowups {
+            max: revolt_database::MAX_FOLLOWUPS
+        }));
+    }
     Ok(Json(FollowupMessage {
         id: message.id,
         ephemeral: false,

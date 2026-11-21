@@ -246,10 +246,20 @@ impl Bot {
         Ok(())
     }
 
-    /// Delete this bot
+    /// Delete this bot: it leaves every server and group, its open
+    /// connections close, and its user is marked deleted
     pub async fn delete(&self, db: &Database) -> Result<()> {
         for member in db.fetch_all_memberships(&self.id).await? {
-            let server = db.fetch_server(&member.id.server).await?;
+            let server = match db.fetch_server(&member.id.server).await {
+                Ok(server) => server,
+                // a membership left behind by a server that is gone: drop it,
+                // or the bot could never be deleted
+                Err(error) if matches!(error.error_type, revolt_result::ErrorType::NotFound) => {
+                    db.force_delete_member(&member.id).await?;
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
 
             member
                 .remove(db, &server, RemovalIntention::Leave, true)
@@ -257,8 +267,15 @@ impl Bot {
 
             server.cleanup_managed_bot_role(db, &self.id).await?;
         }
-        
-        db.fetch_user(&self.id).await?.mark_deleted(db).await?;
+
+        let user = db.fetch_user(&self.id).await?;
+        // group DMs it was added to
+        user.remove_from_all_groups(db).await?;
+        // its gateway connections end now, not at the next request
+        EventV1::Logout.p(self.id.clone()).await;
+
+        let mut user = user;
+        user.mark_deleted(db).await?;
         // its paid Discover places go to whoever waits next
         db.delete_promotions_for_target(&self.id).await?;
         // its slash commands go with it, in every server

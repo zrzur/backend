@@ -19,24 +19,63 @@ pub async fn edit_bot(
     data: Json<DataEditBot>,
 ) -> Result<Json<v0::BotWithUserResponse>> {
     let data = data.into_inner();
-    // Deprecated: use POST /bots/<id>/token/reset. Like it, a new token
-    // needs the owner to sign in again (X-MFA-Ticket).
-    if data.remove.contains(&v0::FieldsBot::Token) && validated_ticket.is_none() {
-        return Err(create_error!(InvalidCredentials));
-    }
-    data.validate().map_err(|error| revolt_database::util::validation::validation_failed(&error))?;
 
+    // who may touch this bot comes first: anyone else learns nothing more
+    // than "not found", whatever else is wrong with the request
     let mut bot = bot_id.as_bot(db).await?;
     if bot.owner != user.id {
         return Err(create_error!(NotFound));
     }
 
-    let mut user = db.fetch_user(&bot.id).await?;
-    if let Some(name) = data.name {
-        // a system bot keeps the name it was given on the server
-        if user.official_bot {
-            return Err(create_error!(OfficialAccount));
+    // Deprecated: use POST /bots/<id>/token/reset. Like it, a new token
+    // needs the owner to sign in again (X-MFA-Ticket).
+    if data.remove.contains(&v0::FieldsBot::Token) && validated_ticket.is_none() {
+        return Err(create_error!(InvalidCredentials));
+    }
+
+    // Everything is checked before anything changes, so a refused request
+    // leaves the bot as it was (the name was changed before, then a 400)
+    data.validate().map_err(|error| revolt_database::util::validation::validation_failed(&error))?;
+
+    // only the three privileged intents are switched on or off here
+    if data.privileged_intents.is_some_and(|bits| bits < 0 || (bits as u64) & !v0::GatewayIntents::PRIVILEGED != 0) {
+        return Err(create_error!(FailedValidation {
+            error: "privileged_intents: only MESSAGE_CONTENT, SERVER_MEMBERS and PRESENCE".to_string()
+        }));
+    }
+
+    // permission bits the server knows, nothing past them
+    if data.default_permissions.is_some_and(|bits| {
+        bits < 0 || (bits as u64) & !(revolt_permissions::ChannelPermission::GrantAllSafe as u64) != 0
+    }) {
+        return Err(create_error!(FailedValidation {
+            error: "default_permissions: unknown permission bits".to_string()
+        }));
+    }
+
+    // a web address only: no javascript:, data: or other schemes reach a
+    // client. An empty string is refused too: to clear the address, send
+    // `"remove": ["InteractionsURL"]`.
+    if let Some(url) = &data.interactions_url {
+        let valid = url::Url::parse(url).is_ok_and(|parsed| {
+            matches!(parsed.scheme(), "https" | "http")
+                && parsed.host_str().is_some_and(|host| !host.is_empty())
+                && parsed.username().is_empty()
+                && parsed.password().is_none()
+        });
+        if !valid || url.chars().any(|c| c.is_whitespace() || c.is_control()) {
+            return Err(create_error!(FailedValidation {
+                error: "interactions_url must be an http or https address".to_string()
+            }));
         }
+    }
+
+    let mut user = db.fetch_user(&bot.id).await?;
+    if data.name.is_some() && user.official_bot {
+        // a system bot keeps the name it was given on the server
+        return Err(create_error!(OfficialAccount));
+    }
+    if let Some(name) = data.name {
         user.update_username(db, name).await?;
     }
 
@@ -64,30 +103,6 @@ pub async fn edit_bot(
         show_creator,
         ..
     } = data;
-
-    // only the three privileged intents are switched on or off here
-    if privileged_intents.is_some_and(|bits| bits < 0 || (bits as u64) & !v0::GatewayIntents::PRIVILEGED != 0) {
-        return Err(create_error!(FailedValidation {
-            error: "privileged_intents: only MESSAGE_CONTENT, SERVER_MEMBERS and PRESENCE".to_string()
-        }));
-    }
-
-    // a web address only: no javascript:, data: or other schemes reach a
-    // client. An empty string is refused too: to clear the address, send
-    // `"remove": ["InteractionsURL"]`.
-    if let Some(url) = &interactions_url {
-        let valid = url::Url::parse(url).is_ok_and(|parsed| {
-            matches!(parsed.scheme(), "https" | "http")
-                && parsed.host_str().is_some_and(|host| !host.is_empty())
-                && parsed.username().is_empty()
-                && parsed.password().is_none()
-        });
-        if !valid || url.chars().any(|c| c.is_whitespace() || c.is_control()) {
-            return Err(create_error!(FailedValidation {
-                error: "interactions_url must be an http or https address".to_string()
-            }));
-        }
-    }
 
     let partial = PartialBot {
         public,

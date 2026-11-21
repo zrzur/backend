@@ -27,7 +27,9 @@ impl<'r> FromRequest<'r> for User {
                         .fetch_bot_by_token(&bot_token)
                         .await
                         .map_err(User::token_lookup_error)?;
-                    if crate::bot_suspended(&bot) {
+                    // a disabled bot, or one whose owner was suspended or
+                    // banned, is refused like a token nobody knows
+                    if !crate::bot_may_receive(db, &bot).await {
                         return Err(create_error!(InvalidSession));
                     }
                     let user = db

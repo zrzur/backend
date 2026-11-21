@@ -374,6 +374,15 @@ impl Member {
         if let Err(error) = crate::ServerEvent::forget_member(db, &server.id, &self.id.user).await {
             log::warn!("Could not remove the event marks of a member who left: {error:?}");
         }
+        // a bot that leaves, is kicked or banned is no longer installed: its
+        // install record and command permissions go, so the server's Apps
+        // list does not show a bot that is gone (both are no-ops for people)
+        if let Err(error) = db.delete_app_install(&server.id, &self.id.user).await {
+            log::warn!("Could not remove the install record of a member who left: {error:?}");
+        }
+        if let Err(error) = db.delete_command_permissions(&server.id, &self.id.user).await {
+            log::warn!("Could not remove the command permissions of a member who left: {error:?}");
+        }
 
         // supercharges leave with their owner
         let mut moved = false;

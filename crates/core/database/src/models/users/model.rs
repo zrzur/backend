@@ -581,7 +581,8 @@ impl User {
                     .fetch_bot_by_token(token)
                     .await
                     .map_err(User::token_lookup_error)?;
-                if crate::bot_suspended(&bot) {
+                // a disabled bot, or one whose owner was suspended or banned
+                if !crate::bot_may_receive(db, &bot).await {
                     return Err(create_error!(InvalidSession));
                 }
                 let user = db.fetch_user(&bot.id).await?.confirm_privileged(db, None).await;

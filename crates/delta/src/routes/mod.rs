@@ -34,6 +34,31 @@ mod webhooks;
 mod account;
 mod session;
 mod mfa;
+mod openapi_security;
+
+/// `revolt_rocket_okapi::mount_endpoints_and_merged_docs`, with the security
+/// section of the merged document set right (see `openapi_security`)
+macro_rules! mount_endpoints_and_fixed_docs {
+    ($rocket_builder:ident, $base_path:expr, $openapi_settings:ident,
+     $($path:expr => $route_and_docs:expr),* $(,)*) => {{
+        let base_path = $base_path.to_string();
+        let mut openapi_list: Vec<(_, revolt_rocket_okapi::revolt_okapi::openapi3::OpenApi)> = Vec::new();
+        $({
+            let (routes, openapi) = $route_and_docs;
+            $rocket_builder = $rocket_builder.mount(format!("{}{}", base_path, $path), routes);
+            openapi_list.push(($path, openapi));
+        })*
+        let mut openapi_docs = match revolt_rocket_okapi::revolt_okapi::merge::marge_spec_list(&openapi_list) {
+            Ok(docs) => docs,
+            Err(err) => panic!("Could not merge OpenAPI spec: {}", err),
+        };
+        openapi_security::fix_security(&mut openapi_docs);
+        $rocket_builder = $rocket_builder.mount(
+            $base_path,
+            vec![revolt_rocket_okapi::get_openapi_route(openapi_docs, &$openapi_settings)],
+        );
+    }};
+}
 
 #[cfg(test)]
 mod age_safety_tests;
@@ -45,7 +70,7 @@ pub fn mount(config: Settings, mut rocket: Rocket<Build>) -> Rocket<Build> {
     let settings = OpenApiSettings::default();
 
     if config.features.webhooks_enabled {
-        mount_endpoints_and_merged_docs! {
+        mount_endpoints_and_fixed_docs! {
             rocket, "/".to_owned(), settings,
             "/" => (vec![], custom_openapi_spec()),
             "" => openapi_get_routes_spec![root::root, root::gateway_schema],
@@ -80,7 +105,7 @@ pub fn mount(config: Settings, mut rocket: Rocket<Build>) -> Rocket<Build> {
             "/connections" => connections::routes()
         };
     } else {
-        mount_endpoints_and_merged_docs! {
+        mount_endpoints_and_fixed_docs! {
             rocket, "/".to_owned(), settings,
             "/" => (vec![], custom_openapi_spec()),
             "" => openapi_get_routes_spec![root::root, root::gateway_schema],
