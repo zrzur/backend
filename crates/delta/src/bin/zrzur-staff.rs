@@ -11,6 +11,13 @@
 //!       token once
 //!   zrzur-staff official-bot <bot-id> <reason...>        (gives the mark)
 //!   zrzur-staff official-bot-off <bot-id> <reason...>    (removes the mark)
+//!   zrzur-staff delete-owned <user-id> [--dry-run] <reason...>
+//!       deletes every server and bot of an account staff banned, except
+//!       official ones (the same code and audit records as the admin
+//!       console's `POST /staff/users/<id>/delete-owned`); prints the plan
+//!       and asks for the account's exact username#discriminator first.
+//!       `--dry-run` prints the plan only. There is no way to skip the
+//!       question.
 //!
 //! The official bot mark changes only here.
 //!
@@ -26,7 +33,7 @@ use revolt_database::{
 
 fn usage() -> ! {
     eprintln!(
-        "usage: zrzur-staff list | grant-owner <user-id> <reason> | break-glass <user-id> <reason> | revoke <user-id> <reason> | verify-audit | system-bot <owner-user-id> <name> <reason> | official-bot <bot-id> <reason> | official-bot-off <bot-id> <reason>"
+        "usage: zrzur-staff list | grant-owner <user-id> <reason> | break-glass <user-id> <reason> | revoke <user-id> <reason> | verify-audit | system-bot <owner-user-id> <name> <reason> | official-bot <bot-id> <reason> | official-bot-off <bot-id> <reason> | delete-owned <user-id> [--dry-run] <reason>"
     );
     std::process::exit(2)
 }
@@ -138,6 +145,105 @@ async fn set_roles(
     );
 }
 
+/// `delete-owned`: plan, typed confirmation, then the shared deletion
+async fn delete_owned(db: &Database, user_id: &str, rest: &[String]) {
+    use revolt_database::staff_deletion::{is_banned, plan_delete_owned, staff_delete_owned};
+
+    let dry_run = rest.iter().any(|a| a == "--dry-run");
+    let why = rest.iter().filter(|a| *a != "--dry-run").cloned().collect::<Vec<_>>().join(" ");
+    let why = why.trim().to_string();
+    if !(3..=500).contains(&why.chars().count()) {
+        fail("give a reason (3 to 500 characters)");
+    }
+    let user = db.fetch_user(user_id).await.unwrap_or_else(|_| fail("no such user"));
+    if user.bot.is_some() {
+        fail("this is a bot; delete-owned takes the account that owns it");
+    }
+    let handle = format!("{}#{}", user.username, user.discriminator);
+    println!("account: {handle} ({})", user.id);
+    let banned = is_banned(&user);
+    if !banned {
+        println!("refused: the account is not banned. Ban it first (admin console, Trust & Safety); a disabled account is not enough.");
+    }
+
+    let plan = plan_delete_owned(db, &user).await.unwrap_or_else(|e| fail(format!("{e:?}")));
+    println!("\nwould delete {} servers:", plan.servers.len());
+    for s in &plan.servers {
+        let link = s
+            .server
+            .vanity_invite
+            .as_ref()
+            .map(|v| format!("zrzur.cc/{}", v.code))
+            .unwrap_or_else(|| "-".into());
+        println!("  {}  {:?}  members={}  link={link}", s.server.id, s.server.name, s.members);
+    }
+    println!("would delete {} bots:", plan.bots.len());
+    for b in &plan.bots {
+        println!("  {}  {:?}", b.bot.id, b.name);
+    }
+    println!("kept (official): {}", plan.skipped.len());
+    for k in &plan.skipped {
+        println!("  {} {}  {:?}", k.kind, k.id, k.name);
+    }
+
+    if dry_run {
+        println!("\ndry run: nothing changed");
+        return;
+    }
+    let actor = AuditRecord {
+        actor_id: STAFF_ACTOR_CLI.to_string(),
+        ..Default::default()
+    };
+    if banned {
+        if plan.servers.is_empty() && plan.bots.is_empty() {
+            println!("\nnothing to delete");
+            return;
+        }
+        println!("\nThis cannot be undone. Type the account's name ({handle}) to delete all of the above:");
+        let mut typed = String::new();
+        std::io::stdin()
+            .read_line(&mut typed)
+            .unwrap_or_else(|e| fail(format!("stdin: {e}")));
+        if typed.trim_end_matches(['\r', '\n']) != handle {
+            fail("the name does not match; nothing changed");
+        }
+    }
+
+    // what the API sets up at start: events go out through RabbitMQ and
+    // Redis, voice rooms are closed through LiveKit
+    revolt_database::AMQP::new_auto().await;
+    let config = revolt_config::config().await;
+    let voice = revolt_database::voice::VoiceClient::new(config.api.livekit.nodes.clone());
+    // re-read: the account may have changed while the question was open.
+    // A refusal is recorded too, as the API does.
+    let user = db.fetch_user(user_id).await.unwrap_or_else(|_| fail("no such user"));
+    let result = staff_delete_owned(db, &voice, &actor, &user, &why, &|_| {})
+        .await
+        .unwrap_or_else(|e| match e.error_type {
+            revolt_result::ErrorType::InvalidOperation => fail("the account is not banned; nothing changed"),
+            _ => fail(format!("{e:?}")),
+        });
+    println!("\ndeleted {} servers:", result.deleted_server_count);
+    for id in &result.deleted_servers {
+        println!("  {id}");
+    }
+    println!("deleted {} bots:", result.deleted_bot_count);
+    for id in &result.deleted_bots {
+        println!("  {id}");
+    }
+    println!("kept (official): {}", result.skipped.len());
+    for k in &result.skipped {
+        println!("  {} {}  {:?}", k.kind, k.id, k.name);
+    }
+    println!("failed: {}", result.failed.len());
+    for f in &result.failed {
+        println!("  {} {}  {:?}  {}", f.kind, f.id, f.name, f.why);
+    }
+    if !result.failed.is_empty() {
+        std::process::exit(1);
+    }
+}
+
 #[rocket::main]
 async fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -219,6 +325,7 @@ async fn main() {
                 .unwrap_or_else(|e| fail(format!("{e:?}")));
             println!("{} ({}): official bot {mark}", user.id, user.username);
         }
+        ("delete-owned", Some(user)) => delete_owned(&db, user, &args[2..]).await,
         ("verify-audit", _) => {
             let mut from = 1;
             let mut before = None;

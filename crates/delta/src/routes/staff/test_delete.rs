@@ -385,3 +385,72 @@ async fn delete_owned_needs_a_banned_account_and_removes_everything_but_official
     let (status, _) = get(&harness, &owner, &token, &format!("/staff/users/{}", squatter.id)).await;
     assert_eq!(status, Status::Ok);
 }
+
+/// `zrzur-staff delete-owned` calls this shared code with the command-line
+/// actor: the same refusal, plan, deletion and audit records as the API
+#[rocket::async_test]
+async fn the_command_line_runs_the_same_deletion() {
+    use revolt_database::{
+        staff_deletion::{plan_delete_owned, staff_delete_owned},
+        voice::VoiceClient,
+        AuditRecord, STAFF_ACTOR_CLI,
+    };
+    let harness = TestHarness::new().await;
+    let voice = harness.client.rocket().state::<VoiceClient>().unwrap();
+    let actor = AuditRecord {
+        actor_id: STAFF_ACTOR_CLI.to_string(),
+        ..Default::default()
+    };
+    let (_, _, squatter) = harness.new_user().await;
+    let server = owned_server(&harness, &squatter).await;
+    let official = owned_server(&harness, &squatter).await;
+    make_official(&harness, &official).await;
+    let (bot, _) = harness.new_bot(&squatter).await;
+    let no_forget = |_: &str| {};
+
+    // not banned: refused, nothing deleted, the refusal recorded
+    let error = staff_delete_owned(&harness.db, voice, &actor, &squatter, "Grabbed custom links", &no_forget)
+        .await
+        .unwrap_err();
+    assert!(matches!(error.error_type, revolt_result::ErrorType::InvalidOperation));
+    assert!(harness.db.fetch_server(&server.id).await.is_ok());
+    assert!(harness.db.fetch_bot(&bot.id).await.is_ok());
+
+    ban(&harness, &squatter).await;
+    let squatter = harness.db.fetch_user(&squatter.id).await.unwrap();
+    let plan = plan_delete_owned(&harness.db, &squatter).await.unwrap();
+    assert_eq!(plan.servers.iter().map(|s| s.server.id.clone()).collect::<Vec<_>>(), vec![server.id.clone()]);
+    assert_eq!(plan.servers[0].members, 1);
+    assert_eq!(plan.bots.iter().map(|b| b.bot.id.clone()).collect::<Vec<_>>(), vec![bot.id.clone()]);
+    assert_eq!(plan.skipped.len(), 1);
+    assert_eq!(plan.skipped[0].id, official.id);
+
+    let result = staff_delete_owned(&harness.db, voice, &actor, &squatter, "Grabbed custom links", &no_forget)
+        .await
+        .unwrap();
+    assert_eq!(result.deleted_servers, vec![server.id.clone()]);
+    assert_eq!(result.deleted_bots, vec![bot.id.clone()]);
+    assert_eq!((result.deleted_server_count, result.deleted_bot_count), (1, 1));
+    assert_eq!(result.skipped[0].id, official.id);
+    assert!(result.failed.is_empty());
+    assert!(harness.db.fetch_server(&server.id).await.is_err());
+    assert!(harness.db.fetch_bot(&bot.id).await.is_err());
+    assert!(harness.db.fetch_server(&official.id).await.is_ok());
+
+    let cli: Vec<(String, String)> = harness
+        .db
+        .fetch_platform_audit(revolt_database::PlatformAuditQuery {
+            limit: 500,
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|e| e.actor_id == STAFF_ACTOR_CLI && e.reason.as_deref() == Some("Grabbed custom links"))
+        .map(|e| (e.action, format!("{:?}", e.outcome)))
+        .collect();
+    assert_eq!(count(&cli, "staff.user.delete_owned", "Denied"), 1);
+    assert_eq!(count(&cli, "staff.user.delete_owned", "Success"), 1);
+    assert_eq!(count(&cli, "staff.server.delete", "Success"), 1);
+    assert_eq!(count(&cli, "staff.bot.delete", "Success"), 1);
+}

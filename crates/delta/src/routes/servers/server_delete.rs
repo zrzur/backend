@@ -1,7 +1,7 @@
 use revolt_database::{
     util::reference::Reference,
     voice::{
-        delete_voice_channel, get_user_voice_channel_in_server, remove_user_from_voice_channel,
+        get_user_voice_channel_in_server, remove_user_from_voice_channel,
         UserVoiceChannel, VoiceClient,
     },
     Database, RemovalIntention, User, ValidatedTicket,
@@ -71,18 +71,7 @@ pub(crate) async fn remove_server(
     voice_client: &VoiceClient,
     server: revolt_database::Server,
 ) -> Result<()> {
-    for channel_id in &server.channels {
-        delete_voice_channel(
-            voice_client,
-            &UserVoiceChannel {
-                id: channel_id.clone(),
-                server_id: Some(server.id.clone()),
-            },
-        )
-        .await?;
-    }
-
-    server.delete(db).await
+    revolt_database::staff_deletion::remove_server(db, voice_client, server).await
 }
 
 #[cfg(test)]

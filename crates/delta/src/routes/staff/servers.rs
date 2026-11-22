@@ -170,7 +170,7 @@ async fn delete(
         deleted: true,
     };
     let (owner, name) = (server.owner.clone(), server.name.clone());
-    super::deletion::delete_server(db, voice_client, staff, server, &why, None).await?;
+    super::deletion::delete_server(db, voice_client, staff, server, &why).await?;
     crate::util::official::server(db, &owner, "server.deleted", &name, &why).await;
     Ok(result)
 }

@@ -1,6 +1,6 @@
 use revolt_database::{
     util::reference::Reference,
-    voice::{remove_user_from_voice_channels, VoiceClient},
+    voice::VoiceClient,
     Database, User, ValidatedTicket,
 };
 use revolt_result::{create_error, Result};
@@ -47,12 +47,8 @@ pub(crate) async fn remove_bot(
     voice_client: &VoiceClient,
     bot: &revolt_database::Bot,
 ) -> Result<()> {
-    let deleted = bot.delete(db).await;
-    // also after a partial failure: the list must not outlive the bot
-    crate::util::public_commands::forget(&bot.id);
-    deleted?;
-
-    remove_user_from_voice_channels(voice_client, &bot.id).await
+    // the list must not outlive the bot, also after a partial failure
+    revolt_database::staff_deletion::remove_bot(db, voice_client, bot, &crate::util::public_commands::forget).await
 }
 
 #[cfg(test)]

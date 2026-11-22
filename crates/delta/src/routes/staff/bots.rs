@@ -470,7 +470,7 @@ pub async fn delete(
     let why = reason(&data.reason)?;
     let bot = db.fetch_bot(id).await?;
     let username = db.fetch_user(&bot.id).await.ok().map(|u| u.username);
-    super::deletion::delete_bot(db, voice_client, &staff, &bot, &why, None).await?;
+    super::deletion::delete_bot(db, voice_client, &staff, &bot, &why).await?;
     crate::util::official::bot(db, &bot.owner, "bot.deleted", username.as_deref().unwrap_or_default(), Some(&why)).await;
     Ok(Json(DeletedBot {
         id: bot.id,
