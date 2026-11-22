@@ -202,8 +202,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "3075687833ad9afda74d45a56eb2b294ed11b6499b6eae14b5ca02c612121892",
-      "bytes": 136775,
+      "sha256": "2d6ab90b040303387e362858ea647c19632e8ea379ecbe7a0461120faf94fcd7",
+      "bytes": 136978,
       "category": "public-documentation"
     },
     {
@@ -3028,8 +3028,8 @@
     },
     {
       "path": "crates/core/database/src/models/users/model.rs",
-      "sha256": "d264f2bab34d7d19f8553ea7a7c2edde7c339f5840c84ef17cc6759978ad1a4d",
-      "bytes": 74976,
+      "sha256": "85fce1b5b322bfb5e50395860d2a095860012dff29f90c0ec2dac5f29d29328b",
+      "bytes": 78267,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6274,8 +6274,8 @@
     },
     {
       "path": "crates/delta/src/routes/users/appearance_fanout_tests.rs",
-      "sha256": "4c1ddd931bd91392baefee185e9a87910eba943cbc167fbaaa82628850d7d840",
-      "bytes": 11654,
+      "sha256": "890bd4e595ba6ba509f2cc2f3f0a66662a8715036051450411224dc1f454a3f3",
+      "bytes": 13562,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -7222,14 +7222,14 @@
     },
     {
       "path": "docs/docs/developers/events/establishing.md",
-      "sha256": "117eabbbb5ea52b484ba7e1a4a9d60ae21722ee0e9177cf07af5bfcf62ba51a7",
-      "bytes": 3978,
+      "sha256": "c16cb55bb080577e4960876e07f4dd1cca3fa93ebddc5ab98dfff4334a84a2cc",
+      "bytes": 4078,
       "category": "public-documentation"
     },
     {
       "path": "docs/docs/developers/events/protocol.md",
-      "sha256": "6d74cb347457eee414a0bee7a4322b0313146cd1e0594415f8de5e31f6eeef4d",
-      "bytes": 10391,
+      "sha256": "dd0e00090f3ff2e50455237106025827390d05c282dc95ccacfcabd0d4eec7ed",
+      "bytes": 10523,
       "category": "public-documentation"
     },
     {
