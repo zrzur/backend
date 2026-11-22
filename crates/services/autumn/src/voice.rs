@@ -302,6 +302,22 @@ pub async fn make(bytes: &[u8], content_type: &str) -> Result<Made, VoiceRefusal
     make_with("ffmpeg", "ffprobe", bytes, content_type).await
 }
 
+/// One of the [`MAX_CONVERSIONS`] turns; held for as long as the work runs
+pub type Turn = tokio::sync::OwnedSemaphorePermit;
+
+/// Wait for a turn, at most [`QUEUE_WAIT`]: nothing is read before it
+pub async fn take_turn() -> Result<Turn, VoiceRefusal> {
+    timeout(QUEUE_WAIT, TURNS.clone().acquire_owned())
+        .await
+        .map_err(|_| VoiceRefusal::Busy)?
+        .map_err(|_| VoiceRefusal::Unavailable)
+}
+
+/// The copy, by a caller that already holds a turn
+pub async fn make_in_turn(bytes: &[u8], content_type: &str) -> Result<Made, VoiceRefusal> {
+    convert_in_turn("ffmpeg", "ffprobe", bytes, content_type).await
+}
+
 /// The same, with the programs named, so a test can run it without them
 pub async fn make_with(
     ffmpeg: &str,
@@ -310,11 +326,17 @@ pub async fn make_with(
     content_type: &str,
 ) -> Result<Made, VoiceRefusal> {
     may_have_copy(content_type, bytes.len() as isize)?;
-    let _turn = timeout(QUEUE_WAIT, TURNS.clone().acquire_owned())
-        .await
-        .map_err(|_| VoiceRefusal::Busy)?
-        .map_err(|_| VoiceRefusal::Unavailable)?;
+    let _turn = take_turn().await?;
+    convert_in_turn(ffmpeg, ffprobe, bytes, content_type).await
+}
 
+async fn convert_in_turn(
+    ffmpeg: &str,
+    ffprobe: &str,
+    bytes: &[u8],
+    content_type: &str,
+) -> Result<Made, VoiceRefusal> {
+    may_have_copy(content_type, bytes.len() as isize)?;
     let input = tempfile::NamedTempFile::new().map_err(|_| VoiceRefusal::Unavailable)?;
     tokio::fs::write(input.path(), bytes)
         .await

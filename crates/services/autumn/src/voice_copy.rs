@@ -45,6 +45,11 @@ pub trait Store: Send + Sync + 'static {
 
 /// What turns a recording into its copy (ffmpeg in voice.rs)
 pub trait Convert: Send + Sync + 'static {
+    /// Held while the original is read and converted
+    type Turn: Send;
+    /// Wait for a turn: nothing is read before it
+    fn turn(&self) -> impl Future<Output = Result<Self::Turn, VoiceRefusal>> + Send;
+    /// Called while holding a turn
     fn make(
         &self,
         bytes: &[u8],
@@ -89,18 +94,21 @@ impl<S: Store, C: Convert> Copies<S, C> {
             // a record without a key can never be read: made again
             self.forget(hash, &stored).await;
         }
+        // The wait for the shared attempt runs in a task of its own; the
+        // caller only awaits the task. A caller that goes away cancels
+        // nothing: the attempt, and the wait for it, run to their end.
         let this = self.clone();
         let owned = hash.clone();
-        let attempt = async move {
-            // its own task: a caller that goes away does not stop it
-            tokio::spawn(async move { this.make_once(owned).await })
+        tokio::spawn(async move {
+            let key = owned.id.clone();
+            let inner = this.clone();
+            this.making
+                .try_get_with(key, async move { inner.make_once(owned).await })
                 .await
-                .unwrap_or(Err(VoiceRefusal::Unavailable))
-        };
-        self.making
-            .try_get_with(hash.id.clone(), attempt)
-            .await
-            .map_err(|refusal| *refusal)
+                .map_err(|refusal| *refusal)
+        })
+        .await
+        .unwrap_or(Err(VoiceRefusal::Unavailable))
     }
 
     /// The copy and its bytes; a copy that can't be read is made again once
@@ -159,6 +167,8 @@ impl<S: Store, C: Convert> Copies<S, C> {
 
     async fn make_inner(&self, hash: &FileHash) -> Result<FileHash, VoiceRefusal> {
         let id = voice_rendition_id(&hash.id);
+        // a turn first: no original is read while every turn is taken
+        let _turn = self.convert.turn().await?;
         let original = self
             .store
             .read(&hash.bucket_id, &hash.path, &hash.iv)
@@ -209,6 +219,15 @@ impl<S: Store, C: Convert> Copies<S, C> {
         };
 
         if self.db.insert_attachment_hash(&copy).await.is_ok() {
+            // the original may have been deleted while this copy was made:
+            // then the copy goes too, or nothing would ever delete it
+            if let Err(error) = self.db.fetch_attachment_hash(&hash.id).await {
+                if matches!(error.error_type, revolt_result::ErrorType::NotFound) {
+                    tracing::info!("original {} went while its AAC copy was made", hash.id);
+                    self.forget(hash, &copy).await;
+                    return Err(VoiceRefusal::Unreadable);
+                }
+            }
             return Ok(copy);
         }
         // another server was first: keep its copy, drop ours
@@ -293,6 +312,8 @@ mod tests {
         answer: Mutex<Result<Made, VoiceRefusal>>,
         /// stored during the conversion: another server's copy record
         during: Mutex<Option<(Database, FileHash)>>,
+        /// deleted during the conversion: the original's record
+        deleting: Mutex<Option<(Database, String)>>,
         slow: Duration,
     }
 
@@ -302,18 +323,29 @@ mod tests {
                 calls: AtomicUsize::new(0),
                 answer: Mutex::new(Ok(Made::Copy(b"aac bytes".to_vec()))),
                 during: Mutex::new(None),
+                deleting: Mutex::new(None),
                 slow: Duration::from_millis(20),
             }
         }
     }
 
     impl Convert for Fake {
+        type Turn = ();
+
+        async fn turn(&self) -> Result<(), VoiceRefusal> {
+            Ok(())
+        }
+
         async fn make(&self, _: &[u8], _: &str) -> Result<Made, VoiceRefusal> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             tokio::time::sleep(self.slow).await;
             let during = self.during.lock().unwrap().take();
             if let Some((db, record)) = during {
                 db.insert_attachment_hash(&record).await.unwrap();
+            }
+            let deleting = self.deleting.lock().unwrap().take();
+            if let Some((db, id)) = deleting {
+                db.delete_attachment_hash(&id).await.unwrap();
             }
             match &*self.answer.lock().unwrap() {
                 Ok(Made::Copy(data)) => Ok(Made::Copy(data.clone())),
@@ -484,6 +516,35 @@ mod tests {
         assert_ne!(second.path, first.path);
         assert_eq!(data, b"aac bytes");
         assert_eq!(copies.convert.calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn a_second_call_while_a_dropped_one_still_converts_waits_for_it() {
+        let mut fake = Fake::copying();
+        fake.slow = Duration::from_millis(200);
+        let (copies, hash) = setup(fake).await;
+        // the first caller goes away while the conversion runs
+        let gone = tokio::time::timeout(Duration::from_millis(40), copies.copy(&hash)).await;
+        assert!(gone.is_err());
+        // a second caller arrives while that attempt is still running
+        let copy = copies.copy(&hash).await.unwrap();
+        assert_eq!(copies.convert.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(copies.store.writes.load(Ordering::SeqCst), 1);
+        assert_eq!(copies.db.fetch_attachment_hash("h1.m4a").await.unwrap().path, copy.path);
+    }
+
+    #[tokio::test]
+    async fn a_copy_of_an_original_deleted_meanwhile_goes_too() {
+        let (copies, hash) = setup(Fake::copying()).await;
+        // the original is deleted while its copy is being made
+        *copies.convert.during.lock().unwrap() = None;
+        let db = copies.db.clone();
+        *copies.convert.deleting.lock().unwrap() = Some((db, "h1".to_owned()));
+        assert_eq!(copies.copy(&hash).await, Err(VoiceRefusal::Unreadable));
+        assert!(copies.db.fetch_attachment_hash("h1.m4a").await.is_err());
+        // no copy bytes left behind: only the original's object (its record went)
+        assert_eq!(copies.store.paths(), vec!["h1".to_owned()]);
+        assert_eq!(copies.store.writes.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

@@ -42,8 +42,8 @@ use crate::{
     preview::PREVIEWS,
     small::{PreviewQuery, preview_key, render_small},
     voice::{
-        Made, REFUSED, VoiceRefusal, WantedFormat, is_voice_name, make as make_voice_copy,
-        served_content_type, wanted_format,
+        Made, REFUSED, VoiceRefusal, WantedFormat, is_voice_name, served_content_type,
+        wanted_format,
     },
     voice_copy::{Convert, Copies, Store},
 };
@@ -1112,12 +1112,18 @@ impl Store for S3Store {
 struct Ffmpeg;
 
 impl Convert for Ffmpeg {
+    type Turn = crate::voice::Turn;
+
+    async fn turn(&self) -> std::result::Result<Self::Turn, VoiceRefusal> {
+        crate::voice::take_turn().await
+    }
+
     async fn make(
         &self,
         bytes: &[u8],
         content_type: &str,
     ) -> std::result::Result<Made, VoiceRefusal> {
-        make_voice_copy(bytes, content_type).await
+        crate::voice::make_in_turn(bytes, content_type).await
     }
 }
 
