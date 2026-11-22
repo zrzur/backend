@@ -764,7 +764,12 @@ async fn server_list_tells_managers_from_plain_members() {
     // Only the servers the person can manage
     let (status, list) = s.bearer_json("/oauth2/@me/servers?manageable=true", &access).await;
     assert_eq!(status, Status::Ok, "{list}");
-    let ids: Vec<&str> = list.as_array().unwrap().iter().map(|s| s["_id"].as_str().unwrap()).collect();
+    let ids: Vec<&str> = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["_id"].as_str().unwrap())
+        .collect();
     assert_eq!(ids, vec![managed.id.as_str()]);
 
     // The owner owns and manages, whatever the roles say

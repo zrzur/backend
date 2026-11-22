@@ -11,7 +11,8 @@ use revolt_models::v0::{
     INTERACTION_VERSION,
 };
 use revolt_permissions::{
-    calculate_channel_permissions, calculate_server_permissions, ChannelPermission, PermissionQuery, PermissionValue,
+    calculate_channel_permissions, calculate_server_permissions, ChannelPermission,
+    PermissionQuery, PermissionValue,
 };
 use revolt_result::{create_error, Result};
 use rocket::{serde::json::Json, State};
