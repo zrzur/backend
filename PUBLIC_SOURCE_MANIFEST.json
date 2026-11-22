@@ -202,8 +202,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "b387abebc8d95d2c03da0f25521986bf69d79a5f6db78de5d8602b8718a9b89c",
-      "bytes": 134877,
+      "sha256": "ff820ea82dd7ae2c660280fdd4a4b3374564f2e62373d5976bf1bc8864908812",
+      "bytes": 135706,
       "category": "public-documentation"
     },
     {
@@ -226,8 +226,8 @@
     },
     {
       "path": "Cargo.toml",
-      "sha256": "8fca97f09c5b1302c1a1cc160f5234cd7b4e0359791cd8c9cdfd3281f144b9fe",
-      "bytes": 4790,
+      "sha256": "f8dd673284b68d94da061c086b32131c9d90e145aa6a3d7c2819045f53fa9a52",
+      "bytes": 4744,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4438,8 +4438,8 @@
     },
     {
       "path": "crates/delta/Cargo.toml",
-      "sha256": "7983197991e6df7a3aa6dcf6f85a18d18e0c7935e38a4e6705100054ab74009a",
-      "bytes": 2522,
+      "sha256": "fc199c7e25c999d26cb6bcfe0aa483897053a49318ce9c353adae32e39437089",
+      "bytes": 2470,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4516,8 +4516,8 @@
     },
     {
       "path": "crates/delta/build.rs",
-      "sha256": "f2010b68712ace0aefc2b8c16da41efaf8c8b85a144ae1c8f28428e65ce1de48",
-      "bytes": 1934,
+      "sha256": "0aec7284620f6441654091c7e05f2bf618a947193505370ed6bf02fbd92cc6a9",
+      "bytes": 2882,
       "category": "product-source-or-build-manifest"
     },
     {
