@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### OAuth2: the server list says who may manage (security, 2026-11-22)
+
+- `GET /oauth2/@me/servers` lists every server the user is a member of, and nothing said whether they may manage it; its type was described as "A server the user can install the app into". Bot dashboards that took the list as "servers you manage" let plain members change a bot's settings for the whole server. Each entry now has `owner`, `can_manage` (owner or Manage Server) and `permissions` (server-wide, a decimal string; channel overrides never count). `?manageable=true` lists only the servers the user can manage. Additive: old fields are unchanged.
+- A staff account's override never reaches a third-party site: through OAuth2 it holds what its roles give.
+- The consent page's `bot.install` server list carries the same fields.
+
 ## 26.3.0-beta.2 (2026-11-21)
 
 ### The owner's /badge command (2026-11-21)

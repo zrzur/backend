@@ -1,17 +1,13 @@
 use iso8601_timestamp::Timestamp;
-use revolt_database::{
-    hash_secret, in_seconds, util::permissions::DatabasePermissionQuery, Database,
-    OAuthCode, OAuthGrant, User,
-};
+use revolt_database::{hash_secret, in_seconds, Database, OAuthCode, OAuthGrant, User};
 use revolt_models::v0::{
     oauth_limits, oauth_scopes, AuthorizationPreview, AuthorizeRedirect, BotFlags, CommandApplication,
     DataAuthorize, OAuthServer,
 };
-use revolt_permissions::{calculate_server_permissions, ChannelPermission};
 use revolt_result::{create_error, Result};
 use rocket::{serde::json::Json, State};
 
-use super::{invalid, validate_request};
+use super::{invalid, oauth_server, validate_request};
 use crate::{routes::applications::install::install_bot, util::audit_log_reason::AuditLogReason};
 
 /// The registered redirect URI with extra query parameters
@@ -36,16 +32,9 @@ async fn installable_servers(db: &Database, user: &User, bot_id: &str) -> Result
         if db.fetch_member(&server.id, bot_id).await.is_ok() {
             continue;
         }
-        let mut query = DatabasePermissionQuery::new(db, user).server(&server);
-        if calculate_server_permissions(&mut query)
-            .await
-            .has_channel_permission(ChannelPermission::ManageServer)
-        {
-            servers.push(OAuthServer {
-                id: server.id,
-                name: server.name,
-                icon: server.icon.map(Into::into),
-            });
+        let server = oauth_server(db, user, server).await;
+        if server.can_manage {
+            servers.push(server);
         }
     }
     Ok(servers)
