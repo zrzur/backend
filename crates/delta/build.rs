@@ -1,5 +1,3 @@
-use vergen::{vergen, Config};
-
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -34,6 +32,11 @@ fn main() {
         })
         .unwrap_or_default();
     println!("cargo:rustc-env=ZRZUR_GIT_COMMIT={commit}");
+    // Run again when the checked-out commit moves (vergen used to ask for this; it is gone with
+    // its libgit2, which nothing read). Only paths that exist: a missing one reruns every build.
+    for path in git_paths_to_watch() {
+        println!("cargo:rerun-if-changed={path}");
+    }
 
     if let Ok(output) = Command::new("git")
         .args(["config", "--get", "remote.origin.url"])
@@ -43,6 +46,22 @@ fn main() {
             println!("cargo:rustc-env=GIT_ORIGIN_URL={git_origin}");
         }
     }
+}
 
-    vergen(Config::default()).ok();
+/// `HEAD` and the branch file it points at, as git paths (worktrees included); empty without git.
+fn git_paths_to_watch() -> Vec<String> {
+    let git = |args: &[&str]| -> Option<String> {
+        let out = Command::new("git").args(args).output().ok()?;
+        let s = String::from_utf8(out.stdout).ok()?.trim().to_string();
+        (out.status.success() && !s.is_empty()).then_some(s)
+    };
+    let mut paths = Vec::new();
+    paths.extend(git(&["rev-parse", "--git-path", "HEAD"]));
+    if let Some(branch) = git(&["symbolic-ref", "-q", "HEAD"]) {
+        paths.extend(git(&["rev-parse", "--git-path", &branch]));
+    }
+    paths
+        .into_iter()
+        .filter(|p| PathBuf::from(p).exists())
+        .collect()
 }
