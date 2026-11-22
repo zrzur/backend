@@ -5,7 +5,7 @@ use revolt_database::{
     util::cdn_purge::{purge_files, PurgeOutcome},
     Database,
 };
-use revolt_files::delete_from_s3;
+use revolt_files::{delete_from_s3, voice_rendition_id};
 use revolt_result::Result;
 use tokio::time::sleep;
 
@@ -41,6 +41,14 @@ pub async fn task(db: Database, _: revolt_database::AMQP) -> Result<()> {
                     // Delete the hash
                     db.delete_attachment_hash(&file_hash.id).await?;
                     info!("Deleted file hash {}", file_hash.id);
+
+                    // and the AAC copy autumn made of a voice message
+                    let copy_id = voice_rendition_id(&file_hash.id);
+                    if let Ok(copy) = db.fetch_attachment_hash(&copy_id).await {
+                        delete_from_s3(&copy.bucket_id, &copy.path).await?;
+                        db.delete_attachment_hash(&copy.id).await?;
+                        info!("Deleted file hash {}", copy.id);
+                    }
                 }
             }
 
