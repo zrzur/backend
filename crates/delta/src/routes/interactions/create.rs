@@ -11,7 +11,7 @@ use revolt_models::v0::{
     INTERACTION_VERSION,
 };
 use revolt_permissions::{
-    calculate_channel_permissions, ChannelPermission, PermissionQuery, PermissionValue,
+    calculate_channel_permissions, calculate_server_permissions, ChannelPermission, PermissionQuery, PermissionValue,
 };
 use revolt_result::{create_error, Result};
 use rocket::{serde::json::Json, State};
@@ -87,6 +87,19 @@ async fn scope(
     let server = match &server_id {
         Some(id) => Some(db.fetch_server(id).await?),
         None => None,
+    };
+    // Server-wide bits (Manage Server, Ban Members, Administrator, ...) come
+    // from the server and the roles, never from a channel override: a bot
+    // that checks Manage Server here must not let a channel make someone a
+    // manager of the whole server
+    let user_permissions = match &server {
+        Some(server) => {
+            let mut server_query = DatabasePermissionQuery::new(db, user).server(server);
+            let server_wide = u64::from(calculate_server_permissions(&mut server_query).await);
+            let only = *revolt_permissions::SERVER_ONLY_PERMISSIONS;
+            PermissionValue::from((u64::from(user_permissions) & !only) | (server_wide & only))
+        }
+        None => user_permissions,
     };
 
     let bot = db
