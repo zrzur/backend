@@ -202,8 +202,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "b387abebc8d95d2c03da0f25521986bf69d79a5f6db78de5d8602b8718a9b89c",
-      "bytes": 134877,
+      "sha256": "dd7c39956568a2d04e0539ebbf0afba48dd0f790ee70015411df1419de269b79",
+      "bytes": 135852,
       "category": "public-documentation"
     },
     {
@@ -1846,8 +1846,8 @@
     },
     {
       "path": "crates/core/database/src/models/channel_unreads/model.rs",
-      "sha256": "0451e627d30046390ee052a7b628c4a9d04787447a01d4e431f2bb335f260ae9",
-      "bytes": 757,
+      "sha256": "1d8e68cbc0116f3d57037f3792fd318e594ae8c9b3bf1ce644789e64d73008ed",
+      "bytes": 5140,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -1858,14 +1858,14 @@
     },
     {
       "path": "crates/core/database/src/models/channel_unreads/ops/mongodb.rs",
-      "sha256": "3467fea4a86f38370c3c2d3c796cfad3019212bcdc97330f601fd1d2ca77eeb6",
-      "bytes": 5140,
+      "sha256": "c15f342c0254323af2065ae5021b6bba9db91e7c859e17816406eb29ce9326d8",
+      "bytes": 5672,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/database/src/models/channel_unreads/ops/reference.rs",
-      "sha256": "c2011b3d21f3edd09c60e6119f1629aa7021ac86247e28ebbe627be4d4f286d6",
-      "bytes": 4260,
+      "sha256": "3525e26fd1b313aec5e154cd79b818758205b1fcd13cc0abc55a00943ad9797f",
+      "bytes": 4630,
       "category": "product-source-or-build-manifest"
     },
     {
