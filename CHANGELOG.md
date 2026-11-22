@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Voice messages play on older iPhones (2026-11-22)
+
+- autumn keeps an AAC copy in MP4 of every `voice-message-<n>.<ext>` attachment: Safari plays Ogg only from 18.4 and WebM Opus only from 17.4. The copy is made right after the upload, and on the first `GET /attachments/{id}/{name}?format=m4a` for older uploads. An original that is AAC already is served as it is; any other `format` value is a 404. `/original?format=m4a` redirects with the question kept. The copy is a file hash of its own, `<hash>.m4a`, in the same bucket (no schema change); crond deletes it with the original, and the CDN purge of a voice message includes its `?format=m4a` links. ffmpeg (already in the autumn image) runs sandboxed as for WebM designs, two at once, 60 s at most.
+- Ogg Opus is served as `audio/ogg; codecs=opus` instead of `audio/opus` (the RTP type), for stored files too.
+- One-off for the server after deploy, not run: `internal/test-env/launch/voice-aac-backfill-2026-11-22.sh` asks autumn once for each voice message without a copy.
+
 ## 26.3.0-beta.2 (2026-11-21)
 
 ### The owner's /badge command (2026-11-21)
