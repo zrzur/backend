@@ -89,6 +89,8 @@ pub async fn web() -> Rocket<Build> {
     revolt_database::tasks::start_workers(db.clone(), amqp.clone());
     // linked accounts: Twitch names, Battle.net copies (services' terms)
     tokio::spawn(util::linked_upkeep::run(db.clone()));
+    // rich presence: Steam "now playing" for people who share it
+    tokio::spawn(util::steam_now_playing::run(db.clone()));
 
     // Configure Rocket
     let rocket = rocket::build();

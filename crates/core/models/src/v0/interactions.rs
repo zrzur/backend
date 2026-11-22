@@ -362,6 +362,7 @@ impl Interaction {
         for user in std::iter::once(&mut self.user).chain(picked) {
             user.online = false;
             user.status = None;
+            user.activities.clear();
         }
     }
 }

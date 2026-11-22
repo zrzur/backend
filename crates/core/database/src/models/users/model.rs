@@ -418,16 +418,22 @@ impl User {
     /// theirs to choose.
     pub async fn effective_privacy(&self, db: &Database) -> v0::UserPrivacy {
         let mut privacy = self.privacy();
-        if privacy.direct_messages != v0::DirectMessagePrivacy::Friends
+        let needs_age = privacy.direct_messages != v0::DirectMessagePrivacy::Friends
+            || privacy.share_activity.is_none();
+        let young = needs_age
             && self.bot.is_none()
             && db.fetch_account(&self.id).await.is_ok_and(|account| {
                 matches!(
                     account.age_band(),
                     v0::AgeBand::Teen | v0::AgeBand::UnderMinimum
                 )
-            })
-        {
+            });
+        if young {
             privacy.direct_messages = v0::DirectMessagePrivacy::Friends;
+        }
+        // sharing what you do: on for adults, off under 18, until chosen
+        if privacy.share_activity.is_none() {
+            privacy.share_activity = Some(self.bot.is_none() && !young);
         }
         privacy
     }
@@ -634,6 +640,7 @@ impl User {
             user.into_known(perspective, is_online).await
         }))
         .await;
+        crate::util::activity::fill(&mut users).await;
 
         // a custom status emoji shows only from a server the viewer shares:
         // the viewer's servers are looked up once, and only when needed

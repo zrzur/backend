@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Rich presence (2026-11-22, behind `[features.rich_presence] enabled`, off by default)
+
+- Users carry `activities` (`UserActivity`: source `Rpc` / `Desktop` / `Steam`, type `Playing` / `Listening` / `Watching` / `Streaming` / `Competing` / `Using`, name, details, state, start and end, pictures, up to two buttons), the main one first. Only for users shown online: never while offline, invisible, or to someone they blocked; a bot sees them only with the Presence intent. On `Ready`, user fetches, member and DM lists. `UserUpdate` carries the whole list (`[]` clears); going offline sends `[]` with `online: false`.
+- New gateway message `SetActivity { source, activity }` from a person's own session (`Rpc` or `Desktop`; `Steam` is the server's). Every text is checked (lengths, one line), run through the platform word list; buttons are `https://` only; a picture is kept on the file server or proxy, any other `https://` picture is shown through the proxy. 5 changes in 20 seconds per person (Redis counter; `updates_per_window`, `window_seconds`). Refusals are `Error` events (`FeatureDisabled`, `IsBot`, `RateLimited`, `FailedValidation`, `ProfileTextFiltered`).
+- Never stored in MongoDB: a Redis hash `activity:{user_id}` holds one entry per source. What a session set goes when its socket goes; the last session removes all (also after a crash, through `clear_region`); the hash expires after a day at the latest.
+- Privacy: `UserPrivacy.share_activity` (unset: on for adults, off under 18; answers carry the value in force) and `share_steam_activity` (off until chosen). Turning sharing off removes what others see at once; while it is off `SetActivity` is ignored.
+- Steam "now playing" (`steam_enabled`): delta reads `GetPlayerSummaries` (game id and name only) for people online, visible, sharing Steam and linked under the current consent text, 100 accounts a call, at most `steam_daily_calls` (20,000) a day, rounds every `steam_interval_seconds` (60) or slower to stay within it; one delta at a time (Redis lock). Pictures go through the proxy unless the game is in `no_picture_appids`.
+- Going invisible or coming back sends the list again (empty to others while invisible).
+- `GET /` gains `features.rich_presence` and `features.rich_presence_steam`.
+
 ## 26.3.0-beta.2 (2026-11-21)
 
 ### The owner's /badge command (2026-11-21)

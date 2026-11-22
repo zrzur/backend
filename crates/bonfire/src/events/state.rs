@@ -47,6 +47,8 @@ pub struct Cache {
     pub channels: HashMap<String, Channel>,
     pub members: HashMap<String, Member>,
     pub servers: HashMap<String, Server>,
+    /// People who blocked this user: they never see their activity
+    pub blocked_by: HashSet<String>,
 
     pub seen_events: LruCache<String, ()>,
 }
@@ -73,6 +75,7 @@ impl Default for Cache {
             channels: Default::default(),
             members: Default::default(),
             servers: Default::default(),
+            blocked_by: Default::default(),
 
             seen_events: LruCache::new(NonZeroUsize::new(2048).unwrap()),
         }

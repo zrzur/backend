@@ -535,6 +535,27 @@ sounds = 512_000
 decorations = 2_500_000
 effects = 2_000_000
 
+[features.rich_presence]
+# Rich presence: others see what a person is doing right now ("Playing ...",
+# elapsed time, details from the game), in the member list, DMs and profiles.
+# The desktop app sets it (programs it sees running, apps over its local RPC);
+# Steam's "now playing" is read for people who chose it. Nothing is stored:
+# activities live in Redis while the person is online and go with their last
+# session. Off, SetActivity is refused with FeatureDisabled, users carry no
+# activities, Steam is not read and the app hides the Activity settings.
+# Turn it on only after the stable web app shows activities.
+enabled = false
+# Changes one person may make in window_seconds (more are refused)
+updates_per_window = 5
+window_seconds = 20
+# Steam "now playing" (needs [api.connections.steam] web_api_key). One call
+# reads 100 accounts; Steam allows 100,000 calls a day per key, shared with
+# the Steam connection. 20,000 calls a day at one round a minute covers about
+# 1,300 people online with Steam shared; with more, rounds stretch.
+steam_enabled = false
+steam_interval_seconds = 60
+steam_daily_calls = 20000
+
 [features.saved_reminders]
 # "Save message" (a private list only the person sees) and "Remind me" on a
 # message (crond delivers it as an entry in the app and a push notification).

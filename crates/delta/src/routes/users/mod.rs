@@ -1,6 +1,8 @@
 use revolt_rocket_okapi::revolt_okapi::openapi3::OpenApi;
 use rocket::Route;
 
+#[cfg(test)]
+mod activity_tests;
 mod add_friend;
 mod block_user;
 mod change_username;

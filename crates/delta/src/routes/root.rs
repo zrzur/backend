@@ -95,6 +95,14 @@ pub struct RevoltFeatures {
     /// Whether people can save messages to a private list and set
     /// reminders on messages
     pub saved_reminders: bool,
+    /// Rich presence: whether people can show what they are doing right
+    /// now (`SetActivity`, `activities` on users)
+    #[serde(default)]
+    pub rich_presence: bool,
+    /// Whether a linked Steam account's "now playing" can be shared as an
+    /// activity
+    #[serde(default)]
+    pub rich_presence_steam: bool,
     /// Voice on a weak connection: whether the app steps down, and when
     pub voice_weak_network: VoiceWeakNetworkFeature,
     /// Whether voice clips are on
@@ -272,6 +280,10 @@ pub async fn root() -> Result<Json<RevoltConfig>> {
             server_import_link: config.features.server_import.enabled
                 && config.features.server_import.link_fetch,
             saved_reminders: config.features.saved_reminders.enabled,
+            rich_presence: config.features.rich_presence.enabled,
+            rich_presence_steam: config.features.rich_presence.enabled
+                && config.features.rich_presence.steam_enabled
+                && config.api.connections.steam.enabled(),
             voice_weak_network: VoiceWeakNetworkFeature {
                 enabled: config.features.voice_weak_network_enabled,
                 weak_loss_percent: config.features.voice_weak_network.weak_loss_percent,

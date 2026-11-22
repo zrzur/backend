@@ -591,6 +591,10 @@ struct Delivery {
     _registration: Option<resume::Registration>,
     /// Presence session while the user counts as online (not while dropped)
     presence: Option<u32>,
+    /// Login session behind this socket: what it set as the user's
+    /// activity goes when it goes (empty for bots)
+    login_session: String,
+    db: &'static Database,
     /// When the last socket dropped, while there is none
     detached_at: Option<Instant>,
     /// Last `seq` given out when the socket dropped: the most a resume can
@@ -643,8 +647,25 @@ impl Delivery {
     async fn go_offline(&mut self, state: &State) {
         if let Some(presence) = self.presence.take() {
             if delete_session(&self.user_id, presence).await {
+                // the last one: the activities went with it
                 state.broadcast_presence_change(false).await;
+            } else {
+                self.forget_activity().await;
             }
+        }
+    }
+
+    /// Still online elsewhere: only what this session set goes
+    async fn forget_activity(&self) {
+        if self.login_session.is_empty()
+            || !revolt_database::util::activity::forget_owned_by(&self.user_id, &self.login_session)
+                .await
+        {
+            return;
+        }
+        let db = self.db;
+        if let Ok(user) = db.fetch_user(&self.user_id).await {
+            revolt_database::util::activity::publish(db, &user).await;
         }
     }
 
@@ -784,6 +805,8 @@ async fn listener(
         gateway_session_id,
         _registration: registration,
         presence: None,
+        login_session: state.session_id.clone(),
+        db,
         detached_at: None,
         seq_at_detach: 0,
         next_generation: 1,
@@ -1153,6 +1176,24 @@ async fn worker(
                             }
                         }
                     }
+                    ClientMessage::SetActivity { source, activity } => {
+                        if let Err(error) = revolt_database::util::activity::set_from_session(
+                            db,
+                            &user_id,
+                            &session_id,
+                            source,
+                            activity,
+                        )
+                        .await
+                        {
+                            write
+                                .lock()
+                                .await
+                                .send(config.encode(&EventV1::Error { data: error }))
+                                .await
+                                .ok();
+                        }
+                    }
                     ClientMessage::Ping { data, responded } => {
                         pinged = true;
 
@@ -1334,6 +1375,10 @@ mod session_check_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "activity_tests.rs"]
+mod activity_tests;
 
 /// bonfire itself on a real TCP socket, with Redis, against the test database
 #[cfg(test)]
