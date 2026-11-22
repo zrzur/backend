@@ -202,8 +202,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "6dfe3e07586aa2338c89a770ca208b9fba29ab4edf70e52caec1e199c7220fdc",
-      "bytes": 135925,
+      "sha256": "7e6b043d3882909fb03d7f5019be07774a895a7d685937e17a4a593f0fae9867",
+      "bytes": 136165,
       "category": "public-documentation"
     },
     {
@@ -7204,8 +7204,8 @@
     },
     {
       "path": "docs/docs/developers/api/uploading-files.md",
-      "sha256": "f58167ef94e9932a97bb84bb39f38dc7dc96da99116ecb4815f03eeb3992ba4d",
-      "bytes": 1874,
+      "sha256": "a147285e960c9c4acd50ca31a1cee001663edc9677a9f1fe9cdbe7897258e5f0",
+      "bytes": 3012,
       "category": "public-documentation"
     },
     {
