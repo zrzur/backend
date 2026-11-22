@@ -7251,6 +7251,7 @@ dependencies = [
  "revolt-config",
  "revolt-database",
  "revolt-files",
+ "revolt-models",
  "revolt-ratelimits",
  "revolt-result",
  "revolt_clamav-client",

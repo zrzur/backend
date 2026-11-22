@@ -1,5 +1,6 @@
-//! Community decorations, nameplates and profile effects. Only creators
-//! granted by staff can submit. Decorations and nameplates go live at once;
+//! Community decorations, nameplates, profile effects and profile frames.
+//! Only creators granted by staff can submit. Decorations, nameplates and
+//! frames go live at once;
 //! effects play by themselves for people who did not ask, so a reviewer
 //! approves each one first. Everyone signed in can browse, favourite and wear
 //! published designs.
@@ -74,6 +75,7 @@ fn kind_of(kind: &str) -> Result<CommunityItemKind> {
         "decorations" => Ok(CommunityItemKind::Decoration),
         "nameplates" => Ok(CommunityItemKind::Nameplate),
         "effects" => Ok(CommunityItemKind::Effect),
+        "frames" => Ok(CommunityItemKind::Frame),
         _ => Err(create_error!(InvalidOperation)),
     }
 }
@@ -90,7 +92,34 @@ async fn effects_open(kind: &CommunityItemKind) -> Result<()> {
 fn tag_of(kind: &CommunityItemKind) -> &'static str {
     match kind {
         CommunityItemKind::Effect => "effects",
-        CommunityItemKind::Decoration | CommunityItemKind::Nameplate => "decorations",
+        CommunityItemKind::Decoration | CommunityItemKind::Nameplate | CommunityItemKind::Frame => {
+            "decorations"
+        }
+    }
+}
+
+/// A community frame is one still picture of the template's size: it is laid
+/// over the card as it is, and a moving one could not be stopped for people
+/// who ask for less motion. The media server has already checked that the
+/// card's content area is transparent (autumn `check_frame_safe_area`).
+fn check_frame_file(file: &File) -> Result<()> {
+    let refused = |code: &str| {
+        Err(revolt_result::failed_validation(vec![revolt_result::ValidationProblem::new(
+            "file", code,
+        )]))
+    };
+    let (width, height) = v0::PROFILE_FRAME_FILE_SIZE;
+    match &file.metadata {
+        revolt_database::Metadata::Image { width: w, height: h, animated, .. } => {
+            if (*w as usize, *h as usize) != (width, height) {
+                return refused("frame_size");
+            }
+            if animated.unwrap_or(false) {
+                return refused("frame_still");
+            }
+            Ok(())
+        }
+        _ => refused("frame_size"),
     }
 }
 
@@ -224,6 +253,9 @@ async fn claim_file(
     let file = db.fetch_attachment(tag, file_id).await?;
     if file.uploader_id.as_deref() != Some(user.id.as_str()) {
         return Err(create_error!(NotFound));
+    }
+    if *kind == CommunityItemKind::Frame {
+        check_frame_file(&file)?;
     }
     File::use_community_item(db, file_id, tag, item_id, &user.id).await
 }
@@ -464,7 +496,7 @@ async fn public_creators(db: &Database, ids: &[String]) -> Result<HashSet<String
 
 /// # List community items
 ///
-/// Published decorations or nameplates only, without those of suspended
+/// Published decorations, nameplates or frames only, without those of suspended
 /// creators. Sort by `new` or `popular`
 /// (unique users who applied it), search by name, tag or creator, filter
 /// by creator or your favourites.

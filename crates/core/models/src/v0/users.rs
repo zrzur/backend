@@ -420,6 +420,13 @@ auto_derived!(
         /// File of a community effect (set by the server, read-only)
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
         pub effect_file: Option<String>,
+        /// Frame drawn around the whole profile card: one of
+        /// [USER_STYLE_PROFILE_FRAMES], or c:<id> for a community frame
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub profile_frame: Option<String>,
+        /// Image of a community frame (set by the server, read-only)
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub profile_frame_file: Option<String>,
     }
 
     /// Who can start a direct message with a user
@@ -721,6 +728,39 @@ pub const USER_STYLE_NAMEPLATES: &[&str] = &[
     "midnight-pulse", "pulse-wave", "pixel-zrzur-home",
 ];
 
+/// Built-in profile frames (drawn by the client). Hand-made pixel art, added
+/// one at a time after the owner has seen each on a real card.
+pub const USER_STYLE_PROFILE_FRAMES: &[&str] = &["crystal"];
+
+/// Size of a community frame file, in pixels: twice the template the client
+/// lays over the card (see [PROFILE_FRAME_TEMPLATE])
+pub const PROFILE_FRAME_FILE_SIZE: (usize, usize) = (800, 1020);
+
+/// Where a community frame may be drawn. It is a 400 x 510 template (CSS px)
+/// laid over the card, which is the rectangle `card`: the frame may reach
+/// 30 px past its sides, 70 px above it and 40 px below it. Rectangles are
+/// left, top, right, bottom.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProfileFrameTemplate {
+    pub width: u32,
+    pub height: u32,
+    /// The card inside the template
+    pub card: (u32, u32, u32, u32),
+    /// Must stay transparent: it lies over the card's content
+    pub safe: (u32, u32, u32, u32),
+    /// May be drawn on although inside `safe`: the crest over the middle of
+    /// the banner
+    pub crest: (u32, u32, u32, u32),
+}
+
+pub const PROFILE_FRAME_TEMPLATE: ProfileFrameTemplate = ProfileFrameTemplate {
+    width: 400,
+    height: 510,
+    card: (30, 70, 370, 470),
+    safe: (40, 80, 360, 460),
+    crest: (120, 80, 280, 110),
+};
+
 /// Decorations that are no longer offered. Saved profiles may still hold one:
 /// clients show nothing for it, and a save that sends it back must not fail.
 const USER_STYLE_RETIRED_DECORATIONS: &[&str] = &[
@@ -783,6 +823,13 @@ impl UserStyle {
                 return Err("unknown nameplate");
             }
         }
+        if let Some(frame) = &self.profile_frame {
+            if !USER_STYLE_PROFILE_FRAMES.contains(&frame.as_str())
+                && community_item_ref(frame).is_none()
+            {
+                return Err("unknown profile_frame");
+            }
+        }
         Ok(())
     }
 
@@ -794,6 +841,7 @@ impl UserStyle {
             && self.decoration.is_none()
             && self.nameplate.is_none()
             && self.effect.is_none()
+            && self.profile_frame.is_none()
     }
 }
 
@@ -879,12 +927,52 @@ mod style_tests {
             super::USER_STYLE_DECORATIONS,
             super::USER_STYLE_NAMEPLATES,
             super::USER_STYLE_EFFECTS,
+            super::USER_STYLE_PROFILE_FRAMES,
         ] {
             let mut seen = std::collections::HashSet::new();
             for id in list {
                 assert!(seen.insert(*id), "{id} is listed twice");
             }
         }
+    }
+
+    #[test]
+    fn profile_frames_are_checked() {
+        for id in super::USER_STYLE_PROFILE_FRAMES {
+            let mut s = style();
+            s.profile_frame = Some((*id).into());
+            assert!(s.validate_style().is_ok(), "{id}");
+        }
+        let mut s = style();
+        s.profile_frame = Some("c:01M5TGZFE80SKMC8JVGJKBHS2A".into());
+        assert!(s.validate_style().is_ok());
+        for bad in ["gold", "c:not-an-id", "crystal; x", "khatam", ""] {
+            let mut s = style();
+            s.profile_frame = Some(bad.into());
+            assert!(s.validate_style().is_err(), "{bad}");
+        }
+        let s = super::UserStyle {
+            profile_frame: Some("crystal".into()),
+            ..Default::default()
+        };
+        assert!(!s.is_empty());
+    }
+
+    #[test]
+    fn the_frame_template_keeps_the_card_clear() {
+        let t = super::PROFILE_FRAME_TEMPLATE;
+        let (fw, fh) = super::PROFILE_FRAME_FILE_SIZE;
+        assert_eq!((fw as u32, fh as u32), (t.width * 2, t.height * 2));
+        // the safe area is the card less 10 px on every side
+        assert_eq!(
+            t.safe,
+            (t.card.0 + 10, t.card.1 + 10, t.card.2 - 10, t.card.3 - 10)
+        );
+        // the crest starts at the top of the safe area and stays clear of
+        // the corner buttons (12 px in, two of 32 px with 8 between)
+        assert!(t.crest.0 >= t.safe.0 && t.crest.2 <= t.safe.2 && t.crest.1 == t.safe.1);
+        assert!(t.crest.2 <= t.card.2 - 12 - 72);
+        assert!(t.crest.0 >= t.card.0 + 12 + 72);
     }
 
     #[test]

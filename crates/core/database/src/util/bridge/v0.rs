@@ -2308,6 +2308,7 @@ impl From<crate::CommunityItemKind> for CommunityItemKind {
             crate::CommunityItemKind::Decoration => CommunityItemKind::Decoration,
             crate::CommunityItemKind::Nameplate => CommunityItemKind::Nameplate,
             crate::CommunityItemKind::Effect => CommunityItemKind::Effect,
+            crate::CommunityItemKind::Frame => CommunityItemKind::Frame,
         }
     }
 }
@@ -2318,6 +2319,7 @@ impl From<CommunityItemKind> for crate::CommunityItemKind {
             CommunityItemKind::Decoration => crate::CommunityItemKind::Decoration,
             CommunityItemKind::Nameplate => crate::CommunityItemKind::Nameplate,
             CommunityItemKind::Effect => crate::CommunityItemKind::Effect,
+            CommunityItemKind::Frame => crate::CommunityItemKind::Frame,
         }
     }
 }

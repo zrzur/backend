@@ -159,6 +159,10 @@ impl AbstractCommunityItems for ReferenceDb {
                     style.effect = None;
                     style.effect_file = None;
                 }
+                if style.profile_frame.as_deref() == Some(&custom) {
+                    style.profile_frame = None;
+                    style.profile_frame_file = None;
+                }
             }
         }
         Ok(())
@@ -177,6 +181,9 @@ impl AbstractCommunityItems for ReferenceDb {
                 if style.effect.as_deref() == Some(&custom) {
                     style.effect_file = Some(file_id.to_string());
                 }
+                if style.profile_frame.as_deref() == Some(&custom) {
+                    style.profile_frame_file = Some(file_id.to_string());
+                }
             }
         }
         Ok(())
@@ -191,7 +198,10 @@ impl AbstractCommunityItems for ReferenceDb {
             .values()
             .filter(|user| {
                 user.style.as_ref().is_some_and(|style| {
-                    style.decoration == custom || style.nameplate == custom || style.effect == custom
+                    style.decoration == custom
+                        || style.nameplate == custom
+                        || style.effect == custom
+                        || style.profile_frame == custom
                 })
             })
             .take(limit)

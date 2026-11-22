@@ -328,6 +328,14 @@ pub(crate) fn wearer_notice(kind: &CommunityItemKind) -> (Words, Words) {
                 "Der Avatar-Rahmen auf deinem Profil ist nicht mehr verfügbar und wurde entfernt. Unter Designs kannst du einen anderen wählen.",
             ),
         ),
+        CommunityItemKind::Frame => (
+            words("A profile frame was removed", "أُزيل إطار البطاقة من ملفك الشخصي", "Ein Profilrahmen wurde entfernt"),
+            words(
+                "The frame around your profile is no longer available, so it has been taken off. You can choose another one on Designs.",
+                "لم يعد إطار البطاقة الموجود حول ملفك الشخصي متاحًا، لذا أُزيل. يمكنك اختيار إطار آخر من صفحة التصاميم.",
+                "Der Rahmen um dein Profil ist nicht mehr verfügbar und wurde entfernt. Unter Designs kannst du einen anderen wählen.",
+            ),
+        ),
         CommunityItemKind::Nameplate => (
             words("A nameplate was removed", "أُزيلت لوحة اسم من ملفك الشخصي", "Ein Namensschild wurde entfernt"),
             words(
