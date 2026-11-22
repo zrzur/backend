@@ -202,8 +202,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "8dfd4e1fda26f3756c46a35ffdeb3c79b0eec9a60d2c7013b84654ec3d876a53",
-      "bytes": 135563,
+      "sha256": "3075687833ad9afda74d45a56eb2b294ed11b6499b6eae14b5ca02c612121892",
+      "bytes": 136775,
       "category": "public-documentation"
     },
     {
@@ -358,8 +358,8 @@
     },
     {
       "path": "crates/bonfire/src/events/impl.rs",
-      "sha256": "5d490851a518f2bf2e8b7155b66fcd8fe079ca0e02e93ba0f34b13ea7f87e059",
-      "bytes": 52511,
+      "sha256": "832f8ff1e7edffd87efbc060ce07d468aa20a5b66bd34837cbd6b01b0dd40fc9",
+      "bytes": 53423,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -376,8 +376,8 @@
     },
     {
       "path": "crates/bonfire/src/events/tests.rs",
-      "sha256": "1c4609ff4c37ba7a48b00ffda937d90a095c65315f2fbbf2c0b736107c30bca4",
-      "bytes": 59674,
+      "sha256": "ba784ce294740828e75961d4b815c383bf51ebe3899ccc98e8656cd1ad92d2d2",
+      "bytes": 62213,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -1378,8 +1378,8 @@
     },
     {
       "path": "crates/core/database/src/drivers/reference.rs",
-      "sha256": "4bbb27189f6d317cb7ea4027e34eb3e534242a5ed7eaa97b63f8b776f3f925d9",
-      "bytes": 6329,
+      "sha256": "567fee5dc5f7f05ba2f3a4923a727b546ae0430a37064d7bcb2229f96e87fcb5",
+      "bytes": 6584,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -2470,8 +2470,8 @@
     },
     {
       "path": "crates/core/database/src/models/ratelimit_events/model.rs",
-      "sha256": "ee9c27bbf466b799ee349032a39f6441b7e553d3d6f4c4b260ff7a563f1eb709",
-      "bytes": 1091,
+      "sha256": "0d61ddc3ad6d0e5e9f3c0ca1c15d644c91758b8ed5c78376002ca9bcf516b0ef",
+      "bytes": 1192,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -2758,8 +2758,8 @@
     },
     {
       "path": "crates/core/database/src/models/server_members/ops/reference.rs",
-      "sha256": "5aceaf663df332596c7021ab6aaf1228deb0599b043e505a43290f47e4178d89",
-      "bytes": 8204,
+      "sha256": "c90d8046e4ac985db8c8a1c2ffe32922227fc19bb6078a6e5a6d85114978dba0",
+      "bytes": 9217,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -3028,8 +3028,8 @@
     },
     {
       "path": "crates/core/database/src/models/users/model.rs",
-      "sha256": "55d24fafbcada88f108b72aed39d811ff48ac806c834093fbb396fc38c03916e",
-      "bytes": 70731,
+      "sha256": "d264f2bab34d7d19f8553ea7a7c2edde7c339f5840c84ef17cc6759978ad1a4d",
+      "bytes": 74976,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4798,8 +4798,8 @@
     },
     {
       "path": "crates/delta/src/routes/bots/edit.rs",
-      "sha256": "0381395020ee855d234511e01f925595e55fdce5e46e2ea6c681be546b084ec8",
-      "bytes": 9687,
+      "sha256": "7a9ac8e788f20823105235af2c916e13df3abff46a487d4ee0c168d319252ba7",
+      "bytes": 10135,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6274,8 +6274,8 @@
     },
     {
       "path": "crates/delta/src/routes/users/appearance_fanout_tests.rs",
-      "sha256": "3a29575a29512a2d28db76d174fe3ad49bcd332ab284a3695c5a4e9ae1bf5710",
-      "bytes": 5574,
+      "sha256": "4c1ddd931bd91392baefee185e9a87910eba943cbc167fbaaa82628850d7d840",
+      "bytes": 11654,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -7222,14 +7222,14 @@
     },
     {
       "path": "docs/docs/developers/events/establishing.md",
-      "sha256": "d1fefe190f63c5819e16f9f9a25375edaf4ecb343ca26f3e93373cc3fc54feb6",
-      "bytes": 3802,
+      "sha256": "117eabbbb5ea52b484ba7e1a4a9d60ae21722ee0e9177cf07af5bfcf62ba51a7",
+      "bytes": 3978,
       "category": "public-documentation"
     },
     {
       "path": "docs/docs/developers/events/protocol.md",
-      "sha256": "4e380c52874985bfa2a79a82c4723d9a39d11ae552f324b4ccbbf04e76083932",
-      "bytes": 9433,
+      "sha256": "6d74cb347457eee414a0bee7a4322b0313146cd1e0594415f8de5e31f6eeef4d",
+      "bytes": 10391,
       "category": "public-documentation"
     },
     {
