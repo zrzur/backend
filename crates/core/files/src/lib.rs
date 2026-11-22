@@ -14,6 +14,13 @@ use tempfile::NamedTempFile;
 
 pub const AUTHENTICATION_TAG_SIZE_BYTES: usize = 16;
 
+/// Id (and storage path) of the AAC copy autumn keeps of a voice message,
+/// for browsers that can't play the recording (Safari before 18.4 and Ogg).
+/// It has no file of its own: it goes when the original hash goes.
+pub fn voice_rendition_id(hash_id: &str) -> String {
+    format!("{hash_id}.m4a")
+}
+
 /// Fetch a file from S3 (and decrypt it)
 pub async fn fetch_from_s3(bucket_id: &str, path: &str, iv: &str) -> Result<Vec<u8>> {
     let encryption = implementation::EncryptionKey::from_config().await;

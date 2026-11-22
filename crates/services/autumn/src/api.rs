@@ -21,7 +21,7 @@ use revolt_database::{
 };
 use revolt_files::{
     AUTHENTICATION_TAG_SIZE_BYTES, create_thumbnail, decode_image, fetch_from_s3, is_animated,
-    upload_to_s3,
+    upload_to_s3, voice_rendition_id,
 };
 use revolt_result::{Error, Result, ToRevoltError, create_error};
 use serde::{Deserialize, Serialize};
@@ -41,6 +41,10 @@ use crate::{
     exif::strip_metadata, metadata::generate_metadata, mime_type::determine_mime_type,
     preview::PREVIEWS,
     small::{PreviewQuery, preview_key, render_small},
+    voice::{
+        RENDITION_CONTENT_TYPE, first_audio_codec, is_aac, is_voice_name, served_content_type,
+        to_aac,
+    },
 };
 
 /// Which websites may read answers in a browser (S-02)
@@ -755,6 +759,17 @@ async fn store_upload(
     let time_to_upload = Instant::now() - upload_start;
     tracing::info!("Took {time_to_upload:?} to upload {new_file_size} bytes to S3.");
 
+    // A voice message: its AAC copy is made now, so an iPhone that can't
+    // play the recording doesn't wait for it on the first tap
+    if matches!(tag, Tag::attachments) && is_voice_name(&filename) {
+        let (db, hash) = (db.clone(), file_hash.clone());
+        tokio::spawn(async move {
+            if let Err(error) = ensure_voice_rendition(&db, &hash).await {
+                tracing::warn!("no AAC copy of voice message {}: {error:?}", hash.id);
+            }
+        });
+    }
+
     // Finally, create the file and return its ID
     let tag: &'static str = tag.into();
     db.insert_attachment(&file_hash.into_file(
@@ -963,15 +978,18 @@ async fn fetch_preview(
     params(
         ("tag" = Tag, Path, description = "Tag to fetch from (e.g. attachments, icons, ...)"),
         ("file_id" = String, Path, description = "File identifier"),
-        ("file_name" = String, Path, description = "File name")
+        ("file_name" = String, Path, description = "File name"),
+        ("format" = Option<String>, Query, description = "`m4a`: the AAC copy of a voice message (`voice-message-<n>.<ext>` attachments only), for browsers that can't play the recording")
     ),
 )]
 async fn fetch_file(
     State(db): State<Database>,
     viewer: Option<User>,
     Path((tag, file_id, file_name)): Path<(Tag, String, String)>,
+    Query(query): Query<FileQuery>,
     headers: HeaderMap,
 ) -> Result<Response> {
+    let aac_copy = query.wants_aac()?;
     let tag: &'static str = tag.clone().into();
     let file = db.fetch_attachment(tag, &file_id).await?;
 
@@ -993,9 +1011,12 @@ async fn fetch_file(
     if file_name != file.filename {
         if file_name == "original" {
             let safe_filename = encode_component(&file.filename);
+            // the AAC copy keeps its question across the redirect
+            let ask = if aac_copy { "?format=m4a" } else { "" };
 
             return Ok(
-                Redirect::permanent(&format!("/{tag}/{file_id}/{}", safe_filename)).into_response(),
+                Redirect::permanent(&format!("/{tag}/{file_id}/{safe_filename}{ask}"))
+                    .into_response(),
             );
         }
 
@@ -1003,9 +1024,87 @@ async fn fetch_file(
     }
 
     let hash = file.as_hash(&db).await?;
-    let data = retrieve_file_by_hash(&hash).await?;
     let cache_control = file_cache_control(tag, private, config().await.files.purge.configured());
+
+    if aac_copy {
+        // only voice messages have one
+        if tag != "attachments" || !is_voice_name(&file.filename) {
+            return Err(create_error!(NotFound));
+        }
+        let copy = ensure_voice_rendition(&db, &hash).await?;
+        let data = retrieve_file_by_hash(&copy).await?;
+        return Ok(original_file_response(data, copy.content_type, cache_control, &headers));
+    }
+
+    let data = retrieve_file_by_hash(&hash).await?;
     Ok(original_file_response(data, hash.content_type, cache_control, &headers))
+}
+
+/// `?format=m4a`: the AAC copy of a voice message. Any other format is refused.
+#[derive(Deserialize, Default)]
+struct FileQuery {
+    format: Option<String>,
+}
+
+impl FileQuery {
+    fn wants_aac(&self) -> Result<bool> {
+        match self.format.as_deref() {
+            None => Ok(false),
+            Some("m4a") => Ok(true),
+            Some(_) => Err(create_error!(NotFound)),
+        }
+    }
+}
+
+/// The hash to serve as the AAC copy of a voice message: the original when it
+/// is AAC already, else the copy, made now when there is none yet (uploads
+/// from before the copies, or a request that came before the upload's own).
+async fn ensure_voice_rendition(db: &Database, hash: &FileHash) -> Result<FileHash> {
+    let id = voice_rendition_id(&hash.id);
+    if let Ok(copy) = db.fetch_attachment_hash(&id).await {
+        if !copy.iv.is_empty() {
+            return Ok(copy);
+        }
+    }
+
+    let original = retrieve_file_by_hash(hash).await?;
+    let probe = original.clone();
+    let codec = tokio::task::spawn_blocking(move || first_audio_codec(&probe))
+        .await
+        .map_err(|_| create_error!(InternalError))?;
+    if is_aac(&hash.content_type, codec.as_deref()) {
+        return Ok(hash.clone());
+    }
+
+    let data = to_aac(&original).await.map_err(|refusal| {
+        tracing::warn!("voice message {} could not be converted: {refusal:?}", hash.id);
+        create_error!(NotFound)
+    })?;
+    let processed = {
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(&data);
+        hasher.finalize()
+    };
+    let copy = FileHash {
+        id: id.clone(),
+        processed_hash: format!("{processed:02x}"),
+        created_at: Timestamp::now_utc(),
+        bucket_id: hash.bucket_id.clone(),
+        path: id.clone(),
+        iv: String::new(),
+        metadata: Metadata::Audio { duration_ms: None },
+        content_type: RENDITION_CONTENT_TYPE.to_owned(),
+        size: (data.len() + AUTHENTICATION_TAG_SIZE_BYTES) as isize,
+    };
+    // two requests may race to make it: the second insert fails, and both
+    // upload the same bytes under the same path
+    if db.fetch_attachment_hash(&id).await.is_err() {
+        let _ = db.insert_attachment_hash(&copy).await;
+    }
+    let nonce = upload_to_s3(&copy.bucket_id, &copy.path, &data).await?;
+    db.set_attachment_hash_nonce(&id, &nonce).await?;
+    S3_CACHE.insert(id, Ok(data)).await;
+    Ok(FileHash { iv: nonce, ..copy })
 }
 
 /// Let browser media engines seek without repeatedly requesting the whole file.
@@ -1041,7 +1140,7 @@ fn original_file_response(
     let mut response = (
         status,
         [
-            (header::CONTENT_TYPE, content_type),
+            (header::CONTENT_TYPE, served_content_type(&content_type)),
             (header::CONTENT_DISPOSITION, "attachment".to_owned()),
             (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_owned()),
             // files never run as a page, even if a browser is asked to show one
