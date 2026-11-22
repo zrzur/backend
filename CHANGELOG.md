@@ -6,7 +6,8 @@
 
 - autumn keeps an AAC copy in MP4 of every `voice-message-<n>.<ext>` attachment: Safari plays Ogg only from 18.4 and WebM Opus only from 17.4. The copy is made right after the upload, and on the first `GET /attachments/{id}/{name}?format=m4a` for older uploads. An original that is AAC already is served as it is; any other `format` value is a 404. `/original?format=m4a` redirects with the question kept. The copy is a file hash of its own, `<hash>.m4a`, in the same bucket (no schema change); crond deletes it with the original, and the CDN purge of a voice message includes its `?format=m4a` links. ffmpeg (already in the autumn image) runs sandboxed as for WebM designs, two at once, 60 s at most.
 - Ogg Opus is served as `audio/ogg; codecs=opus` instead of `audio/opus` (the RTP type), for stored files too.
-- One-off for the server after deploy, not run: `internal/test-env/launch/voice-aac-backfill-2026-11-22.sh` asks autumn once for each voice message without a copy.
+- API contract (accepted 2026-11-22): `?format=m4a` is a new optional query on autumn's `GET /{tag}/{file_id}/{file_name}`, in its OpenAPI description and on the developer page "Uploading Files". No route, event or SDK type changes.
+- One-off for the server after deploy, not run here: the internal launch script `voice-aac-backfill-2026-11-22.sh` asks autumn once for each voice message without a copy.
 
 ## 26.3.0-beta.2 (2026-11-21)
 
