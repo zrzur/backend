@@ -4888,8 +4888,8 @@
     },
     {
       "path": "crates/delta/src/routes/channels/channel_ack.rs",
-      "sha256": "6ddaa2f5dca6be0b69059164825455a6a3db0142caf1bdeba7a2f1a88257a4c6",
-      "bytes": 2641,
+      "sha256": "5833f1e1e34fecaf8dd1ccbd91f016e36f6218a7e11e3fdc36dfc87a9cc1b24e",
+      "bytes": 5345,
       "category": "product-source-or-build-manifest"
     },
     {
