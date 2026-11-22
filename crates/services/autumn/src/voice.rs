@@ -7,36 +7,116 @@
 //! `?format=m4a` where `canPlayType` says no.
 //!
 //! The copy is made right after the upload, and on the first request for a
-//! file that has none yet (older uploads). ffmpeg runs as for WebM designs
-//! (webm.rs): no shell, no stdin, an empty environment, local files only, the
-//! audio demuxers and decoders named here alone, one thread, a time limit,
-//! and only a few at once.
+//! file that has none yet (older uploads). That request comes from anyone who
+//! can see the link, so nothing is done for it before these checks pass:
+//! - the stored file is small enough ([`MAX_SOURCE_BYTES`]) and of a sound
+//!   type ([`may_have_copy`]);
+//! - no earlier attempt failed for it ([`REFUSED`]: an unreadable file for an
+//!   hour, a full queue for a minute);
+//! - one attempt per file at a time ([`MAKING`]), in at most
+//!   [`MAX_CONVERSIONS`] at once ([`TURNS`]), with the per-address limit
+//!   of `ratelimits.rs` in front.
+//!
+//! ffprobe and ffmpeg run as for WebM designs (webm.rs): no shell, no stdin,
+//! an empty environment, local files only, the audio demuxers and decoders
+//! named here alone, one thread, a time limit, a size limit on what comes out.
 
-use std::{sync::Arc, time::Duration};
+use std::{process::Stdio, sync::Arc, time::Duration};
 
 use lazy_static::lazy_static;
-use tokio::{sync::Semaphore, time::timeout};
+use tokio::{process::Command, sync::Semaphore, time::timeout};
 
 use crate::webm::{WebmRefusal, run_limited};
 
-/// Conversions running at once
-const MAX_CONVERSIONS: usize = 2;
+/// Conversions (and probes) running at once
+pub const MAX_CONVERSIONS: usize = 2;
 /// How long a request waits for its turn
 const QUEUE_WAIT: Duration = Duration::from_secs(10);
 /// ffmpeg is killed after this long (the longest recording is 5 minutes)
 const TIME_LIMIT: Duration = Duration::from_secs(60);
+/// ffprobe is killed after this long
+const PROBE_LIMIT: Duration = Duration::from_secs(10);
 /// Largest single allocation ffmpeg may make
 const MAX_ALLOC_BYTES: u64 = 64 * 1024 * 1024;
 /// Longest copy made, in seconds: a little over the 300 s recording limit
 const MAX_SECONDS: &str = "310";
 /// Speech in mono: clear at this rate, and small
 const BITRATE: &str = "64k";
+/// Largest copy ffmpeg may write (310 s at 64 kbit/s is about 2.5 MB)
+const MAX_OUTPUT_BYTES: &str = "4000000";
+/// Largest stored recording a copy is made of: 300 s of Opus at the highest
+/// rate a browser records is about 5 MB
+pub const MAX_SOURCE_BYTES: isize = 8_000_000;
+/// The containers ffprobe and ffmpeg may read
+const FORMATS: &str = "ogg,matroska,webm,mov,mp4,m4a";
+/// The decoders ffmpeg may use
+const DECODERS: &str = "opus,libopus,vorbis,aac,mp3";
 
 /// Content type of the copy
 pub const RENDITION_CONTENT_TYPE: &str = "audio/mp4";
 
 lazy_static! {
     static ref TURNS: Arc<Semaphore> = Arc::new(Semaphore::new(MAX_CONVERSIONS));
+    /// Files no copy could be made of, and why; each entry lives as long as
+    /// its reason says ([`VoiceRefusal::remembered_for`])
+    pub static ref REFUSED: moka::future::Cache<String, VoiceRefusal> =
+        moka::future::Cache::builder()
+            .max_capacity(100_000)
+            .expire_after(RefusalExpiry)
+            .build();
+}
+
+/// Why there is no AAC copy
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VoiceRefusal {
+    /// The stored file is over [`MAX_SOURCE_BYTES`]
+    TooLarge,
+    /// Not a sound (or a type no browser records)
+    NotSound,
+    /// ffprobe or ffmpeg could not read it
+    Unreadable,
+    /// The queue was full or the time ran out
+    TooSlow,
+    /// ffmpeg or ffprobe is not there
+    Unavailable,
+}
+
+impl VoiceRefusal {
+    /// How long a refusal is remembered for the file
+    pub fn remembered_for(self) -> Duration {
+        match self {
+            VoiceRefusal::Unreadable | VoiceRefusal::TooLarge | VoiceRefusal::NotSound => {
+                Duration::from_secs(60 * 60)
+            }
+            VoiceRefusal::TooSlow | VoiceRefusal::Unavailable => Duration::from_secs(60),
+        }
+    }
+
+    /// Asking again later may help: 503 with Retry-After, never stored
+    pub fn try_later(self) -> bool {
+        matches!(self, VoiceRefusal::TooSlow | VoiceRefusal::Unavailable)
+    }
+
+    fn from_run(refusal: WebmRefusal) -> Self {
+        match refusal {
+            WebmRefusal::Unreadable => VoiceRefusal::Unreadable,
+            WebmRefusal::TooSlow => VoiceRefusal::TooSlow,
+            WebmRefusal::Unavailable => VoiceRefusal::Unavailable,
+        }
+    }
+}
+
+struct RefusalExpiry;
+
+impl moka::Expiry<String, VoiceRefusal> for RefusalExpiry {
+    fn expire_after_create(
+        &self,
+        _key: &String,
+        value: &VoiceRefusal,
+        _created_at: std::time::Instant,
+    ) -> Option<Duration> {
+        Some(value.remembered_for())
+    }
 }
 
 /// A voice message as the web app names it: `voice-message-<digits>.<ext>`
@@ -63,10 +143,32 @@ pub fn served_content_type(content_type: &str) -> String {
     }
 }
 
+/// Checked before any work is done for a request: small enough, and a type
+/// a browser records sound in. Chrome's WebM recordings are stored as
+/// `video/webm` (infer reads the container, not the tracks), Safari's MP4
+/// ones as `audio/mp4` or, before the stream check, `video/mp4`.
+pub fn may_have_copy(content_type: &str, size: isize) -> Result<(), VoiceRefusal> {
+    if size > MAX_SOURCE_BYTES {
+        return Err(VoiceRefusal::TooLarge);
+    }
+    if content_type.starts_with("audio/") || matches!(content_type, "video/mp4" | "video/webm") {
+        Ok(())
+    } else {
+        Err(VoiceRefusal::NotSound)
+    }
+}
+
+/// An MP4 container: the sound in it may be AAC already
+pub fn is_mp4_type(content_type: &str) -> bool {
+    matches!(
+        content_type,
+        "audio/mp4" | "audio/m4a" | "audio/x-m4a" | "audio/aac" | "video/mp4"
+    )
+}
+
 /// The original is AAC already (Safari records AAC in MP4): no copy needed
 pub fn is_aac(content_type: &str, codec: Option<&str>) -> bool {
-    matches!(content_type, "audio/mp4" | "audio/aac" | "audio/x-m4a" | "video/mp4")
-        && codec == Some("aac")
+    is_mp4_type(content_type) && codec == Some("aac")
 }
 
 /// Everything ffmpeg is told. No value in here comes from the upload: the
@@ -83,9 +185,9 @@ pub fn ffmpeg_args(input: &str, output: &str) -> Vec<String> {
         "-protocol_whitelist",
         "file",
         "-format_whitelist",
-        "ogg,matroska,webm,mov,mp4,m4a",
+        FORMATS,
         "-codec_whitelist",
-        "opus,libopus,vorbis,aac,mp3",
+        DECODERS,
         "-threads",
         "1",
         "-i",
@@ -109,6 +211,9 @@ pub fn ffmpeg_args(input: &str, output: &str) -> Vec<String> {
         "aac",
         "-b:a",
         BITRATE,
+        // never more than this, whatever the input claims
+        "-fs",
+        MAX_OUTPUT_BYTES,
         // the index first: playback starts before the whole file is in
         "-movflags",
         "+faststart",
@@ -122,55 +227,158 @@ pub fn ffmpeg_args(input: &str, output: &str) -> Vec<String> {
     .collect()
 }
 
-/// Make the AAC copy of a recording
-pub async fn to_aac(bytes: &[u8]) -> Result<Vec<u8>, WebmRefusal> {
-    to_aac_with("ffmpeg", bytes).await
+/// Everything ffprobe is told: the codec of the first sound, nothing more
+pub fn ffprobe_args(input: &str) -> Vec<String> {
+    [
+        "-v",
+        "error",
+        "-protocol_whitelist",
+        "file",
+        "-format_whitelist",
+        FORMATS,
+        "-select_streams",
+        "a:0",
+        "-show_entries",
+        "stream=codec_name",
+        "-of",
+        "default=nw=1:nk=1",
+        input,
+    ]
+    .iter()
+    .map(|value| value.to_string())
+    .collect()
 }
 
-/// The same, with the program named, so a test can run it without ffmpeg
-pub async fn to_aac_with(program: &str, bytes: &[u8]) -> Result<Vec<u8>, WebmRefusal> {
+/// The codec of the first sound, under the same rules as ffmpeg
+async fn probe_codec(program: &str, path: &str) -> Result<String, VoiceRefusal> {
+    let mut command = Command::new(program);
+    command
+        .args(ffprobe_args(path))
+        .env_clear()
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    if let Some(search) = std::env::var_os("PATH") {
+        command.env("PATH", search);
+    }
+    let child = command.spawn().map_err(|error| {
+        tracing::warn!("ffprobe could not start: {error}");
+        VoiceRefusal::Unavailable
+    })?;
+    match timeout(PROBE_LIMIT, child.wait_with_output()).await {
+        Ok(Ok(output)) if output.status.success() => {
+            let codec = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+            if codec.is_empty() {
+                Err(VoiceRefusal::Unreadable)
+            } else {
+                Ok(codec)
+            }
+        }
+        Ok(_) => Err(VoiceRefusal::Unreadable),
+        // dropped with the future: kill_on_drop ends it
+        Err(_) => Err(VoiceRefusal::TooSlow),
+    }
+}
+
+/// What came of a recording
+#[derive(Debug, PartialEq, Eq)]
+pub enum Made {
+    /// It is AAC in MP4 already: serve it as it is
+    Original,
+    /// The AAC copy
+    Copy(Vec<u8>),
+}
+
+/// Make the AAC copy of a recording (or find it needs none)
+pub async fn make(bytes: &[u8], content_type: &str) -> Result<Made, VoiceRefusal> {
+    make_with("ffmpeg", "ffprobe", bytes, content_type).await
+}
+
+/// The same, with the programs named, so a test can run it without them
+pub async fn make_with(
+    ffmpeg: &str,
+    ffprobe: &str,
+    bytes: &[u8],
+    content_type: &str,
+) -> Result<Made, VoiceRefusal> {
+    may_have_copy(content_type, bytes.len() as isize)?;
     let _turn = timeout(QUEUE_WAIT, TURNS.clone().acquire_owned())
         .await
-        .map_err(|_| WebmRefusal::TooSlow)?
-        .map_err(|_| WebmRefusal::Unavailable)?;
+        .map_err(|_| VoiceRefusal::TooSlow)?
+        .map_err(|_| VoiceRefusal::Unavailable)?;
 
-    let input = tempfile::NamedTempFile::new().map_err(|_| WebmRefusal::Unavailable)?;
+    let input = tempfile::NamedTempFile::new().map_err(|_| VoiceRefusal::Unavailable)?;
     tokio::fs::write(input.path(), bytes)
         .await
-        .map_err(|_| WebmRefusal::Unavailable)?;
+        .map_err(|_| VoiceRefusal::Unavailable)?;
+    let in_path = input.path().to_str().ok_or(VoiceRefusal::Unavailable)?;
+
+    // only an MP4 can be AAC already; nothing else is probed
+    if is_mp4_type(content_type) && probe_codec(ffprobe, in_path).await? == "aac" {
+        return Ok(Made::Original);
+    }
+
     let output = tempfile::Builder::new()
         .suffix(".m4a")
         .tempfile()
-        .map_err(|_| WebmRefusal::Unavailable)?;
-    let in_path = input.path().to_str().ok_or(WebmRefusal::Unavailable)?;
-    let out_path = output.path().to_str().ok_or(WebmRefusal::Unavailable)?;
-    run_limited(program, &ffmpeg_args(in_path, out_path), TIME_LIMIT).await?;
+        .map_err(|_| VoiceRefusal::Unavailable)?;
+    let out_path = output.path().to_str().ok_or(VoiceRefusal::Unavailable)?;
+    run_limited(ffmpeg, &ffmpeg_args(in_path, out_path), TIME_LIMIT)
+        .await
+        .map_err(VoiceRefusal::from_run)?;
 
     let copy = tokio::fs::read(output.path())
         .await
-        .map_err(|_| WebmRefusal::Unreadable)?;
+        .map_err(|_| VoiceRefusal::Unreadable)?;
     if copy.is_empty() {
-        return Err(WebmRefusal::Unreadable);
+        return Err(VoiceRefusal::Unreadable);
     }
-    Ok(copy)
+    Ok(Made::Copy(copy))
 }
 
-/// The codec of the first sound in a file, as ffprobe names it
-pub fn first_audio_codec(bytes: &[u8]) -> Option<String> {
-    use std::io::Write;
-    let mut file = tempfile::NamedTempFile::new().ok()?;
-    file.write_all(bytes).ok()?;
-    let probe = ffprobe::ffprobe(file.path()).ok()?;
-    probe
-        .streams
-        .into_iter()
-        .find(|stream| stream.codec_type.as_deref() == Some("audio"))
-        .and_then(|stream| stream.codec_name)
+/// Run `make` at most once at a time per key: concurrent callers for the
+/// same key wait for the first one and share its answer.
+pub async fn once_per_key<T, F>(
+    running: &moka::future::Cache<String, T>,
+    key: &str,
+    work: F,
+) -> Result<T, Arc<VoiceRefusal>>
+where
+    T: Clone + Send + Sync + 'static,
+    F: std::future::Future<Output = Result<T, VoiceRefusal>>,
+{
+    running.try_get_with(key.to_owned(), work).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn have(tool: &str) -> bool {
+        std::process::Command::new(tool)
+            .arg("-version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+    }
+
+    /// A tone in this container and codec, made by ffmpeg (into a file: the
+    /// MP4 muxers can't write to a pipe)
+    fn tone(seconds: u32, format: &str, codec: &str) -> Option<Vec<u8>> {
+        let file = tempfile::NamedTempFile::new().ok()?;
+        let status = std::process::Command::new("ffmpeg")
+            .args(["-nostdin", "-loglevel", "error", "-y", "-f", "lavfi", "-i"])
+            .arg(format!("sine=frequency=440:duration={seconds}"))
+            .args(["-ac", "1", "-c:a", codec, "-f", format])
+            .arg(file.path())
+            .status()
+            .ok()?;
+        let bytes = std::fs::read(file.path()).ok()?;
+        (status.success() && !bytes.is_empty()).then_some(bytes)
+    }
 
     #[test]
     fn voice_names() {
@@ -192,57 +400,158 @@ mod tests {
     }
 
     #[test]
+    fn nothing_is_done_for_big_files_or_other_types() {
+        assert_eq!(may_have_copy("audio/opus", MAX_SOURCE_BYTES + 1), Err(VoiceRefusal::TooLarge));
+        assert_eq!(may_have_copy("image/png", 10), Err(VoiceRefusal::NotSound));
+        assert_eq!(may_have_copy("application/pdf", 10), Err(VoiceRefusal::NotSound));
+        assert_eq!(may_have_copy("video/quicktime", 10), Err(VoiceRefusal::NotSound));
+        assert!(may_have_copy("audio/opus", 10).is_ok());
+        assert!(may_have_copy("video/webm", 10).is_ok());
+        assert!(may_have_copy("video/mp4", 10).is_ok());
+    }
+
+    #[test]
+    fn refusals_are_remembered_and_some_are_asked_again() {
+        assert_eq!(VoiceRefusal::Unreadable.remembered_for(), Duration::from_secs(3600));
+        assert!(!VoiceRefusal::Unreadable.try_later());
+        assert!(VoiceRefusal::TooSlow.try_later());
+        assert!(VoiceRefusal::Unavailable.try_later());
+        assert!(VoiceRefusal::TooSlow.remembered_for() < VoiceRefusal::Unreadable.remembered_for());
+    }
+
+    #[tokio::test]
+    async fn the_refused_cache_keeps_an_unreadable_file() {
+        let key = "test-unreadable-hash".to_owned();
+        REFUSED.insert(key.clone(), VoiceRefusal::Unreadable).await;
+        assert_eq!(REFUSED.get(&key).await, Some(VoiceRefusal::Unreadable));
+    }
+
+    #[test]
     fn aac_needs_no_copy() {
         assert!(is_aac("audio/mp4", Some("aac")));
+        assert!(is_aac("audio/m4a", Some("aac")));
+        assert!(is_aac("video/mp4", Some("aac")));
         assert!(!is_aac("audio/mp4", Some("opus")));
         assert!(!is_aac("audio/opus", Some("opus")));
         assert!(!is_aac("audio/mp4", None));
     }
 
     #[test]
-    fn ffmpeg_reads_only_audio_containers_and_writes_aac() {
+    fn ffmpeg_reads_only_audio_containers_and_writes_little_aac() {
         let args = ffmpeg_args("/tmp/in", "/tmp/out.m4a");
-        let after = |flag: &str| {
-            args.iter()
-                .position(|a| a == flag)
-                .map(|i| args[i + 1].clone())
-        };
+        let after = |flag: &str| args.iter().position(|a| a == flag).map(|i| args[i + 1].clone());
         assert_eq!(after("-protocol_whitelist").as_deref(), Some("file"));
         assert_eq!(after("-c:a").as_deref(), Some("aac"));
         assert_eq!(after("-map").as_deref(), Some("0:a:0"));
         assert_eq!(after("-f").as_deref(), Some("mp4"));
+        assert_eq!(after("-fs").as_deref(), Some("4000000"));
         assert!(args.contains(&"-nostdin".to_owned()));
         assert_eq!(args.last().map(String::as_str), Some("/tmp/out.m4a"));
     }
 
+    #[test]
+    fn ffprobe_reads_only_local_audio_containers() {
+        let args = ffprobe_args("/tmp/in");
+        let after = |flag: &str| args.iter().position(|a| a == flag).map(|i| args[i + 1].clone());
+        assert_eq!(after("-protocol_whitelist").as_deref(), Some("file"));
+        assert_eq!(after("-format_whitelist").as_deref(), Some(FORMATS));
+        assert_eq!(after("-select_streams").as_deref(), Some("a:0"));
+    }
+
     #[tokio::test]
-    async fn a_missing_ffmpeg_is_unavailable() {
+    async fn missing_programs_are_unavailable_and_wrong_types_never_start_them() {
         assert_eq!(
-            to_aac_with("/nonexistent/ffmpeg", b"OggS").await,
-            Err(WebmRefusal::Unavailable)
+            make_with("/nonexistent/ffmpeg", "/nonexistent/ffprobe", b"OggS", "audio/opus").await,
+            Err(VoiceRefusal::Unavailable)
+        );
+        assert_eq!(
+            make_with("/nonexistent/ffmpeg", "/nonexistent/ffprobe", b"OggS", "image/png").await,
+            Err(VoiceRefusal::NotSound)
         );
     }
 
-    /// A real conversion where ffmpeg is installed (WSL, the autumn image)
     #[tokio::test]
-    async fn makes_an_aac_copy_of_opus() {
-        let made = std::process::Command::new("ffmpeg")
-            .args([
-                "-nostdin", "-loglevel", "error", "-f", "lavfi", "-i",
-                "sine=frequency=440:duration=2", "-c:a", "libopus", "-f", "ogg", "-",
-            ])
-            .output();
-        let Ok(out) = made else {
-            eprintln!("SKIPPED: ffmpeg is not installed here");
-            return;
+    async fn two_requests_at_once_make_one_copy() {
+        let running: moka::future::Cache<String, u32> = moka::future::Cache::new(10);
+        let made = Arc::new(AtomicUsize::new(0));
+        let work = |made: Arc<AtomicUsize>| async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            made.fetch_add(1, Ordering::SeqCst);
+            Ok::<u32, VoiceRefusal>(7)
         };
-        if !out.status.success() || out.stdout.is_empty() {
-            eprintln!("SKIPPED: this ffmpeg can't make Opus");
+        let (a, b) = tokio::join!(
+            once_per_key(&running, "hash", work(made.clone())),
+            once_per_key(&running, "hash", work(made.clone())),
+        );
+        assert_eq!((a.unwrap(), b.unwrap()), (7, 7));
+        assert_eq!(made.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn a_failed_attempt_is_not_kept_as_the_answer() {
+        let running: moka::future::Cache<String, u32> = moka::future::Cache::new(10);
+        let first = once_per_key(&running, "hash", async { Err(VoiceRefusal::TooSlow) }).await;
+        assert_eq!(*first.unwrap_err(), VoiceRefusal::TooSlow);
+        let second = once_per_key(&running, "hash", async { Ok(3) }).await;
+        assert_eq!(second.unwrap(), 3);
+    }
+
+    /// Real conversions where ffmpeg is installed (WSL, the autumn image)
+    #[tokio::test]
+    async fn opus_becomes_aac_and_aac_stays_as_it_is() {
+        if !have("ffmpeg") || !have("ffprobe") {
+            eprintln!("SKIPPED: ffmpeg/ffprobe are not installed here");
             return;
         }
-        let copy = to_aac(&out.stdout).await.expect("converted");
+        let Some(ogg) = tone(2, "ogg", "libopus") else {
+            eprintln!("SKIPPED: this ffmpeg can't make Opus");
+            return;
+        };
+        let Made::Copy(copy) = make(&ogg, "audio/opus").await.expect("converted") else {
+            panic!("an Opus recording needs a copy");
+        };
         assert_eq!(&copy[4..8], b"ftyp");
-        assert_eq!(first_audio_codec(&copy).as_deref(), Some("aac"));
-        assert_eq!(first_audio_codec(&out.stdout).as_deref(), Some("opus"));
+
+        // what Safari records: AAC in MP4, as it is
+        let mp4 = tone(2, "ipod", "aac").expect("ffmpeg makes AAC");
+        assert_eq!(make(&mp4, "audio/m4a").await, Ok(Made::Original));
+        // the copy itself counts as AAC
+        assert_eq!(make(&copy, "audio/mp4").await, Ok(Made::Original));
+        // junk is unreadable
+        assert_eq!(make(b"OggS not really", "audio/opus").await, Err(VoiceRefusal::Unreadable));
+    }
+
+    /// What the upload code stores for each kind of browser recording
+    #[test]
+    fn browser_recordings_are_stored_as_sound_types() {
+        if !have("ffmpeg") {
+            eprintln!("SKIPPED: ffmpeg is not installed here");
+            return;
+        }
+        let cases = [
+            ("ogg", "libopus", "voice-message-1.ogg"),
+            ("webm", "libopus", "voice-message-1.webm"),
+            ("ipod", "aac", "voice-message-1.m4a"),
+            ("mp4", "aac", "voice-message-1.mp4"),
+        ];
+        let mut checked = 0;
+        for (format, codec, name) in cases {
+            let Some(bytes) = tone(1, format, codec) else {
+                // ffmpeg's own AAC encoder is always there: only Opus may be missing
+                assert_ne!(codec, "aac", "ffmpeg could not make {format}/{codec}");
+                eprintln!("SKIPPED: this ffmpeg can't make {format}/{codec}");
+                continue;
+            };
+            checked += 1;
+            let mut file = tempfile::NamedTempFile::new().unwrap();
+            std::io::Write::write_all(&mut file, &bytes).unwrap();
+            let stored = crate::mime_type::determine_mime_type(&mut file, &bytes, name);
+            eprintln!("{format}/{codec}: stored as {stored}");
+            assert!(may_have_copy(stored, bytes.len() as isize).is_ok(), "{name}: {stored}");
+            if codec == "aac" {
+                assert!(is_mp4_type(stored), "{name}: {stored} is not an MP4 type");
+            }
+        }
+        assert!(checked >= 2, "only {checked} recordings were checked");
     }
 }

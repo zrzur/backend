@@ -28,6 +28,17 @@ mod tests {
         assert_eq!(bucket(Method::POST, "/attachments"), ("upload".into(), Some("attachments".into()), 10));
         assert_eq!(bucket(Method::GET, "/attachments/abc").2, u32::MAX);
     }
+
+    #[test]
+    fn aac_copies_have_a_limit_of_their_own() {
+        assert_eq!(
+            bucket(Method::GET, "/attachments/abc/voice-message-1.ogg?format=m4a"),
+            ("aac_copy".into(), None, 60)
+        );
+        assert_eq!(bucket(Method::GET, "/attachments/abc/original?format=m4a").0, "aac_copy");
+        // the same file without the question: free, as every download
+        assert_eq!(bucket(Method::GET, "/attachments/abc/voice-message-1.ogg").2, u32::MAX);
+    }
 }
 
 pub struct AutumnRatelimits;
@@ -45,6 +56,16 @@ impl RatelimitResolver<Parts> for AutumnRatelimits {
             (&Method::POST, &[tag]) => ("upload", Some(tag)),
             // a webhook's files: counted per webhook (and address), never unlimited
             (&Method::POST, &["webhooks", webhook, "attachments"]) => ("webhook_upload", Some(webhook)),
+            // the AAC copy of a voice message may have to be made: counted
+            // per address (or account), whatever the file
+            (&Method::GET, &[_, _, _])
+                if parts
+                    .uri
+                    .query()
+                    .is_some_and(|query| query.split('&').any(|pair| pair.starts_with("format="))) =>
+            {
+                ("aac_copy", None)
+            }
             _ => ("any_atmn", None),
         }
     }
@@ -55,6 +76,9 @@ impl RatelimitResolver<Parts> for AutumnRatelimits {
             // delta lets a webhook send 5 messages in 2 s with 5 files each:
             // 125 files in a 10 s window, so delta's own forwarding never hits this
             "webhook_upload" => 125,
+            // a conversation full of voice messages on an older iPhone: each
+            // one is a few range requests and one read for the waveform
+            "aac_copy" => 60,
             _ => u32::MAX,
         }
     }
