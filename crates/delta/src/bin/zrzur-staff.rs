@@ -147,101 +147,34 @@ async fn set_roles(
 
 /// `delete-owned`: plan, typed confirmation, then the shared deletion
 async fn delete_owned(db: &Database, user_id: &str, rest: &[String]) {
-    use revolt_database::staff_deletion::{is_banned, plan_delete_owned, staff_delete_owned};
-
-    let dry_run = rest.iter().any(|a| a == "--dry-run");
-    let why = rest.iter().filter(|a| *a != "--dry-run").cloned().collect::<Vec<_>>().join(" ");
-    let why = why.trim().to_string();
-    if !(3..=500).contains(&why.chars().count()) {
-        fail("give a reason (3 to 500 characters)");
-    }
-    let user = db.fetch_user(user_id).await.unwrap_or_else(|_| fail("no such user"));
-    if user.bot.is_some() {
-        fail("this is a bot; delete-owned takes the account that owns it");
-    }
-    let handle = format!("{}#{}", user.username, user.discriminator);
-    println!("account: {handle} ({})", user.id);
-    let banned = is_banned(&user);
-    if !banned {
-        println!("refused: the account is not banned. Ban it first (admin console, Trust & Safety); a disabled account is not enough.");
-    }
-
-    let plan = plan_delete_owned(db, &user).await.unwrap_or_else(|e| fail(format!("{e:?}")));
-    println!("\nwould delete {} servers:", plan.servers.len());
-    for s in &plan.servers {
-        let link = s
-            .server
-            .vanity_invite
-            .as_ref()
-            .map(|v| format!("zrzur.cc/{}", v.code))
-            .unwrap_or_else(|| "-".into());
-        println!("  {}  {:?}  members={}  link={link}", s.server.id, s.server.name, s.members);
-    }
-    println!("would delete {} bots:", plan.bots.len());
-    for b in &plan.bots {
-        println!("  {}  {:?}", b.bot.id, b.name);
-    }
-    println!("kept (official): {}", plan.skipped.len());
-    for k in &plan.skipped {
-        println!("  {} {}  {:?}", k.kind, k.id, k.name);
-    }
-
-    if dry_run {
-        println!("\ndry run: nothing changed");
-        return;
-    }
     let actor = AuditRecord {
         actor_id: STAFF_ACTOR_CLI.to_string(),
         ..Default::default()
     };
-    if banned {
-        if plan.servers.is_empty() && plan.bots.is_empty() {
-            println!("\nnothing to delete");
-            return;
+    // what the API sets up at start: events go out through RabbitMQ (and
+    // Redis), voice rooms are closed through LiveKit. Connected before the
+    // question, so a refused connection stops the run before anything.
+    let setup = || async {
+        let amqp = rocket::tokio::spawn(revolt_database::AMQP::new_auto());
+        match rocket::tokio::time::timeout(std::time::Duration::from_secs(15), amqp).await {
+            Ok(Ok(_)) => {}
+            Ok(Err(_)) => return Err("could not connect to RabbitMQ".to_string()),
+            Err(_) => return Err("RabbitMQ did not answer within 15 seconds".to_string()),
         }
-        println!("\nThis cannot be undone. Type the account's name ({handle}) to delete all of the above:");
-        let mut typed = String::new();
-        std::io::stdin()
-            .read_line(&mut typed)
-            .unwrap_or_else(|e| fail(format!("stdin: {e}")));
-        if typed.trim_end_matches(['\r', '\n']) != handle {
-            fail("the name does not match; nothing changed");
-        }
-    }
-
-    // what the API sets up at start: events go out through RabbitMQ and
-    // Redis, voice rooms are closed through LiveKit
-    revolt_database::AMQP::new_auto().await;
-    let config = revolt_config::config().await;
-    let voice = revolt_database::voice::VoiceClient::new(config.api.livekit.nodes.clone());
-    // re-read: the account may have changed while the question was open.
-    // A refusal is recorded too, as the API does.
-    let user = db.fetch_user(user_id).await.unwrap_or_else(|_| fail("no such user"));
-    let result = staff_delete_owned(db, &voice, &actor, &user, &why, &|_| {})
-        .await
-        .unwrap_or_else(|e| match e.error_type {
-            revolt_result::ErrorType::InvalidOperation => fail("the account is not banned; nothing changed"),
-            _ => fail(format!("{e:?}")),
-        });
-    println!("\ndeleted {} servers:", result.deleted_server_count);
-    for id in &result.deleted_servers {
-        println!("  {id}");
-    }
-    println!("deleted {} bots:", result.deleted_bot_count);
-    for id in &result.deleted_bots {
-        println!("  {id}");
-    }
-    println!("kept (official): {}", result.skipped.len());
-    for k in &result.skipped {
-        println!("  {} {}  {:?}", k.kind, k.id, k.name);
-    }
-    println!("failed: {}", result.failed.len());
-    for f in &result.failed {
-        println!("  {} {}  {:?}  {}", f.kind, f.id, f.name, f.why);
-    }
-    if !result.failed.is_empty() {
-        std::process::exit(1);
-    }
+        let config = revolt_config::config().await;
+        Ok(revolt_database::voice::VoiceClient::new(config.api.livekit.nodes.clone()))
+    };
+    let code = revolt_database::staff_deletion::run_delete_owned_command(
+        db,
+        &actor,
+        user_id,
+        rest,
+        &mut std::io::BufReader::new(std::io::stdin()),
+        &mut std::io::stdout(),
+        setup,
+    )
+    .await;
+    std::process::exit(code)
 }
 
 #[rocket::main]

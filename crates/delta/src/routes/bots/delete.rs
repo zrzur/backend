@@ -48,7 +48,7 @@ pub(crate) async fn remove_bot(
     bot: &revolt_database::Bot,
 ) -> Result<()> {
     // the list must not outlive the bot, also after a partial failure
-    revolt_database::staff_deletion::remove_bot(db, voice_client, bot, &crate::util::public_commands::forget).await
+    revolt_database::staff_deletion::remove_bot(db, voice_client, bot, crate::util::public_commands::forget).await
 }
 
 #[cfg(test)]

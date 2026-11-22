@@ -76,7 +76,7 @@ pub(super) async fn delete_bot(
     bot: &Bot,
     why: &str,
 ) -> Result<()> {
-    staff_deletion::staff_delete_bot(db, voice_client, &actor(staff), bot, why, None, &forget).await
+    staff_deletion::staff_delete_bot(db, voice_client, &actor(staff), bot, why, None, forget).await
 }
 
 #[derive(Deserialize)]
@@ -100,7 +100,7 @@ pub async fn delete_owned(
     require_delete_gate(db, &staff, "staff.user.delete_owned", "user", id).await?;
     let why = reason(&data.reason)?;
     let user = db.fetch_user(id).await?;
-    staff_deletion::staff_delete_owned(db, voice_client, &actor(&staff), &user, &why, &forget)
+    staff_deletion::staff_delete_owned(db, voice_client, &actor(&staff), &user, &why, forget, None)
         .await
         .map(Json)
 }

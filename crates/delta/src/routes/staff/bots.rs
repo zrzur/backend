@@ -29,7 +29,6 @@ use crate::routes::{
 };
 
 const SUSPENDED: i32 = BotFlags::Suspended as i32;
-const OFFICIAL: i32 = BotFlags::Official as i32;
 
 #[derive(Serialize)]
 pub struct BotRow {
@@ -105,6 +104,8 @@ async fn rows(db: &Database, bots: Vec<revolt_database::Bot>) -> Result<Vec<BotR
         .map(|bot| {
             let flags = bot.flags.unwrap_or_default();
             let user = find(&bot.id);
+            // the flag, or the official-bot mark of `zrzur-staff official-bot`
+            let official = revolt_database::staff_deletion::is_official_bot(&bot, user);
             BotRow {
                 username: user.map(|u| u.username.clone()),
                 discriminator: user.map(|u| u.discriminator.clone()),
@@ -113,7 +114,7 @@ async fn rows(db: &Database, bots: Vec<revolt_database::Bot>) -> Result<Vec<BotR
                 public: bot.public,
                 discoverable: bot.discoverable,
                 verified: flags & VERIFIED != 0,
-                official: flags & OFFICIAL != 0,
+                official,
                 suspended: flags & SUSPENDED != 0,
                 id: bot.id,
             }

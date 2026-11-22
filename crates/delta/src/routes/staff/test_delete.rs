@@ -406,10 +406,10 @@ async fn the_command_line_runs_the_same_deletion() {
     let official = owned_server(&harness, &squatter).await;
     make_official(&harness, &official).await;
     let (bot, _) = harness.new_bot(&squatter).await;
-    let no_forget = |_: &str| {};
+    let no_forget: revolt_database::staff_deletion::BotForget = |_| {};
 
     // not banned: refused, nothing deleted, the refusal recorded
-    let error = staff_delete_owned(&harness.db, voice, &actor, &squatter, "Grabbed custom links", &no_forget)
+    let error = staff_delete_owned(&harness.db, voice, &actor, &squatter, "Grabbed custom links", no_forget, None)
         .await
         .unwrap_err();
     assert!(matches!(error.error_type, revolt_result::ErrorType::InvalidOperation));
@@ -425,7 +425,7 @@ async fn the_command_line_runs_the_same_deletion() {
     assert_eq!(plan.skipped.len(), 1);
     assert_eq!(plan.skipped[0].id, official.id);
 
-    let result = staff_delete_owned(&harness.db, voice, &actor, &squatter, "Grabbed custom links", &no_forget)
+    let result = staff_delete_owned(&harness.db, voice, &actor, &squatter, "Grabbed custom links", no_forget, None)
         .await
         .unwrap();
     assert_eq!(result.deleted_servers, vec![server.id.clone()]);
@@ -453,4 +453,204 @@ async fn the_command_line_runs_the_same_deletion() {
     assert_eq!(count(&cli, "staff.user.delete_owned", "Success"), 1);
     assert_eq!(count(&cli, "staff.server.delete", "Success"), 1);
     assert_eq!(count(&cli, "staff.bot.delete", "Success"), 1);
+}
+
+/// A bot marked through `zrzur-staff official-bot` (its account's
+/// `official_bot`), with no Official flag on the bot
+async fn mark_official_bot(harness: &TestHarness, bot: &Bot) {
+    harness
+        .db
+        .update_user(
+            &bot.id,
+            &PartialUser {
+                official_bot: Some(true),
+                ..Default::default()
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
+}
+
+#[rocket::async_test]
+async fn a_bot_with_only_the_official_bot_mark_is_kept() {
+    let harness = TestHarness::new().await;
+    let (_, _, developer) = harness.new_user().await;
+    let (marked, _) = harness.new_bot(&developer).await;
+    mark_official_bot(&harness, &marked).await;
+    let (owner, token) = stepped_up_owner(&harness).await;
+
+    // the single delete refuses it, and the list shows it as official
+    let (status, _) = send(&harness, &owner, &token, Post, &format!("/staff/bots/{}/delete", marked.id), json!({ "reason": "Testing the guard" })).await;
+    assert_eq!(status, Status::Forbidden);
+    assert!(harness.db.fetch_bot(&marked.id).await.is_ok());
+    let (status, list) = get(&harness, &owner, &token, &format!("/staff/bots?q={}", marked.id)).await;
+    assert_eq!(status, Status::Ok, "{list}");
+    assert_eq!(list[0]["official"], true);
+
+    // delete-owned keeps it and lists it
+    ban(&harness, &developer).await;
+    let (status, result) = send(&harness, &owner, &token, Post, &format!("/staff/users/{}/delete-owned", developer.id), json!({ "reason": "Testing the guard" })).await;
+    assert_eq!(status, Status::Ok, "{result}");
+    assert_eq!(result["deleted_bot_count"], 0);
+    assert_eq!(result["skipped"][0]["id"], marked.id.as_str());
+    assert_eq!(result["skipped"][0]["why"], "official");
+    assert!(harness.db.fetch_bot(&marked.id).await.is_ok());
+}
+
+/// Removes a bot's own account record, so deleting the bot fails
+async fn drop_user_record(harness: &TestHarness, id: &str) {
+    match &harness.db {
+        Database::Reference(db) => {
+            db.users.lock().await.remove(id);
+        }
+        Database::MongoDb(db) => {
+            db.col::<Document>("users").delete_one(doc! { "_id": id }).await.unwrap();
+        }
+    }
+}
+
+struct Cli {
+    code: i32,
+    out: String,
+    set_up: bool,
+}
+
+/// `zrzur-staff delete-owned` as the command runs it, with `typed` on stdin.
+/// `before_question` runs where the command connects RabbitMQ and LiveKit.
+async fn cli<F>(harness: &TestHarness, user_id: &str, args: &[&str], typed: &str, before_question: F) -> Cli
+where
+    F: std::future::Future<Output = ()>,
+{
+    use revolt_database::{staff_deletion::run_delete_owned_command, voice::VoiceClient, AuditRecord, STAFF_ACTOR_CLI};
+    let actor = AuditRecord {
+        actor_id: STAFF_ACTOR_CLI.to_string(),
+        ..Default::default()
+    };
+    let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+    let mut input = std::io::Cursor::new(typed.as_bytes().to_vec());
+    let mut out = Vec::new();
+    let set_up = std::cell::Cell::new(false);
+    let code = run_delete_owned_command(&harness.db, &actor, user_id, &args, &mut input, &mut out, || async {
+        set_up.set(true);
+        before_question.await;
+        let nodes = revolt_config::config().await.api.livekit.nodes.clone();
+        Ok(VoiceClient::new(nodes))
+    })
+    .await;
+    Cli {
+        code,
+        out: String::from_utf8(out).unwrap(),
+        set_up: set_up.get(),
+    }
+}
+
+fn handle(user: &User) -> String {
+    format!("{}#{}\n", user.username, user.discriminator)
+}
+
+const REASON: [&str; 5] = ["Account", "created", "to", "grab", "links"];
+
+fn with_reason(extra: &[&'static str]) -> Vec<&'static str> {
+    let mut args = extra.to_vec();
+    args.extend(REASON);
+    args
+}
+
+#[rocket::async_test]
+async fn the_command_shows_the_plan_and_deletes_only_after_the_name() {
+    let harness = TestHarness::new().await;
+    let (_, _, squatter) = harness.new_user().await;
+    let server = owned_server(&harness, &squatter).await;
+    let (bot, _) = harness.new_bot(&squatter).await;
+    let (marked, _) = harness.new_bot(&squatter).await;
+    mark_official_bot(&harness, &marked).await;
+    ban(&harness, &squatter).await;
+    let squatter = harness.db.fetch_user(&squatter.id).await.unwrap();
+
+    // only --dry-run is an option; there is no way to skip the question
+    let run = cli(&harness, &squatter.id, &with_reason(&["--yes"]), &handle(&squatter), async {}).await;
+    assert_eq!(run.code, 2);
+    assert!(!run.set_up);
+
+    // a dry run shows the plan and changes nothing, not even the audit log
+    let before = audit_actions(&harness).await.len();
+    let run = cli(&harness, &squatter.id, &with_reason(&["--dry-run"]), "", async {}).await;
+    assert_eq!(run.code, 0, "{}", run.out);
+    assert!(run.out.contains(&server.id) && run.out.contains(&bot.id), "{}", run.out);
+    assert!(run.out.contains(&format!("{}#{}", squatter.username, squatter.discriminator)));
+    assert!(run.out.contains("kept (official): 1"), "{}", run.out);
+    assert!(!run.set_up);
+    assert_eq!(audit_actions(&harness).await.len(), before);
+
+    // a wrong name, or no answer at all, deletes nothing
+    for typed in ["someone#0000\n", "", "\n"] {
+        let run = cli(&harness, &squatter.id, &REASON, typed, async {}).await;
+        assert_eq!(run.code, 1, "{typed:?}: {}", run.out);
+        assert!(harness.db.fetch_server(&server.id).await.is_ok());
+        assert!(harness.db.fetch_bot(&bot.id).await.is_ok());
+    }
+    assert_eq!(audit_actions(&harness).await.len(), before);
+
+    // a plan that changes after it was shown is not carried out
+    let run = cli(&harness, &squatter.id, &REASON, &handle(&squatter), async {
+        owned_server(&harness, &squatter).await;
+    })
+    .await;
+    assert_eq!(run.code, 1, "{}", run.out);
+    assert!(harness.db.fetch_server(&server.id).await.is_ok());
+
+    // the exact name: everything shown goes, the official bot stays
+    let run = cli(&harness, &squatter.id, &REASON, &handle(&squatter), async {}).await;
+    assert_eq!(run.code, 0, "{}", run.out);
+    assert!(harness.db.fetch_server(&server.id).await.is_err());
+    assert!(harness.db.fetch_bot(&bot.id).await.is_err());
+    assert!(harness.db.fetch_bot(&marked.id).await.is_ok());
+    assert!(run.out.contains("deleted 2 servers") && run.out.contains("deleted 1 bots"), "{}", run.out);
+    let actions = audit_actions(&harness).await;
+    assert_eq!(count(&actions, "staff.user.delete_owned", "Denied"), 1);
+    assert_eq!(count(&actions, "staff.user.delete_owned", "Success"), 1);
+}
+
+#[rocket::async_test]
+async fn the_command_refuses_an_account_that_is_not_banned() {
+    let harness = TestHarness::new().await;
+    let (_, _, user) = harness.new_user().await;
+    let server = owned_server(&harness, &user).await;
+
+    // a dry run says so with exit 1, and writes nothing
+    let run = cli(&harness, &user.id, &with_reason(&["--dry-run"]), "", async {}).await;
+    assert_eq!(run.code, 1, "{}", run.out);
+    assert!(audit_actions(&harness).await.is_empty());
+
+    // the right name typed, and the account banned in the meantime: still
+    // refused at the first read, nothing set up, nothing deleted
+    let run = cli(&harness, &user.id, &REASON, &handle(&user), async {
+        ban(&harness, &user).await;
+    })
+    .await;
+    assert_eq!(run.code, 1, "{}", run.out);
+    assert!(!run.set_up);
+    assert!(harness.db.fetch_server(&server.id).await.is_ok());
+    let actions = audit_actions(&harness).await;
+    assert_eq!(count(&actions, "staff.user.delete_owned", "Denied"), 1);
+    assert_eq!(count(&actions, "staff.server.delete", "Success"), 0);
+}
+
+#[rocket::async_test]
+async fn the_command_exits_1_when_one_item_fails() {
+    let harness = TestHarness::new().await;
+    let (_, _, squatter) = harness.new_user().await;
+    let server = owned_server(&harness, &squatter).await;
+    let (broken, _) = harness.new_bot(&squatter).await;
+    drop_user_record(&harness, &broken.id).await;
+    ban(&harness, &squatter).await;
+    let squatter = harness.db.fetch_user(&squatter.id).await.unwrap();
+
+    let run = cli(&harness, &squatter.id, &REASON, &handle(&squatter), async {}).await;
+    assert_eq!(run.code, 1, "{}", run.out);
+    // the rest still went ahead, and the summary was given
+    assert!(harness.db.fetch_server(&server.id).await.is_err());
+    assert!(run.out.contains("failed: 1"), "{}", run.out);
+    assert!(run.out.contains(&broken.id), "{}", run.out);
 }
