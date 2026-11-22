@@ -777,7 +777,7 @@ impl State {
             }
         }
 
-        if self.cache.is_bot && !self.allowed_by_intents(db, event).await {
+        if self.cache.is_bot && !self.allowed_by_intents(db, event, topic).await {
             return false;
         }
 
@@ -1194,7 +1194,7 @@ impl State {
 
     /// Drop or trim an event a bot's intents don't cover. Only events that
     /// don't change this connection's state are dropped here.
-    async fn allowed_by_intents(&self, db: &Database, event: &mut EventV1) -> bool {
+    async fn allowed_by_intents(&self, db: &Database, event: &mut EventV1, topic: &str) -> bool {
         let cache = &self.cache;
         let me = cache.user_id.as_str();
         let messages = |channel: &str| {
@@ -1257,6 +1257,24 @@ impl State {
                 return id.user == me || cache.has_intent(GatewayIntents::SERVER_MEMBERS)
             }
             EventV1::UserUpdate { id, data, clear, .. } => {
+                // another user's avatar and names reach a server topic for
+                // every member (bug #10); a bot sees those only with the
+                // member intent, as it sees joins and member changes
+                if id != me
+                    && cache.servers.contains_key(topic)
+                    && !cache.has_intent(GatewayIntents::SERVER_MEMBERS)
+                {
+                    data.avatar = None;
+                    data.display_name = None;
+                    data.username = None;
+                    data.discriminator = None;
+                    clear.retain(|field| {
+                        !matches!(field, v0::FieldsUser::Avatar | v0::FieldsUser::DisplayName)
+                    });
+                    if *data == v0::PartialUser::default() && clear.is_empty() {
+                        return false;
+                    }
+                }
                 if id != me && !cache.has_intent(GatewayIntents::PRESENCE) {
                     data.online = None;
                     data.status = None;

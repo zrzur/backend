@@ -85,6 +85,9 @@ database_derived!(
         pub server_insights_cursor: Arc<Mutex<Option<(i64, Option<i64>)>>>,
         pub server_insights_attempts: Arc<Mutex<Option<(i64, u32)>>>,
         pub server_members: Arc<Mutex<HashMap<MemberCompositeKey, Member>>>,
+        /// Members who left while timed out: kept apart (as MongoDB keeps them with
+        /// `pending_deletion_at`) so no member query finds them until they rejoin
+        pub pending_member_deletions: Arc<Mutex<HashMap<MemberCompositeKey, Member>>>,
         pub servers: Arc<Mutex<HashMap<String, Server>>>,
         pub safety_reports: Arc<Mutex<HashMap<String, Report>>>,
         pub safety_snapshots: Arc<Mutex<HashMap<String, Snapshot>>>,

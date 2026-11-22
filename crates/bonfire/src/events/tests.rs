@@ -651,7 +651,9 @@ async fn without_presence_a_bot_gets_no_online_changes() {
         clear: vec![],
         event_id: None,
     };
-    assert!(state.handle_incoming_event_v1(&db, &mut renamed, SERVER).await);
+    // (on the user's own topic: a name change through a server needs the
+    // member intent, see a_bot_without_the_member_intent_gets_no_appearance_from_a_server_topic)
+    assert!(state.handle_incoming_event_v1(&db, &mut renamed, OWNER).await);
     if let EventV1::UserUpdate { data, .. } = renamed {
         assert_eq!(data.online, None);
         assert_eq!(data.display_name.as_deref(), Some("New name"));
@@ -1714,4 +1716,74 @@ async fn a_role_event_reaches_role_holders_and_a_draft_reaches_nobody() {
         let session = state(user, &server, &[]).await;
         assert!(!hears(&session, &audience).await, "{user}");
     }
+}
+
+// Bug #10 (2026-11-22): a user's avatar and names now also reach every
+// server they are in. A bot hears that only with the member intent.
+
+fn renamed(on: &str) -> EventV1 {
+    EventV1::UserUpdate {
+        id: on.to_string(),
+        data: v0::PartialUser {
+            display_name: Some("Layla".to_string()),
+            ..Default::default()
+        },
+        clear: vec![v0::FieldsUser::Avatar],
+        event_id: None,
+    }
+}
+
+#[tokio::test]
+async fn a_bot_without_the_member_intent_gets_no_appearance_from_a_server_topic() {
+    let db = db().await;
+    let mut state = bot_state(I::DEFAULT).await;
+    let mut event = renamed(OWNER);
+    assert!(!state.handle_incoming_event_v1(&db, &mut event, SERVER).await);
+}
+
+#[tokio::test]
+async fn a_bot_with_the_member_intent_gets_appearance_from_a_server_topic() {
+    let db = db().await;
+    let mut state = bot_state(I::DEFAULT | I::SERVER_MEMBERS).await;
+    let mut event = renamed(OWNER);
+    assert!(state.handle_incoming_event_v1(&db, &mut event, SERVER).await);
+    let EventV1::UserUpdate { data, clear, .. } = event else {
+        unreachable!()
+    };
+    assert_eq!(data.display_name.as_deref(), Some("Layla"));
+    assert_eq!(clear, vec![v0::FieldsUser::Avatar]);
+}
+
+#[tokio::test]
+async fn a_bot_still_gets_appearance_from_the_users_own_topic() {
+    // a friend or DM partner: the user's own topic, as before
+    let db = db().await;
+    let mut state = bot_state(I::DEFAULT).await;
+    let mut event = renamed(OWNER);
+    assert!(state.handle_incoming_event_v1(&db, &mut event, OWNER).await);
+}
+
+#[tokio::test]
+async fn presence_on_a_server_topic_still_reaches_a_bot_with_the_presence_intent() {
+    let db = db().await;
+    let mut state = bot_state(I::DEFAULT | I::PRESENCE).await;
+    let mut event = EventV1::UserUpdate {
+        id: OWNER.to_string(),
+        data: v0::PartialUser {
+            online: Some(true),
+            ..Default::default()
+        },
+        clear: vec![],
+        event_id: None,
+    };
+    assert!(state.handle_incoming_event_v1(&db, &mut event, SERVER).await);
+}
+
+#[tokio::test]
+async fn people_get_appearance_from_a_server_topic() {
+    let db = db().await;
+    let server = server(false);
+    let mut state = state("member", &server, &[]).await;
+    let mut event = renamed(OWNER);
+    assert!(state.handle_incoming_event_v1(&db, &mut event, SERVER).await);
 }

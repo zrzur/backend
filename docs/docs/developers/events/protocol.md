@@ -56,7 +56,7 @@ Ping the server, you can specify a timestamp that you'll receive back.
 
 ### Subscribe
 
-Subscribe to a server's UserUpdate events.
+Ask for a server's per-member user stream while the server is on screen.
 
 ```json
 {
@@ -72,6 +72,7 @@ Implementation notes:
 - This has no effect on bot sessions.
 - This event should only be sent **iff** app/client is in focus.
 - You should aim to send this event at most every 10 minutes per server.
+- You do not need it for avatars and names: those changes reach every member of a server without it (see [UserUpdate](#userupdate)). Today nothing else is sent through this stream.
 
 ## Server to Client
 
@@ -484,6 +485,8 @@ User has been updated.
 ```
 
 - `data` field contains a partial User object.
+- Who receives it: the user, their friends and the people in a DM or group with them get every change. When the avatar, display name or username changes, every member of every server the user is in also gets one `UserUpdate` with only `avatar`, `display_name`, `username` and `discriminator` (and `clear` of `Avatar` or `DisplayName` when there is none). The same event id goes to all of those servers, so a session in several gets it once. At most 5 of these go out per user per hour; a change past that reaches only the user's own followers, and the next one sent carries the whole current look.
+- Bots get another user's avatar and name changes through a server only with the Server Members intent (presence still follows the Presence intent).
 - `clear` is a field to remove, one of:
   - `ProfileContent`
   - `ProfileBackground`

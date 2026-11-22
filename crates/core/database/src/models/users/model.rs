@@ -22,6 +22,10 @@ use revolt_result::{create_error, Result};
 use serde_json::json;
 use ulid::Ulid;
 
+/// Most times an hour a user's avatar and names are sent to every server
+/// they are in (see [`User::announce_appearance`])
+pub const APPEARANCE_FANOUTS_PER_HOUR: usize = 5;
+
 auto_derived_partial!(
     /// # User
     pub struct User {
@@ -757,6 +761,15 @@ impl User {
     /// twice in 24 hours; taking one's own name, or changing its capitals,
     /// is not counted.
     pub async fn update_username(&mut self, db: &Database, username: String) -> Result<()> {
+        if self.update_username_held(db, username).await? {
+            self.announce_appearance(db);
+        }
+        Ok(())
+    }
+
+    /// [`User::update_username`] without telling the servers (see
+    /// [`User::update_held`]); whether the name changed
+    pub async fn update_username_held(&mut self, db: &Database, username: String) -> Result<bool> {
         let new_username = User::sanitise_username(&username).await?;
         User::validate_username(&new_username)?;
 
@@ -782,7 +795,7 @@ impl User {
                 .await?
             };
             return self
-                .update(
+                .update_held(
                     db,
                     PartialUser {
                         discriminator: Some(discriminator),
@@ -817,7 +830,7 @@ impl User {
             .await?;
         }
 
-        self.update(
+        self.update_held(
             db,
             PartialUser {
                 discriminator: Some(discriminator),
@@ -1028,13 +1041,30 @@ impl User {
         }
     }
 
-    /// Update user data
+    /// Update user data; a new avatar or name also goes to every server
+    /// the user is in (see [`User::announce_appearance`])
     pub async fn update(
         &mut self,
         db: &Database,
         partial: PartialUser,
         remove: Vec<FieldsUser>,
     ) -> Result<()> {
+        if self.update_held(db, partial, remove).await? {
+            self.announce_appearance(db);
+        }
+        Ok(())
+    }
+
+    /// Update user data and tell the user's own topic (the user, friends,
+    /// DM and group partners), not the servers. Returns whether the avatar or
+    /// a name changed, so a caller making several changes in a row (a bot
+    /// rename) announces them to the servers once.
+    pub async fn update_held(
+        &mut self,
+        db: &Database,
+        partial: PartialUser,
+        remove: Vec<FieldsUser>,
+    ) -> Result<bool> {
         for field in &remove {
             self.remove_field(field);
         }
@@ -1042,7 +1072,7 @@ impl User {
         self.apply_options(partial.clone());
         db.update_user(&self.id, &partial, remove.clone()).await?;
 
-        let appearance = Self::appearance_change(&partial, &remove);
+        let appearance = Self::changes_appearance(&partial, &remove);
 
         EventV1::UserUpdate {
             id: self.id.clone(),
@@ -1053,51 +1083,128 @@ impl User {
         .p(self.id.clone())
         .await;
 
-        // The event above reaches only this user, friends and people in a
-        // DM or group with them. Everyone else who shares a server saw the
-        // old picture and name until they reloaded (bug #10, 2026-11-22).
-        // The picture and the names are shown to them anyway, so those go
-        // to every server the user is in, as presence already does; one
-        // event id, so a session in several of them takes it once.
-        if let Some((data, clear)) = appearance {
-            let event = EventV1::UserUpdate {
-                id: self.id.clone(),
-                data: data.into(),
-                clear: clear.into_iter().map(|v| v.into()).collect(),
-                event_id: Some(Ulid::new().to_string()),
-            };
-            for member in db.fetch_all_memberships(&self.id).await.unwrap_or_default() {
-                event.clone().p(member.id.server).await;
+        Ok(appearance)
+    }
+
+    /// Send the user's current avatar and names to every server they are in,
+    /// in the background (the request that changed them does not wait).
+    ///
+    /// The user's own topic reaches only them, friends and DM or group
+    /// partners; everyone else who shares a server saw the old picture and
+    /// name until they reloaded (bug #10, 2026-11-22). Presence already goes
+    /// to every server the same way. At most [`APPEARANCE_FANOUTS_PER_HOUR`]
+    /// times an hour: past that the change still reaches the user's own
+    /// topic, and the next fan-out sends the newest look (the whole current
+    /// value, not one change), so nothing is lost but time.
+    pub fn announce_appearance(&self, db: &Database) {
+        let db = db.clone();
+        let user = self.clone();
+        tokio::spawn(async move {
+            user.fan_out_appearance(&db).await;
+        });
+    }
+
+    /// The fan-out itself; whether it was sent
+    pub async fn fan_out_appearance(&self, db: &Database) -> bool {
+        match db
+            .has_ratelimited(
+                &self.id,
+                crate::RatelimitEventType::AppearanceFanOut,
+                Duration::from_secs(60 * 60),
+                APPEARANCE_FANOUTS_PER_HOUR,
+            )
+            .await
+        {
+            Ok(false) => {}
+            Ok(true) => {
+                log::debug!(
+                    "appearance of {} not sent to its servers: over the hourly limit",
+                    self.id
+                );
+                return false;
+            }
+            Err(error) => {
+                log::error!(
+                    "appearance fan-out of {}: rate limit lookup failed: {error:?}",
+                    self.id
+                );
+                return false;
             }
         }
 
-        Ok(())
+        let members = match db.fetch_all_memberships(&self.id).await {
+            Ok(members) => members,
+            Err(error) => {
+                log::error!(
+                    "appearance fan-out of {}: membership lookup failed: {error:?}",
+                    self.id
+                );
+                return false;
+            }
+        };
+        if members.is_empty() {
+            return false;
+        }
+
+        if let Err(error) = RatelimitEvent::create(
+            db,
+            self.id.clone(),
+            crate::RatelimitEventType::AppearanceFanOut,
+        )
+        .await
+        {
+            log::error!(
+                "appearance fan-out of {}: could not count it: {error:?}",
+                self.id
+            );
+        }
+
+        // one event id for every server, so a session in several takes it once
+        let event = self.appearance_event();
+        join_all(
+            members
+                .into_iter()
+                .map(|member| event.clone().p(member.id.server)),
+        )
+        .await;
+        true
     }
 
-    /// The part of a change that people sharing a server see: the avatar,
-    /// the display name and the username. Nothing when it changed none of them.
-    pub fn appearance_change(
-        partial: &PartialUser,
-        remove: &[FieldsUser],
-    ) -> Option<(PartialUser, Vec<FieldsUser>)> {
-        let data = PartialUser {
-            avatar: partial.avatar.clone(),
-            display_name: partial.display_name.clone(),
-            username: partial.username.clone(),
-            discriminator: partial.discriminator.clone(),
-            ..Default::default()
-        };
-        let clear: Vec<FieldsUser> = remove
-            .iter()
-            .filter(|field| matches!(field, FieldsUser::Avatar | FieldsUser::DisplayName))
-            .cloned()
-            .collect();
-        let changed = data.avatar.is_some()
-            || data.display_name.is_some()
-            || data.username.is_some()
-            || data.discriminator.is_some()
-            || !clear.is_empty();
-        changed.then_some((data, clear))
+    /// The user's current avatar and names as a `UserUpdate`: what people
+    /// who share a server see anyway, nothing else
+    pub fn appearance_event(&self) -> EventV1 {
+        let mut clear = vec![];
+        if self.avatar.is_none() {
+            clear.push(v0::FieldsUser::Avatar);
+        }
+        if self.display_name.is_none() {
+            clear.push(v0::FieldsUser::DisplayName);
+        }
+        EventV1::UserUpdate {
+            id: self.id.clone(),
+            data: PartialUser {
+                avatar: self.avatar.clone(),
+                display_name: self.display_name.clone(),
+                username: Some(self.username.clone()),
+                discriminator: Some(self.discriminator.clone()),
+                ..Default::default()
+            }
+            .into(),
+            clear,
+            event_id: Some(Ulid::new().to_string()),
+        }
+    }
+
+    /// Whether a change touches what people sharing a server see: the
+    /// avatar, the display name or the username
+    pub fn changes_appearance(partial: &PartialUser, remove: &[FieldsUser]) -> bool {
+        partial.avatar.is_some()
+            || partial.display_name.is_some()
+            || partial.username.is_some()
+            || partial.discriminator.is_some()
+            || remove
+                .iter()
+                .any(|field| matches!(field, FieldsUser::Avatar | FieldsUser::DisplayName))
     }
 
     /// Clear custom statuses whose expiry has passed, at most 1000 a pass
@@ -1389,10 +1496,12 @@ impl User {
 #[cfg(test)]
 mod tests {
     /// Bug #10: what goes to the servers a user is in is only what their
-    /// members see anyway, and nothing goes there for other changes
+    /// members see anyway (the current avatar and names), and other changes
+    /// do not go there
     #[test]
     fn only_the_picture_and_names_go_to_shared_servers() {
-        use crate::{FieldsUser, PartialUser, User, UserStatus};
+        use crate::{events::client::EventV1, FieldsUser, PartialUser, User, UserStatus};
+        use revolt_models::v0;
 
         let named = PartialUser {
             display_name: Some("Layla".into()),
@@ -1400,22 +1509,37 @@ mod tests {
             pronouns: Some("she/her".into()),
             ..Default::default()
         };
-        let (data, clear) = User::appearance_change(&named, &[FieldsUser::StatusText])
-            .expect("a new display name is shown in servers");
-        assert_eq!(data.display_name.as_deref(), Some("Layla"));
-        assert!(data.status.is_none() && data.pronouns.is_none());
-        assert!(clear.is_empty(), "a status clear is not sent: {clear:?}");
-
-        let (_, clear) = User::appearance_change(&PartialUser::default(), &[FieldsUser::Avatar])
-            .expect("a removed avatar is shown in servers");
-        assert_eq!(clear, vec![FieldsUser::Avatar]);
-
+        assert!(User::changes_appearance(&named, &[FieldsUser::StatusText]));
+        assert!(User::changes_appearance(&PartialUser::default(), &[FieldsUser::Avatar]));
         let status_only = PartialUser {
             status: Some(UserStatus::default()),
             ..Default::default()
         };
-        assert!(User::appearance_change(&status_only, &[FieldsUser::StatusText]).is_none());
-        assert!(User::appearance_change(&PartialUser::default(), &[FieldsUser::Pronouns]).is_none());
+        assert!(!User::changes_appearance(&status_only, &[FieldsUser::StatusText]));
+        assert!(!User::changes_appearance(&PartialUser::default(), &[FieldsUser::Pronouns]));
+
+        // the event carries the whole current look: a fan-out after one the
+        // hourly limit held back still brings the newest picture and name
+        let user = User {
+            id: "u".into(),
+            username: "layla".into(),
+            discriminator: "0001".into(),
+            display_name: Some("Layla".into()),
+            pronouns: Some("she/her".into()),
+            status: Some(UserStatus {
+                text: Some("away".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let EventV1::UserUpdate { data, clear, .. } = user.appearance_event() else {
+            unreachable!()
+        };
+        assert_eq!(data.display_name.as_deref(), Some("Layla"));
+        assert_eq!(data.username.as_deref(), Some("layla"));
+        assert_eq!(data.discriminator.as_deref(), Some("0001"));
+        assert!(data.status.is_none() && data.pronouns.is_none() && data.online.is_none());
+        assert_eq!(clear, vec![v0::FieldsUser::Avatar], "no avatar now: it is cleared");
     }
 
     /// A15: an unknown or reset token is an invalid session wherever it is

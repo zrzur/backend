@@ -4,7 +4,11 @@
 
 ### A new avatar reaches everyone who shares a server (2026-11-22, bug report #10)
 
-- A user's change went only to their own topic, which only they, their friends and people in a DM or group with them follow. Everyone else who shares a server with them kept the old avatar and name until they reloaded the app. A change of the avatar (set or removed), the display name (set or removed) or the username now also goes, as a `UserUpdate` with only those fields, to every server the user is in, as presence already does; one event id for all of them, so a session in several shared servers takes it once. Status, pronouns, profile and the rest stay on the user's own topic.
+- A user's change went only to their own topic, which only they, their friends and people in a DM or group with them follow. Everyone else who shares a server with them kept the old avatar and name until they reloaded the app. A change of the avatar (set or removed), the display name (set or removed) or the username now also goes, as a `UserUpdate` carrying the user's whole current look (`avatar`, `display_name`, `username`, `discriminator`, and `clear` of `Avatar`/`DisplayName` when there is none), to every server the user is in, as presence already does; one event id for all of them, so a session in several shared servers takes it once. Status, pronouns, profile and the rest stay on the user's own topic.
+- At most 5 of these server fan-outs per user per hour (new `RatelimitEventType::AppearanceFanOut`). Past that, the change reaches only the user's own topic; the next fan-out sends the newest look. The fan-out runs after the request has answered (`PATCH /users/@me` does not wait for it), and a failed membership lookup is logged.
+- A bot rename (`PATCH /bots/{id}` with `name`) changes the username and the display name and announces them to the bot's servers once.
+- **Gateway, bots:** another user's avatar and name changes that arrive through a server reach a bot only with the Server Members intent (presence through a server still follows the Presence intent). Changes through the user's own topic (a friend, a DM partner) are unchanged. Developer docs: `docs/developers/events/establishing.md`, `protocol.md` (Subscribe, UserUpdate).
+- Reference database (tests): a member who leaves while timed out is kept apart as a pending deletion, as MongoDB keeps them with `pending_deletion_at`, instead of the old `panic!`; member queries skip them and a rejoin restores the record.
 
 ## 26.3.0-beta.2 (2026-11-21)
 
