@@ -485,7 +485,7 @@ User has been updated.
 ```
 
 - `data` field contains a partial User object.
-- Who receives it: the user, their friends and the people in a DM or group with them get every change. When the avatar, display name or username changes, every member of every server the user is in also gets one `UserUpdate` with only `avatar`, `display_name`, `username` and `discriminator` (and `clear` of `Avatar` or `DisplayName` when there is none). The same event id goes to all of those servers, so a session in several gets it once. At most 5 of these go out per user per hour; a change past that reaches only the user's own followers, and the next one sent carries the whole current look.
+- Who receives it: the user, their friends and the people in a DM or group with them get every change. When the avatar, display name or username changes, every member of every server the user is in also gets one `UserUpdate` with only `avatar`, `display_name`, `username` and `discriminator` (and `clear` of `Avatar` or `DisplayName` when there is none). The same event id goes to all of those servers, so a session in several gets it once. At most 5 of these go out per user per hour. A change past that reaches the user's own followers at once, and the servers get one more `UserUpdate` as soon as the hour allows it, carrying the user's look at that moment (later changes in between are merged into it, never sent one by one).
 - Bots get another user's avatar and name changes through a server only with the Server Members intent (presence still follows the Presence intent).
 - `clear` is a field to remove, one of:
   - `ProfileContent`

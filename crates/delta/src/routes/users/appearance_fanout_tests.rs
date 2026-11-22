@@ -303,3 +303,46 @@ async fn a_user_in_no_servers_still_hears_the_own_change() {
     edit_me(&harness, &session, serde_json::json!({ "display_name": "Alone" })).await;
     assert!(hears_name(&mut own_events, &user.id, "Alone", 5, None).await.is_some());
 }
+
+#[rocket::async_test]
+async fn a_change_held_back_by_the_limit_reaches_the_server_when_the_window_opens() {
+    use std::sync::atomic::Ordering;
+    // a short window for the test (each test runs in its own process)
+    revolt_database::APPEARANCE_FANOUT_WINDOW_SECS.store(8, Ordering::Relaxed);
+    revolt_database::APPEARANCE_FANOUT_RETRY_SECS.store(1, Ordering::Relaxed);
+
+    let harness = TestHarness::new().await;
+    let (_, session, user) = harness.new_user().await;
+    let (_, _, neighbour) = harness.new_user().await;
+    let server = shared_server(&harness, &user, &neighbour).await;
+    let mut server_events = PubSubTestHelper::new(&server).await;
+
+    for n in 1..=5 {
+        let name = format!("Name {n}");
+        edit_me(&harness, &session, serde_json::json!({ "display_name": name })).await;
+        assert!(hears_name(&mut server_events, &user.id, &name, 5, None).await.is_some());
+    }
+
+    // the 6th and 7th change in the window: held back, one trailing fan-out
+    edit_me(&harness, &session, serde_json::json!({ "display_name": "Name 6" })).await;
+    assert!(hears_name(&mut server_events, &user.id, "Name 6", 1, None).await.is_none());
+    edit_me(&harness, &session, serde_json::json!({ "display_name": "Name 7" })).await;
+
+    // when the window opens the members get the newest look, once
+    let late = hears_name(&mut server_events, &user.id, "Name 7", 20, None)
+        .await
+        .expect("the held-back change reaches the server after the window");
+    let EventV1::UserUpdate { event_id, .. } = &late else {
+        unreachable!()
+    };
+    assert!(
+        hears_name(&mut server_events, &user.id, "Name 7", 3, event_id.clone())
+            .await
+            .is_none(),
+        "one trailing fan-out per user"
+    );
+    assert!(
+        hears_name(&mut server_events, &user.id, "Name 6", 1, None).await.is_none(),
+        "an older look is never sent"
+    );
+}

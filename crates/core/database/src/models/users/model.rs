@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, HashSet},
     str::FromStr,
+    sync::atomic::{AtomicU64, Ordering},
     time::Duration,
 };
 
@@ -25,6 +26,20 @@ use ulid::Ulid;
 /// Most times an hour a user's avatar and names are sent to every server
 /// they are in (see [`User::announce_appearance`])
 pub const APPEARANCE_FANOUTS_PER_HOUR: usize = 5;
+
+/// The window of that limit in seconds (an hour; tests make it shorter)
+pub static APPEARANCE_FANOUT_WINDOW_SECS: AtomicU64 = AtomicU64::new(60 * 60);
+
+/// How often a held-back fan-out asks again whether the window has room
+pub static APPEARANCE_FANOUT_RETRY_SECS: AtomicU64 = AtomicU64::new(60);
+
+/// The limit is looked at and counted as one step (per process)
+static APPEARANCE_FANOUT_GATE: Lazy<futures::lock::Mutex<()>> =
+    Lazy::new(|| futures::lock::Mutex::new(()));
+
+/// Users with a trailing fan-out waiting for the window to open
+static APPEARANCE_FANOUT_TRAILING: Lazy<futures::lock::Mutex<HashSet<String>>> =
+    Lazy::new(|| futures::lock::Mutex::new(HashSet::new()));
 
 auto_derived_partial!(
     /// # User
@@ -1093,74 +1108,125 @@ impl User {
     /// partners; everyone else who shares a server saw the old picture and
     /// name until they reloaded (bug #10, 2026-11-22). Presence already goes
     /// to every server the same way. At most [`APPEARANCE_FANOUTS_PER_HOUR`]
-    /// times an hour: past that the change still reaches the user's own
-    /// topic, and the next fan-out sends the newest look (the whole current
-    /// value, not one change), so nothing is lost but time.
+    /// times in the window: a change past that still reaches the user's own
+    /// topic at once, and one trailing fan-out per user goes out when the
+    /// window opens again, with the look the user has then.
     pub fn announce_appearance(&self, db: &Database) {
         let db = db.clone();
-        let user = self.clone();
+        let id = self.id.clone();
         tokio::spawn(async move {
-            user.fan_out_appearance(&db).await;
+            User::fan_out_appearance(&db, &id).await;
         });
     }
 
-    /// The fan-out itself; whether it was sent
-    pub async fn fan_out_appearance(&self, db: &Database) -> bool {
+    /// The fan-out itself; whether it was sent now
+    pub async fn fan_out_appearance(db: &Database, user_id: &str) -> bool {
+        match Self::take_fanout_slot(db, user_id).await {
+            Some(true) => Self::publish_appearance(db, user_id).await,
+            Some(false) => {
+                Self::schedule_trailing_fanout(db, user_id).await;
+                false
+            }
+            None => false,
+        }
+    }
+
+    /// Count one fan-out if the window has room: `Some(true)` counted,
+    /// `Some(false)` over the limit, `None` the lookup failed (logged). The
+    /// look and the count are one step inside this process, so two changes
+    /// at once never both take the last slot.
+    async fn take_fanout_slot(db: &Database, user_id: &str) -> Option<bool> {
+        let _one_at_a_time = APPEARANCE_FANOUT_GATE.lock().await;
+        let window = Duration::from_secs(APPEARANCE_FANOUT_WINDOW_SECS.load(Ordering::Relaxed));
         match db
             .has_ratelimited(
-                &self.id,
+                user_id,
                 crate::RatelimitEventType::AppearanceFanOut,
-                Duration::from_secs(60 * 60),
+                window,
                 APPEARANCE_FANOUTS_PER_HOUR,
             )
             .await
         {
+            Ok(true) => return Some(false),
             Ok(false) => {}
-            Ok(true) => {
-                log::debug!(
-                    "appearance of {} not sent to its servers: over the hourly limit",
-                    self.id
-                );
-                return false;
-            }
             Err(error) => {
-                log::error!(
-                    "appearance fan-out of {}: rate limit lookup failed: {error:?}",
-                    self.id
-                );
-                return false;
+                log::error!("appearance fan-out of {user_id}: rate limit lookup failed: {error:?}");
+                return None;
             }
         }
+        if let Err(error) = RatelimitEvent::create(
+            db,
+            user_id.to_string(),
+            crate::RatelimitEventType::AppearanceFanOut,
+        )
+        .await
+        {
+            log::error!("appearance fan-out of {user_id}: could not count it: {error:?}");
+        }
+        Some(true)
+    }
 
-        let members = match db.fetch_all_memberships(&self.id).await {
+    /// One trailing fan-out per user while the window is full: it waits
+    /// until a slot is free, then sends the look the user has at that time
+    /// (read again), so the last change of a busy hour is not lost. More
+    /// changes meanwhile add nothing.
+    async fn schedule_trailing_fanout(db: &Database, user_id: &str) {
+        if !APPEARANCE_FANOUT_TRAILING
+            .lock()
+            .await
+            .insert(user_id.to_string())
+        {
+            return;
+        }
+        log::debug!("appearance of {user_id}: over the limit, sent when the window opens");
+        let db = db.clone();
+        let id = user_id.to_string();
+        tokio::spawn(async move {
+            // the window is at most an hour; a failing lookup is retried a
+            // bounded number of times
+            let mut failures = 0;
+            loop {
+                let wait = APPEARANCE_FANOUT_RETRY_SECS.load(Ordering::Relaxed);
+                tokio::time::sleep(Duration::from_secs(wait.max(1))).await;
+                match User::take_fanout_slot(&db, &id).await {
+                    Some(true) => break,
+                    Some(false) => {}
+                    None => {
+                        failures += 1;
+                        if failures >= 10 {
+                            APPEARANCE_FANOUT_TRAILING.lock().await.remove(&id);
+                            return;
+                        }
+                    }
+                }
+            }
+            APPEARANCE_FANOUT_TRAILING.lock().await.remove(&id);
+            User::publish_appearance(&db, &id).await;
+        });
+    }
+
+    /// Read the user again and send their look to every server they are in
+    /// (an older task never sends an older look after a newer one)
+    async fn publish_appearance(db: &Database, user_id: &str) -> bool {
+        let user = match db.fetch_user(user_id).await {
+            Ok(user) => user,
+            Err(error) => {
+                log::error!("appearance fan-out of {user_id}: user lookup failed: {error:?}");
+                return false;
+            }
+        };
+        let members = match db.fetch_all_memberships(user_id).await {
             Ok(members) => members,
             Err(error) => {
-                log::error!(
-                    "appearance fan-out of {}: membership lookup failed: {error:?}",
-                    self.id
-                );
+                log::error!("appearance fan-out of {user_id}: membership lookup failed: {error:?}");
                 return false;
             }
         };
         if members.is_empty() {
             return false;
         }
-
-        if let Err(error) = RatelimitEvent::create(
-            db,
-            self.id.clone(),
-            crate::RatelimitEventType::AppearanceFanOut,
-        )
-        .await
-        {
-            log::error!(
-                "appearance fan-out of {}: could not count it: {error:?}",
-                self.id
-            );
-        }
-
         // one event id for every server, so a session in several takes it once
-        let event = self.appearance_event();
+        let event = user.appearance_event();
         join_all(
             members
                 .into_iter()
