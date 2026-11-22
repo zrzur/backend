@@ -20,16 +20,26 @@ fn unread_mentions_pipeline(message_ids: &[String]) -> Vec<Document> {
     vec![doc! {
         "$set": {
             "mentions": {
-                "$concatArrays": [
-                    { "$ifNull": ["$mentions", []] },
-                    {
-                        "$filter": {
-                            "input": message_ids.to_vec(),
-                            "as": "id",
-                            "cond": { "$gt": ["$$id", { "$ifNull": ["$last_id", ""] }] }
+                "$let": {
+                    "vars": {
+                        "new": {
+                            "$filter": {
+                                "input": message_ids.to_vec(),
+                                "as": "id",
+                                "cond": { "$gt": ["$$id", { "$ifNull": ["$last_id", ""] }] }
+                            }
                         }
+                    },
+                    // nothing new: the field stays as it was (absent stays
+                    // absent, as in the reference database), never `[]`
+                    "in": {
+                        "$cond": [
+                            { "$eq": [{ "$size": "$$new" }, 0] },
+                            { "$ifNull": ["$mentions", "$$REMOVE"] },
+                            { "$concatArrays": [{ "$ifNull": ["$mentions", []] }, "$$new"] }
+                        ]
                     }
-                ]
+                }
             }
         }
     }]

@@ -6,6 +6,9 @@
 
 - Mentions are written by a debounced task seconds after the message (`tasks/ack.rs`, 5 s after the channel's last message, up to 30 s). A read that landed in between was undone: the task pushed the mention after the read, and after a reload the badge was back. Measured on the dev stack: read at 2 s, mention present again at 8 s with the read mark already past it.
 - The mention write now takes only messages after the reader's read mark, in the same database write that reads the mark (an update pipeline on `channel_unreads`), so a read that lands while the task waits always wins. The same holds for @everyone mentions (`add_mention_to_many_unreads`). The task still never writes the read mark itself.
+- @everyone badges: pushd passed the channel id as the mention, not the message id. With the read-mark check above, every @everyone badge was dropped for anyone who had read the channel before; it now passes the message (`events::rabbit::mass_mention_ids`).
+- When nothing new is added, MongoDB keeps the mentions as they were (absent stays absent) instead of writing an empty list, the same shape as the reference database.
+- Acking a channel no longer risks an integer underflow when counting the mentions it cleared (`saturating_sub`).
 - The in-memory test database now behaves like MongoDB here: an ack removes only the mentions up to the acked message, and mentions are added instead of replacing the earlier ones.
 
 ## 26.3.0-beta.2 (2026-11-21)
