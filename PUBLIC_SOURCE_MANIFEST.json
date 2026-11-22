@@ -202,8 +202,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "7e6b043d3882909fb03d7f5019be07774a895a7d685937e17a4a593f0fae9867",
-      "bytes": 136165,
+      "sha256": "0687552930d3d2609040438348de78f49edc2ef307d64f153e352031f75100d2",
+      "bytes": 137416,
       "category": "public-documentation"
     },
     {
@@ -4192,8 +4192,8 @@
     },
     {
       "path": "crates/daemons/crond/src/tasks/file_deletion.rs",
-      "sha256": "3ce88eb08fdf01cfef843041e863de69902a3dfffa8733265a405f8e7345b97d",
-      "bytes": 2499,
+      "sha256": "0be515e70949395b4d15df05e74b84bb7e217562e7846de3bed3a5ddc4454d98",
+      "bytes": 5967,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6898,8 +6898,8 @@
     },
     {
       "path": "crates/services/autumn/src/api.rs",
-      "sha256": "1635c625ed54325547475e8d8a4aecea6b6dd8b2f986e2d37ed9e43e61d1da3f",
-      "bytes": 49739,
+      "sha256": "b0ca19cb349768f3948027de67522d4122fcc9318b3e2498ff527e97f0b395c7",
+      "bytes": 54374,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6964,8 +6964,8 @@
     },
     {
       "path": "crates/services/autumn/src/ratelimits.rs",
-      "sha256": "c4a0aef06dae42d8ac73cd20843ad3e0edd9576a05c34ecb8a7fb3e2b6169613",
-      "bytes": 2371,
+      "sha256": "f58a0f51cda28d2806a8c4fda2cfd878351cf8ac476ea36aa2055831b01412b0",
+      "bytes": 3453,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6988,8 +6988,8 @@
     },
     {
       "path": "crates/services/autumn/src/voice.rs",
-      "sha256": "342e2a4d03c7172a8fbe1b01be023e4dcd948c190599c07c3faac4cbc004d04a",
-      "bytes": 8717,
+      "sha256": "2290f8f1a96dca7e33a94535ee850f6ad68825f2c850d4ae59ccbba845091bf1",
+      "bytes": 20835,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -7204,8 +7204,8 @@
     },
     {
       "path": "docs/docs/developers/api/uploading-files.md",
-      "sha256": "a147285e960c9c4acd50ca31a1cee001663edc9677a9f1fe9cdbe7897258e5f0",
-      "bytes": 3012,
+      "sha256": "27901fb59440598033d48cc4b3d4a214e605decbcae634c7dfc1b8facbb0f39f",
+      "bytes": 3323,
       "category": "public-documentation"
     },
     {
