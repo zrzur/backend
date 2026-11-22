@@ -202,8 +202,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "0687552930d3d2609040438348de78f49edc2ef307d64f153e352031f75100d2",
-      "bytes": 137416,
+      "sha256": "b1904438df0eac93ad33318d6966e709e453e53d3cc7e78796187d1847bd1752",
+      "bytes": 138447,
       "category": "public-documentation"
     },
     {
@@ -2050,20 +2050,20 @@
     },
     {
       "path": "crates/core/database/src/models/file_hashes/ops.rs",
-      "sha256": "42979c448f1cea0fb8b9b10e2f658d9ed30fdec69501990236bc09fe193f9e97",
-      "bytes": 1173,
+      "sha256": "f1206f5f5db4932ea2a400fc1257d3325992e01b2e6c133b05a9d08b53930385",
+      "bytes": 1386,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/database/src/models/file_hashes/ops/mongodb.rs",
-      "sha256": "408a119ea514618207c045ddc28cdb2d7e44e35c4ac66bcf71d4af7b473f8336",
-      "bytes": 3148,
+      "sha256": "621e409ec27e663e1e8a7848988204370a36a96dd46519194a10e6a0bdf8a0b6",
+      "bytes": 3556,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/database/src/models/file_hashes/ops/reference.rs",
-      "sha256": "7f036b42c735f717364d99c79f693d6b17fdd778723426d96f50064d1cab605f",
-      "bytes": 2737,
+      "sha256": "2444b4d022320b6e7bab70975e4209fefeab53569b2e8a040b34965041960907",
+      "bytes": 3151,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -3574,14 +3574,14 @@
     },
     {
       "path": "crates/core/files/src/implementation/s3_impl.rs",
-      "sha256": "d856982f9e009cc9d2ed294ee1dca84a0ed2cd71ea1e15400a94653fdb66d42c",
-      "bytes": 3317,
+      "sha256": "831ca3c11f672607636abeadaad5b274b6ab0e380dd75620ead7931d702c2a72",
+      "bytes": 5675,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/files/src/lib.rs",
-      "sha256": "7dd67e961e25d2225ccfc9adda6d0136c247fbbfb5de388ade37ca253a2cfdf4",
-      "bytes": 7789,
+      "sha256": "0a43f7f64909500f5110fe82d703068f352eeeb46bc83ff42aac221daa87d94f",
+      "bytes": 9083,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4192,8 +4192,8 @@
     },
     {
       "path": "crates/daemons/crond/src/tasks/file_deletion.rs",
-      "sha256": "0be515e70949395b4d15df05e74b84bb7e217562e7846de3bed3a5ddc4454d98",
-      "bytes": 5967,
+      "sha256": "f84c15d4ee828154f663a9b6f3356e8c162522c576db836d4f047c0e3f63035a",
+      "bytes": 7814,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6898,8 +6898,8 @@
     },
     {
       "path": "crates/services/autumn/src/api.rs",
-      "sha256": "b0ca19cb349768f3948027de67522d4122fcc9318b3e2498ff527e97f0b395c7",
-      "bytes": 54374,
+      "sha256": "d791929e6e5f92dfb488ebe2f511e5cfb3ff45ea319771e7f1d8eb799a41f6d3",
+      "bytes": 50212,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6940,8 +6940,8 @@
     },
     {
       "path": "crates/services/autumn/src/main.rs",
-      "sha256": "656942cdc1dcf3b727889b77486979a65741583e15ab363491831708c855f6d8",
-      "bytes": 4384,
+      "sha256": "568669d6dd8e97fd426d9d20da72391d277d6a539a0dc6546f56874924b41c3f",
+      "bytes": 4400,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6964,8 +6964,8 @@
     },
     {
       "path": "crates/services/autumn/src/ratelimits.rs",
-      "sha256": "f58a0f51cda28d2806a8c4fda2cfd878351cf8ac476ea36aa2055831b01412b0",
-      "bytes": 3453,
+      "sha256": "d01774fe3e5a92be3ff75e592c02c49ab29a1fd7d01ba5dae0e66ef26cf93c0f",
+      "bytes": 4019,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6988,8 +6988,14 @@
     },
     {
       "path": "crates/services/autumn/src/voice.rs",
-      "sha256": "2290f8f1a96dca7e33a94535ee850f6ad68825f2c850d4ae59ccbba845091bf1",
-      "bytes": 20835,
+      "sha256": "ec4215b07b20ddb83d2d5274f0a315e33de4ec9b439008bcb0e744d8411d760f",
+      "bytes": 22039,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/services/autumn/src/voice_copy.rs",
+      "sha256": "34259651a13994bb9068d5e1aca30d470ecc009223985fdd317049058da9234e",
+      "bytes": 20244,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -7204,8 +7210,8 @@
     },
     {
       "path": "docs/docs/developers/api/uploading-files.md",
-      "sha256": "27901fb59440598033d48cc4b3d4a214e605decbcae634c7dfc1b8facbb0f39f",
-      "bytes": 3323,
+      "sha256": "bd3e754b61f8993d61c48d4cbee7bd5cb2f36071c01950b1a6f592a4478bad70",
+      "bytes": 3377,
       "category": "public-documentation"
     },
     {
