@@ -51,12 +51,17 @@ pub async fn edit_privacy(
     if let Some(steam) = data.share_steam_activity {
         privacy.share_steam_activity = steam;
     }
+    if let Some(seen) = data.activity_intro_seen {
+        privacy.activity_intro_seen = seen;
+    }
     // under 18 the server keeps direct messages to friends, so that is what
     // is saved and answered, whatever was asked for
     let mut privacy_user = user.clone();
     privacy_user.privacy = Some(privacy.clone());
     let mut saved = privacy_user.effective_privacy(db).await;
     saved.share_activity = privacy.share_activity;
+    // worked out by the server on every answer, never saved
+    saved.activity_friends_only = false;
 
     // Written directly: a user update event would go to everyone
     // subscribed to this user, and the settings are private
@@ -71,6 +76,13 @@ pub async fn edit_privacy(
     .await?;
 
     let answer = privacy_user.effective_privacy(db).await;
+    // the person's other sessions (and the desktop app behind them) learn
+    // the new settings at once: sharing off stops the desktop from scanning
+    revolt_database::events::client::EventV1::PrivacyUpdate {
+        privacy: answer.clone(),
+    }
+    .private(user.id.clone())
+    .await;
     let shared_now = answer.share_activity == Some(true);
     let steam_off = !answer.share_steam_activity;
     if shared_before && !shared_now {
@@ -216,11 +228,13 @@ mod test {
             .await;
         assert_eq!(response.status(), Status::Ok);
         let privacy: v0::UserPrivacy = response.into_json().await.unwrap();
-        // the answer carries the activity sharing in force (on for adults)
+        // the answer carries the activity sharing in force (off until
+        // chosen); the test account is an adult, so not friends only
         assert_eq!(
             privacy,
             v0::UserPrivacy {
-                share_activity: Some(true),
+                share_activity: Some(false),
+                activity_friends_only: false,
                 ..Default::default()
             }
         );
@@ -244,6 +258,7 @@ mod test {
             stored.privacy(),
             v0::UserPrivacy {
                 share_activity: None,
+                activity_friends_only: false,
                 ..privacy
             }
         );

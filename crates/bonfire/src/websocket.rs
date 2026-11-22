@@ -1186,10 +1186,12 @@ async fn worker(
                         )
                         .await
                         {
+                            // not an error of the connection: the app keeps
+                            // its session and does not send it again
                             write
                                 .lock()
                                 .await
-                                .send(config.encode(&EventV1::Error { data: error }))
+                                .send(config.encode(&EventV1::ActivityRefused { source, error }))
                                 .await
                                 .ok();
                         }

@@ -172,6 +172,9 @@ fn action_key(action: &SafetyAction) -> &'static str {
         SafetyActionKind::DisableBot => "action.disable_bot",
         SafetyActionKind::RemoveDiscoverListing => "action.remove_discover",
         SafetyActionKind::SuspendCommunityItem | SafetyActionKind::SuspendCreator => "action.suspend_design",
+        SafetyActionKind::ClearActivity
+        | SafetyActionKind::BlockActivityApp
+        | SafetyActionKind::BlockActivityPicture => "action.activity",
     }
 }
 
@@ -348,6 +351,9 @@ fn what_key(action: &SafetyAction) -> &'static str {
         SafetyActionKind::DisableBot => "reporter.what.disable_bot",
         SafetyActionKind::RemoveDiscoverListing => "reporter.what.remove_discover",
         SafetyActionKind::SuspendCommunityItem | SafetyActionKind::SuspendCreator => "reporter.what.suspend_design",
+        SafetyActionKind::ClearActivity
+        | SafetyActionKind::BlockActivityApp
+        | SafetyActionKind::BlockActivityPicture => "reporter.what.activity",
     }
 }
 

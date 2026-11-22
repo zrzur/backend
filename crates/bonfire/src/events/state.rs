@@ -47,7 +47,8 @@ pub struct Cache {
     pub channels: HashMap<String, Channel>,
     pub members: HashMap<String, Member>,
     pub servers: HashMap<String, Server>,
-    /// People who blocked this user: they never see their activity
+    /// People this user blocked or who blocked this user: activities are
+    /// hidden between them both ways
     pub blocked_by: HashSet<String>,
 
     pub seen_events: LruCache<String, ()>,

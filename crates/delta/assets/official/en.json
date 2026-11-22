@@ -31,6 +31,10 @@
     "title": "We took one of your designs down",
     "body": "{statement}"
   },
+  "action.activity": {
+    "title": "We took down what your profile showed you doing",
+    "body": "{statement}"
+  },
   "action.revoked": {
     "title": "We reversed a decision on your account",
     "body": "We looked again and reversed it.\n{note}"
@@ -494,6 +498,10 @@
   "reporter.what.remove_message": {
     "title": "",
     "body": "removed the message"
+  },
+  "reporter.what.activity": {
+    "title": "",
+    "body": "took the activity off the profile"
   },
   "reporter.what.suspend": {
     "title": "",

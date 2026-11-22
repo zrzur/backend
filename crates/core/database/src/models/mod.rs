@@ -12,6 +12,7 @@ mod billing;
 mod channels;
 mod community_items;
 mod platform_words;
+mod activity_blocks;
 mod discover_requests;
 mod emojis;
 mod file_hashes;
@@ -62,6 +63,7 @@ pub use billing::*;
 pub use channels::*;
 pub use community_items::*;
 pub use platform_words::*;
+pub use activity_blocks::*;
 pub use discover_requests::*;
 pub use emojis::*;
 pub use file_hashes::*;
@@ -142,6 +144,7 @@ pub trait AbstractDatabase:
     + discover_requests::AbstractDiscoverRequest
     + community_items::AbstractCommunityItems
     + platform_words::AbstractPlatformWords
+    + activity_blocks::AbstractActivityBlocks
     + plugins::AbstractPlugins
     + billing::AbstractBilling
     + trust_safety::AbstractTrustSafety

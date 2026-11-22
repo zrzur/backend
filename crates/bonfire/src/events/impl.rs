@@ -432,7 +432,13 @@ impl State {
             .relations
             .iter()
             .flatten()
-            .filter(|relation| relation.status == revolt_database::RelationshipStatus::BlockedOther)
+            .filter(|relation| {
+                matches!(
+                    relation.status,
+                    revolt_database::RelationshipStatus::BlockedOther
+                        | revolt_database::RelationshipStatus::Blocked
+                )
+            })
             .map(|relation| relation.id.clone())
             .collect();
         self.cache.users = users.iter().cloned().map(|x| (x.id.clone(), x)).collect();
@@ -464,7 +470,7 @@ impl State {
         .await;
 
         // what the people shown online are doing right now
-        revolt_database::util::activity::fill(&mut users).await;
+        revolt_database::util::activity::fill(&mut users, Some(&user)).await;
 
         // Make sure we see our own user correctly.
         users.push(user.into_self(true).await);
@@ -1113,7 +1119,10 @@ impl State {
             EventV1::UserRelationship { id, user, .. } => {
                 // to this person: how `user` now stands to them
                 if id == &self.cache.user_id && user.id != self.cache.user_id {
-                    if user.relationship == v0::RelationshipStatus::BlockedOther {
+                    if matches!(
+                        user.relationship,
+                        v0::RelationshipStatus::BlockedOther | v0::RelationshipStatus::Blocked
+                    ) {
                         self.cache.blocked_by.insert(user.id.clone());
                     } else {
                         self.cache.blocked_by.remove(&user.id);

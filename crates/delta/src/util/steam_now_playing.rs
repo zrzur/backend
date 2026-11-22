@@ -104,7 +104,7 @@ pub async fn calls_today() -> i64 {
 }
 
 /// The people to read: online, visible, sharing Steam, link agreed
-async fn readers(db: &Database) -> Result<Vec<(User, LinkedAccount)>> {
+async fn readers(db: &Database) -> Result<Vec<(User, LinkedAccount, bool)>> {
     let accounts: Vec<LinkedAccount> = db
         .fetch_linked_accounts_of_service("steam")
         .await?
@@ -132,14 +132,43 @@ async fn readers(db: &Database) -> Result<Vec<(User, LinkedAccount)>> {
             .as_ref()
             .and_then(|status| status.presence.as_ref())
             == Some(&Presence::Invisible);
-        if invisible || !user.privacy().share_steam_activity || !activity::shares(db, &user).await {
+        if invisible || !user.privacy().share_steam_activity {
             continue;
         }
+        let Some(friends_only) = activity::sharing(db, &user).await else {
+            continue;
+        };
         if let Some(account) = by_user.remove(&user.id) {
-            chosen.push((user, account));
+            chosen.push((user, account, friends_only));
         }
     }
     Ok(chosen)
+}
+
+/// Online people with a Steam activity who no longer qualify (sharing or
+/// Steam turned off, consent withdrawn, link gone, invisible) lose it at
+/// once, and the others are told
+async fn drop_ineligible(db: &Database, readers: &[(User, LinkedAccount, bool)]) -> Result<()> {
+    let keep: std::collections::HashSet<&str> =
+        readers.iter().map(|(user, _, _)| user.id.as_str()).collect();
+    let linked: Vec<String> = db
+        .fetch_linked_accounts_of_service("steam")
+        .await?
+        .into_iter()
+        .map(|account| account.user_id)
+        .collect();
+    let online = revolt_presence::filter_online(&linked).await;
+    for id in online {
+        if keep.contains(id.as_str()) {
+            continue;
+        }
+        if activity::store(&id, ActivitySource::Steam, None, None).await {
+            if let Ok(user) = db.fetch_user(&id).await {
+                activity::publish(db, &user).await;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// What Steam's answer means for one person
@@ -191,6 +220,7 @@ pub async fn run_once(db: &Database, now: Timestamp) -> Result<usize> {
     let hosts = activity::Hosts::from_config().await;
 
     let people = readers(db).await?;
+    drop_ineligible(db, &people).await?;
     let mut calls = 0;
     for chunk in people.chunks(PER_CALL) {
         if !spend(settings.steam_daily_calls).await {
@@ -198,9 +228,10 @@ pub async fn run_once(db: &Database, now: Timestamp) -> Result<usize> {
             break;
         }
         calls += 1;
-        let ids: Vec<&str> = chunk.iter().map(|(_, account)| account.external_id.as_str()).collect();
+        let ids: Vec<&str> = chunk.iter().map(|(_, account, _)| account.external_id.as_str()).collect();
         let playing = crate::util::steam::now_playing(&steam, &ids).await?;
-        for (user, account) in chunk {
+        for (user, account, friends_only) in chunk {
+            activity::set_audience(&user.id, *friends_only).await;
             let before = activity::list(&user.id)
                 .await
                 .into_iter()

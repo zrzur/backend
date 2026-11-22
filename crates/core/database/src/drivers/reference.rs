@@ -39,6 +39,7 @@ database_derived!(
         pub discover_bans: Arc<Mutex<HashMap<String, DiscoverBan>>>,
         pub community_items: Arc<Mutex<HashMap<String, CommunityItem>>>,
         pub platform_words: Arc<Mutex<HashMap<String, revolt_models::v0::PlatformWord>>>,
+        pub activity_blocks: Arc<Mutex<HashMap<String, revolt_models::v0::ActivityBlock>>>,
         pub trust_safety: Arc<Mutex<crate::TrustSafetyStore>>,
         pub platform_staff: Arc<Mutex<crate::PlatformStaffStore>>,
         pub bot_verifications: Arc<Mutex<HashMap<String, crate::BotVerification>>>,

@@ -34,8 +34,8 @@ pub const LABEL_MAX: usize = 32;
 pub const URL_MAX: usize = 512;
 /// Most buttons
 pub const BUTTONS_MAX: usize = 2;
-/// Longest application id (a ULID is 26)
-pub const APPLICATION_ID_MAX: usize = 32;
+/// Longest application id (a ULID is 26; a local app's own id up to 64)
+pub const APPLICATION_ID_MAX: usize = 64;
 /// The hash goes on its own after a day even if nothing removes it
 const KEEP_SECONDS: usize = 24 * 60 * 60;
 /// A start time may be this far ahead of the server's clock
@@ -96,7 +96,44 @@ fn refuse(error: impl Into<String>) -> revolt_result::Error {
     })
 }
 
-/// A text as shown: trimmed, one line, no control characters
+/// Characters that may hide or reorder text: control characters, line and
+/// paragraph separators (Zl, Zp) and format characters (Cf: bidi overrides
+/// and isolates, zero-width spaces, word joiners, the byte order mark, tags).
+/// Zero-width non-joiner and joiner (U+200C, U+200D) stay: Persian words and
+/// emoji sequences need them, and they reorder nothing.
+pub fn hidden_char(c: char) -> bool {
+    if c.is_control() {
+        return true;
+    }
+    let n = c as u32;
+    matches!(
+        n,
+        0x00AD
+            | 0x0600..=0x0605
+            | 0x061C
+            | 0x06DD
+            | 0x070F
+            | 0x0890..=0x0891
+            | 0x08E2
+            | 0x180E
+            | 0x200B
+            | 0x200E..=0x200F
+            | 0x2028..=0x202E
+            | 0x2060..=0x2064
+            | 0x2066..=0x206F
+            | 0xFEFF
+            | 0xFFF9..=0xFFFB
+            | 0x110BD
+            | 0x110CD
+            | 0x13430..=0x1343F
+            | 0x1BCA0..=0x1BCA3
+            | 0x1D173..=0x1D17A
+            | 0xE0001
+            | 0xE0020..=0xE007F
+    )
+}
+
+/// A text as shown: trimmed, one line, nothing hidden in it
 fn text(value: Option<String>, name: &str, max: usize) -> Result<Option<String>> {
     let Some(value) = value else {
         return Ok(None);
@@ -108,8 +145,8 @@ fn text(value: Option<String>, name: &str, max: usize) -> Result<Option<String>>
     if value.chars().count() > max {
         return Err(refuse(format!("activity.{name} is longer than {max} characters")));
     }
-    if value.chars().any(|c| c.is_control()) {
-        return Err(refuse(format!("activity.{name} must be one line of text")));
+    if value.chars().any(hidden_char) {
+        return Err(refuse(format!("activity.{name} must be one line of plain text")));
     }
     Ok(Some(value.to_string()))
 }
@@ -207,7 +244,11 @@ pub fn check(
     let application_id = match input.application_id.map(|id| id.trim().to_string()) {
         Some(id) if id.is_empty() => None,
         Some(id) => {
-            if id.len() > APPLICATION_ID_MAX || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
+            if id.len() > APPLICATION_ID_MAX
+                || !id
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+            {
                 return Err(refuse("activity.application_id is not an id"));
             }
             Some(id)
@@ -244,6 +285,93 @@ pub fn check(
     })
 }
 
+/// Whether a platform-wide block stops this activity (legal RP-07): its app
+/// id, or a picture, as the app sent it or as it is shown through the proxy
+pub fn blocked_by(activity: &UserActivity, blocks: &[v0::ActivityBlock]) -> bool {
+    blocks.iter().any(|block| match block.kind {
+        v0::ActivityBlockKind::Application => {
+            activity.application_id.as_deref() == Some(block.value.as_str())
+        }
+        v0::ActivityBlockKind::Picture => {
+            let proxied = encode_query(&block.value);
+            [&activity.large_image, &activity.small_image]
+                .into_iter()
+                .flatten()
+                .any(|shown| shown == &block.value || shown.ends_with(&format!("url={proxied}")))
+        }
+    })
+}
+
+/// Refuse an activity a platform-wide block stops
+pub async fn check_blocks(db: &Database, activity: &UserActivity) -> Result<()> {
+    if blocked_by(activity, &db.fetch_activity_blocks().await?) {
+        return Err(create_error!(ProfileTextFiltered {
+            category: "ActivityBlocked".to_string(),
+        }));
+    }
+    Ok(())
+}
+
+/// Stop an app id or a picture everywhere (Trust & Safety)
+pub async fn block(
+    db: &Database,
+    kind: v0::ActivityBlockKind,
+    value: &str,
+    case_id: Option<&str>,
+    actor_id: &str,
+    now: i64,
+) -> Result<()> {
+    db.insert_activity_block(&v0::ActivityBlock {
+        id: Ulid::new().to_string(),
+        kind,
+        value: value.chars().take(URL_MAX).collect(),
+        case_id: case_id.map(str::to_string),
+        actor_id: actor_id.to_string(),
+        created_at: now,
+    })
+    .await
+}
+
+/// Lift the blocks taken on one case (an action reversed)
+pub async fn unblock_case(db: &Database, case_id: &str) -> Result<()> {
+    for block in db.fetch_activity_blocks().await? {
+        if block.case_id.as_deref() == Some(case_id) {
+            db.delete_activity_block(&block.id).await?;
+        }
+    }
+    Ok(())
+}
+
+/// A copy of shown activities for a report: everything others saw, and the
+/// app ids and picture addresses staff can block
+pub fn evidence_text(activities: &[UserActivity]) -> String {
+    activities
+        .iter()
+        .map(|activity| {
+            let mut parts = vec![format!("{:?} {:?}: {}", activity.source, activity.kind, activity.name)];
+            for (label, value) in [
+                ("details", &activity.details),
+                ("state", &activity.state),
+                ("app", &activity.application_id),
+                ("large_image", &activity.large_image),
+                ("large_text", &activity.large_text),
+                ("small_image", &activity.small_image),
+                ("small_text", &activity.small_text),
+            ] {
+                if let Some(value) = value {
+                    parts.push(format!("{label}: {value}"));
+                }
+            }
+            for button in &activity.buttons {
+                parts.push(format!("button: {} <{}>", button.label, button.url));
+            }
+            parts.join(" | ")
+        })
+        .collect::<Vec<_>>()
+        .join("
+")
+}
+
 /// Every text others would read, one per line, for the word list
 pub fn texts_of(activity: &UserActivity) -> String {
     let mut all = vec![activity.name.as_str()];
@@ -274,15 +402,105 @@ pub async fn check_words(db: &Database, activity: &UserActivity) -> Result<()> {
     }
 }
 
-/// Whether this person shares their activity (the setting in force: unset
-/// is on for adults, off under 18)
+/// Field of the hash that says only friends may see the activities
+const AUDIENCE_FIELD: &str = "Audience";
+const FRIENDS_ONLY: &str = "Friends";
+
+/// Whether this person shares their activity (the setting in force: off
+/// until chosen), and if so whether only friends may see it (under 18, no
+/// stated age, or an age that cannot be read)
+pub async fn sharing(db: &Database, user: &User) -> Option<bool> {
+    if user.bot.is_some() {
+        return None;
+    }
+    let privacy = user.effective_privacy(db).await;
+    privacy
+        .share_activity
+        .unwrap_or(false)
+        .then_some(privacy.activity_friends_only)
+}
+
+/// Whether this person shares their activity
 pub async fn shares(db: &Database, user: &User) -> bool {
-    user.bot.is_none()
-        && user
-            .effective_privacy(db)
-            .await
-            .share_activity
-            .unwrap_or(false)
+    sharing(db, user).await.is_some()
+}
+
+/// Record who may see a person's activities, kept with them so every read
+/// can check it without asking the database
+pub async fn set_audience(user_id: &str, friends_only: bool) {
+    let Ok(mut conn) = get_connection().await else {
+        return;
+    };
+    let key = revolt_presence::activity_key(user_id);
+    if friends_only {
+        write_while_online(user_id, AUDIENCE_FIELD, FRIENDS_ONLY).await;
+    } else {
+        let _: std::result::Result<(), _> = conn.hdel(&key, AUDIENCE_FIELD).await;
+    }
+}
+
+/// Write one field of the hash only while the person has a session, in one
+/// step: a write racing the last session's end can never leave an activity
+/// behind with nobody online. False when nothing was written.
+async fn write_while_online(user_id: &str, field: &str, value: &str) -> bool {
+    let Ok(conn) = get_connection().await else {
+        return false;
+    };
+    let mut conn = conn.into_inner();
+    let written: std::result::Result<i64, _> = redis::Script::new(
+        r"if redis.call('SCARD', KEYS[2]) > 0 then
+            redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+            redis.call('EXPIRE', KEYS[1], ARGV[3])
+            return 1
+          end
+          return 0",
+    )
+    .key(revolt_presence::activity_key(user_id))
+    .key(format!("sessions:{user_id}"))
+    .arg(field)
+    .arg(value)
+    .arg(KEEP_SECONDS)
+    .invoke_async(&mut conn)
+    .await;
+    written.unwrap_or(0) == 1
+}
+
+/// Members of a server, from the same one-hour cache the server list uses
+async fn member_count(db: &Database, server_id: &str) -> usize {
+    let key = format!("member_count:{server_id}");
+    if let Ok(mut conn) = get_connection().await {
+        if let Ok(Some(count)) = conn.get::<_, Option<usize>>(&key).await {
+            return count;
+        }
+        let Ok(count) = db.fetch_member_count(server_id).await else {
+            return usize::MAX;
+        };
+        let _: std::result::Result<(), _> = conn.set_ex(&key, count, 60 * 60).await;
+        return count;
+    }
+    db.fetch_member_count(server_id).await.unwrap_or(usize::MAX)
+}
+
+fn friends_only_in(values: &HashMap<String, String>) -> bool {
+    values.get(AUDIENCE_FIELD).map(String::as_str) == Some(FRIENDS_ONLY)
+}
+
+/// Whether either of them blocked the other
+fn blocked_between(viewer: &User, target: &str) -> bool {
+    viewer.relations.iter().flatten().any(|relation| {
+        relation.id == target
+            && matches!(
+                relation.status,
+                crate::RelationshipStatus::Blocked | crate::RelationshipStatus::BlockedOther
+            )
+    })
+}
+
+/// Whether `viewer` and `target` are friends, from the viewer's side
+fn are_friends(viewer: &User, target: &str) -> bool {
+    viewer.relations.iter().flatten().any(|relation| {
+        relation.id == target && relation.status == crate::RelationshipStatus::Friend
+    })
 }
 
 /// Count one change; `Err(retry_after_ms)` when there were too many.
@@ -335,8 +553,8 @@ pub async fn list(user_id: &str) -> Vec<UserActivity> {
     parse(values).into_iter().map(|(activity, _)| activity).collect()
 }
 
-/// Activities of many people at once
-pub async fn list_many(user_ids: &[String]) -> HashMap<String, Vec<UserActivity>> {
+/// Activities of many people at once, with whether only friends may see them
+pub async fn list_many(user_ids: &[String]) -> HashMap<String, (Vec<UserActivity>, bool)> {
     let mut found = HashMap::new();
     if user_ids.is_empty() {
         return found;
@@ -353,10 +571,11 @@ pub async fn list_many(user_ids: &[String]) -> HashMap<String, Vec<UserActivity>
         let answers: Vec<HashMap<String, String>> =
             pipe.query_async(&mut conn).await.unwrap_or_default();
         for (id, values) in chunk.iter().zip(answers) {
+            let friends_only = friends_only_in(&values);
             let activities: Vec<UserActivity> =
                 parse(values).into_iter().map(|(activity, _)| activity).collect();
             if !activities.is_empty() {
-                found.insert(id.clone(), activities);
+                found.insert(id.clone(), (activities, friends_only));
             }
         }
     }
@@ -386,8 +605,9 @@ pub async fn store(
             let same = before
                 .and_then(|before| serde_json::from_str::<Stored>(&before).ok())
                 .is_some_and(|before| before.activity == activity);
-            let _: std::result::Result<(), _> = conn.hset(&key, field(source), value).await;
-            let _: std::result::Result<(), _> = conn.expire(&key, KEEP_SECONDS).await;
+            if !write_while_online(user_id, field(source), &value).await {
+                return false;
+            }
             !same
         }
         None => {
@@ -467,19 +687,21 @@ pub async fn set_from_session(
             global: false,
         }));
     }
-    if !shares(db, &user).await {
+    let Some(friends_only) = sharing(db, &user).await else {
         // nothing is kept for someone who does not share
         if forget_all(user_id).await {
             publish(db, &user).await;
         }
         return Ok(());
-    }
+    };
+    set_audience(user_id, friends_only).await;
 
     let activity = match input {
         Some(input) => {
             let hosts = Hosts::from_config().await;
             let activity = check(input, source, Timestamp::now_utc(), &hosts)?;
             check_words(db, &activity).await?;
+            check_blocks(db, &activity).await?;
             Some(activity)
         }
         None => None,
@@ -490,10 +712,11 @@ pub async fn set_from_session(
     Ok(())
 }
 
-/// Put the activities on users shown to someone. Only users shown online
+/// Put the activities on users shown to `viewer`. Only users shown online
 /// get them (being online already takes blocks and invisibility into
-/// account); nothing when the feature is off.
-pub async fn fill(users: &mut [v0::User]) {
+/// account), and where only friends may see them, only a friend of theirs;
+/// nothing when the feature is off.
+pub async fn fill(users: &mut [v0::User], viewer: Option<&User>) {
     if !enabled().await {
         return;
     }
@@ -504,15 +727,24 @@ pub async fn fill(users: &mut [v0::User]) {
         .collect();
     let mut found = list_many(&online).await;
     for user in users.iter_mut() {
-        if let Some(activities) = found.remove(&user.id) {
-            user.activities = activities;
+        if let Some((activities, friends_only)) = found.remove(&user.id) {
+            let own = viewer.is_some_and(|viewer| viewer.id == user.id);
+            // hidden both ways when one of them blocked the other
+            let blocked = viewer.is_some_and(|viewer| blocked_between(viewer, &user.id));
+            let allowed = own
+                || (!blocked
+                    && (!friends_only
+                        || viewer.is_some_and(|viewer| are_friends(viewer, &user.id))));
+            if allowed {
+                user.activities = activities;
+            }
         }
     }
 }
 
 /// `fill` for one user
-pub async fn fill_one(user: &mut v0::User) {
-    fill(std::slice::from_mut(user)).await;
+pub async fn fill_one(user: &mut v0::User, viewer: Option<&User>) {
+    fill(std::slice::from_mut(user), viewer).await;
 }
 
 /// A person's own activities, for themselves: also while they are
@@ -548,16 +780,44 @@ fn update(user_id: &str, activities: Vec<UserActivity>) -> EventV1 {
 /// Tell everyone who may see this person what they are doing now: their
 /// servers and their own topic, as with presence. While they are invisible
 /// the others get an empty list and only the person's own sessions the
-/// real one.
+/// real one. When only friends may see it, only friends are told (each on
+/// their private topic) and nobody else gets anything.
 pub async fn publish(db: &Database, user: &User) {
     let current = list(&user.id).await;
-    let mut topics: Vec<String> = db
-        .fetch_all_memberships(&user.id)
+    if let Some(friends_only) = sharing(db, user).await {
+        set_audience(&user.id, friends_only).await;
+        if friends_only {
+            let friends: Vec<String> = user
+                .relations
+                .iter()
+                .flatten()
+                .filter(|relation| relation.status == crate::RelationshipStatus::Friend)
+                .map(|relation| relation.id.clone())
+                .collect();
+            if is_invisible(user) {
+                update(&user.id, vec![]).private_broadcast(friends).await;
+                update(&user.id, current).private(user.id.clone()).await;
+            } else {
+                let mut everyone = friends;
+                everyone.push(user.id.clone());
+                update(&user.id, current).private_broadcast(everyone).await;
+            }
+            return;
+        }
+    }
+    // servers up to the size limit are told at once; larger ones read it
+    // when someone opens the profile or the member list
+    let limit = revolt_config::config()
         .await
-        .unwrap_or_default()
-        .into_iter()
-        .map(|member| member.id.server)
-        .collect();
+        .features
+        .rich_presence
+        .broadcast_max_members;
+    let mut topics: Vec<String> = vec![];
+    for member in db.fetch_all_memberships(&user.id).await.unwrap_or_default() {
+        if member_count(db, &member.id.server).await <= limit {
+            topics.push(member.id.server);
+        }
+    }
     topics.push(user.id.clone());
 
     if is_invisible(user) {
@@ -762,6 +1022,81 @@ mod tests {
             assert!(texts.contains(part), "{part} goes through the word list");
         }
         assert!(!texts.contains("example.com"), "addresses are not texts");
+    }
+
+    #[test]
+    fn hidden_and_reordering_characters_are_refused() {
+        let now = Timestamp::now_utc();
+        for bad in [
+            "Game\u{202E}gnp.exe", // right-to-left override
+            "Ga\u{200B}me",        // zero-width space
+            "Ga\u{2066}me",        // left-to-right isolate
+            "Line\u{2028}break",   // line separator
+            "Para\u{2029}graph",   // paragraph separator
+            "Ga\u{FEFF}me",        // byte order mark
+            "Ga\u{00AD}me",        // soft hyphen
+            "Tag\u{E0041}",        // tag character
+        ] {
+            assert!(check(game(bad), ActivitySource::Rpc, now, &hosts()).is_err(), "{bad:?}");
+        }
+        // Persian words and emoji sequences keep their joiners
+        assert!(check(game("می\u{200C}خواهم"), ActivitySource::Rpc, now, &hosts()).is_ok());
+        assert!(check(game("👩\u{200D}💻 Coding"), ActivitySource::Rpc, now, &hosts()).is_ok());
+        // ordinary Arabic and German text
+        assert!(check(game("لعبة الشطرنج"), ActivitySource::Rpc, now, &hosts()).is_ok());
+        assert!(check(game("Straßenbahn-Simulator"), ActivitySource::Rpc, now, &hosts()).is_ok());
+    }
+
+    #[test]
+    fn app_ids_may_be_a_local_app_name() {
+        let now = Timestamp::now_utc();
+        let mut ok = game("Game");
+        ok.application_id = Some("zrzur-vscode".into());
+        assert!(check(ok, ActivitySource::Rpc, now, &hosts()).is_ok());
+        let mut long = game("Game");
+        long.application_id = Some("x".repeat(65));
+        assert!(check(long, ActivitySource::Rpc, now, &hosts()).is_err());
+    }
+
+    #[test]
+    fn blocks_match_the_app_id_and_the_picture_as_sent_or_proxied() {
+        let now = Timestamp::now_utc();
+        let mut input = game("Game");
+        input.application_id = Some("bad-app".into());
+        input.large_image = Some("https://img.example/bad.png".into());
+        let shown = check(input, ActivitySource::Rpc, now, &hosts()).unwrap();
+        let block = |kind, value: &str| v0::ActivityBlock {
+            id: "b".into(),
+            kind,
+            value: value.into(),
+            case_id: None,
+            actor_id: "a".into(),
+            created_at: 0,
+        };
+        assert!(blocked_by(&shown, &[block(v0::ActivityBlockKind::Application, "bad-app")]));
+        assert!(!blocked_by(&shown, &[block(v0::ActivityBlockKind::Application, "good-app")]));
+        assert!(blocked_by(&shown, &[block(v0::ActivityBlockKind::Picture, "https://img.example/bad.png")]));
+        let proxied = shown.large_image.clone().unwrap();
+        assert!(blocked_by(&shown, &[block(v0::ActivityBlockKind::Picture, &proxied)]));
+        assert!(!blocked_by(&shown, &[block(v0::ActivityBlockKind::Picture, "https://img.example/other.png")]));
+        assert!(!blocked_by(&shown, &[]));
+    }
+
+    #[test]
+    fn the_report_copy_holds_what_others_saw() {
+        let now = Timestamp::now_utc();
+        let mut input = game("Star Kebab");
+        input.details = Some("Level 3".into());
+        input.application_id = Some("my-game".into());
+        input.buttons = vec![ActivityButton {
+            label: "Join".into(),
+            url: "https://example.com/join".into(),
+        }];
+        let shown = check(input, ActivitySource::Rpc, now, &hosts()).unwrap();
+        let text = evidence_text(&[shown]);
+        for part in ["Star Kebab", "details: Level 3", "app: my-game", "button: Join <https://example.com/join>"] {
+            assert!(text.contains(part), "{part} in {text}");
+        }
     }
 
     #[test]

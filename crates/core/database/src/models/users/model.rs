@@ -415,26 +415,30 @@ impl User {
     /// This user's privacy settings as enforced. People aged 16 or 17 (and
     /// anyone below the minimum age) only get direct messages from friends,
     /// whatever is saved (privacy policy, PR-9); the other settings are
-    /// theirs to choose.
+    /// theirs to choose. Sharing what you do is off until chosen, for
+    /// everyone (legal RP-01); only friends see it for people under 18,
+    /// with no stated age, or whose age cannot be read (RP-02, fails
+    /// closed).
     pub async fn effective_privacy(&self, db: &Database) -> v0::UserPrivacy {
         let mut privacy = self.privacy();
-        let needs_age = privacy.direct_messages != v0::DirectMessagePrivacy::Friends
-            || privacy.share_activity.is_none();
-        let young = needs_age
-            && self.bot.is_none()
-            && db.fetch_account(&self.id).await.is_ok_and(|account| {
-                matches!(
-                    account.age_band(),
-                    v0::AgeBand::Teen | v0::AgeBand::UnderMinimum
-                )
-            });
+        let band = if self.bot.is_some() {
+            None
+        } else {
+            Some(db.fetch_account(&self.id).await.map(|account| account.age_band()))
+        };
+        let young = matches!(
+            band,
+            Some(Ok(v0::AgeBand::Teen | v0::AgeBand::UnderMinimum))
+        );
         if young {
             privacy.direct_messages = v0::DirectMessagePrivacy::Friends;
         }
-        // sharing what you do: on for adults, off under 18, until chosen
-        if privacy.share_activity.is_none() {
-            privacy.share_activity = Some(self.bot.is_none() && !young);
-        }
+        privacy.share_activity = Some(self.bot.is_none() && privacy.share_activity.unwrap_or(false));
+        privacy.activity_friends_only = match band {
+            None => false,
+            Some(Ok(v0::AgeBand::AdultDeclared)) => false,
+            Some(_) => true,
+        };
         privacy
     }
 
@@ -640,7 +644,7 @@ impl User {
             user.into_known(perspective, is_online).await
         }))
         .await;
-        crate::util::activity::fill(&mut users).await;
+        crate::util::activity::fill(&mut users, Some(perspective)).await;
 
         // a custom status emoji shows only from a server the viewer shares:
         // the viewer's servers are looked up once, and only when needed

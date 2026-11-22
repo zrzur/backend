@@ -89,31 +89,100 @@ async fn seen_by(harness: &TestHarness, viewer: &Session, target: &str) -> v0::U
 }
 
 #[rocket::async_test]
-async fn sharing_is_on_for_adults_and_off_under_18_until_chosen() {
+async fn sharing_is_off_for_everyone_until_chosen() {
     let harness = TestHarness::new().await;
     let (_, adult, _) = person(&harness, 30).await;
     let (_, teen, _) = person(&harness, 16).await;
+    // an account from before ages were asked: no stated age (the routes
+    // refuse it until an age is given, so its settings are read directly)
+    let (_, _, unknown) = harness.new_user_without_age().await;
 
-    let grown = privacy(&harness, &adult).await;
-    assert_eq!(grown.share_activity, Some(true));
-    assert!(!grown.share_steam_activity, "Steam is off until chosen");
-    assert_eq!(privacy(&harness, &teen).await.share_activity, Some(false));
+    for session in [&adult, &teen] {
+        let answer = privacy(&harness, session).await;
+        assert_eq!(answer.share_activity, Some(false), "off until chosen (RP-01)");
+        assert!(!answer.share_steam_activity, "Steam is off until chosen");
+        assert!(!answer.activity_intro_seen);
+    }
+    let unknown = unknown.effective_privacy(&harness.db).await;
+    assert_eq!(unknown.share_activity, Some(false), "off until chosen (RP-01)");
+    // only friends see it under 18 and with no stated age (RP-02)
+    assert!(!privacy(&harness, &adult).await.activity_friends_only);
+    assert!(privacy(&harness, &teen).await.activity_friends_only);
+    assert!(unknown.activity_friends_only);
 
-    // changing something else keeps "the default for your age" unsaved
-    set_privacy(&harness, &teen, json!({ "group_invites": "Nobody" })).await;
-    assert_eq!(privacy(&harness, &teen).await.share_activity, Some(false));
+    // changing something else saves no choice for this switch
+    set_privacy(&harness, &adult, json!({ "group_invites": "Nobody" })).await;
+    assert_eq!(privacy(&harness, &adult).await.share_activity, Some(false));
 
-    // a teen may turn it on; an adult may turn it off
+    // anyone may turn it on, and off again
     assert_eq!(set_privacy(&harness, &teen, json!({ "share_activity": true })).await.share_activity, Some(true));
+    assert_eq!(set_privacy(&harness, &adult, json!({ "share_activity": true })).await.share_activity, Some(true));
     assert_eq!(set_privacy(&harness, &adult, json!({ "share_activity": false })).await.share_activity, Some(false));
     let steam = set_privacy(&harness, &adult, json!({ "share_steam_activity": true })).await;
     assert!(steam.share_steam_activity);
+
+    // the intro card is answered once, and a sent friends-only flag is ignored
+    let seen = set_privacy(&harness, &adult, json!({ "activity_intro_seen": true, "activity_friends_only": true })).await;
+    assert!(seen.activity_intro_seen);
+    assert!(!seen.activity_friends_only);
+    assert_eq!(seen.share_activity, Some(false), "Not now saves no choice");
+}
+
+#[rocket::async_test]
+async fn an_account_whose_age_cannot_be_read_counts_as_under_18() {
+    let harness = TestHarness::new().await;
+    // a user whose account record is missing: the lookup fails
+    let name = format!("u{}", ulid::Ulid::new().to_string().to_lowercase());
+    let user = User::create(&harness.db, name[..20].to_owned(), ulid::Ulid::new().to_string(), None)
+        .await
+        .unwrap();
+    let answer = user.effective_privacy(&harness.db).await;
+    assert!(answer.activity_friends_only, "fails closed");
+    assert_eq!(answer.share_activity, Some(false));
+}
+
+#[rocket::async_test]
+async fn under_18_and_no_stated_age_are_seen_by_friends_only() {
+    let harness = TestHarness::new().await;
+    let (_, teen_session, mut teen) = person(&harness, 16).await;
+    let (_, _, mut friend) = person(&harness, 30).await;
+    let (_, _, stranger) = person(&harness, 30).await;
+    relate(&harness, &mut teen, &mut friend, RelationshipStatus::Friend, RelationshipStatus::Friend).await;
+    set_privacy(&harness, &teen_session, json!({ "share_activity": true })).await;
+    revolt_presence::create_session(&teen.id, 0).await;
+
+    // as the gateway does it: the audience is kept with the activity
+    let teen = harness.db.fetch_user(&teen.id).await.unwrap();
+    let friends_only = activity::sharing(&harness.db, &teen).await.expect("sharing");
+    assert!(friends_only);
+    activity::set_audience(&teen.id, friends_only).await;
+    activity::store(&teen.id, ActivitySource::Rpc, Some(game("Star Kebab")), Some("s")).await;
+
+    let friend = harness.db.fetch_user(&friend.id).await.unwrap();
+    let seen = User::fetch_many_ids_as_mutuals(&harness.db, &friend, &[teen.id.clone()]).await.unwrap();
+    assert_eq!(seen[0].activities.len(), 1, "a friend sees it");
+    let seen = User::fetch_many_ids_as_mutuals(&harness.db, &stranger, &[teen.id.clone()]).await.unwrap();
+    assert!(seen[0].online, "online is still shown as before");
+    assert!(seen[0].activities.is_empty(), "a server co-member who is no friend does not");
+    let own = harness.db.fetch_user(&teen.id).await.unwrap().into_self(false).await;
+    assert_eq!(own.activities.len(), 1, "their own view keeps it");
+
+    // an adult's activity reaches the same stranger
+    let (_, adult_session, adult) = person(&harness, 30).await;
+    set_privacy(&harness, &adult_session, json!({ "share_activity": true })).await;
+    revolt_presence::create_session(&adult.id, 0).await;
+    activity::set_audience(&adult.id, false).await;
+    activity::store(&adult.id, ActivitySource::Rpc, Some(game("Moon Cats")), Some("s")).await;
+    let seen = User::fetch_many_ids_as_mutuals(&harness.db, &stranger, &[adult.id.clone()]).await.unwrap();
+    assert_eq!(seen[0].activities.len(), 1);
 }
 
 #[rocket::async_test]
 async fn turning_sharing_off_removes_what_others_see_at_once() {
     let harness = TestHarness::new().await;
     let (_, session, user) = person(&harness, 30).await;
+    set_privacy(&harness, &session, json!({ "share_activity": true })).await;
+    revolt_presence::create_session(&user.id, 0).await;
     assert!(activity::store(&user.id, ActivitySource::Rpc, Some(game("Star Kebab")), Some("s")).await);
     assert_eq!(activity::list(&user.id).await.len(), 1);
 
@@ -125,6 +194,7 @@ async fn turning_sharing_off_removes_what_others_see_at_once() {
 async fn turning_steam_off_removes_only_the_steam_activity() {
     let harness = TestHarness::new().await;
     let (_, session, user) = person(&harness, 30).await;
+    revolt_presence::create_session(&user.id, 0).await;
     activity::store(&user.id, ActivitySource::Rpc, Some(game("Star Kebab")), Some("s")).await;
     let mut steam = game("Portal 2");
     steam.source = ActivitySource::Steam;
@@ -143,12 +213,13 @@ async fn a_friend_sees_it_while_online_and_visible_never_when_blocked() {
     let (_, friend_session, mut friend) = person(&harness, 30).await;
     relate(&harness, &mut owner, &mut friend, RelationshipStatus::Friend, RelationshipStatus::Friend).await;
 
-    activity::store(&owner.id, ActivitySource::Rpc, Some(game("Star Kebab")), Some("s")).await;
-
-    // offline: nothing
+    // offline: nothing is even kept
+    assert!(!activity::store(&owner.id, ActivitySource::Rpc, Some(game("Star Kebab")), Some("s")).await);
+    assert!(activity::list(&owner.id).await.is_empty(), "never stored for someone offline");
     assert!(seen_by(&harness, &friend_session, &owner.id).await.activities.is_empty());
 
     let (_, presence) = revolt_presence::create_session(&owner.id, 0).await;
+    activity::store(&owner.id, ActivitySource::Rpc, Some(game("Star Kebab")), Some("s")).await;
     let seen = seen_by(&harness, &friend_session, &owner.id).await;
     assert!(seen.online);
     assert_eq!(seen.activities.len(), 1);
@@ -208,6 +279,7 @@ async fn a_friend_sees_it_while_online_and_visible_never_when_blocked() {
 async fn activities_are_never_written_to_the_database() {
     let harness = TestHarness::new().await;
     let (_, _, user) = person(&harness, 30).await;
+    revolt_presence::create_session(&user.id, 0).await;
     activity::store(&user.id, ActivitySource::Rpc, Some(game("Star Kebab")), Some("s")).await;
     let stored = serde_json::to_string(&harness.db.fetch_user(&user.id).await.unwrap()).unwrap();
     assert!(!stored.contains("Star Kebab"));
@@ -239,9 +311,9 @@ async fn steam_now_playing_is_read_only_for_people_who_share_it_and_are_online()
     link_steam(&harness, &quiet, test_steam::PRIVATE).await;
     link_steam(&harness, &offline, "76561197960287999").await;
 
-    set_privacy(&harness, &sharing_session, json!({ "share_steam_activity": true })).await;
-    set_privacy(&harness, &other_session, json!({ "share_steam_activity": true })).await;
-    set_privacy(&harness, &offline_session, json!({ "share_steam_activity": true })).await;
+    for session in [&sharing_session, &other_session, &offline_session] {
+        set_privacy(&harness, session, json!({ "share_activity": true, "share_steam_activity": true })).await;
+    }
     for user in [&sharing, &other, &quiet] {
         revolt_presence::create_session(&user.id, 0).await;
     }
@@ -275,4 +347,22 @@ async fn steam_now_playing_is_read_only_for_people_who_share_it_and_are_online()
     set_privacy(&harness, &sharing_session, json!({ "share_activity": false })).await;
     steam_now_playing::run_once(&harness.db, Timestamp::now_utc()).await.unwrap();
     assert!(activity::list(&sharing.id).await.is_empty());
+}
+
+#[rocket::async_test]
+async fn unlinking_steam_takes_the_steam_activity_away() {
+    let harness = TestHarness::new().await;
+    let (_, session, user) = person(&harness, 30).await;
+    revolt_presence::create_session(&user.id, 0).await;
+    link_steam(&harness, &user, test_steam::PUBLIC).await;
+    let mut steam = game("Portal 2");
+    steam.source = ActivitySource::Steam;
+    activity::store(&user.id, ActivitySource::Steam, Some(steam), None).await;
+    activity::store(&user.id, ActivitySource::Rpc, Some(game("Star Kebab")), Some("s")).await;
+
+    let (status, body) = call(&harness, Method::Delete, &session, "/users/@me/connections/steam", None).await;
+    assert!(status.code < 300, "{status} {body}");
+    let left = activity::list(&user.id).await;
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].source, ActivitySource::Rpc, "only the Steam one goes");
 }

@@ -56,8 +56,27 @@ async fn person(db: &Database, birth_month: &str) -> (Session, User) {
     (account.create_session(db, "test".to_owned()).await.unwrap(), user)
 }
 
+/// An adult who turned sharing on (it is off until chosen)
 async fn adult(db: &Database) -> (Session, User) {
-    person(db, "1990-01").await
+    let (session, user) = person(db, "1990-01").await;
+    share(db, &user).await;
+    (session, user)
+}
+
+async fn share(db: &Database, user: &User) {
+    db.update_user(
+        &user.id,
+        &PartialUser {
+            privacy: Some(v0::UserPrivacy {
+                share_activity: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        vec![],
+    )
+    .await
+    .unwrap();
 }
 
 async fn friends(db: &Database, a: &User, b: &User) {
@@ -149,12 +168,24 @@ async fn activities_of(socket: &mut Socket, user: &str, patience: StdDuration) -
     }
 }
 
-/// The next error event
+/// The next refusal: its own event, never the connection's `Error`
 async fn error_of(socket: &mut Socket) -> Value {
     loop {
-        let event = next_event(socket, PATIENCE).await.expect("an error");
-        if event["type"] == "Error" {
-            return event["data"].clone();
+        let event = next_event(socket, PATIENCE).await.expect("a refusal");
+        assert_ne!(event["type"], "Error", "a refusal is not an error of the connection");
+        if event["type"] == "ActivityRefused" {
+            return event["error"].clone();
+        }
+    }
+}
+
+/// The socket still answers a ping
+async fn still_open(socket: &mut Socket) {
+    send(socket, json!({ "type": "Ping", "data": 7 })).await;
+    loop {
+        let event = next_event(socket, PATIENCE).await.expect("the socket stayed open");
+        if event["type"] == "Pong" {
+            return;
         }
     }
 }
@@ -245,6 +276,14 @@ async fn bad_activities_are_refused_with_the_reason() {
     send(&mut socket, json!({ "type": "SetActivity", "source": "Steam", "activity": { "name": "Game" } })).await;
     assert_eq!(error_of(&mut socket).await["type"], "FailedValidation", "Steam is the server's");
 
+    // hidden characters: a right-to-left override, a zero-width space, a line separator
+    for hidden in ["Game\u{202E}gnp.exe", "Ga\u{200B}me", "Line\u{2028}break"] {
+        send(&mut socket, json!({ "type": "SetActivity", "source": "Rpc", "activity": { "name": hidden } })).await;
+        assert_eq!(error_of(&mut socket).await["type"], "FailedValidation", "{hidden:?}");
+    }
+    // refusals never end the session
+    still_open(&mut socket).await;
+
     assert!(activity::list(&user.id).await.is_empty());
 }
 
@@ -333,16 +372,63 @@ async fn an_invisible_person_shows_others_nothing() {
 }
 
 #[tokio::test]
-async fn under_18_nothing_is_shared_until_they_choose() {
+async fn nothing_is_shared_until_they_choose() {
     let db = database().await;
     let now = Timestamp::now_utc();
     let teen_birth = format!("{}-{:02}", now.year() - 16, u8::from(now.month()));
-    let (session, user) = person(db, &teen_birth).await;
-    let (mut socket, _) = signed_in(db, &session).await;
-    send(&mut socket, set("Star Kebab")).await;
-    // no error: the app may send, the server keeps nothing
-    assert!(activities_of(&mut socket, &user.id, StdDuration::from_secs(2)).await.is_none());
-    assert!(activity::list(&user.id).await.is_empty());
+    // under 18, and an adult: both off until chosen (legal RP-01)
+    for birth in [teen_birth.as_str(), "1990-01"] {
+        let (session, user) = person(db, birth).await;
+        let (mut socket, _) = signed_in(db, &session).await;
+        send(&mut socket, set("Star Kebab")).await;
+        // no refusal: the app may send, the server keeps nothing
+        assert!(activities_of(&mut socket, &user.id, StdDuration::from_secs(2)).await.is_none());
+        assert!(activity::list(&user.id).await.is_empty());
+    }
+}
+
+#[tokio::test]
+async fn under_18_who_share_reach_only_their_friends() {
+    let db = database().await;
+    let now = Timestamp::now_utc();
+    let teen_birth = format!("{}-{:02}", now.year() - 16, u8::from(now.month()));
+    let (teen_session, teen) = person(db, &teen_birth).await;
+    share(db, &teen).await;
+    let (friend_session, friend) = adult(db).await;
+    friends(db, &teen, &friend).await;
+    let (mut teen_socket, _) = signed_in(db, &teen_session).await;
+    let (mut friend_socket, _) = signed_in(db, &friend_session).await;
+
+    send(&mut teen_socket, set("Star Kebab")).await;
+    let seen = activities_of(&mut friend_socket, &teen.id, PATIENCE).await.expect("a friend hears it");
+    assert_eq!(seen[0]["name"], "Star Kebab");
+    let own = activities_of(&mut teen_socket, &teen.id, PATIENCE).await.expect("their own sessions hear it");
+    assert_eq!(own[0]["name"], "Star Kebab");
+}
+
+#[tokio::test]
+async fn a_viewer_who_blocked_someone_gets_no_activity_events() {
+    let db = database().await;
+    let (a_session, a) = adult(db).await;
+    let (c_session, c) = adult(db).await;
+    friends(db, &a, &c).await;
+    let (mut a_socket, _) = signed_in(db, &a_session).await;
+    let (mut c_socket, _) = signed_in(db, &c_session).await;
+    {
+        // c blocks a after both sessions started
+        let mut c_user = db.fetch_user(&c.id).await.unwrap();
+        let mut a_user = db.fetch_user(&a.id).await.unwrap();
+        #[allow(clippy::disallowed_methods)]
+        c_user
+            .apply_relationship(db, &mut a_user, RelationshipStatus::Blocked, RelationshipStatus::BlockedOther)
+            .await
+            .unwrap();
+    }
+    tokio::time::sleep(StdDuration::from_millis(500)).await;
+    send(&mut a_socket, set("Star Kebab")).await;
+    if let Some(seen) = activities_of(&mut c_socket, &a.id, StdDuration::from_secs(2)).await {
+        panic!("someone who blocked a still saw {seen}");
+    }
 }
 
 #[tokio::test]

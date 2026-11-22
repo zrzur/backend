@@ -31,6 +31,10 @@
     "title": "أوقفنا أحد تصاميمك",
     "body": "{statement}"
   },
+  "action.activity": {
+    "title": "أزلنا النشاط الذي كان يعرضه ملفك الشخصي",
+    "body": "{statement}"
+  },
   "action.revoked": {
     "title": "ألغينا قراراً على حسابك",
     "body": "راجعنا الأمر مرة أخرى وألغينا القرار.\n{note}"
@@ -494,6 +498,10 @@
   "reporter.what.remove_message": {
     "title": "",
     "body": "أزلنا الرسالة"
+  },
+  "reporter.what.activity": {
+    "title": "",
+    "body": "أزلنا النشاط من الملف الشخصي"
   },
   "reporter.what.suspend": {
     "title": "",

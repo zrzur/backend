@@ -61,7 +61,8 @@ auto_derived!(
         /// When it ends (the app shows the time left)
         #[serde(skip_serializing_if = "Option::is_none", default)]
         pub ends_at: Option<Timestamp>,
-        /// Id of the Zrzur application (bot) that set it, if it is one
+        /// Id of the app that set it: a Zrzur application id, or the id a
+        /// local app gave the desktop app (used for platform-wide blocks)
         #[serde(skip_serializing_if = "Option::is_none", default)]
         pub application_id: Option<String>,
         /// Large picture: an address on the Zrzur file or proxy server
@@ -103,7 +104,8 @@ auto_derived!(
         /// When it ends; after `started_at`, at most 7 days ahead
         #[serde(skip_serializing_if = "Option::is_none", default)]
         pub ends_at: Option<Timestamp>,
-        /// Id of a Zrzur application (bot)
+        /// Id of the app: a Zrzur application id, or the id a local app gave
+        /// (letters, digits, `.`, `_`, `-`; at most 64)
         #[serde(skip_serializing_if = "Option::is_none", default)]
         pub application_id: Option<String>,
         /// `https://` picture; anything not on Zrzur's servers is shown
@@ -122,6 +124,34 @@ auto_derived!(
         /// At most two
         #[serde(skip_serializing_if = "Vec::is_empty", default)]
         pub buttons: Vec<ActivityButton>,
+    }
+);
+
+auto_derived!(
+    /// What a platform-wide activity block stops
+    #[derive(Copy)]
+    pub enum ActivityBlockKind {
+        /// Every activity with this application id
+        Application,
+        /// Every activity that shows this picture address
+        Picture,
+    }
+
+    /// A platform-wide block on what activities may show, taken by Trust &
+    /// Safety with a statement of reasons (legal RP-07)
+    pub struct ActivityBlock {
+        #[serde(rename = "_id")]
+        pub id: String,
+        pub kind: ActivityBlockKind,
+        /// The application id, or the picture address as the app sent it
+        pub value: String,
+        /// Case it was taken on
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        pub case_id: Option<String>,
+        /// Staff member who took it
+        pub actor_id: String,
+        /// Milliseconds since the epoch
+        pub created_at: i64,
     }
 );
 

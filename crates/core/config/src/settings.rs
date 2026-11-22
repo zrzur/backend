@@ -1481,6 +1481,15 @@ pub struct FeaturesRichPresence {
     /// within it; when it is used up, Steam is not read until the next day.
     #[serde(default = "rich_presence_steam_budget")]
     pub steam_daily_calls: i64,
+    /// A change is sent at once only to servers with at most this many
+    /// members; in larger ones people see it when they open the profile or
+    /// the member list (friends and direct messages are told as usual)
+    #[serde(default = "rich_presence_broadcast_max")]
+    pub broadcast_max_members: usize,
+}
+
+fn rich_presence_broadcast_max() -> usize {
+    1000
 }
 
 fn rich_presence_updates() -> i64 {
@@ -1505,6 +1514,7 @@ impl Default for FeaturesRichPresence {
             steam_enabled: false,
             steam_interval_seconds: rich_presence_steam_interval(),
             steam_daily_calls: rich_presence_steam_budget(),
+            broadcast_max_members: rich_presence_broadcast_max(),
         }
     }
 }

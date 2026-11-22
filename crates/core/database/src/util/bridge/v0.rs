@@ -1360,7 +1360,7 @@ impl crate::User {
         // a custom status emoji only for those who share its server
         crate::util::status_emoji::hide_for(db, &mut user.status, &user.id, viewer.as_deref())
             .await;
-        crate::util::activity::fill_one(&mut user).await;
+        crate::util::activity::fill_one(&mut user, perspective).await;
         user
     }
 
@@ -1373,7 +1373,7 @@ impl crate::User {
         let mut user = self.into_known(viewer, is_online).await;
         crate::util::status_emoji::hide_for(db, &mut user.status, &user.id.clone(), Some(&viewer_id))
             .await;
-        crate::util::activity::fill_one(&mut user).await;
+        crate::util::activity::fill_one(&mut user, Some(viewer)).await;
         user
     }
 

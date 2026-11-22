@@ -555,6 +555,10 @@ window_seconds = 20
 steam_enabled = false
 steam_interval_seconds = 60
 steam_daily_calls = 20000
+# Changes go out at once only to servers with at most this many members. In
+# larger servers people see an activity when they open the profile or the
+# member list; friends and direct messages are told as usual.
+broadcast_max_members = 1000
 
 [features.saved_reminders]
 # "Save message" (a private list only the person sees) and "Remind me" on a
