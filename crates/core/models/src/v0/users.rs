@@ -392,12 +392,16 @@ auto_derived!(
         /// Font for the display name, one of [USER_STYLE_FONTS]
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
         pub name_font: Option<String>,
-        /// Name colour: one colour (solid) or two (gradient), #rrggbb
+        /// Name colour, #rrggbb: one (solid), two (gradient) or three to
+        /// five (spectrum)
         #[cfg_attr(
             feature = "serde",
             serde(skip_serializing_if = "Vec::is_empty", default)
         )]
         pub name_colour: Vec<String>,
+        /// Effect drawn on the display name, one of [USER_STYLE_NAME_EFFECTS]
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub name_effect: Option<String>,
         /// Avatar decoration: one of [USER_STYLE_DECORATIONS], or c:<id>
         /// for a community decoration
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
@@ -595,6 +599,12 @@ pub const USER_STYLE_FONTS: &[&str] = &[
     "elegant", "strong", "clear", "soft", "slab", "classic", "comic", "typewriter", "code", "kufi",
 ];
 
+/// Effects a display name can wear (the client draws each one)
+pub const USER_STYLE_NAME_EFFECTS: &[&str] = &["halo", "edge", "lifted", "sheen"];
+
+/// Most colours in a display name (a spectrum)
+pub const USER_STYLE_NAME_MAX_COLOURS: usize = 5;
+
 /// Profile sections a person can order or hide, in their default order.
 /// Roles, mutual servers and the message box depend on who is looking, so
 /// they keep their place.
@@ -752,8 +762,15 @@ impl UserStyle {
         if !colours_ok(&self.theme) {
             return Err("theme must be one or two #rrggbb colours");
         }
-        if !colours_ok(&self.name_colour) {
-            return Err("name_colour must be one or two #rrggbb colours");
+        if self.name_colour.len() > USER_STYLE_NAME_MAX_COLOURS
+            || !self.name_colour.iter().all(|c| RE_HEX_COLOUR.is_match(c))
+        {
+            return Err("name_colour must be one to five #rrggbb colours");
+        }
+        if let Some(effect) = &self.name_effect {
+            if !USER_STYLE_NAME_EFFECTS.contains(&effect.as_str()) {
+                return Err("unknown name_effect");
+            }
         }
         if let Some(font) = &self.name_font {
             if !USER_STYLE_FONTS.contains(&font.as_str()) {
@@ -791,6 +808,7 @@ impl UserStyle {
         self.theme.is_empty()
             && self.name_font.is_none()
             && self.name_colour.is_empty()
+            && self.name_effect.is_none()
             && self.decoration.is_none()
             && self.nameplate.is_none()
             && self.effect.is_none()
@@ -830,7 +848,19 @@ mod style_tests {
         assert!(s.validate_style().is_err());
 
         let mut s = style();
-        s.name_colour = vec!["#000000".into(), "#111111".into(), "#222222".into()];
+        s.name_colour = vec!["#000000".into(); 6];
+        assert!(s.validate_style().is_err());
+
+        let mut s = style();
+        s.name_colour = vec!["#000000".into(), "red".into(), "#222222".into()];
+        assert!(s.validate_style().is_err());
+
+        let mut s = style();
+        s.name_effect = Some("glow; color: red".into());
+        assert!(s.validate_style().is_err());
+
+        let mut s = style();
+        s.name_effect = Some("snow".into());
         assert!(s.validate_style().is_err());
 
         let mut s = style();
@@ -844,6 +874,25 @@ mod style_tests {
         let mut s = style();
         s.nameplate = Some("c:not-an-id".into());
         assert!(s.validate_style().is_err());
+    }
+
+    #[test]
+    fn accepts_spectrum_and_name_effects() {
+        for count in 1..=5 {
+            let mut s = style();
+            s.name_colour = vec!["#ff5c8a".into(); count];
+            assert!(s.validate_style().is_ok(), "{count} colours");
+        }
+        for effect in super::USER_STYLE_NAME_EFFECTS {
+            let mut s = style();
+            s.name_effect = Some((*effect).into());
+            assert!(s.validate_style().is_ok(), "{effect}");
+        }
+        let only_effect = UserStyle {
+            name_effect: Some("halo".into()),
+            ..Default::default()
+        };
+        assert!(!only_effect.is_empty());
     }
 
     #[test]
