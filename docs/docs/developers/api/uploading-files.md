@@ -52,7 +52,9 @@ Voice messages are attachments named `voice-message-<digits>.<ext>` (`ogg`, `web
 
 - `GET {endpoint}/attachments/{file_id}/{file_name}?format=m4a` serves the copy as `audio/mp4`, with `Range` support like the original. `/original?format=m4a` redirects to the file name and keeps the query.
 - The copy is made right after the upload; for older files, on the first request (that request waits for it). A recording that is AAC already is served as it is.
-- Only voice-message attachments have a copy: on any other file, and for any other `format` value, the answer is 404.
+- Only voice-message attachments have a copy: on any other file, a file over 8 MB, one that can't be read, and for any other `format` value, the answer is 404. Any other query parameter is a 400.
+- While a copy can't be made right now (busy, or the converter is missing), the answer is 503 with `Retry-After: 60`; ask again then.
+- These requests have a rate-limit bucket of their own, `aac_copy`: 60 per 10 seconds per address.
 - The copy goes when the file is deleted.
 
 Ask for the copy only where the browser can't play the recording, for example when `audio.canPlayType('audio/ogg; codecs="opus"')` is empty for an Ogg file. Ogg Opus originals are served as `audio/ogg; codecs=opus`.
