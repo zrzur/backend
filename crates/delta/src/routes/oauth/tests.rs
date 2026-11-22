@@ -672,3 +672,133 @@ async fn an_installer_without_manage_roles_can_still_approve() {
     assert_eq!(status, Status::Forbidden);
     assert!(s.harness.db.fetch_member(&servers[1], &s.bot.id).await.is_err());
 }
+
+impl Setup {
+    async fn bearer_json(&self, path: &str, token: &str) -> (Status, Value) {
+        let response = self
+            .harness
+            .client
+            .get(path)
+            .header(Header::new("Authorization", format!("Bearer {token}")))
+            .dispatch()
+            .await;
+        let status = response.status();
+        (status, response.into_json().await.unwrap_or(Value::Null))
+    }
+
+    /// An access token with `identify servers.read` for whoever owns `session`
+    async fn servers_token(&self, session: &str) -> String {
+        let (status, redirect) = self
+            .authorize(session, self.authorize_body("identify servers.read", true, json!({})))
+            .await;
+        assert_eq!(status, Status::Ok);
+        let (status, tokens) = self.exchange(&code_of(&redirect.unwrap())).await;
+        assert_eq!(status, Status::Ok, "{tokens}");
+        tokens["access_token"].as_str().unwrap().to_string()
+    }
+}
+
+fn entry<'a>(list: &'a Value, server: &str) -> &'a Value {
+    list.as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["_id"] == server)
+        .unwrap_or_else(|| panic!("{server} missing from {list}"))
+}
+
+/// A dashboard must be able to tell a manager from a plain member: the
+/// server list says, per server, whether the user owns it, can manage it and
+/// what they hold there, and `?manageable=true` keeps only what they manage.
+#[rocket::async_test]
+async fn server_list_tells_managers_from_plain_members() {
+    let s = setup().await;
+    let manage_server = revolt_permissions::ChannelPermission::ManageServer as u64;
+
+    // A plain member: no role, the server's default permissions only
+    let (_, member_session, member) = s.harness.new_user().await;
+    Member::create(&s.harness.db, &s.server, &member, None).await.unwrap();
+
+    // The same person runs a second server through a Manage Server role
+    let (_, _, other_owner) = s.harness.new_user().await;
+    let (managed, _) = s.harness.new_server(&other_owner).await;
+    Member::create(&s.harness.db, &managed, &other_owner, None).await.unwrap();
+    let role = s
+        .harness
+        .new_role(
+            &managed,
+            1,
+            Some(revolt_permissions::OverrideField { a: manage_server as i64, d: 0 }),
+        )
+        .await;
+    let (mut in_managed, _) = Member::create(&s.harness.db, &managed, &member, None).await.unwrap();
+    in_managed
+        .update(
+            &s.harness.db,
+            revolt_database::PartialMember {
+                roles: Some(vec![role.id.clone()]),
+                ..Default::default()
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
+
+    let access = s.servers_token(&member_session.token).await;
+    let (status, list) = s.bearer_json("/oauth2/@me/servers", &access).await;
+    assert_eq!(status, Status::Ok, "{list}");
+    assert_eq!(list.as_array().unwrap().len(), 2);
+
+    let plain = entry(&list, &s.server.id);
+    assert_eq!(plain["owner"], false, "{plain}");
+    assert_eq!(plain["can_manage"], false, "{plain}");
+    let held: u64 = plain["permissions"].as_str().unwrap().parse().unwrap();
+    assert_eq!(held & manage_server, 0, "{plain}");
+    assert_eq!(held, s.server.default_permissions as u64);
+
+    let run = entry(&list, &managed.id);
+    assert_eq!(run["owner"], false, "{run}");
+    assert_eq!(run["can_manage"], true, "{run}");
+    let held: u64 = run["permissions"].as_str().unwrap().parse().unwrap();
+    assert_ne!(held & manage_server, 0, "{run}");
+
+    // Only the servers the person can manage
+    let (status, list) = s.bearer_json("/oauth2/@me/servers?manageable=true", &access).await;
+    assert_eq!(status, Status::Ok, "{list}");
+    let ids: Vec<&str> = list.as_array().unwrap().iter().map(|s| s["_id"].as_str().unwrap()).collect();
+    assert_eq!(ids, vec![managed.id.as_str()]);
+
+    // The owner owns and manages, whatever the roles say
+    let access = s.servers_token(&s.owner_session).await;
+    let (_, list) = s.bearer_json("/oauth2/@me/servers?manageable=true", &access).await;
+    let own = entry(&list, &s.server.id);
+    assert_eq!(own["owner"], true, "{own}");
+    assert_eq!(own["can_manage"], true, "{own}");
+}
+
+/// A staff account's override is not handed to third-party sites: through
+/// OAuth2 it holds what its roles give, like anyone else
+#[rocket::async_test]
+async fn server_list_ignores_staff_privilege() {
+    let s = setup().await;
+    let (_, staff_session, staff) = s.harness.new_user().await;
+    Member::create(&s.harness.db, &s.server, &staff, None).await.unwrap();
+    s.harness
+        .db
+        .update_user(
+            &staff.id,
+            &revolt_database::PartialUser {
+                privileged: Some(true),
+                ..Default::default()
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
+
+    let access = s.servers_token(&staff_session.token).await;
+    let (_, list) = s.bearer_json("/oauth2/@me/servers", &access).await;
+    let row = entry(&list, &s.server.id);
+    assert_eq!(row["can_manage"], false, "{row}");
+    let (_, list) = s.bearer_json("/oauth2/@me/servers?manageable=true", &access).await;
+    assert!(list.as_array().unwrap().is_empty(), "{list}");
+}
