@@ -38,6 +38,15 @@ mod tests {
         assert_eq!(bucket(Method::GET, "/attachments/abc/original?format=m4a").0, "aac_copy");
         // the same file without the question: free, as every download
         assert_eq!(bucket(Method::GET, "/attachments/abc/voice-message-1.ogg").2, u32::MAX);
+        // written another way, or twice: still the same bucket
+        assert_eq!(bucket(Method::GET, "/attachments/abc/original?%66ormat=m4a").0, "aac_copy");
+        assert_eq!(
+            bucket(Method::GET, "/attachments/abc/original?format=m4a&format=m4a").0,
+            "aac_copy"
+        );
+        assert_eq!(bucket(Method::GET, "/attachments/abc/original?utm=1&format=m4a").0, "aac_copy");
+        // a tracker alone is an ordinary download
+        assert_eq!(bucket(Method::GET, "/attachments/abc/original?utm=1").2, u32::MAX);
     }
 }
 
@@ -58,11 +67,10 @@ impl RatelimitResolver<Parts> for AutumnRatelimits {
             (&Method::POST, &["webhooks", webhook, "attachments"]) => ("webhook_upload", Some(webhook)),
             // the AAC copy of a voice message may have to be made: counted
             // per address (or account), whatever the file
+            // (the format as the file route reads it: decoded, trackers ignored)
             (&Method::GET, &[_, _, _])
-                if parts
-                    .uri
-                    .query()
-                    .is_some_and(|query| query.split('&').any(|pair| pair.starts_with("format="))) =>
+                if crate::voice::wanted_format(parts.uri.query())
+                    == crate::voice::WantedFormat::M4a =>
             {
                 ("aac_copy", None)
             }

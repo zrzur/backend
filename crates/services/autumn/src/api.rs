@@ -5,7 +5,7 @@ use std::{
 
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, Path, Query, State},
+    extract::{DefaultBodyLimit, Path, Query, RawQuery, State},
     http::{HeaderMap, Method, header},
     middleware::map_response,
     response::{IntoResponse, Redirect, Response},
@@ -21,7 +21,7 @@ use revolt_database::{
 };
 use revolt_files::{
     AUTHENTICATION_TAG_SIZE_BYTES, create_thumbnail, decode_image, fetch_from_s3, is_animated,
-    upload_to_s3, voice_rendition_id,
+    upload_to_s3,
 };
 use revolt_result::{Error, Result, ToRevoltError, create_error};
 use serde::{Deserialize, Serialize};
@@ -42,9 +42,10 @@ use crate::{
     preview::PREVIEWS,
     small::{PreviewQuery, preview_key, render_small},
     voice::{
-        Made, REFUSED, RENDITION_CONTENT_TYPE, VoiceRefusal, is_voice_name,
-        make as make_voice_copy, may_have_copy, once_per_key, served_content_type,
+        Made, REFUSED, VoiceRefusal, WantedFormat, is_voice_name, make as make_voice_copy,
+        served_content_type, wanted_format,
     },
+    voice_copy::{Convert, Copies, Store},
 };
 
 /// Which websites may read answers in a browser (S-02)
@@ -764,7 +765,7 @@ async fn store_upload(
     if matches!(tag, Tag::attachments) && is_voice_name(&filename) {
         let (db, hash) = (db.clone(), file_hash.clone());
         tokio::spawn(async move {
-            if let Err(refusal) = voice_copy(&db, &hash).await {
+            if let Err(refusal) = voice_copies(&db).copy(&hash).await {
                 tracing::warn!("no AAC copy of voice message {}: {refusal:?}", hash.id);
             }
         });
@@ -986,10 +987,15 @@ async fn fetch_file(
     State(db): State<Database>,
     viewer: Option<User>,
     Path((tag, file_id, file_name)): Path<(Tag, String, String)>,
-    Query(query): Query<FileQuery>,
+    RawQuery(query): RawQuery,
     headers: HeaderMap,
 ) -> Result<Response> {
-    let aac_copy = query.wants_aac()?;
+    // only the decoded `format` counts; trackers on a shared link are ignored
+    let aac_copy = match wanted_format(query.as_deref()) {
+        WantedFormat::Original => false,
+        WantedFormat::M4a => true,
+        WantedFormat::Other => return Err(create_error!(NotFound)),
+    };
     let tag: &'static str = tag.clone().into();
     let file = db.fetch_attachment(tag, &file_id).await?;
 
@@ -1031,7 +1037,7 @@ async fn fetch_file(
         if tag != "attachments" || !is_voice_name(&file.filename) {
             return Err(create_error!(NotFound));
         }
-        return Ok(match served_voice_copy(&db, &hash).await {
+        return Ok(match voice_copies(&db).served(&hash).await {
             Ok((copy, data)) => {
                 original_file_response(data, copy.content_type, cache_control, &headers)
             }
@@ -1044,25 +1050,6 @@ async fn fetch_file(
     Ok(original_file_response(data, hash.content_type, cache_control, &headers))
 }
 
-/// `?format=m4a`: the AAC copy of a voice message. Any other format, and any
-/// other parameter, is refused: a query the server ignored would make a new
-/// cache entry at the CDN for the same file.
-#[derive(Deserialize, Default)]
-#[serde(deny_unknown_fields)]
-struct FileQuery {
-    format: Option<String>,
-}
-
-impl FileQuery {
-    fn wants_aac(&self) -> Result<bool> {
-        match self.format.as_deref() {
-            None => Ok(false),
-            Some("m4a") => Ok(true),
-            Some(_) => Err(create_error!(NotFound)),
-        }
-    }
-}
-
 lazy_static! {
     /// AAC copies being made, or just made, per original hash: one attempt
     /// per file at a time; the others wait for it and share its answer
@@ -1070,6 +1057,68 @@ lazy_static! {
         .max_capacity(10_000)
         .time_to_live(Duration::from_secs(5 * 60))
         .build();
+}
+
+/// The copies with this server's storage (S3) and converter (ffmpeg)
+fn voice_copies(db: &Database) -> Copies<S3Store, Ffmpeg> {
+    Copies {
+        db: db.clone(),
+        store: std::sync::Arc::new(S3Store),
+        convert: std::sync::Arc::new(Ffmpeg),
+        making: MAKING.clone(),
+        refused: REFUSED.clone(),
+    }
+}
+
+/// S3, with the short-lived memory cache in front of reads (keyed by path:
+/// an original's path is its hash id, each copy's path is its own)
+struct S3Store;
+
+impl Store for S3Store {
+    async fn read(
+        &self,
+        bucket: &str,
+        path: &str,
+        iv: &str,
+    ) -> std::result::Result<Vec<u8>, revolt_files::FetchFailure> {
+        if let Some(Ok(data)) = S3_CACHE.get(path).await {
+            return Ok(data);
+        }
+        let data = revolt_files::fetch_from_s3_checked(bucket, path, iv).await?;
+        S3_CACHE.insert(path.to_owned(), Ok(data.clone())).await;
+        Ok(data)
+    }
+
+    async fn write(
+        &self,
+        bucket: &str,
+        path: &str,
+        data: &[u8],
+    ) -> std::result::Result<String, String> {
+        upload_to_s3(bucket, path, data)
+            .await
+            .map_err(|error| format!("{error:?}"))
+    }
+
+    async fn delete(&self, bucket: &str, path: &str) -> std::result::Result<(), String> {
+        S3_CACHE.invalidate(path).await;
+        revolt_files::delete_from_s3(bucket, path)
+            .await
+            .map_err(|error| format!("{error:?}"))
+    }
+}
+
+/// ffprobe and ffmpeg, as voice.rs runs them
+struct Ffmpeg;
+
+impl Convert for Ffmpeg {
+    async fn make(
+        &self,
+        bytes: &[u8],
+        content_type: &str,
+    ) -> std::result::Result<Made, VoiceRefusal> {
+        make_voice_copy(bytes, content_type).await
+    }
 }
 
 /// 503 for a copy that can't be made now: asked again in a minute, never stored
@@ -1083,145 +1132,6 @@ fn try_later_response() -> Response {
         ],
     )
         .into_response()
-}
-
-/// The AAC copy of a voice message and its bytes. A stored copy that can't
-/// be read (its key lost, a half-written attempt) is made again, once.
-async fn served_voice_copy(
-    db: &Database,
-    hash: &FileHash,
-) -> std::result::Result<(FileHash, Vec<u8>), VoiceRefusal> {
-    let copy = voice_copy(db, hash).await?;
-    match retrieve_file_by_hash(&copy).await {
-        Ok(data) => return Ok((copy, data)),
-        Err(error) => {
-            tracing::warn!("AAC copy {} can't be read, made again: {error:?}", copy.id);
-            forget_voice_copy(db, hash, &copy).await;
-        }
-    }
-    let copy = voice_copy(db, hash).await?;
-    let data = retrieve_file_by_hash(&copy).await.map_err(|error| {
-        tracing::error!("AAC copy {} can't be read after a new one: {error:?}", copy.id);
-        VoiceRefusal::Unavailable
-    })?;
-    Ok((copy, data))
-}
-
-/// Take a broken copy away: its record, its stored bytes (never the
-/// original's), and what the caches remember of it
-async fn forget_voice_copy(db: &Database, hash: &FileHash, copy: &FileHash) {
-    MAKING.invalidate(&hash.id).await;
-    S3_CACHE.invalidate(&copy.id).await;
-    if copy.path != hash.path {
-        if let Err(error) = revolt_files::delete_from_s3(&copy.bucket_id, &copy.path).await {
-            tracing::warn!("broken AAC copy {} stays in storage: {error:?}", copy.path);
-        }
-    }
-    if let Err(error) = db.delete_attachment_hash(&copy.id).await {
-        tracing::warn!("broken AAC copy {} stays recorded: {error:?}", copy.id);
-    }
-}
-
-/// The hash to serve as the AAC copy of a voice message, made now when there
-/// is none yet (uploads from before the copies, or a request that came before
-/// the upload's own). Nothing is done for a file that is too big, not a sound,
-/// or failed before ([`REFUSED`]); one attempt per file at a time ([`MAKING`]).
-async fn voice_copy(
-    db: &Database,
-    hash: &FileHash,
-) -> std::result::Result<FileHash, VoiceRefusal> {
-    may_have_copy(&hash.content_type, hash.size)?;
-    if let Some(refusal) = REFUSED.get(&hash.id).await {
-        return Err(refusal);
-    }
-    let id = voice_rendition_id(&hash.id);
-    if let Ok(copy) = db.fetch_attachment_hash(&id).await {
-        if !copy.iv.is_empty() {
-            return Ok(copy);
-        }
-    }
-    match once_per_key(&MAKING, &hash.id, make_voice_copy_once(db, hash)).await {
-        Ok(copy) => Ok(copy),
-        Err(refusal) => {
-            REFUSED.insert(hash.id.clone(), *refusal).await;
-            Err(*refusal)
-        }
-    }
-}
-
-/// One attempt at the copy. The bytes go to a path of their own, and the
-/// record is written once and complete (path and key together): two servers
-/// racing never leave a record whose key belongs to the other one's bytes.
-async fn make_voice_copy_once(
-    db: &Database,
-    hash: &FileHash,
-) -> std::result::Result<FileHash, VoiceRefusal> {
-    let unavailable = |what: &str, error: Error| {
-        tracing::error!("AAC copy of {}: {what}: {error:?}", hash.id);
-        VoiceRefusal::Unavailable
-    };
-    let id = voice_rendition_id(&hash.id);
-    let original = retrieve_file_by_hash(hash)
-        .await
-        .map_err(|error| unavailable("reading the original", error))?;
-
-    let copy = match make_voice_copy(&original, &hash.content_type).await? {
-        // AAC already: the record points at the original's bytes, so the
-        // file is never looked at again
-        Made::Original => FileHash {
-            id: id.clone(),
-            processed_hash: hash.processed_hash.clone(),
-            created_at: Timestamp::now_utc(),
-            bucket_id: hash.bucket_id.clone(),
-            path: hash.path.clone(),
-            iv: hash.iv.clone(),
-            metadata: Metadata::Audio { duration_ms: None },
-            content_type: hash.content_type.clone(),
-            size: hash.size,
-        },
-        Made::Copy(data) => {
-            let processed = {
-                let mut hasher = sha2::Sha256::new();
-                hasher.update(&data);
-                hasher.finalize()
-            };
-            let path = format!("{id}.{}", ulid::Ulid::new());
-            let nonce = upload_to_s3(&hash.bucket_id, &path, &data)
-                .await
-                .map_err(|error| unavailable("storing the copy", error))?;
-            let size = (data.len() + AUTHENTICATION_TAG_SIZE_BYTES) as isize;
-            S3_CACHE.insert(id.clone(), Ok(data)).await;
-            FileHash {
-                id: id.clone(),
-                processed_hash: format!("{processed:02x}"),
-                created_at: Timestamp::now_utc(),
-                bucket_id: hash.bucket_id.clone(),
-                path,
-                iv: nonce,
-                metadata: Metadata::Audio { duration_ms: None },
-                content_type: RENDITION_CONTENT_TYPE.to_owned(),
-                size,
-            }
-        }
-    };
-
-    match db.insert_attachment_hash(&copy).await {
-        Ok(()) => Ok(copy),
-        // another server was first: keep its copy, drop ours
-        Err(_) => {
-            S3_CACHE.invalidate(&id).await;
-            if copy.path != hash.path {
-                if let Err(error) = revolt_files::delete_from_s3(&copy.bucket_id, &copy.path).await {
-                    tracing::warn!("spare AAC copy {} stays in storage: {error:?}", copy.path);
-                }
-            }
-            match db.fetch_attachment_hash(&id).await {
-                Ok(winner) if !winner.iv.is_empty() => Ok(winner),
-                Ok(_) => Err(VoiceRefusal::TooSlow),
-                Err(error) => Err(unavailable("reading the other copy", error)),
-            }
-        }
-    }
 }
 
 /// Let browser media engines seek without repeatedly requesting the whole file.

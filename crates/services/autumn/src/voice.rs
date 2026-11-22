@@ -11,9 +11,9 @@
 //! can see the link, so nothing is done for it before these checks pass:
 //! - the stored file is small enough ([`MAX_SOURCE_BYTES`]) and of a sound
 //!   type ([`may_have_copy`]);
-//! - no earlier attempt failed for it ([`REFUSED`]: an unreadable file for an
-//!   hour, a full queue for a minute);
-//! - one attempt per file at a time ([`MAKING`]), in at most
+//! - no earlier attempt failed for it ([`REFUSED`]: a file that could not be
+//!   read, or ran out of time, for an hour; a full queue for a minute);
+//! - one attempt per file at a time (voice_copy.rs), in at most
 //!   [`MAX_CONVERSIONS`] at once ([`TURNS`]), with the per-address limit
 //!   of `ratelimits.rs` in front.
 //!
@@ -75,9 +75,11 @@ pub enum VoiceRefusal {
     NotSound,
     /// ffprobe or ffmpeg could not read it
     Unreadable,
-    /// The queue was full or the time ran out
+    /// ffprobe or ffmpeg ran out of time on it: it will again
     TooSlow,
-    /// ffmpeg or ffprobe is not there
+    /// Waited too long for a turn: the others were busy
+    Busy,
+    /// ffmpeg or ffprobe is not there, or the storage could not be reached
     Unavailable,
 }
 
@@ -85,16 +87,17 @@ impl VoiceRefusal {
     /// How long a refusal is remembered for the file
     pub fn remembered_for(self) -> Duration {
         match self {
-            VoiceRefusal::Unreadable | VoiceRefusal::TooLarge | VoiceRefusal::NotSound => {
-                Duration::from_secs(60 * 60)
-            }
-            VoiceRefusal::TooSlow | VoiceRefusal::Unavailable => Duration::from_secs(60),
+            VoiceRefusal::Unreadable
+            | VoiceRefusal::TooSlow
+            | VoiceRefusal::TooLarge
+            | VoiceRefusal::NotSound => Duration::from_secs(60 * 60),
+            VoiceRefusal::Busy | VoiceRefusal::Unavailable => Duration::from_secs(60),
         }
     }
 
     /// Asking again later may help: 503 with Retry-After, never stored
     pub fn try_later(self) -> bool {
-        matches!(self, VoiceRefusal::TooSlow | VoiceRefusal::Unavailable)
+        matches!(self, VoiceRefusal::Busy | VoiceRefusal::Unavailable)
     }
 
     fn from_run(refusal: WebmRefusal) -> Self {
@@ -232,10 +235,14 @@ pub fn ffprobe_args(input: &str) -> Vec<String> {
     [
         "-v",
         "error",
+        "-max_alloc",
+        &MAX_ALLOC_BYTES.to_string(),
         "-protocol_whitelist",
         "file",
         "-format_whitelist",
         FORMATS,
+        "-codec_whitelist",
+        DECODERS,
         "-select_streams",
         "a:0",
         "-show_entries",
@@ -305,7 +312,7 @@ pub async fn make_with(
     may_have_copy(content_type, bytes.len() as isize)?;
     let _turn = timeout(QUEUE_WAIT, TURNS.clone().acquire_owned())
         .await
-        .map_err(|_| VoiceRefusal::TooSlow)?
+        .map_err(|_| VoiceRefusal::Busy)?
         .map_err(|_| VoiceRefusal::Unavailable)?;
 
     let input = tempfile::NamedTempFile::new().map_err(|_| VoiceRefusal::Unavailable)?;
@@ -337,24 +344,47 @@ pub async fn make_with(
     Ok(Made::Copy(copy))
 }
 
-/// Run `make` at most once at a time per key: concurrent callers for the
-/// same key wait for the first one and share its answer.
-pub async fn once_per_key<T, F>(
-    running: &moka::future::Cache<String, T>,
-    key: &str,
-    work: F,
-) -> Result<T, Arc<VoiceRefusal>>
-where
-    T: Clone + Send + Sync + 'static,
-    F: std::future::Future<Output = Result<T, VoiceRefusal>>,
-{
-    running.try_get_with(key.to_owned(), work).await
+/// What a request asks for, from its query string. Keys and values are
+/// decoded as a form would send them (`%66ormat=m4a` is `format=m4a`);
+/// any other key (a tracker on a shared link) is ignored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WantedFormat {
+    /// No `format`: the file as it was uploaded
+    Original,
+    /// `format=m4a`: the AAC copy
+    M4a,
+    /// Another format, or `format` given twice with different values
+    Other,
+}
+
+fn form_decode(part: &str) -> String {
+    url_escape::decode(&part.replace('+', " ")).into_owned()
+}
+
+pub fn wanted_format(query: Option<&str>) -> WantedFormat {
+    let mut wanted = WantedFormat::Original;
+    for pair in query.unwrap_or_default().split('&').filter(|p| !p.is_empty()) {
+        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+        if form_decode(key) != "format" {
+            continue;
+        }
+        let this = if form_decode(value) == "m4a" {
+            WantedFormat::M4a
+        } else {
+            WantedFormat::Other
+        };
+        wanted = match (wanted, this) {
+            (WantedFormat::Original, this) => this,
+            (same, this) if same == this => same,
+            _ => WantedFormat::Other,
+        };
+    }
+    wanted
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn have(tool: &str) -> bool {
         std::process::Command::new(tool)
@@ -414,9 +444,8 @@ mod tests {
     fn refusals_are_remembered_and_some_are_asked_again() {
         assert_eq!(VoiceRefusal::Unreadable.remembered_for(), Duration::from_secs(3600));
         assert!(!VoiceRefusal::Unreadable.try_later());
-        assert!(VoiceRefusal::TooSlow.try_later());
         assert!(VoiceRefusal::Unavailable.try_later());
-        assert!(VoiceRefusal::TooSlow.remembered_for() < VoiceRefusal::Unreadable.remembered_for());
+        assert!(VoiceRefusal::Busy.remembered_for() < VoiceRefusal::Unreadable.remembered_for());
     }
 
     #[tokio::test]
@@ -455,6 +484,8 @@ mod tests {
         let after = |flag: &str| args.iter().position(|a| a == flag).map(|i| args[i + 1].clone());
         assert_eq!(after("-protocol_whitelist").as_deref(), Some("file"));
         assert_eq!(after("-format_whitelist").as_deref(), Some(FORMATS));
+        assert_eq!(after("-codec_whitelist").as_deref(), Some(DECODERS));
+        assert!(after("-max_alloc").is_some());
         assert_eq!(after("-select_streams").as_deref(), Some("a:0"));
     }
 
@@ -470,30 +501,27 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn two_requests_at_once_make_one_copy() {
-        let running: moka::future::Cache<String, u32> = moka::future::Cache::new(10);
-        let made = Arc::new(AtomicUsize::new(0));
-        let work = |made: Arc<AtomicUsize>| async move {
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            made.fetch_add(1, Ordering::SeqCst);
-            Ok::<u32, VoiceRefusal>(7)
-        };
-        let (a, b) = tokio::join!(
-            once_per_key(&running, "hash", work(made.clone())),
-            once_per_key(&running, "hash", work(made.clone())),
-        );
-        assert_eq!((a.unwrap(), b.unwrap()), (7, 7));
-        assert_eq!(made.load(Ordering::SeqCst), 1);
+    #[test]
+    fn the_format_is_read_as_a_form_would_send_it() {
+        assert_eq!(wanted_format(None), WantedFormat::Original);
+        assert_eq!(wanted_format(Some("")), WantedFormat::Original);
+        assert_eq!(wanted_format(Some("format=m4a")), WantedFormat::M4a);
+        assert_eq!(wanted_format(Some("%66ormat=m4a")), WantedFormat::M4a);
+        assert_eq!(wanted_format(Some("format=%6d4a")), WantedFormat::M4a);
+        assert_eq!(wanted_format(Some("format=m4a&format=m4a")), WantedFormat::M4a);
+        assert_eq!(wanted_format(Some("format=m4a&format=mp3")), WantedFormat::Other);
+        assert_eq!(wanted_format(Some("format=mp3")), WantedFormat::Other);
+        // trackers on a shared link are ignored
+        assert_eq!(wanted_format(Some("utm_source=x&format=m4a&fbclid=1")), WantedFormat::M4a);
+        assert_eq!(wanted_format(Some("utm_source=x")), WantedFormat::Original);
     }
 
-    #[tokio::test]
-    async fn a_failed_attempt_is_not_kept_as_the_answer() {
-        let running: moka::future::Cache<String, u32> = moka::future::Cache::new(10);
-        let first = once_per_key(&running, "hash", async { Err(VoiceRefusal::TooSlow) }).await;
-        assert_eq!(*first.unwrap_err(), VoiceRefusal::TooSlow);
-        let second = once_per_key(&running, "hash", async { Ok(3) }).await;
-        assert_eq!(second.unwrap(), 3);
+    #[test]
+    fn a_full_queue_is_asked_again_and_a_slow_file_is_not() {
+        assert!(VoiceRefusal::Busy.try_later());
+        assert_eq!(VoiceRefusal::Busy.remembered_for(), Duration::from_secs(60));
+        assert!(!VoiceRefusal::TooSlow.try_later());
+        assert_eq!(VoiceRefusal::TooSlow.remembered_for(), Duration::from_secs(3600));
     }
 
     /// Real conversions where ffmpeg is installed (WSL, the autumn image)
