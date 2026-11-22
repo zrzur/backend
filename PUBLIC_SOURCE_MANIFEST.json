@@ -202,8 +202,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "2d6ab90b040303387e362858ea647c19632e8ea379ecbe7a0461120faf94fcd7",
-      "bytes": 136978,
+      "sha256": "67cf83e0fe498ba30797117ee137b60d0a640894dbd37ea0cc0c0f9ba671027a",
+      "bytes": 137234,
       "category": "public-documentation"
     },
     {
@@ -6850,8 +6850,8 @@
     },
     {
       "path": "crates/delta/src/util/ratelimits.rs",
-      "sha256": "a5038c25abb9c0718eff9f12e739a6261e4680cc751cde68d815e135a63dbf92",
-      "bytes": 15559,
+      "sha256": "6621986bf649fc57a83cef0086b58e0d3e68b94e88782512a287ba87f8b3e490",
+      "bytes": 17418,
       "category": "product-source-or-build-manifest"
     },
     {
