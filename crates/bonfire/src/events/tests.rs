@@ -6,7 +6,7 @@ use std::{collections::HashMap, num::NonZeroUsize};
 
 use revolt_database::{
     events::client::EventV1, Channel, Database, DatabaseInfo, Member, MemberCompositeKey,
-    PartialChannel, Role, Server, User,
+    PartialChannel, Presence, Relationship, RelationshipStatus, Role, Server, User, UserStatus,
 };
 use revolt_models::v0;
 use revolt_permissions::{ChannelPermission, OverrideField, DEFAULT_PERMISSION_SERVER};
@@ -1714,4 +1714,200 @@ async fn a_role_event_reaches_role_holders_and_a_draft_reaches_nobody() {
         let session = state(user, &server, &[]).await;
         assert!(!hears(&session, &audience).await, "{user}");
     }
+}
+
+// UserRelationship: `id` is this session's user, `user` the other person
+// (hotfix bonfire-self-cache). The session must go on reasoning as itself.
+
+/// REFERENCE, or a fresh MongoDB database under TEST_DB=MONGODB
+async fn relationship_db() -> Database {
+    if std::env::var("TEST_DB").is_ok() {
+        DatabaseInfo::Test(format!("bonfire_self_{}", ulid::Ulid::new()))
+            .connect()
+            .await
+            .expect("test db")
+    } else {
+        db().await
+    }
+}
+
+/// The other person as the relationship event carries them
+fn other(id: &str, relationship: &str) -> v0::User {
+    serde_json::from_value(serde_json::json!({
+        "_id": id,
+        "username": id,
+        "discriminator": "0001",
+        "relationship": relationship,
+        "online": true,
+        "status": { "presence": "Online" },
+    }))
+    .expect("valid user")
+}
+
+/// What `apply_relationship` sends privately to this session about `them`
+async fn relate(state: &mut State, db: &Database, them: &str, relationship: &str) {
+    let me = state.cache.user_id.clone();
+    let mut event = EventV1::UserRelationship {
+        id: me.clone(),
+        user: other(them, relationship),
+    };
+    assert!(
+        state
+            .handle_incoming_event_v1(db, &mut event, &format!("{me}!"))
+            .await
+    );
+}
+
+/// A session of `id` with the given relationships and presence
+fn person(id: &str, relations: &[(&str, RelationshipStatus)], presence: Option<Presence>) -> State {
+    let user = User {
+        id: id.to_string(),
+        username: id.to_string(),
+        relations: Some(
+            relations
+                .iter()
+                .map(|(id, status)| Relationship {
+                    id: id.to_string(),
+                    status: status.clone(),
+                })
+                .collect(),
+        ),
+        status: presence.map(|presence| UserStatus {
+            presence: Some(presence),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let mut state = State::from(user, "session".to_string(), NonZeroUsize::new(16).unwrap());
+    state.state = SubscriptionStateChange::None;
+    state
+}
+
+/// The relationship this session is shown with a message's author
+async fn shown_relationship(state: &mut State, db: &Database, author: &str) -> v0::RelationshipStatus {
+    let mut event = EventV1::Message(
+        serde_json::from_value(serde_json::json!({
+            "_id": ulid::Ulid::new().to_string(),
+            "channel": DM,
+            "author": author,
+            "content": "hello",
+            "user": {
+                "_id": author,
+                "username": author,
+                "discriminator": "0001",
+                "relationship": "None",
+                "online": false,
+            },
+        }))
+        .expect("valid message"),
+    );
+    assert!(state.handle_incoming_event_v1(db, &mut event, DM).await);
+    let EventV1::Message(message) = event else {
+        panic!("message changed into {event:?}");
+    };
+    message.user.expect("author").relationship
+}
+
+#[tokio::test]
+async fn a_friend_request_to_the_owner_does_not_open_their_private_channels() {
+    let db = relationship_db().await;
+    let server = server(false);
+    let mut state = state("member", &server, &[]).await;
+    made_private(&db, &mut state).await;
+
+    // the member sends the server owner a friend request
+    relate(&mut state, &db, OWNER, "Outgoing").await;
+
+    // then anything that recalculates the server: a server-wide permission edit
+    let mut event = EventV1::ServerUpdate {
+        id: SERVER.to_string(),
+        data: v0::PartialServer {
+            default_permissions: Some(*DEFAULT_PERMISSION_SERVER as i64),
+            ..Default::default()
+        },
+        clear: vec![],
+    };
+    state.handle_incoming_event_v1(&db, &mut event, SERVER).await;
+    assert!(!created_in(&event), "private channel sent: {event:?}");
+    assert!(!subscribed(&state, CHANNEL).await, "follows the private channel");
+    assert!(!state.cache.channels.contains_key(CHANNEL));
+
+    // nor does a new private channel reach the member
+    let deny = OverrideField { a: 0, d: view() };
+    let mut event = EventV1::ChannelCreate(channel(staff_can_view(), Some(deny)).into());
+    assert!(!state.handle_incoming_event_v1(&db, &mut event, SERVER).await);
+    assert!(!subscribed(&state, CHANNEL).await);
+}
+
+#[tokio::test]
+async fn relationship_changes_keep_the_own_topic_and_follow_the_other_person() {
+    let db = relationship_db().await;
+    let server = server(false);
+    let mut state = state("member", &server, &[]).await;
+
+    relate(&mut state, &db, "friend", "Outgoing").await;
+    assert!(subscribed(&state, "member").await, "own topic dropped");
+    assert!(subscribed(&state, "friend").await, "other person not followed");
+    assert_eq!(state.clone_user().id, "member");
+    assert!(state.cache.users.contains_key("friend"));
+
+    relate(&mut state, &db, "friend", "Friend").await;
+    assert!(subscribed(&state, "member").await);
+    assert!(subscribed(&state, "friend").await);
+
+    relate(&mut state, &db, "friend", "Blocked").await;
+    assert!(subscribed(&state, "member").await);
+    assert!(!subscribed(&state, "friend").await, "blocked person still followed");
+
+    relate(&mut state, &db, "friend", "None").await;
+    assert!(subscribed(&state, "member").await);
+    assert!(!subscribed(&state, "friend").await);
+    assert_eq!(state.clone_user().id, "member");
+}
+
+#[tokio::test]
+async fn an_invisible_user_stays_invisible_after_relationship_changes() {
+    let db = relationship_db().await;
+    let mut state = person("hidden", &[], Some(Presence::Invisible));
+    assert!(!state.cache.shows_presence());
+
+    for relationship in ["Outgoing", "Friend", "Blocked", "None"] {
+        relate(&mut state, &db, "friend", relationship).await;
+        assert!(
+            !state.cache.shows_presence(),
+            "online changes would be broadcast after {relationship}"
+        );
+    }
+
+    let mut visible = person("visible", &[], None);
+    relate(&mut visible, &db, "friend", "Outgoing").await;
+    assert!(visible.cache.shows_presence());
+}
+
+#[tokio::test]
+async fn the_blocked_mark_and_message_relationships_stay_right() {
+    use v0::RelationshipStatus as R;
+    let db = relationship_db().await;
+    let mut state = person("member", &[("pest", RelationshipStatus::Blocked)], None);
+
+    // a friend request to someone else must not lose the block
+    relate(&mut state, &db, "friend", "Outgoing").await;
+    assert_eq!(shown_relationship(&mut state, &db, "pest").await, R::Blocked);
+    assert_eq!(shown_relationship(&mut state, &db, "friend").await, R::Outgoing);
+    assert_eq!(shown_relationship(&mut state, &db, "member").await, R::User);
+
+    relate(&mut state, &db, "friend", "Friend").await;
+    assert_eq!(shown_relationship(&mut state, &db, "friend").await, R::Friend);
+    assert_eq!(shown_relationship(&mut state, &db, "pest").await, R::Blocked);
+
+    relate(&mut state, &db, "friend", "Blocked").await;
+    assert_eq!(shown_relationship(&mut state, &db, "friend").await, R::Blocked);
+
+    // unblocking removes the entry
+    relate(&mut state, &db, "pest", "None").await;
+    assert_eq!(shown_relationship(&mut state, &db, "pest").await, R::None);
+    assert_eq!(shown_relationship(&mut state, &db, "friend").await, R::Blocked);
+    let me = state.clone_user();
+    assert_eq!(me.id, "member");
+    assert_eq!(me.relations.as_ref().map(Vec::len), Some(1));
 }

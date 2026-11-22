@@ -214,6 +214,17 @@ impl Cache {
         })
     }
 
+    /// Whether this user's online changes may be told to others (not while invisible)
+    pub fn shows_presence(&self) -> bool {
+        match self.users.get(&self.user_id) {
+            Some(user) => user
+                .status
+                .as_ref()
+                .is_none_or(|status| status.presence != Some(Presence::Invisible)),
+            None => false,
+        }
+    }
+
     /// Check whether we can subscribe to another user
     pub fn can_subscribe_to_user(&self, user_id: &str) -> bool {
         if let Some(user) = self.users.get(&self.user_id) {
@@ -695,11 +706,7 @@ impl State {
             return;
         }
 
-        if if let Some(status) = &self.cache.users.get(&self.cache.user_id).unwrap().status {
-            status.presence != Some(Presence::Invisible)
-        } else {
-            true
-        } {
+        if self.cache.shows_presence() {
             let event = EventV1::UserUpdate {
                 id: self.cache.user_id.clone(),
                 data: v0::PartialUser {
