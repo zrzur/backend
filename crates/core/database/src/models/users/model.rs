@@ -1042,6 +1042,8 @@ impl User {
         self.apply_options(partial.clone());
         db.update_user(&self.id, &partial, remove.clone()).await?;
 
+        let appearance = Self::appearance_change(&partial, &remove);
+
         EventV1::UserUpdate {
             id: self.id.clone(),
             data: partial.into(),
@@ -1051,7 +1053,51 @@ impl User {
         .p(self.id.clone())
         .await;
 
+        // The event above reaches only this user, friends and people in a
+        // DM or group with them. Everyone else who shares a server saw the
+        // old picture and name until they reloaded (bug #10, 2026-11-22).
+        // The picture and the names are shown to them anyway, so those go
+        // to every server the user is in, as presence already does; one
+        // event id, so a session in several of them takes it once.
+        if let Some((data, clear)) = appearance {
+            let event = EventV1::UserUpdate {
+                id: self.id.clone(),
+                data: data.into(),
+                clear: clear.into_iter().map(|v| v.into()).collect(),
+                event_id: Some(Ulid::new().to_string()),
+            };
+            for member in db.fetch_all_memberships(&self.id).await.unwrap_or_default() {
+                event.clone().p(member.id.server).await;
+            }
+        }
+
         Ok(())
+    }
+
+    /// The part of a change that people sharing a server see: the avatar,
+    /// the display name and the username. Nothing when it changed none of them.
+    pub fn appearance_change(
+        partial: &PartialUser,
+        remove: &[FieldsUser],
+    ) -> Option<(PartialUser, Vec<FieldsUser>)> {
+        let data = PartialUser {
+            avatar: partial.avatar.clone(),
+            display_name: partial.display_name.clone(),
+            username: partial.username.clone(),
+            discriminator: partial.discriminator.clone(),
+            ..Default::default()
+        };
+        let clear: Vec<FieldsUser> = remove
+            .iter()
+            .filter(|field| matches!(field, FieldsUser::Avatar | FieldsUser::DisplayName))
+            .cloned()
+            .collect();
+        let changed = data.avatar.is_some()
+            || data.display_name.is_some()
+            || data.username.is_some()
+            || data.discriminator.is_some()
+            || !clear.is_empty();
+        changed.then_some((data, clear))
     }
 
     /// Clear custom statuses whose expiry has passed, at most 1000 a pass
@@ -1342,6 +1388,36 @@ impl User {
 
 #[cfg(test)]
 mod tests {
+    /// Bug #10: what goes to the servers a user is in is only what their
+    /// members see anyway, and nothing goes there for other changes
+    #[test]
+    fn only_the_picture_and_names_go_to_shared_servers() {
+        use crate::{FieldsUser, PartialUser, User, UserStatus};
+
+        let named = PartialUser {
+            display_name: Some("Layla".into()),
+            status: Some(UserStatus::default()),
+            pronouns: Some("she/her".into()),
+            ..Default::default()
+        };
+        let (data, clear) = User::appearance_change(&named, &[FieldsUser::StatusText])
+            .expect("a new display name is shown in servers");
+        assert_eq!(data.display_name.as_deref(), Some("Layla"));
+        assert!(data.status.is_none() && data.pronouns.is_none());
+        assert!(clear.is_empty(), "a status clear is not sent: {clear:?}");
+
+        let (_, clear) = User::appearance_change(&PartialUser::default(), &[FieldsUser::Avatar])
+            .expect("a removed avatar is shown in servers");
+        assert_eq!(clear, vec![FieldsUser::Avatar]);
+
+        let status_only = PartialUser {
+            status: Some(UserStatus::default()),
+            ..Default::default()
+        };
+        assert!(User::appearance_change(&status_only, &[FieldsUser::StatusText]).is_none());
+        assert!(User::appearance_change(&PartialUser::default(), &[FieldsUser::Pronouns]).is_none());
+    }
+
     /// A15: an unknown or reset token is an invalid session wherever it is
     /// looked up (the API, and the file service through the same mapping);
     /// other errors stay what they are

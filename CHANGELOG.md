@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### A new avatar reaches everyone who shares a server (2026-11-22, bug report #10)
+
+- A user's change went only to their own topic, which only they, their friends and people in a DM or group with them follow. Everyone else who shares a server with them kept the old avatar and name until they reloaded the app. A change of the avatar (set or removed), the display name (set or removed) or the username now also goes, as a `UserUpdate` with only those fields, to every server the user is in, as presence already does; one event id for all of them, so a session in several shared servers takes it once. Status, pronouns, profile and the rest stay on the user's own topic.
+
 ## 26.3.0-beta.2 (2026-11-21)
 
 ### The owner's /badge command (2026-11-21)
