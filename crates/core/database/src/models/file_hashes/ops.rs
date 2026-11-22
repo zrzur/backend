@@ -29,4 +29,8 @@ pub trait AbstractAttachmentHashes: Sync + Send {
 
     /// Delete attachment hash by id.
     async fn delete_attachment_hash(&self, id: &str) -> Result<()>;
+
+    /// Delete the attachment hash with this id only while it still points at
+    /// this path. Whether a record was removed.
+    async fn delete_attachment_hash_at(&self, id: &str, path: &str) -> Result<bool>;
 }

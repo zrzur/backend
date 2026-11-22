@@ -43,6 +43,69 @@ impl<ER: EncryptionRepository> S3Storage<ER> {
     }
 }
 
+impl<ER: EncryptionRepository> S3Storage<ER> {
+    /// Fetch and decrypt, telling apart a missing object, bytes that don't
+    /// decrypt with this key, and a failure to reach the storage
+    pub async fn fetch_checked(
+        &self,
+        bucket_id: &str,
+        path: &str,
+        iv: &str,
+    ) -> Result<Vec<u8>, crate::FetchFailure> {
+        use aws_sdk_s3::operation::get_object::GetObjectError;
+        let object = match self.client.get_object().bucket(bucket_id).key(path).send().await {
+            Ok(object) => object,
+            Err(error) => {
+                let missing = matches!(
+                    error.as_service_error(),
+                    Some(GetObjectError::NoSuchKey(_))
+                ) || error.raw_response().is_some_and(|raw| raw.status().as_u16() == 404);
+                return Err(if missing {
+                    crate::FetchFailure::Missing
+                } else {
+                    crate::FetchFailure::Transport(format!("{error:?}"))
+                });
+            }
+        };
+        let bytes = object
+            .body
+            .collect()
+            .await
+            .map_err(|error| crate::FetchFailure::Transport(format!("{error:?}")))?
+            .into_bytes()
+            .to_vec();
+        if iv.is_empty() {
+            return Ok(bytes);
+        }
+        self.encryption
+            .decrypt_buffer(bytes, iv)
+            .map_err(|_| crate::FetchFailure::Undecryptable)
+    }
+
+    /// Every object whose key starts with `prefix`
+    pub async fn list_prefix(&self, bucket_id: &str, prefix: &str) -> anyhow::Result<Vec<String>> {
+        let mut keys = Vec::new();
+        let mut token: Option<String> = None;
+        loop {
+            let page = self
+                .client
+                .list_objects_v2()
+                .bucket(bucket_id)
+                .prefix(prefix)
+                .set_continuation_token(token.take())
+                .send()
+                .await
+                .with_context(|| format!("failed to list {prefix}* in {bucket_id}"))?;
+            keys.extend(page.contents().iter().filter_map(|o| o.key().map(str::to_owned)));
+            match page.next_continuation_token() {
+                Some(next) if page.is_truncated() == Some(true) => token = Some(next.to_owned()),
+                _ => break,
+            }
+        }
+        Ok(keys)
+    }
+}
+
 #[async_trait::async_trait]
 impl<ER: EncryptionRepository> FileStorageRepository for S3Storage<ER> {
     #[tracing::instrument(skip(self), err)]
