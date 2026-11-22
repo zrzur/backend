@@ -353,4 +353,46 @@ mod test {
         assert_ne!(res.status(), Status::NotFound);
         assert!(res.headers().get_one("x-ratelimit-bucket").is_some());
     }
+
+    /// Saving the profile (`PATCH /users/@me`) has a bucket of its own: the
+    /// reads of `/users` an app makes when it opens and when Settings opens
+    /// never use up a save (review of 2026-11-22). Reads of other users and
+    /// of your own profile share the `users` bucket.
+    #[rocket::async_test]
+    async fn a_profile_save_is_not_counted_with_the_users_reads() {
+        let harness = TestHarness::new().await;
+        let (_, session, user) = harness.new_user().await;
+        let headers = |res: &rocket::local::asynchronous::LocalResponse<'_>| {
+            (
+                res.headers().get_one("x-ratelimit-limit").map(str::to_string),
+                res.headers().get_one("x-ratelimit-bucket").map(str::to_string),
+            )
+        };
+        let token = Header::new("x-session-token", session.token.clone());
+
+        let read = harness.client.get("/users/@me").header(token.clone()).dispatch().await;
+        let profile = harness
+            .client
+            .get(format!("/users/{}/profile", user.id))
+            .header(token.clone())
+            .dispatch()
+            .await;
+        let save = harness
+            .client
+            .patch("/users/@me")
+            .header(token)
+            .header(Header::new("content-type", "application/json"))
+            .body(r#"{"display_name":"Layla"}"#)
+            .dispatch()
+            .await;
+
+        let (read_limit, read_bucket) = headers(&read);
+        let (_, profile_bucket) = headers(&profile);
+        let (save_limit, save_bucket) = headers(&save);
+        assert_eq!(read_limit.as_deref(), Some("20"));
+        assert_eq!(read_bucket, profile_bucket, "reads share one bucket");
+        assert_eq!(save_limit.as_deref(), Some("2"));
+        assert!(save_bucket.is_some());
+        assert_ne!(save_bucket, read_bucket, "a save has its own bucket");
+    }
 }
