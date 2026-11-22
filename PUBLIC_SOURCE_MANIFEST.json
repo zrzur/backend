@@ -3214,8 +3214,8 @@
     },
     {
       "path": "crates/core/database/src/util/cdn_purge.rs",
-      "sha256": "15c508cc3048e55dc1f02cdc65d0ba5e1bab3b4f5adbd895a2822b2f3b38cbdd",
-      "bytes": 10879,
+      "sha256": "a40fe5ec031e7a929106ca0d4243f6ee448d9b77c267ae5e294b17e39fdd3e65",
+      "bytes": 11734,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -3580,8 +3580,8 @@
     },
     {
       "path": "crates/core/files/src/lib.rs",
-      "sha256": "a663cd6ec4b92067f0027aae734109b0f5ab01a0caf49309dec9560fe3c347fd",
-      "bytes": 7484,
+      "sha256": "7dd67e961e25d2225ccfc9adda6d0136c247fbbfb5de388ade37ca253a2cfdf4",
+      "bytes": 7789,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4192,8 +4192,8 @@
     },
     {
       "path": "crates/daemons/crond/src/tasks/file_deletion.rs",
-      "sha256": "768cbe7647239e6237f88de99e30853f616b8f1ff636a208d97f7d924ab5bc8f",
-      "bytes": 2025,
+      "sha256": "3ce88eb08fdf01cfef843041e863de69902a3dfffa8733265a405f8e7345b97d",
+      "bytes": 2499,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6898,8 +6898,8 @@
     },
     {
       "path": "crates/services/autumn/src/api.rs",
-      "sha256": "2387f013b3babc2012f57316437dd0d0a188353dedf757a1aa50d62297fd3682",
-      "bytes": 45818,
+      "sha256": "1635c625ed54325547475e8d8a4aecea6b6dd8b2f986e2d37ed9e43e61d1da3f",
+      "bytes": 49739,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6940,8 +6940,8 @@
     },
     {
       "path": "crates/services/autumn/src/main.rs",
-      "sha256": "fe00264f0ef2171bce8f16af29a1c7c16ed9773d3b1d53eec714509013faf441",
-      "bytes": 4373,
+      "sha256": "656942cdc1dcf3b727889b77486979a65741583e15ab363491831708c855f6d8",
+      "bytes": 4384,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6984,6 +6984,12 @@
       "path": "crates/services/autumn/src/utils.rs",
       "sha256": "017364e591ecaaec66ee55f4e91960336c8d55a7df287384ee93b78676fb5549",
       "bytes": 1043,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/services/autumn/src/voice.rs",
+      "sha256": "342e2a4d03c7172a8fbe1b01be023e4dcd948c190599c07c3faac4cbc004d04a",
+      "bytes": 8717,
       "category": "product-source-or-build-manifest"
     },
     {
