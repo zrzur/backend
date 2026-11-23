@@ -1920,6 +1920,54 @@ async fn server_actions_follow_staff_roles() {
 }
 
 #[rocket::async_test]
+async fn partner_mark_is_its_own_bit_and_staff_only() {
+    use rocket::http::Method::Post;
+    let harness = TestHarness::new().await;
+    let (_, owner_session, server_owner) = harness.new_user().await;
+    let (server, _) = harness.new_server(&server_owner).await;
+    let ts = member(&harness, vec![StaffRole::TrustSafety]).await;
+    let ts_token = sign_in(&harness, &ts, 0).await;
+    let path = format!("/staff/servers/{}/actions", server.id);
+    let flags = |h: &TestHarness| {
+        let id = server.id.clone();
+        let db = h.db.clone();
+        async move { db.fetch_server(&id).await.unwrap().flags.unwrap_or_default() }
+    };
+
+    // the server owner cannot set the partner bit through the server edit
+    let status = harness
+        .client
+        .patch(format!("/servers/{}", server.id))
+        .header(rocket::http::ContentType::JSON)
+        .header(rocket::http::Header::new("x-session-token", owner_session.token.clone()))
+        .body(json!({ "flags": 4 }).to_string())
+        .dispatch()
+        .await
+        .status();
+    assert_eq!(status, Status::Forbidden);
+    assert_eq!(flags(&harness).await, 0);
+
+    step_up(&harness, &ts, &ts_token).await;
+    let (status, body) = send(&harness, &ts, &ts_token, Post, &path, json!({ "action": "verify", "reason": "Known community" })).await;
+    assert_eq!(status, Status::Ok, "{body}");
+    let (status, body) = send(&harness, &ts, &ts_token, Post, &path, json!({ "action": "partner", "reason": "Partner since today" })).await;
+    assert_eq!(status, Status::Ok, "{body}");
+    // verified and partner side by side
+    assert_eq!(flags(&harness).await, 2 | 4);
+    let (status, _) = send(&harness, &ts, &ts_token, Post, &path, json!({ "action": "partner", "reason": "Partner since today" })).await;
+    assert_eq!(status, Status::BadRequest);
+    // taking the verified mark away keeps the partner bit, and the other way round
+    let (status, _) = send(&harness, &ts, &ts_token, Post, &path, json!({ "action": "unverify", "reason": "Review ended" })).await;
+    assert_eq!(status, Status::Ok);
+    assert_eq!(flags(&harness).await, 4);
+    let (status, _) = send(&harness, &ts, &ts_token, Post, &path, json!({ "action": "unpartner", "reason": "Partnership ended" })).await;
+    assert_eq!(status, Status::Ok);
+    assert_eq!(flags(&harness).await, 0);
+    let (status, _) = send(&harness, &ts, &ts_token, Post, &path, json!({ "action": "unpartner", "reason": "Partnership ended" })).await;
+    assert_eq!(status, Status::BadRequest);
+}
+
+#[rocket::async_test]
 async fn security_centre_and_metrics_follow_staff_roles() {
     use rocket::http::Method::Post;
     let harness = TestHarness::new().await;

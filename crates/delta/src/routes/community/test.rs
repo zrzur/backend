@@ -1874,14 +1874,15 @@ async fn taking_any_design_down_comes_with_a_statement_and_an_appeal() {
 #[test]
 fn wearers_are_told_what_left_their_profile() {
     use crate::routes::safety::actions::wearer_notice;
-    use revolt_database::CommunityItemKind::{Decoration, Effect, Nameplate};
+    use revolt_database::CommunityItemKind::{Decoration, Effect, Frame, Nameplate};
     for language in ["en", "ar", "de"] {
-        let titles: std::collections::HashSet<_> = [Decoration, Nameplate, Effect]
+        let titles: std::collections::HashSet<_> = [Decoration, Nameplate, Effect, Frame]
             .iter()
             .map(|kind| wearer_notice(kind).0[language].clone())
             .collect();
-        assert_eq!(titles.len(), 3, "{language}");
+        assert_eq!(titles.len(), 4, "{language}");
     }
+    assert!(wearer_notice(&Frame).1["en"].contains("frame around your profile"));
     assert!(wearer_notice(&Nameplate).1["en"].contains("nameplate"));
     assert!(wearer_notice(&Decoration).1["de"].contains("Avatar-Rahmen"));
     assert!(wearer_notice(&Effect).1["ar"].contains("المؤثر"));
@@ -2117,4 +2118,107 @@ async fn a_creator_deletes_a_withdrawn_design() {
     let (_, sketch) = create_design(&harness, &session, &user, "Later", false).await;
     change_creator(&harness, &user, "suspend", Some("stolen art")).await;
     assert_eq!(delete(&harness, &session, &sketch.unwrap().id).await, Status::Forbidden);
+}
+
+
+/// A community frame: an upload of the template's size, still
+async fn upload_frame(harness: &TestHarness, user: &User, width: isize, height: isize, animated: bool) -> String {
+    let id = upload(harness, user).await;
+    let mut file = harness.db.fetch_attachment("decorations", &id).await.unwrap();
+    let new_id = TestHarness::rand_string();
+    file.id = new_id.clone();
+    file.metadata = Metadata::Image {
+        width,
+        height,
+        thumbhash: None,
+        animated: Some(animated),
+    };
+    harness.db.insert_attachment(&file).await.unwrap();
+    new_id
+}
+
+async fn wear_frame(harness: &TestHarness, session: &Session, value: &str) -> Status {
+    harness
+        .client
+        .patch("/users/@me")
+        .header(ContentType::JSON)
+        .header(Header::new("x-session-token", session.token.clone()))
+        .body(json!({ "style": { "profile_frame": value } }).to_string())
+        .dispatch()
+        .await
+        .status()
+}
+
+#[rocket::async_test]
+async fn a_frame_must_be_one_still_picture_of_the_template_size() {
+    let harness = TestHarness::new().await;
+    let (session, user) = creator(&harness).await;
+    let (w, h) = v0::PROFILE_FRAME_FILE_SIZE;
+    let (w, h) = (w as isize, h as isize);
+
+    for (width, height, animated) in [(128, 128, false), (w, h + 2, false), (w / 2, h / 2, false), (w, h, true)] {
+        let file = upload_frame(&harness, &user, width, height, animated).await;
+        let body = json!({ "name": "Arch", "file": file, "submit": true, "rights": promise() });
+        assert_eq!(
+            post_design(&harness, &session, "frames", body).await,
+            Status::BadRequest,
+            "{width}x{height} animated={animated}"
+        );
+    }
+
+    let file = upload_frame(&harness, &user, w, h, false).await;
+    let body = json!({ "name": "Arch", "file": file, "submit": true, "rights": promise() });
+    assert_eq!(post_design(&harness, &session, "frames", body).await, Status::Ok);
+
+    // it is listed with the frames, and only there
+    let frames = harness
+        .client
+        .get("/community/frames")
+        .header(Header::new("x-session-token", session.token.clone()))
+        .dispatch()
+        .await
+        .into_json::<v0::CommunityPage>()
+        .await
+        .unwrap();
+    assert_eq!(frames.items.len(), 1);
+    assert_eq!(frames.items[0].kind, v0::CommunityItemKind::Frame);
+    assert!(public_list(&harness, &session).await.items.is_empty());
+}
+
+#[rocket::async_test]
+async fn a_community_frame_is_worn_and_comes_off_with_a_takedown() {
+    let harness = TestHarness::new().await;
+    let (session, user) = creator(&harness).await;
+    let (boss, _) = reviewer(&harness).await;
+    let (_, wearer_session, wearer) = harness.new_user().await;
+    let (w, h) = v0::PROFILE_FRAME_FILE_SIZE;
+    let file = upload_frame(&harness, &user, w as isize, h as isize, false).await;
+    let res = harness
+        .client
+        .post("/community/frames")
+        .header(ContentType::JSON)
+        .header(Header::new("x-session-token", session.token.clone()))
+        .body(json!({ "name": "Arch", "file": file, "submit": true, "rights": promise() }).to_string())
+        .dispatch()
+        .await;
+    assert_eq!(res.status(), Status::Ok);
+    let item = res.into_json::<v0::CommunityItem>().await.unwrap();
+
+    // a built-in frame, an unknown one and a decoration in the frame field
+    assert_eq!(wear_frame(&harness, &wearer_session, "crystal").await, Status::Ok);
+    assert_eq!(wear_frame(&harness, &wearer_session, "golden").await, Status::BadRequest);
+    let decoration = post_kind(&harness, &session, &user, "decorations").await;
+    assert_ne!(wear_frame(&harness, &wearer_session, &format!("c:{}", decoration.id)).await, Status::Ok);
+
+    // the community frame: its file is filled in by the server
+    assert_eq!(wear_frame(&harness, &wearer_session, &format!("c:{}", item.id)).await, Status::Ok);
+    let stored = harness.db.fetch_user(&wearer.id).await.unwrap();
+    let style = stored.style.unwrap();
+    assert_eq!(style.profile_frame.as_deref(), Some(format!("c:{}", item.id).as_str()));
+    assert_eq!(style.profile_frame_file.as_deref(), Some(item.file.id.as_str()));
+
+    // a takedown takes it off the wearer
+    assert_eq!(act(&harness, &boss, &item.id, "suspend", Some("Breaks the rules")).await, Status::Ok);
+    let stored = harness.db.fetch_user(&wearer.id).await.unwrap();
+    assert!(stored.style.and_then(|s| s.profile_frame).is_none());
 }

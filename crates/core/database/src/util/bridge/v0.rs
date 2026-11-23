@@ -234,6 +234,7 @@ impl From<crate::Channel> for Channel {
                 active,
                 recipients,
                 last_message_id,
+                ..
             } => Channel::DirectMessage {
                 id,
                 active,
@@ -319,6 +320,8 @@ impl From<Channel> for crate::Channel {
                 active,
                 recipients,
                 last_message_id,
+                started_by: vec![],
+                stopped_by: vec![],
             },
             Channel::Group {
                 id,
@@ -1353,12 +1356,14 @@ impl crate::User {
             official_names: self.official_names,
             bot: shown_bot,
             style: self.style,
+            activities: vec![],
             relationship,
             id: self.id,
         };
         // a custom status emoji only for those who share its server
         crate::util::status_emoji::hide_for(db, &mut user.status, &user.id, viewer.as_deref())
             .await;
+        crate::util::activity::fill_one(&mut user, perspective).await;
         user
     }
 
@@ -1371,6 +1376,7 @@ impl crate::User {
         let mut user = self.into_known(viewer, is_online).await;
         crate::util::status_emoji::hide_for(db, &mut user.status, &user.id.clone(), Some(&viewer_id))
             .await;
+        crate::util::activity::fill_one(&mut user, Some(viewer)).await;
         user
     }
 
@@ -1442,6 +1448,7 @@ impl crate::User {
             official_names: self.official_names,
             bot: shown_bot,
             style: self.style,
+            activities: vec![],
             relationship,
             id: self.id,
         }
@@ -1482,6 +1489,7 @@ impl crate::User {
             official_names: self.official_names,
             bot: shown_bot,
             style: self.style,
+            activities: vec![],
             relationship: RelationshipStatus::None, // events client will populate this from cache
             id: self.id,
         }
@@ -1500,7 +1508,7 @@ impl crate::User {
     pub async fn into_self(self, force_online: bool) -> User {
         let badges = self.get_badges().await;
 
-        User {
+        let mut user = User {
             username: self.username,
             discriminator: self.discriminator,
             display_name: self.display_name,
@@ -1532,9 +1540,14 @@ impl crate::User {
             official_names: self.official_names,
             bot: self.bot.map(|bot| bot.into()),
             style: self.style,
+            activities: vec![],
             relationship: RelationshipStatus::User,
             id: self.id,
-        }
+        };
+        // your own activities, so the app can show what others see; also
+        // while you are invisible
+        crate::util::activity::fill_own(&mut user).await;
+        user
     }
 
     pub fn as_author_for_system(&self) -> MessageAuthor {
@@ -1603,6 +1616,7 @@ impl From<crate::PartialUser> for PartialUser {
             style: value.style,
             relationship: None,
             online: None,
+            activities: None,
             id: value.id,
         }
     }
@@ -2308,6 +2322,7 @@ impl From<crate::CommunityItemKind> for CommunityItemKind {
             crate::CommunityItemKind::Decoration => CommunityItemKind::Decoration,
             crate::CommunityItemKind::Nameplate => CommunityItemKind::Nameplate,
             crate::CommunityItemKind::Effect => CommunityItemKind::Effect,
+            crate::CommunityItemKind::Frame => CommunityItemKind::Frame,
         }
     }
 }
@@ -2318,6 +2333,7 @@ impl From<CommunityItemKind> for crate::CommunityItemKind {
             CommunityItemKind::Decoration => crate::CommunityItemKind::Decoration,
             CommunityItemKind::Nameplate => crate::CommunityItemKind::Nameplate,
             CommunityItemKind::Effect => crate::CommunityItemKind::Effect,
+            CommunityItemKind::Frame => crate::CommunityItemKind::Frame,
         }
     }
 }

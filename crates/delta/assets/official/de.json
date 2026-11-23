@@ -31,6 +31,10 @@
     "title": "Wir haben eines deiner Designs entfernt",
     "body": "{statement}"
   },
+  "action.activity": {
+    "title": "Wir haben entfernt, was dein Profil als deine Aktivität zeigte",
+    "body": "{statement}"
+  },
   "action.revoked": {
     "title": "Wir haben eine Entscheidung zurückgenommen",
     "body": "Wir haben es erneut geprüft und zurückgenommen.\n{note}"
@@ -138,6 +142,18 @@
   "server.nsfw": {
     "title": "Dein Server ist als 18+ markiert",
     "body": "„{name}“ ist jetzt nur für Erwachsene.\n{note}"
+  },
+  "server.partnered": {
+    "title": "Dein Server ist Zrzur-Partner",
+    "body": "„{name}“ ist jetzt Zrzur-Partner und darf einen eigenen Einladungslink ohne die Regel zu Mitgliedern und Aktivität behalten."
+  },
+  "server.unpartnered": {
+    "title": "Partnerstatus entfernt",
+    "body": "„{name}“ ist kein Zrzur-Partner mehr.\n{note}"
+  },
+  "vanity.ending": {
+    "title": "Dein eigener Link zrzur.cc/{code} endet",
+    "body": "„{name}“ erfüllt die Regel für einen eigenen Einladungslink nicht mehr. Der Link funktioniert noch bis {date}, danach wird er freigegeben und jeder kann den Namen nehmen.\n\nUm ihn zu behalten, braucht der Server mindestens {members} Mitglieder und muss aktiv sein: mindestens {messages} Nachrichten von {authors} verschiedenen Mitgliedern in den letzten {days} Tagen. Offizielle Server und Partnerserver behalten ihren Link immer."
   },
   "server.not_nsfw": {
     "title": "18+-Markierung entfernt",
@@ -502,6 +518,10 @@
   "reporter.what.remove_message": {
     "title": "",
     "body": "die Nachricht entfernt"
+  },
+  "reporter.what.activity": {
+    "title": "",
+    "body": "die Aktivität vom Profil entfernt"
   },
   "reporter.what.suspend": {
     "title": "",

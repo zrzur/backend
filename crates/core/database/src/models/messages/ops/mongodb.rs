@@ -9,7 +9,7 @@ use std::time::SystemTime;
 use ulid::Ulid;
 
 use crate::{
-    AppendMessage, DocumentId, FieldsMessage, IntoDocumentPath, Message, MessageQuery,
+    AppendMessage, DocumentId, MessageActivity, FieldsMessage, IntoDocumentPath, Message, MessageQuery,
     MessageTimePeriod, MongoDb, PartialMessage,
 };
 
@@ -22,6 +22,54 @@ const SEARCH_MAX_TIME: std::time::Duration = std::time::Duration::from_secs(5);
 
 #[async_trait]
 impl AbstractMessages for MongoDb {
+    /// Uses the `{channel, _id}` index: the id range starts at the ULID of
+    /// the first moment counted. Authors are grouped first, so the users
+    /// lookup runs once per author, not once per message.
+    async fn count_message_activity(&self, channels: &[String], since_id: &str) -> Result<MessageActivity> {
+        if channels.is_empty() {
+            return Ok(MessageActivity::default());
+        }
+        let pipeline = vec![
+            doc! { "$match": {
+                "channel": { "$in": channels },
+                "_id": { "$gte": since_id },
+                "system": { "$exists": false },
+                "webhook": { "$exists": false },
+            } },
+            doc! { "$group": { "_id": "$author", "n": { "$sum": 1_i32 } } },
+            doc! { "$lookup": {
+                "from": "users",
+                "localField": "_id",
+                "foreignField": "_id",
+                "as": "user",
+            } },
+            // only real accounts that are not bots
+            doc! { "$match": { "user.0": { "$exists": true }, "user.bot": { "$exists": false } } },
+            doc! { "$group": { "_id": bson::Bson::Null, "messages": { "$sum": "$n" }, "authors": { "$sum": 1_i32 } } },
+        ];
+
+        #[derive(serde::Deserialize)]
+        struct Totals {
+            messages: i64,
+            authors: i64,
+        }
+
+        let mut cursor = self
+            .col::<Document>(COL)
+            .aggregate(pipeline)
+            .await
+            .map_err(|_| create_database_error!("aggregate", COL))?
+            .with_type::<Totals>();
+        match cursor.next().await {
+            Some(Ok(totals)) => Ok(MessageActivity {
+                messages: totals.messages.max(0) as usize,
+                authors: totals.authors.max(0) as usize,
+            }),
+            Some(Err(_)) => Err(create_database_error!("aggregate", COL)),
+            None => Ok(MessageActivity::default()),
+        }
+    }
+
     /// Insert a new message into the database
     async fn insert_message(&self, message: &Message) -> Result<()> {
         query!(self, insert_one, COL, &message).map(|_| ())

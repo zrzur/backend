@@ -19,7 +19,11 @@ const DAY: i64 = 24 * 60 * 60 * 1000;
 /// How long an action counts against standing
 fn weight(kind: SafetyActionKind) -> (u32, Option<i64>) {
     match kind {
-        SafetyActionKind::Warning | SafetyActionKind::RemoveMessage => (1, Some(90 * DAY)),
+        SafetyActionKind::Warning
+        | SafetyActionKind::RemoveMessage
+        | SafetyActionKind::ClearActivity
+        | SafetyActionKind::BlockActivityApp
+        | SafetyActionKind::BlockActivityPicture => (1, Some(90 * DAY)),
         SafetyActionKind::DisableBot
         | SafetyActionKind::RemoveDiscoverListing
         | SafetyActionKind::SuspendCommunityItem

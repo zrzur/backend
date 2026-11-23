@@ -22,5 +22,14 @@ pub async fn block(
     let mut target = target.as_user(db).await?;
 
     user.block_user(db, &mut target).await?;
+    // blocking a bot also stops it: after an unblock it waits for Start again
+    if target.bot.is_some() {
+        if let Ok(channel) = db.find_direct_message_channel(&user.id, &target.id).await {
+            // the block stands either way; the bot still can't write
+            if let Err(error) = db.set_bot_started(channel.id(), &user.id, false).await {
+                log::warn!("bot dms: clearing Start of {} failed: {error:?}", channel.id());
+            }
+        }
+    }
     Ok(Json(target.into(db, &user).await))
 }

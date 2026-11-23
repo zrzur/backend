@@ -242,11 +242,19 @@ async fn client_with_limits(
     let Ok(mut config) = receiver.await else {
         return;
     };
+    // compressed frames only where the server allows them
+    config.allow_compression(
+        revolt_config::config()
+            .await
+            .features
+            .gateway_compression_enabled,
+    );
 
     info!(
-        "User {addr:?} provided protocol configuration (version = {}, format = {:?})",
+        "User {addr:?} provided protocol configuration (version = {}, format = {:?}, compression = {:?})",
         config.get_protocol_version(),
-        config.get_protocol_format()
+        config.get_protocol_format(),
+        config.get_compression()
     );
 
     // Split the socket for simultaneously read and write.
@@ -422,8 +430,9 @@ async fn client_with_limits(
         *session_id = gateway_session_id.clone();
     }
 
-    if report_internal_error!(write.lock().await.send(config.encode(&ready_payload)).await).is_err()
-    {
+    // serialised (and compressed) before the socket is locked
+    let ready_frame = config.encode(&ready_payload);
+    if report_internal_error!(write.lock().await.send(ready_frame).await).is_err() {
         return;
     }
 
@@ -538,9 +547,11 @@ async fn resume_session(
     };
 
     let Some(handle) = resume::find(session_id) else {
+        info!("resume of {session_id} refused: no such session waiting here");
         return Resumption::Refused;
     };
     if handle.user_id != user.id || handle.auth_session_id != auth_session_id {
+        info!("resume of {session_id} refused: another login");
         return Resumption::Refused;
     }
 
@@ -552,7 +563,10 @@ async fn resume_session(
                 refuse_intents(write, config, refusal).await;
                 return Resumption::Ended;
             }
-            Ok(intents) if intents != handle.intents => return Resumption::Refused,
+            Ok(intents) if intents != handle.intents => {
+                info!("resume of {session_id} refused: the intents changed");
+                return Resumption::Refused;
+            }
             Ok(_) => {}
         }
     }
@@ -567,6 +581,7 @@ async fn resume_session(
         reply: reply_s,
     };
     if handle.control.send(Control::Attach(attach)).await.is_err() {
+        info!("resume of {session_id} refused: the session just ended");
         return Resumption::Refused;
     }
 
@@ -603,6 +618,10 @@ struct Delivery {
     _registration: Option<resume::Registration>,
     /// Presence session while the user counts as online (not while dropped)
     presence: Option<u32>,
+    /// Login session behind this socket: what it set as the user's
+    /// activity goes when it goes (empty for bots)
+    login_session: String,
+    db: &'static Database,
     /// When the last socket dropped, while there is none
     detached_at: Option<Instant>,
     /// Last `seq` given out when the socket dropped: the most a resume can
@@ -640,23 +659,42 @@ async fn send_in_time(
 }
 
 impl Delivery {
-    /// Online: a presence session, and the first one tells the others
-    async fn come_online(&mut self, state: &State) {
+    /// Online: a presence session, and the first one tells the others.
+    /// `listening`: the session already follows its topics (a resume).
+    async fn come_online(&mut self, state: &State, listening: bool) {
         if self.presence.is_none() {
             let (first, presence) = create_session(&self.user_id, 0).await;
             self.presence = Some(presence);
             if first {
-                state.broadcast_presence_change(true).await;
+                state.broadcast_presence_change(true, listening).await;
             }
         }
     }
 
-    /// Offline: the presence session goes, and the last one tells the others
-    async fn go_offline(&mut self, state: &State) {
+    /// Offline: the presence session goes, and the last one tells the others.
+    /// `listening`: the session still follows its topics (a drop).
+    async fn go_offline(&mut self, state: &State, listening: bool) {
         if let Some(presence) = self.presence.take() {
             if delete_session(&self.user_id, presence).await {
-                state.broadcast_presence_change(false).await;
+                // the last one: the activities went with it
+                state.broadcast_presence_change(false, listening).await;
+            } else {
+                self.forget_activity().await;
             }
+        }
+    }
+
+    /// Still online elsewhere: only what this session set goes
+    async fn forget_activity(&self) {
+        if self.login_session.is_empty()
+            || !revolt_database::util::activity::forget_owned_by(&self.user_id, &self.login_session)
+                .await
+        {
+            return;
+        }
+        let db = self.db;
+        if let Ok(user) = db.fetch_user(&self.user_id).await {
+            revolt_database::util::activity::publish(db, &user).await;
         }
     }
 
@@ -672,7 +710,7 @@ impl Delivery {
         let now = Instant::now();
         self.detached_at = Some(now);
         self.seq_at_detach = self.buffer.last_seq();
-        self.go_offline(state).await;
+        self.go_offline(state, true).await;
         if let Some(id) = &self.gateway_session_id {
             for control in resume::detached(id, &self.limits, now) {
                 let _ = control.try_send(Control::SessionOver);
@@ -706,6 +744,13 @@ impl Delivery {
             reply,
         } = attach;
         if !self.resumable || !self.buffer.covers(seq, Instant::now()) {
+            // why, for the log: what the client has against what is kept
+            info!(
+                "{addr:?}: resume from seq {seq} refused: resumable {}, last seq {}, kept from {}",
+                self.resumable,
+                self.buffer.last_seq(),
+                self.buffer.forgotten() + 1
+            );
             let _ = reply.send(None);
             return;
         }
@@ -767,7 +812,7 @@ impl Delivery {
             if let Some(id) = &self.gateway_session_id {
                 resume::attached(id);
             }
-            self.come_online(state).await;
+            self.come_online(state, true).await;
         } else {
             self.detach(state).await;
         }
@@ -796,13 +841,15 @@ async fn listener(
         gateway_session_id,
         _registration: registration,
         presence: None,
+        login_session: state.session_id.clone(),
+        db,
         detached_at: None,
         seq_at_detach: 0,
         next_generation: 1,
     };
 
     // Create presence session; the first one tells the others we are online
-    delivery.come_online(state).await;
+    delivery.come_online(state, false).await;
 
     listen(db, state, addr, topic_signal_r, control_r, &mut delivery).await;
 
@@ -812,7 +859,7 @@ async fn listener(
         outlet.kill_worker.send(()).await.ok();
     }
     // the last session going tells the others we are offline
-    delivery.go_offline(state).await;
+    delivery.go_offline(state, false).await;
 }
 
 async fn listen(
@@ -942,6 +989,7 @@ async fn listen(
 
         select! {
             _ = t4 => {
+                info!("{addr:?}: the session ends: its Redis subscriber was cancelled");
                 break 'out;
             },
             _ = t5 => {
@@ -957,6 +1005,7 @@ async fn listen(
                         .is_some_and(|outlet| outlet.generation == generation);
                     if current {
                         if !delivery.resumable {
+                            info!("{addr:?}: the socket is gone and the session was not resumable");
                             break 'out;
                         }
                         delivery.detach(state).await;
@@ -965,7 +1014,14 @@ async fn listen(
                 Ok(Control::Attach(attach)) => {
                     delivery.attach(db, state, attach, addr).await;
                 }
-                Ok(Control::SessionOver) | Err(_) => break 'out,
+                Ok(Control::SessionOver) => {
+                    info!("{addr:?}: the session ends: told it is over");
+                    break 'out;
+                }
+                Err(_) => {
+                    info!("{addr:?}: the session ends: nothing can reach it any more");
+                    break 'out;
+                }
             },
             message = t1 => {
                 // Handle incoming events.
@@ -1183,6 +1239,26 @@ async fn worker(
                                 // Poke the listener to adjust subscriptions
                                 topic_signal_s.send(()).await.ok();
                             }
+                        }
+                    }
+                    ClientMessage::SetActivity { source, activity } => {
+                        if let Err(error) = revolt_database::util::activity::set_from_session(
+                            db,
+                            &user_id,
+                            &session_id,
+                            source,
+                            activity,
+                        )
+                        .await
+                        {
+                            // not an error of the connection: the app keeps
+                            // its session and does not send it again
+                            write
+                                .lock()
+                                .await
+                                .send(config.encode(&EventV1::ActivityRefused { source, error }))
+                                .await
+                                .ok();
                         }
                     }
                     ClientMessage::Ping { data, responded } => {
@@ -1420,6 +1496,10 @@ mod session_check_tests {
     }
 }
 
+#[cfg(test)]
+#[path = "activity_tests.rs"]
+mod activity_tests;
+
 /// bonfire itself on a real TCP socket, with Redis, against the test database
 #[cfg(test)]
 mod socket_tests {
@@ -1480,6 +1560,16 @@ mod socket_tests {
     type Socket = async_tungstenite::WebSocketStream<tokio_util::compat::Compat<TcpStream>>;
 
     async fn connect(db: &'static Database, token: &str, check_every: StdDuration) -> Socket {
+        connect_with(db, token, check_every, "").await
+    }
+
+    /// `connect` with more query parameters (`extra` starts with `&`)
+    async fn connect_with(
+        db: &'static Database,
+        token: &str,
+        check_every: StdDuration,
+        extra: &str,
+    ) -> Socket {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         tokio::spawn(async move {
@@ -1488,7 +1578,7 @@ mod socket_tests {
         });
 
         let stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
-        let url = format!("ws://127.0.0.1:{port}/?format=json&version=1&token={token}");
+        let url = format!("ws://127.0.0.1:{port}/?format=json&version=1&token={token}{extra}");
         async_tungstenite::client_async(url, stream.compat())
             .await
             .unwrap()
@@ -1535,6 +1625,32 @@ mod socket_tests {
         db.delete_session(&session.id).await.unwrap();
 
         expect_logout_and_close(&mut socket).await;
+    }
+
+    /// The shipped settings have `gateway_compression_enabled = false`: a
+    /// client that asks for compression still gets every frame as text
+    #[tokio::test]
+    async fn with_the_switch_off_a_client_asking_for_compression_gets_text() {
+        let db = database().await;
+        let session = person(db).await;
+        let mut socket = connect_with(db, &session.token, NEVER, "&compression=deflate").await;
+        loop {
+            let message = tokio::time::timeout(PATIENCE, socket.next())
+                .await
+                .expect("the socket stayed open and silent")
+                .expect("the socket ended before Ready")
+                .expect("a frame");
+            match message {
+                Message::Binary(_) => panic!("a binary frame although the switch is off"),
+                Message::Text(text) => {
+                    let event: serde_json::Value = serde_json::from_str(&text).unwrap();
+                    if event["type"] == "Ready" {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 
     #[tokio::test]
@@ -2213,6 +2329,54 @@ mod resume_tests {
         }
         assert!(!kinds.contains(&"Message".to_owned()), "{kinds:?}");
         assert!(kinds.contains(&"ChannelDelete".to_owned()), "{kinds:?}");
+    }
+
+    /// A person in more servers than their subscriber's buffer holds (32):
+    /// their own "offline" at the drop and "online" at the resume go to every
+    /// server they are in and come back to this very session. The session has
+    /// to keep reading meanwhile, or the buffer overflows and the session ends
+    /// at the drop (round 2 of the weak-network stream: every resume of the
+    /// 175-server test account was refused).
+    #[tokio::test]
+    async fn a_person_in_many_servers_can_resume() {
+        use revolt_database::{Member, Server};
+        let db = database().await;
+        let owner_session = person(db).await;
+        let owner = db.fetch_user(&owner_session.user_id).await.unwrap();
+        let session = person(db).await;
+        let member = db.fetch_user(&session.user_id).await.unwrap();
+        for n in 0..48 {
+            let (server, _) = Server::create(
+                db,
+                v0::DataCreateServer {
+                    name: format!("Many {n}"),
+                    ..Default::default()
+                },
+                &owner,
+                true,
+            )
+            .await
+            .unwrap();
+            Member::create(db, &server, &member, None).await.unwrap();
+        }
+
+        let limits = ResumeLimits::default();
+        let (socket, id, seen) = resumable_session(db, &session, limits).await;
+        drop_socket(socket).await;
+        tokio::time::sleep(StdDuration::from_millis(500)).await;
+
+        let mut socket = resume(db, &session.token, &id, seen, limits).await;
+        wait_for(&mut socket, "Resumed").await;
+
+        // and it goes on after its own "online" came back from every server
+        tokio::time::sleep(StdDuration::from_millis(500)).await;
+        ack(&session.user_id, "after").await;
+        loop {
+            let event = wait_for(&mut socket, "ChannelAck").await;
+            if event["message_id"] == "after" {
+                break;
+            }
+        }
     }
 
     /// Review nit: a socket gets two tries at a resume, then it is closed

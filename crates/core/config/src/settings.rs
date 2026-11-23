@@ -1331,6 +1331,11 @@ pub struct Features {
     /// Unset means off.
     #[serde(default)]
     pub join_by_link_enabled: bool,
+    /// Bots in direct messages: anyone may write to a public bot without a
+    /// shared server, and a person can press Start (with the payload of a
+    /// bot link). Unset means off.
+    #[serde(default)]
+    pub bot_dms_enabled: bool,
     /// Hours an account made by `POST /auth/account/join` has to confirm its
     /// e-mail before crond removes it. Unset means 72.
     #[serde(default = "default_join_confirm_hours")]
@@ -1364,9 +1369,18 @@ pub struct Features {
     pub team_applications: Box<FeaturesTeamApplications>,
     #[serde(default)]
     pub saved_reminders: FeaturesSavedReminders,
+    /// Rich presence: what someone is doing right now ("Playing ..."),
+    /// set by the desktop app, local apps over its RPC, and Steam. Boxed
+    /// for the same reason as `team_applications`.
+    #[serde(default)]
+    pub rich_presence: Box<FeaturesRichPresence>,
     /// The owner's `/badge` command (off unless both ids are set)
     #[serde(default)]
     pub badge_command: FeaturesBadgeCommand,
+    /// Who may hold a custom invite link (zrzur.cc/<name>)
+    #[serde(default)]
+    pub vanity: FeaturesVanity,
+
     /// Zrzur Desk: staff manage the platform from a bot, each with their own
     /// grant (off unless enabled, the bot is set and a place is allowed)
     #[serde(default)]
@@ -1378,6 +1392,11 @@ pub struct Features {
     /// `voice_weak_network` reach it through `GET /`. Unset means off.
     #[serde(default)]
     pub voice_weak_network_enabled: bool,
+    /// The gateway may send large JSON frames compressed (raw DEFLATE in a
+    /// binary frame) to a client that connects with `?compression=deflate`.
+    /// Clients that do not ask get text frames as before. Unset means off.
+    #[serde(default)]
+    pub gateway_compression_enabled: bool,
     /// Voice clips: the last seconds of a voice room, saved by a person in
     /// it and shared as a message (`/channels/{target}/capture/...`). Unset
     /// means off.
@@ -1453,6 +1472,71 @@ impl FeaturesBadgeCommand {
     }
 }
 
+/// Rich presence (`SetActivity` on the gateway, `activities` on users).
+/// Activities live only in Redis while the person is online.
+#[derive(Deserialize, Debug, Clone)]
+pub struct FeaturesRichPresence {
+    /// The whole feature. Off, `SetActivity` is refused with
+    /// `FeatureDisabled`, users carry no activities and Steam is not read.
+    /// Unset means off.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Activity changes one person may make in `window_seconds`
+    #[serde(default = "rich_presence_updates")]
+    pub updates_per_window: i64,
+    #[serde(default = "rich_presence_window")]
+    pub window_seconds: u64,
+    /// Read "now playing" from linked Steam accounts of people who are
+    /// online and chose to share it. Needs the Steam connection's key.
+    #[serde(default)]
+    pub steam_enabled: bool,
+    /// Seconds between two rounds of Steam reads, at the least
+    #[serde(default = "rich_presence_steam_interval")]
+    pub steam_interval_seconds: u64,
+    /// Steam Web API calls a day this feature may make (each call reads up
+    /// to 100 accounts). Steam allows 100,000 a day for one key, shared with
+    /// the Steam connection, so stay well below. Rounds stretch to keep
+    /// within it; when it is used up, Steam is not read until the next day.
+    #[serde(default = "rich_presence_steam_budget")]
+    pub steam_daily_calls: i64,
+    /// A change is sent at once only to servers with at most this many
+    /// members; in larger ones people see it when they open the profile or
+    /// the member list (friends and direct messages are told as usual)
+    #[serde(default = "rich_presence_broadcast_max")]
+    pub broadcast_max_members: usize,
+}
+
+fn rich_presence_broadcast_max() -> usize {
+    1000
+}
+
+fn rich_presence_updates() -> i64 {
+    5
+}
+fn rich_presence_window() -> u64 {
+    20
+}
+fn rich_presence_steam_interval() -> u64 {
+    60
+}
+fn rich_presence_steam_budget() -> i64 {
+    20_000
+}
+
+impl Default for FeaturesRichPresence {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            updates_per_window: rich_presence_updates(),
+            window_seconds: rich_presence_window(),
+            steam_enabled: false,
+            steam_interval_seconds: rich_presence_steam_interval(),
+            steam_daily_calls: rich_presence_steam_budget(),
+            broadcast_max_members: rich_presence_broadcast_max(),
+        }
+    }
+}
+
 /// Zrzur Desk: the staff bot. The bot decides nothing; the server checks
 /// every press against the presser's own staff grant.
 #[derive(Deserialize, Debug, Clone, Default, PartialEq, Eq)]
@@ -1522,6 +1606,63 @@ fn saved_reminders_max_days_ahead() -> u32 {
 }
 fn saved_reminders_keep_delivered_days() -> u32 {
     30
+}
+
+/// Who may hold a custom invite link (zrzur.cc/<name>), owner rule of
+/// 2026-11-21: official and partner servers always; any other server once it
+/// has `min_members` members and is active (`active_messages` messages from
+/// `active_authors` different members in the last `active_days` days, bots,
+/// webhooks and system messages not counted). With billing on, the Wings
+/// level that unlocks the link is a second way in.
+#[derive(Deserialize, Debug, Clone)]
+pub struct FeaturesVanity {
+    #[serde(default = "vanity_min_members")]
+    pub min_members: usize,
+    #[serde(default = "vanity_active_messages")]
+    pub active_messages: usize,
+    #[serde(default = "vanity_active_authors")]
+    pub active_authors: usize,
+    #[serde(default = "vanity_active_days")]
+    pub active_days: u32,
+    /// Days a link keeps working after its server stops meeting the rule
+    /// (the owner gets a notice); then the name is released
+    #[serde(default = "vanity_notice_days")]
+    pub notice_days: u32,
+    /// Hours an activity count is reused before it is counted again
+    #[serde(default = "vanity_activity_cache_hours")]
+    pub activity_cache_hours: u32,
+}
+
+fn vanity_min_members() -> usize {
+    500
+}
+fn vanity_active_messages() -> usize {
+    100
+}
+fn vanity_active_authors() -> usize {
+    20
+}
+fn vanity_active_days() -> u32 {
+    30
+}
+fn vanity_notice_days() -> u32 {
+    30
+}
+fn vanity_activity_cache_hours() -> u32 {
+    6
+}
+
+impl Default for FeaturesVanity {
+    fn default() -> Self {
+        Self {
+            min_members: vanity_min_members(),
+            active_messages: vanity_active_messages(),
+            active_authors: vanity_active_authors(),
+            active_days: vanity_active_days(),
+            notice_days: vanity_notice_days(),
+            activity_cache_hours: vanity_activity_cache_hours(),
+        }
+    }
 }
 
 impl Default for FeaturesSavedReminders {
@@ -2005,6 +2146,12 @@ pub struct FeaturesCommunity {
     /// takes a restart of delta and autumn. Zrzur's own effects are not touched.
     #[serde(default = "community_effects_enabled")]
     pub effects_enabled: bool,
+    /// Creator profile frames are open: uploads, the gallery and wearing them.
+    /// Off (the default until they are approved) refuses new community frames
+    /// and wearing one; Zrzur's built-in frames are not touched. Takes a
+    /// restart of delta.
+    #[serde(default = "community_frames_enabled")]
+    pub frames_enabled: bool,
     /// Largest width or height of an effect in pixels
     #[serde(default = "community_max_dimension")]
     pub effect_max_dimension: u32,
@@ -2047,6 +2194,9 @@ fn community_webm_timeout_ms() -> u64 {
 fn community_effects_enabled() -> bool {
     true
 }
+fn community_frames_enabled() -> bool {
+    false
+}
 fn community_effect_max_frames() -> u32 {
     120
 }
@@ -2065,6 +2215,7 @@ impl Default for FeaturesCommunity {
             max_frames: community_max_frames(),
             max_duration_ms: community_max_duration_ms(),
             effects_enabled: community_effects_enabled(),
+            frames_enabled: community_frames_enabled(),
             effect_max_dimension: community_max_dimension(),
             effect_max_frames: community_effect_max_frames(),
             effect_max_duration_ms: community_effect_max_duration_ms(),

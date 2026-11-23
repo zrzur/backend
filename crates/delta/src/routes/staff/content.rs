@@ -255,6 +255,7 @@ pub async fn designs(
         Some("Decoration") => Some(CommunityItemKind::Decoration),
         Some("Nameplate") => Some(CommunityItemKind::Nameplate),
         Some("Effect") => Some(CommunityItemKind::Effect),
+        Some("Frame") => Some(CommunityItemKind::Frame),
         _ => return Err(create_error!(InvalidOperation)),
     };
     let list = db

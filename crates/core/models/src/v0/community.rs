@@ -12,6 +12,8 @@ auto_derived!(
         Nameplate,
         /// Transparent animation that plays once over a profile
         Effect,
+        /// Still picture drawn around the whole profile card
+        Frame,
     }
 
     /// Review state of a community item
@@ -75,7 +77,7 @@ auto_derived!(
         /// Unique Id
         #[cfg_attr(feature = "serde", serde(rename = "_id"))]
         pub id: String,
-        /// Decoration, nameplate or effect
+        /// Decoration, nameplate, effect or profile frame
         pub kind: CommunityItemKind,
         /// Name shown in the gallery
         pub name: String,

@@ -15,6 +15,13 @@ const ZRZUR_ORIGINS: [&str; 9] = [
 /// The origin of the app's native shell on iOS (Capacitor's fixed scheme)
 pub const NATIVE_SHELL_IOS: &str = "capacitor://localhost";
 
+/// How long a browser may keep the API's answer to a preflight (seconds).
+/// Every call from the app carries the session header, so without it the
+/// browser asks again before nearly every call: one more round trip each,
+/// 0.6 s on a slow mobile line. Chrome keeps it up to 2 h, Firefox 24 h. The
+/// origin check is unchanged; a site that may not call gets no answer to keep.
+pub const PREFLIGHT_MAX_AGE_SECS: usize = 86_400;
+
 /// Local addresses as patterns, for libraries that take them
 pub const LOCAL_ORIGIN_PATTERNS: [&str; 2] = [
     r"^http://localhost(:\d+)?$",

@@ -62,11 +62,45 @@ async fn enforce(
     case: &SafetyCase,
     kind: SafetyActionKind,
     duration_days: Option<u32>,
+    activity_value: Option<&str>,
     reason: &str,
 ) -> Result<(Option<String>, Option<i64>)> {
     let owner = case.target_owner_id.clone();
     let now = safety_now();
     match kind {
+        // rich presence (legal RP-07): what a profile shows is taken off,
+        // and an app id or picture can be stopped everywhere
+        SafetyActionKind::ClearActivity
+        | SafetyActionKind::BlockActivityApp
+        | SafetyActionKind::BlockActivityPicture => {
+            let owner = owner.ok_or_else(|| create_error!(InvalidOperation))?;
+            let subject = check_subject(db, actor, &owner).await?;
+            if kind != SafetyActionKind::ClearActivity {
+                let value = activity_value
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| create_error!(FailedValidation {
+                        error: "activity_value required".to_string()
+                    }))?;
+                revolt_database::util::activity::block(
+                    db,
+                    if kind == SafetyActionKind::BlockActivityApp {
+                        revolt_models::v0::ActivityBlockKind::Application
+                    } else {
+                        revolt_models::v0::ActivityBlockKind::Picture
+                    },
+                    value,
+                    Some(&case.id),
+                    &actor.id,
+                    now,
+                )
+                .await?;
+            }
+            if revolt_database::util::activity::forget_all(&subject.id).await {
+                revolt_database::util::activity::publish(db, &subject).await;
+            }
+            Ok((Some(owner), None))
+        }
         // recorded by the creator routes, never taken on a case
         SafetyActionKind::SuspendCreator => Err(create_error!(InvalidOperation)),
         SafetyActionKind::Warning => {
@@ -328,6 +362,14 @@ pub(crate) fn wearer_notice(kind: &CommunityItemKind) -> (Words, Words) {
                 "Der Avatar-Rahmen auf deinem Profil ist nicht mehr verfügbar und wurde entfernt. Unter Designs kannst du einen anderen wählen.",
             ),
         ),
+        CommunityItemKind::Frame => (
+            words("A profile frame was removed", "أُزيل إطار البطاقة من ملفك الشخصي", "Ein Profilrahmen wurde entfernt"),
+            words(
+                "The frame around your profile is no longer available, so it has been taken off. You can choose another one on Designs.",
+                "لم يعد إطار البطاقة الموجود حول ملفك الشخصي متاحًا، لذا أُزيل. يمكنك اختيار إطار آخر من صفحة التصاميم.",
+                "Der Rahmen um dein Profil ist nicht mehr verfügbar und wurde entfernt. Unter Designs kannst du einen anderen wählen.",
+            ),
+        ),
         CommunityItemKind::Nameplate => (
             words("A nameplate was removed", "أُزيلت لوحة اسم من ملفك الشخصي", "Ein Namensschild wurde entfernt"),
             words(
@@ -423,8 +465,14 @@ async fn reverse(db: &Database, actor: &User, action: &SafetyAction) -> Result<(
             )
             .await?;
         }
+        SafetyActionKind::BlockActivityApp | SafetyActionKind::BlockActivityPicture => {
+            if let Some(case_id) = &action.case_id {
+                revolt_database::util::activity::unblock_case(db, case_id).await?;
+            }
+        }
         SafetyActionKind::Warning
         | SafetyActionKind::RemoveMessage
+        | SafetyActionKind::ClearActivity
         | SafetyActionKind::RemoveDiscoverListing => {}
     }
     Ok(())
@@ -620,7 +668,16 @@ pub(crate) async fn take_with_statement(
     let (subject, expires_at) =
         // boxed: every action is one big future, and on the stack it overflowed
         // the 2 MB of a test thread once account deletion grew (linked accounts)
-        Box::pin(enforce(db, user, &before, data.kind, data.duration_days, &public_reason)).await?;
+        Box::pin(enforce(
+            db,
+            user,
+            &before,
+            data.kind,
+            data.duration_days,
+            data.activity_value.as_deref(),
+            &public_reason,
+        ))
+        .await?;
 
     let now = safety_now();
     let basis = if before.subcategory.as_deref() == Some("staff") {

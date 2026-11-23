@@ -31,6 +31,10 @@
     "title": "We took one of your designs down",
     "body": "{statement}"
   },
+  "action.activity": {
+    "title": "We took down what your profile showed you doing",
+    "body": "{statement}"
+  },
   "action.revoked": {
     "title": "We reversed a decision on your account",
     "body": "We looked again and reversed it.\n{note}"
@@ -138,6 +142,18 @@
   "server.nsfw": {
     "title": "Your server is marked 18+",
     "body": "“{name}” is now for adults only.\n{note}"
+  },
+  "server.partnered": {
+    "title": "Your server is a Zrzur partner",
+    "body": "“{name}” is now a Zrzur partner. It may keep a custom invite link without the member and activity rule."
+  },
+  "server.unpartnered": {
+    "title": "Partner status removed",
+    "body": "“{name}” is no longer a Zrzur partner.\n{note}"
+  },
+  "vanity.ending": {
+    "title": "Your custom link zrzur.cc/{code} will end",
+    "body": "“{name}” no longer meets the rule for a custom invite link. The link keeps working until {date}, then it is released and anyone can take the name.\n\nTo keep it, the server needs at least {members} members and must be active: at least {messages} messages from {authors} different members in the last {days} days. Official and partner servers always keep their link."
   },
   "server.not_nsfw": {
     "title": "18+ mark removed",
@@ -502,6 +518,10 @@
   "reporter.what.remove_message": {
     "title": "",
     "body": "removed the message"
+  },
+  "reporter.what.activity": {
+    "title": "",
+    "body": "took the activity off the profile"
   },
   "reporter.what.suspend": {
     "title": "",

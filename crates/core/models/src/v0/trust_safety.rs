@@ -304,6 +304,12 @@ auto_derived!(
         SuspendCommunityItem,
         /// Creator paused: their designs are hidden until they are reinstated
         SuspendCreator,
+        /// What the person is doing right now (rich presence) is taken off
+        ClearActivity,
+        /// An app id may no longer show activities anywhere (`activity_value`)
+        BlockActivityApp,
+        /// A picture address may no longer show in activities (`activity_value`)
+        BlockActivityPicture,
     }
 
     /// A reversal of an action
@@ -552,6 +558,10 @@ auto_derived!(
         /// Suspension length in days (SuspendAccount)
         #[cfg_attr(feature = "validator", validate(range(min = 1, max = 365)))]
         pub duration_days: Option<u32>,
+        /// The app id or picture address (BlockActivityApp, BlockActivityPicture)
+        #[cfg_attr(feature = "validator", validate(length(min = 1, max = 512)))]
+        #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+        pub activity_value: Option<String>,
         /// Answer to the reporter (shown on their receipt; no internal details)
         #[cfg_attr(feature = "validator", validate(length(max = 500)))]
         pub reporter_note: Option<String>,

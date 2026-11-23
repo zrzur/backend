@@ -9,8 +9,21 @@ use crate::{AppendMessage, FieldsMessage, Message, MessageQuery, PartialMessage}
 mod mongodb;
 mod reference;
 
+/// Messages written by people (no bots, webhooks or system messages) in a
+/// set of channels since a point in time, and how many people wrote them
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MessageActivity {
+    pub messages: usize,
+    pub authors: usize,
+}
+
 #[async_trait]
 pub trait AbstractMessages: Sync + Send {
+    /// Count the messages people wrote in `channels` with an id from
+    /// `since_id` (a ULID) on, and the different people who wrote them.
+    /// Bots, webhooks and system messages are not counted.
+    async fn count_message_activity(&self, channels: &[String], since_id: &str) -> Result<MessageActivity>;
+
     /// Insert a new message into the database
     async fn insert_message(&self, message: &Message) -> Result<()>;
 

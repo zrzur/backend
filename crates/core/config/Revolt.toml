@@ -365,10 +365,21 @@ server_events_enabled = false
 # as before. Needs SMTP (the confirmation mail sets the password).
 join_by_link_enabled = false
 join_confirm_hours = 72
+# Bots in direct messages. On: anyone may open a conversation with a public
+# bot without a shared server, and press Start there (POST /interactions with
+# type Start, carrying the payload of a bot link /b/{id}?start=...). A bot
+# writes to a person only after they wrote or pressed Start; blocking stops
+# it. Off, Start answers FeatureDisabled and only shared-server rules apply.
+bot_dms_enabled = false
 # Voice on a weak connection: each person's app steps down (lighter voice,
 # video lowered, then video paused with audio kept) and shows a sign. Off,
 # calls behave as before. Numbers in [features.voice_weak_network].
 voice_weak_network_enabled = false
+# The live connection (gateway) sends frames of 16 KB or more, above all the
+# first answer (Ready, often 50 to 350 KB of JSON), compressed to about a
+# fifth, to clients that connect with ?compression=deflate. Other clients
+# (older apps, bots) get text frames as before. Off, every client gets text.
+gateway_compression_enabled = false
 # Voice clips: a person in a voice room saves the last seconds and shares
 # them as a message. A voice is included only after its owner agreed. Off,
 # the routes answer FeatureDisabled and the app hides the button.
@@ -535,6 +546,31 @@ sounds = 512_000
 decorations = 2_500_000
 effects = 2_000_000
 
+[features.rich_presence]
+# Rich presence: others see what a person is doing right now ("Playing ...",
+# elapsed time, details from the game), in the member list, DMs and profiles.
+# The desktop app sets it (programs it sees running, apps over its local RPC);
+# Steam's "now playing" is read for people who chose it. Nothing is stored:
+# activities live in Redis while the person is online and go with their last
+# session. Off, SetActivity is refused with FeatureDisabled, users carry no
+# activities, Steam is not read and the app hides the Activity settings.
+# Turn it on only after the stable web app shows activities.
+enabled = false
+# Changes one person may make in window_seconds (more are refused)
+updates_per_window = 5
+window_seconds = 20
+# Steam "now playing" (needs [api.connections.steam] web_api_key). One call
+# reads 100 accounts; Steam allows 100,000 calls a day per key, shared with
+# the Steam connection. 20,000 calls a day at one round a minute covers about
+# 1,300 people online with Steam shared; with more, rounds stretch.
+steam_enabled = false
+steam_interval_seconds = 60
+steam_daily_calls = 20000
+# Changes go out at once only to servers with at most this many members. In
+# larger servers people see an activity when they open the profile or the
+# member list; friends and direct messages are told as usual.
+broadcast_max_members = 1000
+
 [features.saved_reminders]
 # "Save message" (a private list only the person sees) and "Remind me" on a
 # message (crond delivers it as an entry in the app and a push notification).
@@ -564,6 +600,10 @@ max_duration_ms = 12_000
 # the gallery and the files closed, and stops all of them at once (restart
 # delta and autumn). The file size limit is the `effects` upload limit.
 effects_enabled = false
+# Creator profile frames (`/community/frames`). Off refuses new community
+# frames and wearing one, and the gallery is empty; the built-in frames stay.
+# Not approved yet: keep off (restart delta after a change).
+frames_enabled = false
 effect_max_dimension = 1024
 effect_max_frames = 120
 effect_max_duration_ms = 4_000
@@ -772,6 +812,22 @@ recording_hours_by_level = [5, 20, 60]
 # Longest single episode, and how many days an episode is kept (0 = kept)
 episode_max_minutes = 60
 episode_retention_days = 90
+
+[features.vanity]
+# Custom invite links (zrzur.cc/<name>). Official and partner servers may
+# always hold one. Any other server needs min_members members and must be
+# active: active_messages messages from active_authors different members in
+# the last active_days days (bots, webhooks and system messages not counted).
+# With billing on, the Wings level that unlocks the link is a second way in.
+min_members = 1000
+active_messages = 100
+active_authors = 20
+active_days = 30
+# A server that stops meeting the rule gets a notice; its link keeps working
+# this many days, then the name is released (unless it meets the rule again)
+notice_days = 30
+# An activity count is reused this long before crond or a claim counts again
+activity_cache_hours = 6
 
 [features.billing]
 # Zrzur Feather (member subscription) and Wings (server supercharges).

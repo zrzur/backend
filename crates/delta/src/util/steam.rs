@@ -498,6 +498,77 @@ async fn get_json<T: for<'de> Deserialize<'de> + Default>(
     }
 }
 
+/// The game an account is in right now: Steam's `gameid` and
+/// `gameextrainfo`, nothing else of the answer is kept
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NowPlaying {
+    pub appid: u32,
+    pub name: String,
+}
+
+#[derive(Deserialize, Default)]
+struct NowPlayingAnswer {
+    #[serde(default)]
+    response: NowPlayingList,
+}
+
+#[derive(Deserialize, Default)]
+struct NowPlayingList {
+    #[serde(default)]
+    players: Vec<NowPlayingPlayer>,
+}
+
+#[derive(Deserialize, Default)]
+struct NowPlayingPlayer {
+    #[serde(default)]
+    steamid: String,
+    #[serde(default)]
+    gameid: Option<String>,
+    #[serde(default)]
+    gameextrainfo: Option<String>,
+}
+
+fn now_playing_of(answer: NowPlayingAnswer) -> std::collections::HashMap<String, NowPlaying> {
+    answer
+        .response
+        .players
+        .into_iter()
+        .filter_map(|player| {
+            let appid = player.gameid?.parse::<u32>().ok()?;
+            let name = clean_name(&player.gameextrainfo?);
+            if name.is_empty() {
+                return None;
+            }
+            Some((player.steamid, NowPlaying { appid, name }))
+        })
+        .collect()
+}
+
+/// Which of these accounts (at most 100) are in a game right now, by
+/// SteamID. One Web API call.
+pub async fn now_playing(
+    config: &ApiConnectionSteam,
+    steam_ids: &[&str],
+) -> Result<std::collections::HashMap<String, NowPlaying>> {
+    #[cfg(test)]
+    {
+        let _ = config;
+        return Ok(test_steam::now_playing(steam_ids));
+    }
+
+    #[allow(unreachable_code)]
+    {
+        let ids = steam_ids.join(",");
+        let answer: Option<NowPlayingAnswer> = get_json(
+            config,
+            "ISteamUser/GetPlayerSummaries/v2/",
+            &[("steamids", ids.as_str())],
+        )
+        .await?;
+        Ok(answer.map(now_playing_of).unwrap_or_default())
+    }
+}
+
 /// Read what Steam shows publicly about this account, on its owner's request
 pub async fn fetch(config: &ApiConnectionSteam, steam_id: &str) -> Result<SteamSnapshot> {
     #[cfg(test)]
@@ -586,6 +657,33 @@ pub mod test_steam {
     pub const PRIVATE: &str = "76561197960287931";
     /// A signature Steam refuses
     pub const BAD_SIGNATURE: &str = "bad-signature";
+
+    /// `PUBLIC` is in Portal 2 (a game without pictures in the test
+    /// config), `OTHER` in Half-Life 2 with a stray long name trimmed,
+    /// every other account in no game
+    pub fn now_playing(steam_ids: &[&str]) -> std::collections::HashMap<String, NowPlaying> {
+        let answer = NowPlayingAnswer {
+            response: NowPlayingList {
+                players: steam_ids
+                    .iter()
+                    .map(|id| NowPlayingPlayer {
+                        steamid: id.to_string(),
+                        gameid: match *id {
+                            PUBLIC => Some("620".into()),
+                            OTHER => Some("220".into()),
+                            _ => None,
+                        },
+                        gameextrainfo: match *id {
+                            PUBLIC => Some("Portal 2".into()),
+                            OTHER => Some("  Half-Life 2  ".into()),
+                            _ => None,
+                        },
+                    })
+                    .collect(),
+            },
+        };
+        now_playing_of(answer)
+    }
 
     pub fn snapshot(steam_id: &str) -> SteamSnapshot {
         let summary = Summary {

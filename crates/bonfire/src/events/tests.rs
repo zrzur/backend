@@ -519,6 +519,8 @@ async fn bot_state(intents: u64) -> State {
             active: true,
             recipients: vec![BOT.to_string(), OWNER.to_string()],
             last_message_id: None,
+            started_by: vec![],
+            stopped_by: vec![],
         },
     );
     state

@@ -19,13 +19,18 @@ pub trait PermissionQuery {
     /// Whether the currently selected user is a bot
     async fn user_is_bot(&mut self) -> bool;
 
+    /// Whether the currently selected user is a public bot anyone may write
+    /// to (not suspended or disabled)
+    async fn user_is_public_bot(&mut self) -> bool;
+
     /// Do we have a mutual connection with the currently selected user?
     async fn have_mutual_connection(&mut self) -> bool;
 
     /// Do the privacy settings of the currently selected user let us start a direct message?
     async fn user_accepts_direct_messages(&mut self) -> bool;
 
-    /// Has the currently selected user written in this direct message channel?
+    /// Has the currently selected user written in this direct message channel,
+    /// or pressed Start in it (a person in their conversation with a bot)?
     /// (only called for DirectMessage channels after [PermissionQuery::set_recipient_as_user])
     async fn has_user_written_in_channel(&mut self) -> bool;
 

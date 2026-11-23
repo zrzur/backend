@@ -18,8 +18,9 @@ pub async fn fetch_privacy(db: &State<Database>, user: User) -> Result<Json<v0::
 
 /// # Edit Privacy Settings
 ///
-/// Change who can message you and who can add you to group chats.
-/// Fields left out stay the same.
+/// Change who can message you, who can add you to group chats and whether
+/// others see what you are doing right now. Fields left out stay the same.
+/// Turning activity sharing off removes what others see at once.
 #[openapi(tag = "User Information")]
 #[patch("/@me/privacy", data = "<data>")]
 pub async fn edit_privacy(
@@ -32,6 +33,7 @@ pub async fn edit_privacy(
     }
 
     let data = data.into_inner();
+    let shared_before = user.effective_privacy(db).await.share_activity == Some(true);
     // start from what is enforced now, so changing one setting never
     // loosens the other (for example the friends-only default under 18)
     let mut privacy = user.effective_privacy(db).await;
@@ -41,25 +43,66 @@ pub async fn edit_privacy(
     if let Some(group_invites) = data.group_invites {
         privacy.group_invites = group_invites;
     }
+    // activity sharing stays "the default for your age" until chosen, so
+    // turning 18 changes it for someone who never picked
+    privacy.share_activity = data
+        .share_activity
+        .or(user.privacy().share_activity);
+    if let Some(steam) = data.share_steam_activity {
+        privacy.share_steam_activity = steam;
+    }
+    if let Some(seen) = data.activity_intro_seen {
+        privacy.activity_intro_seen = seen;
+    }
     // under 18 the server keeps direct messages to friends, so that is what
     // is saved and answered, whatever was asked for
     let mut privacy_user = user.clone();
-    privacy_user.privacy = Some(privacy);
-    let privacy = privacy_user.effective_privacy(db).await;
+    privacy_user.privacy = Some(privacy.clone());
+    let mut saved = privacy_user.effective_privacy(db).await;
+    saved.share_activity = privacy.share_activity;
+    // worked out by the server on every answer, never saved
+    saved.activity_friends_only = false;
 
     // Written directly: a user update event would go to everyone
     // subscribed to this user, and the settings are private
     db.update_user(
         &user.id,
         &PartialUser {
-            privacy: Some(privacy.clone()),
+            privacy: Some(saved),
             ..Default::default()
         },
         vec![],
     )
     .await?;
 
-    Ok(Json(privacy))
+    let answer = privacy_user.effective_privacy(db).await;
+    // the person's other sessions (and the desktop app behind them) learn
+    // the new settings at once: sharing off stops the desktop from scanning
+    revolt_database::events::client::EventV1::PrivacyUpdate {
+        privacy: answer.clone(),
+    }
+    .private(user.id.clone())
+    .await;
+    let shared_now = answer.share_activity == Some(true);
+    let steam_off = !answer.share_steam_activity;
+    if shared_before && !shared_now {
+        // nothing of what you were doing stays on show
+        if revolt_database::util::activity::forget_all(&user.id).await {
+            revolt_database::util::activity::publish(db, &user).await;
+        }
+    } else if steam_off
+        && revolt_database::util::activity::store(
+            &user.id,
+            revolt_models::v0::ActivitySource::Steam,
+            None,
+            None,
+        )
+        .await
+    {
+        revolt_database::util::activity::publish(db, &user).await;
+    }
+
+    Ok(Json(answer))
 }
 
 #[cfg(test)]
@@ -185,7 +228,16 @@ mod test {
             .await;
         assert_eq!(response.status(), Status::Ok);
         let privacy: v0::UserPrivacy = response.into_json().await.unwrap();
-        assert_eq!(privacy, v0::UserPrivacy::default());
+        // the answer carries the activity sharing in force (off until
+        // chosen); the test account is an adult, so not friends only
+        assert_eq!(
+            privacy,
+            v0::UserPrivacy {
+                share_activity: Some(false),
+                activity_friends_only: false,
+                ..Default::default()
+            }
+        );
         assert_eq!(privacy.direct_messages, v0::DirectMessagePrivacy::Mutual);
         assert_eq!(privacy.group_invites, v0::GroupInvitePrivacy::Friends);
 
@@ -201,7 +253,15 @@ mod test {
         assert_eq!(privacy.group_invites, v0::GroupInvitePrivacy::Nobody);
 
         let stored = harness.db.fetch_user(&user.id).await.unwrap();
-        assert_eq!(stored.privacy(), privacy);
+        // activity sharing stays "the default for your age" until chosen
+        assert_eq!(
+            stored.privacy(),
+            v0::UserPrivacy {
+                share_activity: None,
+                activity_friends_only: false,
+                ..privacy
+            }
+        );
     }
 
     #[rocket::async_test]
@@ -286,6 +346,7 @@ mod test {
                     privacy: Some(v0::UserPrivacy {
                         direct_messages: v0::DirectMessagePrivacy::Everyone,
                         group_invites: v0::GroupInvitePrivacy::Everyone,
+                        ..Default::default()
                     }),
                     ..Default::default()
                 },

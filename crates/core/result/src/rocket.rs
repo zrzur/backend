@@ -74,6 +74,7 @@ impl<'r> Responder<'r, 'static> for Error {
             ErrorType::VanityTaken => Status::Conflict,
             ErrorType::VanityReserved => Status::BadRequest,
             ErrorType::VanityPaused => Status::Gone,
+            ErrorType::VanityNotEligible { .. } => Status::Forbidden,
 
             ErrorType::TooManyServers { .. } => Status::BadRequest,
             ErrorType::TooManyEmbeds { .. } => Status::BadRequest,
