@@ -31,6 +31,17 @@ pub async fn calculate_user_permissions<P: PermissionQuery>(query: &mut P) -> Pe
         permissions |= UserPermission::SendMessage as u64;
     };
 
+    // ... and to any public bot, with nothing in common: the bot itself
+    // only answers once they wrote or pressed Start (channel permissions)
+    if !query.are_we_a_bot().await
+        && query.user_is_bot().await
+        && query.user_is_public_bot().await
+    {
+        permissions |= UserPermission::Access as u64
+            + UserPermission::ViewProfile as u64
+            + UserPermission::SendMessage as u64;
+    };
+
     // A bot may only start a conversation when the person's privacy allows
     // it: `Everyone` or `Mutual`, with a server or group in common. Bots are
     // never friends, so `Friends` keeps them out; blocking returned above.

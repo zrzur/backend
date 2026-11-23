@@ -7,8 +7,8 @@ use revolt_database::{
 use revolt_models::v0::{
     self, find_component, interaction_limits, ApplicationCommandType, CommandOptionType,
     Component, DataCreateInteraction, InteractionAccepted, InteractionCommandData,
-    InteractionComponentData, InteractionModalData, InteractionType, ModalFieldValue,
-    INTERACTION_VERSION,
+    InteractionComponentData, InteractionModalData, InteractionStartData, InteractionType,
+    ModalFieldValue, INTERACTION_VERSION,
 };
 use revolt_permissions::{
     calculate_channel_permissions, calculate_server_permissions, ChannelPermission,
@@ -64,6 +64,21 @@ async fn scope(
         }
         _ => return Err(invalid("interactions are only available in server channels")),
     };
+
+    // a bot the person stopped (blocked) gets nothing from them in their DM
+    if server_id.is_none() {
+        let blocked = user.relations.iter().flatten().any(|relation| {
+            relation.id == application_id
+                && matches!(
+                    relation.status,
+                    revolt_database::RelationshipStatus::Blocked
+                        | revolt_database::RelationshipStatus::BlockedOther
+                )
+        });
+        if blocked {
+            return Err(create_error!(Blocked));
+        }
+    }
 
     // A staff account's override is for Zrzur's own tools: a bot sees what
     // the person holds through the server, like anyone else
@@ -168,6 +183,7 @@ async fn payload(
         message_ephemeral: false,
         component: None,
         modal: None,
+        start: None,
         respond_by: interaction.respond_by,
         expires_at: interaction.expires_at,
     }
@@ -869,6 +885,55 @@ async fn modal_submit(
     Ok((interaction, payload))
 }
 
+/// The person pressed Start in their DM with the bot, maybe from a bot link
+/// with `?start=`. From then on the bot may write to them.
+async fn start(
+    db: &Database,
+    user: &User,
+    data: DataCreateInteraction,
+) -> Result<(Interaction, v0::Interaction)> {
+    if !revolt_config::config().await.features.bot_dms_enabled {
+        return Err(create_error!(FeatureDisabled {
+            feature: "bot_dms".to_string()
+        }));
+    }
+    let application_id = data
+        .application_id
+        .as_deref()
+        .ok_or_else(|| invalid("application_id is required"))?;
+    let payload_text = match data.payload.as_deref() {
+        None | Some("") => None,
+        Some(text) if v0::valid_start_payload(text) => Some(text.to_string()),
+        Some(_) => {
+            return Err(invalid(
+                "payload must be 1-64 characters of A-Z, a-z, 0-9, _ and -",
+            ))
+        }
+    };
+    // only in the person's DM with this bot, and only while they may write
+    // there: a blocked bot is never started
+    let scope = scope(db, user, &data.channel_id, application_id, true, true).await?;
+    if scope.server.is_some() {
+        return Err(invalid("start is only available in a direct message with the bot"));
+    }
+
+    let (interaction, token) = Interaction::new(
+        InteractionType::Start,
+        scope.bot.id.clone(),
+        user.id.clone(),
+        None,
+        scope.channel.id().to_string(),
+        data.nonce,
+    );
+    revolt_database::util::bot_dms::note_started(db, &scope.channel, user).await?;
+
+    let mut payload = payload(db, user, &scope, &interaction, token, data.locale).await;
+    payload.start = Some(InteractionStartData {
+        payload: payload_text,
+    });
+    Ok((interaction, payload))
+}
+
 /// Store the interaction and hand it to the bot only: to its endpoint if it
 /// has one, else to its own sessions
 async fn dispatch(
@@ -912,8 +977,10 @@ fn check_nonce(data: &DataCreateInteraction) -> Result<()> {
 
 /// # Create Interaction
 ///
-/// Use an application command, a component on a bot's message, or submit a
-/// form the bot opened. The server checks every value and permission, then
+/// Use an application command, a component on a bot's message, submit a
+/// form the bot opened, or start a bot in your direct message with it
+/// (`Start`, with the optional `payload` of a bot link). The server checks
+/// every value and permission, then
 /// sends the interaction to the bot only. The answer arrives as
 /// `InteractionStateUpdate` plus a channel message, a message update,
 /// `EphemeralMessageCreate` or `InteractionModal`, for this user.
@@ -945,6 +1012,7 @@ pub async fn create_interaction(
         InteractionType::Command => command(db, &user, data).await?,
         InteractionType::Component => component(db, &user, data).await?,
         InteractionType::ModalSubmit => modal_submit(db, &user, data).await?,
+        InteractionType::Start => start(db, &user, data).await?,
         InteractionType::Autocomplete => return Err(create_error!(InvalidOperation)),
     };
     dispatch(db, amqp, interaction, payload).await.map(Json)

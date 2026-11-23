@@ -198,6 +198,8 @@ async fn hidden_and_foreign_content_is_not_found() {
         active: true,
         recipients: vec![s.author.id.clone(), other.id.clone()],
         last_message_id: None,
+        started_by: vec![],
+        stopped_by: vec![],
     };
     harness.db.insert_channel(&dm).await.unwrap();
     let private = Message {

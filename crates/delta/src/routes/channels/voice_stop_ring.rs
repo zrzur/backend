@@ -115,6 +115,8 @@ mod test {
             active: true,
             recipients: vec![caller.id.clone(), callee.id.clone()],
             last_message_id: None,
+            started_by: vec![],
+            stopped_by: vec![],
         };
         harness.db.insert_channel(&channel).await.unwrap();
         Dm {

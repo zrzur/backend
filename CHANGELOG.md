@@ -112,6 +112,18 @@
 - The consent page's `bot.install` server list carries the same fields.
 - **Changed:** in an interaction's `user_permissions`, the server-wide bits (Manage Server, Manage Roles, Kick, Ban, Timeout, Assign Roles, nicknames and avatars, Audit Log, Join Requests, Administrator, Manage Soundboard, Manage Events) are what the person holds on the server. A channel or category override no longer adds or removes them, so a bot that checks Manage Server there can't be fooled by a channel. Channel bits still follow the channel. New `SERVER_ONLY_PERMISSIONS` in `revolt-permissions`.
 
+## Unreleased
+
+### Bots in direct messages (2026-11-22, owner's request)
+
+- `features.bot_dms_enabled` (off by default; `GET /` says `features.bot_dms`). On, anyone may open a direct message with a **public** bot (not suspended or disabled) and write to it without a shared server. Bots that start a conversation keep the old rule: the person's privacy setting and a server or group in common.
+- New interaction type `Start`: `POST /interactions` with `type: "Start"`, `application_id` and an optional `payload` (1-64 of `A-Z a-z 0-9 _ -`, the `?start=` of a bot link), only in the caller's DM with that bot. The bot gets `InteractionCreate` with `start: { payload }` and answers it like any interaction; its answer carries `interaction.type = "Start"`. Off: `FeatureDisabled { feature: "bot_dms" }`.
+- Pressing Start, or writing to the bot, lets the bot write to the person from then on (`started_by` on the DM channel, stored only; no migration). With the feature on, blocking the bot clears it (`stopped_by`), and messages from before the stop no longer count, so after an unblock the bot waits for a new Start or a new message. A conversation from before the switch, never started or stopped, keeps the old rule: the person's messages there still let the bot answer.
+- Between a person and a bot, their own conversation no longer counts as a tie (a shared server or group does): a bot does not write because a conversation is open, even to someone who takes messages from everyone, and a suspended or disabled bot can't be written to there.
+- The bot hears of a conversation a person opened with it only when they start it: `ChannelCreate` goes to the bot with the Start or the first message, not when the conversation is opened.
+- The data export lists the bots a person started (`bots_started.json`: bot and channel).
+- **Also with the feature off:** a bot the person blocked gets no interaction from them in their DM (`Blocked`), components included. Before, a button on its old message still reached it.
+
 ## 26.3.0-beta.2 (2026-11-21)
 
 ### The owner's /badge command (2026-11-21)

@@ -241,6 +241,23 @@ pub async fn build_export_zip(db: &Database, account: &Account, user: &User) -> 
         .map(|r| json!({ "message": r.message_id, "channel": r.channel_id, "due_at": r.due_at, "created_at": r.created_at, "delivered_at": r.delivered_at }))
         .collect();
 
+    // Bots they started in direct messages (Start, or a message to it): each
+    // may write to them until they stop it
+    let bots_started: Vec<Value> = db
+        .find_direct_messages(&user.id)
+        .await?
+        .into_iter()
+        .filter_map(|channel| match channel {
+            crate::Channel::DirectMessage { id, recipients, started_by, .. }
+                if started_by.contains(&user.id) =>
+            {
+                let bot = recipients.into_iter().find(|other| other != &user.id)?;
+                Some(json!({ "bot": bot, "channel": id }))
+            }
+            _ => None,
+        })
+        .collect();
+
     // Designs they made, with what they promised about each. Who reported or
     // reviewed one is not theirs to have.
     let creations: Vec<Value> = db
@@ -543,6 +560,7 @@ Why we use this data, who receives it, how long we keep it, your rights and how 
         ("team_memberships.json".into(), compact(Value::Array(team_memberships))),
         ("team_activity.json".into(), compact(Value::Array(team_activity))),
         ("bots.json".into(), compact(Value::Array(bots))),
+        ("bots_started.json".into(), compact(Value::Array(bots_started))),
         ("creations.json".into(), compact(Value::Array(creations))),
         ("linked_accounts.json".into(), compact(Value::Array(linked_accounts))),
         (
