@@ -8,16 +8,11 @@ use super::AbstractActivityBlocks;
 
 static COL: &str = "activity_blocks";
 
-#[async_trait]
-impl AbstractActivityBlocks for MongoDb {
-    async fn insert_activity_block(&self, block: &ActivityBlock) -> Result<()> {
-        query!(self, insert_one, COL, &block).map(|_| ())
-    }
-
-    async fn fetch_activity_blocks(&self) -> Result<Vec<ActivityBlock>> {
+impl MongoDb {
+    async fn find_blocks(&self, filter: mongodb::bson::Document) -> Result<Vec<ActivityBlock>> {
         let mut cursor = self
             .col::<ActivityBlock>(COL)
-            .find(doc! {})
+            .find(filter)
             .await
             .map_err(|_| create_database_error!("find", COL))?;
         let mut blocks = vec![];
@@ -25,6 +20,24 @@ impl AbstractActivityBlocks for MongoDb {
             blocks.push(block.map_err(|_| create_database_error!("find", COL))?);
         }
         Ok(blocks)
+    }
+}
+
+#[async_trait]
+impl AbstractActivityBlocks for MongoDb {
+    async fn insert_activity_block(&self, block: &ActivityBlock) -> Result<()> {
+        query!(self, insert_one, COL, &block).map(|_| ())
+    }
+
+    async fn fetch_activity_blocks_with_values(&self, values: &[String]) -> Result<Vec<ActivityBlock>> {
+        if values.is_empty() {
+            return Ok(vec![]);
+        }
+        self.find_blocks(doc! { "value": { "$in": values } }).await
+    }
+
+    async fn fetch_activity_blocks_of_case(&self, case_id: &str) -> Result<Vec<ActivityBlock>> {
+        self.find_blocks(doc! { "case_id": case_id }).await
     }
 
     async fn delete_activity_block(&self, id: &str) -> Result<()> {

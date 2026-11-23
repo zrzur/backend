@@ -302,9 +302,51 @@ pub fn blocked_by(activity: &UserActivity, blocks: &[v0::ActivityBlock]) -> bool
     })
 }
 
-/// Refuse an activity a platform-wide block stops
+/// The values a block on this activity would carry: its app id, its
+/// pictures, and the address inside a proxied picture
+pub fn block_candidates(activity: &UserActivity) -> Vec<String> {
+    let mut values: Vec<String> = activity.application_id.iter().cloned().collect();
+    for shown in [&activity.large_image, &activity.small_image].into_iter().flatten() {
+        values.push(shown.clone());
+        if let Some((_, inner)) = shown.rsplit_once("url=") {
+            values.push(decode_query(inner));
+        }
+    }
+    values.sort();
+    values.dedup();
+    values
+}
+
+/// The reverse of `encode_query`
+pub fn decode_query(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            // bytes, not a str slice: a '%' before a multi-byte character
+            // must not split it
+            let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).ok();
+            if let Some(byte) = hex.and_then(|hex| u8::from_str_radix(hex, 16).ok()) {
+                out.push(byte);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Refuse an activity a platform-wide block stops (one indexed lookup by
+/// value, not every block)
 pub async fn check_blocks(db: &Database, activity: &UserActivity) -> Result<()> {
-    if blocked_by(activity, &db.fetch_activity_blocks().await?) {
+    let candidates = block_candidates(activity);
+    if candidates.is_empty() {
+        return Ok(());
+    }
+    if blocked_by(activity, &db.fetch_activity_blocks_with_values(&candidates).await?) {
         return Err(create_error!(ProfileTextFiltered {
             category: "ActivityBlocked".to_string(),
         }));
@@ -334,10 +376,8 @@ pub async fn block(
 
 /// Lift the blocks taken on one case (an action reversed)
 pub async fn unblock_case(db: &Database, case_id: &str) -> Result<()> {
-    for block in db.fetch_activity_blocks().await? {
-        if block.case_id.as_deref() == Some(case_id) {
-            db.delete_activity_block(&block.id).await?;
-        }
+    for block in db.fetch_activity_blocks_of_case(case_id).await? {
+        db.delete_activity_block(&block.id).await?;
     }
     Ok(())
 }
@@ -831,6 +871,36 @@ pub async fn publish(db: &Database, user: &User) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_block_is_found_by_its_value_also_inside_a_proxied_picture() {
+        let picture = "https://pics.example/a b/ü.png?x=1&y=2";
+        assert_eq!(decode_query(&encode_query(picture)), picture);
+        assert_eq!(decode_query("100%"), "100%", "a lone percent stays");
+        assert_eq!(decode_query("%E2%9C%93%zz"), "\u{2713}%zz");
+        let activity = UserActivity {
+            application_id: Some("com.example.app".into()),
+            large_image: Some(format!("https://proxy.zrzur.test/proxy?url={}", encode_query(picture))),
+            ..game_activity()
+        };
+        let candidates = block_candidates(&activity);
+        assert!(candidates.contains(&"com.example.app".to_string()));
+        assert!(candidates.contains(&picture.to_string()));
+        // what is looked up is what blocked_by then matches
+        let block = v0::ActivityBlock {
+            id: "b".into(),
+            kind: v0::ActivityBlockKind::Picture,
+            value: picture.into(),
+            case_id: None,
+            actor_id: "staff".into(),
+            created_at: 0,
+        };
+        assert!(blocked_by(&activity, &[block]));
+    }
+
+    fn game_activity() -> UserActivity {
+        check(game("Star Kebab"), ActivitySource::Rpc, Timestamp::now_utc(), &hosts()).unwrap()
+    }
 
     fn hosts() -> Hosts {
         Hosts {

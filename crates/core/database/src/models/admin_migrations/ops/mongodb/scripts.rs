@@ -61,6 +61,8 @@ const PENDING_SAVED_REMINDER_INDEXES: i32 = 90;
 const PENDING_SERVER_EVENT_ANSWERS: i32 = 91;
 // Stream team-volunteers: the coordinator gives the number at merge; -1 never runs
 const PENDING_TEAM_VOLUNTEER_INDEXES: i32 = 92;
+// Stream rich-presence: the coordinator gives the number at merge; -1 never runs
+const PENDING_ACTIVITY_BLOCKS_INDEX: i32 = -1;
 
 /// The earliest day a session from before expiry can expire. At least 30
 /// days out, also with expiry switched off (0), for the day it is switched on.
@@ -2662,6 +2664,11 @@ pub async fn run_migrations(db: &MongoDb, revision: i32) -> i32 {
         create_team_volunteer_indexes(&db.db()).await;
     }
 
+    if revision <= PENDING_ACTIVITY_BLOCKS_INDEX {
+        info!("Running migration [revision {PENDING_ACTIVITY_BLOCKS_INDEX} / 23-11-2026]: Indexes for activity blocks");
+        create_activity_block_indexes(&db.db()).await;
+    }
+
     // Reminder to update LATEST_REVISION when adding new migrations.
     LATEST_REVISION.max(revision)
 }
@@ -2695,6 +2702,21 @@ pub async fn create_team_volunteer_indexes(db: &mongodb::Database) {
     })
     .await
     .expect("Failed to create the team identity index");
+}
+
+/// Activity blocks (Trust & Safety) are looked up by value on every
+/// `SetActivity` and by case when an action is reversed. Only indexes, no
+/// data moves. Safe to run twice: creating an index that exists is a no-op.
+pub async fn create_activity_block_indexes(db: &mongodb::Database) {
+    db.run_command(doc! {
+        "createIndexes": "activity_blocks",
+        "indexes": [
+            { "key": { "value": 1_i32, "kind": 1_i32 }, "name": "value_kind" },
+            { "key": { "case_id": 1_i32 }, "name": "case_id", "sparse": true }
+        ]
+    })
+    .await
+    .expect("Failed to create the activity block indexes");
 }
 
 /// Saved messages are listed by person, newest first. Reminders are listed
@@ -3801,6 +3823,28 @@ mod statement_migration_tests {
                 .unwrap();
             assert_eq!(names.len(), wanted, "{collection}: {names:?}");
         }
+    }
+
+    /// MongoDB only: the activity block indexes can be made twice
+    #[tokio::test]
+    async fn activity_block_indexes_run_twice_on_mongodb() {
+        let db = crate::DatabaseInfo::Test("activity_block_indexes".to_string())
+            .connect()
+            .await
+            .expect("Database connection failed.");
+        let crate::Database::MongoDb(mongo) = &db else {
+            return;
+        };
+        for _ in 0..2 {
+            super::create_activity_block_indexes(&mongo.db()).await;
+        }
+        let names = mongo
+            .db()
+            .collection::<Document>("activity_blocks")
+            .list_index_names()
+            .await
+            .unwrap();
+        assert_eq!(names.len(), 3, "{names:?}");
     }
 
     /// MongoDB only: the saved message and reminder indexes can be made twice

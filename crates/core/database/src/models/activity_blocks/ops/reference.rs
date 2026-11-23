@@ -15,8 +15,26 @@ impl AbstractActivityBlocks for ReferenceDb {
         Ok(())
     }
 
-    async fn fetch_activity_blocks(&self) -> Result<Vec<ActivityBlock>> {
-        Ok(self.activity_blocks.lock().await.values().cloned().collect())
+    async fn fetch_activity_blocks_with_values(&self, values: &[String]) -> Result<Vec<ActivityBlock>> {
+        Ok(self
+            .activity_blocks
+            .lock()
+            .await
+            .values()
+            .filter(|block| values.contains(&block.value))
+            .cloned()
+            .collect())
+    }
+
+    async fn fetch_activity_blocks_of_case(&self, case_id: &str) -> Result<Vec<ActivityBlock>> {
+        Ok(self
+            .activity_blocks
+            .lock()
+            .await
+            .values()
+            .filter(|block| block.case_id.as_deref() == Some(case_id))
+            .cloned()
+            .collect())
     }
 
     async fn delete_activity_block(&self, id: &str) -> Result<()> {
