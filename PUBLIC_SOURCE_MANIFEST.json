@@ -202,8 +202,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "60bb265b5a9476f3f5516658ce0048844e4a4f2578c4fc370c6e4b97941d03c5",
-      "bytes": 139063,
+      "sha256": "9cc85fa50efa6eb391ad2e165b55cd9086ee52f7343fb986ae94333f1c0310b0",
+      "bytes": 139109,
       "category": "public-documentation"
     },
     {
@@ -406,8 +406,8 @@
     },
     {
       "path": "crates/bonfire/src/websocket.rs",
-      "sha256": "201123a5efcc2236903742a904be84cfba833e470debb9a75c65a1d32fe164ae",
-      "bytes": 80747,
+      "sha256": "7d39286e7463f34b587a8c090f31f7b5782620b5f701600360cefde6156232b9",
+      "bytes": 80911,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -1540,20 +1540,20 @@
     },
     {
       "path": "crates/core/database/src/models/activity_blocks/ops.rs",
-      "sha256": "2da8ad7799544d0bb7bca5ad8eabdb7b76f385d9b26d8b3a5a53dc536f46223e",
-      "bytes": 494,
+      "sha256": "7ae0a38d1f4a965e875d49f41d9c8162c24fdba4670e4dc170b242c3f82807b1",
+      "bytes": 733,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/database/src/models/activity_blocks/ops/mongodb.rs",
-      "sha256": "da4ae979519706c0d35c51db9439fcc92229f91d373163a0696cd470140c1c22",
-      "bytes": 1118,
+      "sha256": "6f1dac9177e342d5f92fdbe91ad0f0b5dbc62322decddd2a5bcd5f27b3d2ce2b",
+      "bytes": 1573,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/database/src/models/activity_blocks/ops/reference.rs",
-      "sha256": "c423b7f87957c144153a615cd69a2407916164af6243e2fe584a1c909acb9056",
-      "bytes": 713,
+      "sha256": "edf20233d3e1bb1d36b6a016f8706621982ed1dbb0821e5a8b605216cfd8aa59",
+      "bytes": 1208,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -1582,14 +1582,14 @@
     },
     {
       "path": "crates/core/database/src/models/admin_migrations/ops/mongodb/init.rs",
-      "sha256": "f00623cbcbe5d97bf9369c6702a4e71f06a6293e14aa7f65d86c9033924ef6de",
-      "bytes": 13596,
+      "sha256": "b015e2d892ba048a0f2b17b88cbd1dfb4714a5813b689e8cf5d23251ad58d244",
+      "bytes": 13658,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/database/src/models/admin_migrations/ops/mongodb/scripts.rs",
-      "sha256": "24472b4f4061264c9c8b858a5a29c3cbba9fec263e82ff7cfc9f80d6894d7f13",
-      "bytes": 178629,
+      "sha256": "93f4f3046fa85f27e7c3cc33f44ff9801323279278b4b4aa4c29f0118424a6ea",
+      "bytes": 180365,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -3196,8 +3196,8 @@
     },
     {
       "path": "crates/core/database/src/util/activity.rs",
-      "sha256": "5ca761a0e0562c93fb649682a2e238a597255697ba91a5f6c0f4a0e4efd2ce4f",
-      "bytes": 40792,
+      "sha256": "6277c3f7cb25b59758dd4e07eaeb3556ee313ec4d04c5f291cccc690e1f11e75",
+      "bytes": 43531,
       "category": "product-source-or-build-manifest"
     },
     {
