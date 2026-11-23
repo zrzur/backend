@@ -58,7 +58,7 @@
     },
     {
       "path": ".github/workflows/source-check.yml",
-      "sha256": "7bbb43006068c4d0623c7f2ddfb68cd35117744e2f6d7eb5b1da85c443cd48f6",
+      "sha256": "d2fd29e853507c72f9e0bf6096d0bd5fc5c9f580291c05790682bef938622747",
       "bytes": 959,
       "category": "reviewed-build-and-ci"
     },
@@ -202,8 +202,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "ff820ea82dd7ae2c660280fdd4a4b3374564f2e62373d5976bf1bc8864908812",
-      "bytes": 135706,
+      "sha256": "a2e72d4250ae7c98489b15b03a2ebbdba927e79100d1956217a030ff67c032c2",
+      "bytes": 160655,
       "category": "public-documentation"
     },
     {
@@ -220,8 +220,8 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "2ae584a122bcd810c03f89ff6a32220892e3d9c1192ff56cfd1f8eb022942fa7",
-      "bytes": 269722,
+      "sha256": "7b92eca858c512d41eb45277fbac0d72235097b8c4d091a4c6a42ff820f9520e",
+      "bytes": 266493,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -274,7 +274,7 @@
     },
     {
       "path": "RELEASE.json",
-      "sha256": "8c623f04cdb52f0e12ddd58d700005dd5c183f3479b7b1e8447efb5cab5daabf",
+      "sha256": "c1446f93e06dc00a0ed21d190ff1e0e816fe56e280f8ba20b96688617a0a4f61",
       "bytes": 299,
       "category": "product-source-or-build-manifest"
     },
@@ -298,13 +298,13 @@
     },
     {
       "path": "ZRZUR_RELEASE.md",
-      "sha256": "7fac400c6bfad34440f7286cf59763ab6dc3a4b601551d5501b10a1ba29b8570",
+      "sha256": "347aa952e6f580088d7b44db0dca70cabbba98428d7038c99fe7df59f77cd466",
       "bytes": 1618,
       "category": "public-documentation"
     },
     {
       "path": "ZRZUR_VERSION",
-      "sha256": "c9c07ef41bc4293a36e4d72ddb9bd4b061d8ce2653a78da68ff5d12bc4d9c310",
+      "sha256": "d70e28aa0b3d367ad4e70a45d29bb4896c7315d51c7fa250386c4d0ff6fbb23e",
       "bytes": 351,
       "category": "product-source-or-build-manifest"
     },
@@ -328,8 +328,8 @@
     },
     {
       "path": "crates/bonfire/Cargo.toml",
-      "sha256": "05139856275c31aeb974863d7f0c313390124ea3c34811aaac0159239c86c105",
-      "bytes": 1434,
+      "sha256": "381c7f314da12c2505116b1310188a29eb94fbe527801b077867c096b623c36d",
+      "bytes": 1503,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -345,9 +345,15 @@
       "category": "license-and-attribution"
     },
     {
+      "path": "crates/bonfire/src/activity_tests.rs",
+      "sha256": "c445ecb5a236357fb2d2eb48b4b36a2ab3af5583e0e81e1b337b47cb2f83956d",
+      "bytes": 20000,
+      "category": "product-source-or-build-manifest"
+    },
+    {
       "path": "crates/bonfire/src/config.rs",
-      "sha256": "32b27f15dc4b33f9924234a4913fcb8bb6087b2970d0203d4ff5597c9e98dd3b",
-      "bytes": 8728,
+      "sha256": "1a006744b3534ecc8fa36719230e77bf0829ec1c5444c30e2bcd5cc6d57a94e5",
+      "bytes": 16065,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -358,8 +364,8 @@
     },
     {
       "path": "crates/bonfire/src/events/impl.rs",
-      "sha256": "5d490851a518f2bf2e8b7155b66fcd8fe079ca0e02e93ba0f34b13ea7f87e059",
-      "bytes": 52511,
+      "sha256": "c8f96fba37f6cbba9ead17b8a4f591e9b954e75ff8072c914836ea37795b1768",
+      "bytes": 56976,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -370,14 +376,14 @@
     },
     {
       "path": "crates/bonfire/src/events/state.rs",
-      "sha256": "4420a49a4f5b0f106b30d2a6fa4c28b794eb667f243db4b5aa1657c254945647",
-      "bytes": 7748,
+      "sha256": "1e82bb548ee773d7b37dfbdee7790ce4d54325f71aa53641e14d897670bfc03a",
+      "bytes": 7941,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/bonfire/src/events/tests.rs",
-      "sha256": "1c4609ff4c37ba7a48b00ffda937d90a095c65315f2fbbf2c0b736107c30bca4",
-      "bytes": 59674,
+      "sha256": "4041ce40a3dbd138565b1ca54538e4459cda59301f21aebe3daaf7815ac591f7",
+      "bytes": 69731,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -400,8 +406,8 @@
     },
     {
       "path": "crates/bonfire/src/websocket.rs",
-      "sha256": "269cd378df3c99de542c96e690b4bfeeb0dfa4e9c9839bddf74c373d0fd345e7",
-      "bytes": 77660,
+      "sha256": "77c33fa1e3d7c301701afb9d7a5b88be352ec4f030fb4f6fe45ff0cf15e97e8c",
+      "bytes": 85198,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -538,14 +544,14 @@
     },
     {
       "path": "crates/core/config/Revolt.test.toml",
-      "sha256": "dd4cef33e9931a2912b42d95f00677a15286b819e37794f6055b26e40fd37dea",
-      "bytes": 2444,
+      "sha256": "509b5574b8f8fcb446a4479f50d0e26036f87e7796aa96b98fdbf4fa82c157e9",
+      "bytes": 2528,
       "category": "synthetic-test-source-or-fixture"
     },
     {
       "path": "crates/core/config/Revolt.toml",
-      "sha256": "c2ab5e84ad759b27fa626a515d1029a8108e86baf0592eea24d4630f71635066",
-      "bytes": 31485,
+      "sha256": "edbe8aad2e9626df216dc570f602972fc239488e32d6a0682ef6ab79f34c1899",
+      "bytes": 34172,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -574,8 +580,8 @@
     },
     {
       "path": "crates/core/config/src/settings.rs",
-      "sha256": "ce35d14e3d346486d980d979fea88da657175d1c9782a1fde4dfcbf10f605210",
-      "bytes": 111753,
+      "sha256": "01a83b6c7088635a8baefb2aa856ed737ff30d5446a13b019db5ddb8480e9cbe",
+      "bytes": 117138,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -1378,14 +1384,14 @@
     },
     {
       "path": "crates/core/database/src/drivers/reference.rs",
-      "sha256": "4bbb27189f6d317cb7ea4027e34eb3e534242a5ed7eaa97b63f8b776f3f925d9",
-      "bytes": 6329,
+      "sha256": "77ac256d1a20bd3b884f79496381cb5317027c1e877e34c4c2f1b67b1c63af7a",
+      "bytes": 6676,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/database/src/events/client.rs",
-      "sha256": "788e123045eda25713d29a417f978a621260d8d61d6bc28cd929608491202306",
-      "bytes": 20146,
+      "sha256": "059f2bd3e404f2fa77909a41bbd0afdd2d5c6c959104ec37dcee823517766b79",
+      "bytes": 20596,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -1396,20 +1402,20 @@
     },
     {
       "path": "crates/core/database/src/events/rabbit.rs",
-      "sha256": "f05697580799be3aac07fe955302786dc5df58d470bde36ce616d2a95ca10b73",
-      "bytes": 2409,
+      "sha256": "23c74bf77b8a3a9f30507349f50bc65e6d0bc773120dc3d577ec15e592402bc1",
+      "bytes": 2734,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/database/src/events/server.rs",
-      "sha256": "e811164cfaa7d9bc3cb2141292094cd64115bc01c4156209fd6c379956c7c555",
-      "bytes": 1106,
+      "sha256": "19bf64ccafc7ebc61a0078e94fb1c3c1b7fd0f659e4812fce11b41e8d42b0c83",
+      "bytes": 1702,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/database/src/lib.rs",
-      "sha256": "68a3824746c93b59ebfd14e3b8fac5064841c5abd24cbaf0ff0565e3acbfe22e",
-      "bytes": 6310,
+      "sha256": "791f24f8d2152b95b2d68bb9536a326586b6d20336049e49363c2b413ea975c0",
+      "bytes": 6424,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -1527,6 +1533,30 @@
       "category": "product-source-or-build-manifest"
     },
     {
+      "path": "crates/core/database/src/models/activity_blocks/mod.rs",
+      "sha256": "2864a0b89a66597dd0167b08f398218bb8a4dc0219a78e468f7b702cdf21f9a0",
+      "bytes": 219,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/src/models/activity_blocks/ops.rs",
+      "sha256": "7ae0a38d1f4a965e875d49f41d9c8162c24fdba4670e4dc170b242c3f82807b1",
+      "bytes": 733,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/src/models/activity_blocks/ops/mongodb.rs",
+      "sha256": "6f1dac9177e342d5f92fdbe91ad0f0b5dbc62322decddd2a5bcd5f27b3d2ce2b",
+      "bytes": 1573,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/src/models/activity_blocks/ops/reference.rs",
+      "sha256": "edf20233d3e1bb1d36b6a016f8706621982ed1dbb0821e5a8b605216cfd8aa59",
+      "bytes": 1208,
+      "category": "product-source-or-build-manifest"
+    },
+    {
       "path": "crates/core/database/src/models/admin_migrations/mod.rs",
       "sha256": "074570ce3a070c32d70d1bb85660132eb31ae2859b449b0ef0541c792a9ce22f",
       "bytes": 55,
@@ -1552,14 +1582,14 @@
     },
     {
       "path": "crates/core/database/src/models/admin_migrations/ops/mongodb/init.rs",
-      "sha256": "f00623cbcbe5d97bf9369c6702a4e71f06a6293e14aa7f65d86c9033924ef6de",
-      "bytes": 13596,
+      "sha256": "b015e2d892ba048a0f2b17b88cbd1dfb4714a5813b689e8cf5d23251ad58d244",
+      "bytes": 13658,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/database/src/models/admin_migrations/ops/mongodb/scripts.rs",
-      "sha256": "24472b4f4061264c9c8b858a5a29c3cbba9fec263e82ff7cfc9f80d6894d7f13",
-      "bytes": 178629,
+      "sha256": "93f4f3046fa85f27e7c3cc33f44ff9801323279278b4b4aa4c29f0118424a6ea",
+      "bytes": 180365,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -1630,8 +1660,8 @@
     },
     {
       "path": "crates/core/database/src/models/badges/auto.rs",
-      "sha256": "186b06c25bbd6c32063ca7f13e39c11af04223f20081d192a5de475a2ebc888a",
-      "bytes": 6523,
+      "sha256": "0ba8c6018cf608e66cd16518aaccc12fd89122827a36a9558c1bc65cdf9a1db7",
+      "bytes": 6535,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -1672,8 +1702,8 @@
     },
     {
       "path": "crates/core/database/src/models/billing/logic.rs",
-      "sha256": "f6e4bec50e2e4f1ab4a9cd2bd6d35cdf4e2a7fd5de7c3ff30b6ef5e7c4b34ebf",
-      "bytes": 14796,
+      "sha256": "cf6718eef9ed3ab7fb0811341b058f8809564698f7be53af113a61891f456b2a",
+      "bytes": 14908,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -1744,8 +1774,8 @@
     },
     {
       "path": "crates/core/database/src/models/billing/vanity.rs",
-      "sha256": "9fd86c8895a3d272a88c5db0a820f9e04259f41f6cad1e23b3a73465e861cbfd",
-      "bytes": 7553,
+      "sha256": "a69b4d17980a4804431ac307b29598aaee18e6f7e8b8eeb89dc11391653e04a9",
+      "bytes": 21372,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -1786,8 +1816,8 @@
     },
     {
       "path": "crates/core/database/src/models/bots/model.rs",
-      "sha256": "2cd4d62cf868b7d18946623a3b966fced74d284b0233bdf9b0a15f93d653cbad",
-      "bytes": 21910,
+      "sha256": "071f6cffa3a026e39cffb5e031e38eb1cf816d8c10f713d5ae557d9cc4ee543e",
+      "bytes": 21943,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -1846,8 +1876,8 @@
     },
     {
       "path": "crates/core/database/src/models/channel_unreads/model.rs",
-      "sha256": "0451e627d30046390ee052a7b628c4a9d04787447a01d4e431f2bb335f260ae9",
-      "bytes": 757,
+      "sha256": "e2ef46992722fea8611011e51102f2868fbe8da7b2cb2dad38ad5f358d12975c",
+      "bytes": 9425,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -1858,14 +1888,14 @@
     },
     {
       "path": "crates/core/database/src/models/channel_unreads/ops/mongodb.rs",
-      "sha256": "3467fea4a86f38370c3c2d3c796cfad3019212bcdc97330f601fd1d2ca77eeb6",
-      "bytes": 5140,
+      "sha256": "c788eee3d0b50a82871f0713607dd7cce9bdf0dd6a88c4d50651515aa437bb1f",
+      "bytes": 6186,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/database/src/models/channel_unreads/ops/reference.rs",
-      "sha256": "c2011b3d21f3edd09c60e6119f1629aa7021ac86247e28ebbe627be4d4f286d6",
-      "bytes": 4260,
+      "sha256": "3525e26fd1b313aec5e154cd79b818758205b1fcd13cc0abc55a00943ad9797f",
+      "bytes": 4630,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -1948,8 +1978,8 @@
     },
     {
       "path": "crates/core/database/src/models/community_items/model.rs",
-      "sha256": "a256e3d3f9bdd9143f69bef908fffb37efe3334336147bb2ff08256e0a0b0e9d",
-      "bytes": 9803,
+      "sha256": "c57e2b27c263ede51c8e2ccf365ae4bb2fadd994ff8108d6564b8e21e8550f0c",
+      "bytes": 9880,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -1960,14 +1990,14 @@
     },
     {
       "path": "crates/core/database/src/models/community_items/ops/mongodb.rs",
-      "sha256": "990f5da94a5271ae6c010ff083b7a42fd844502d4470706ed1e87588b3a810be",
-      "bytes": 14985,
+      "sha256": "f01cdaddca815aac6480f51e4ffa7ba8b6d8b91022c38c8539c71d81c07462c8",
+      "bytes": 15167,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/database/src/models/community_items/ops/reference.rs",
-      "sha256": "323e15a98cafec939f18d041161e1fea8d39982ee97f5e151d95018664516844",
-      "bytes": 11348,
+      "sha256": "234d53eff737c6f3a756fbd5170e4c1c4b64f2a6b22cdd4dbc1df84f21b9f338",
+      "bytes": 11802,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -2050,20 +2080,20 @@
     },
     {
       "path": "crates/core/database/src/models/file_hashes/ops.rs",
-      "sha256": "42979c448f1cea0fb8b9b10e2f658d9ed30fdec69501990236bc09fe193f9e97",
-      "bytes": 1173,
+      "sha256": "95cf2ec07ba32898fbafe64cf258cf7a971ee4f3120fb36ee50e72d609542088",
+      "bytes": 3167,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/database/src/models/file_hashes/ops/mongodb.rs",
-      "sha256": "408a119ea514618207c045ddc28cdb2d7e44e35c4ac66bcf71d4af7b473f8336",
-      "bytes": 3148,
+      "sha256": "621e409ec27e663e1e8a7848988204370a36a96dd46519194a10e6a0bdf8a0b6",
+      "bytes": 3556,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/database/src/models/file_hashes/ops/reference.rs",
-      "sha256": "7f036b42c735f717364d99c79f693d6b17fdd778723426d96f50064d1cab605f",
-      "bytes": 2737,
+      "sha256": "2444b4d022320b6e7bab70975e4209fefeab53569b2e8a040b34965041960907",
+      "bytes": 3151,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -2170,20 +2200,20 @@
     },
     {
       "path": "crates/core/database/src/models/messages/ops.rs",
-      "sha256": "63ff9dde945e4c5313fc08c344e4d0d69464294a4a1b157ea70841197888891d",
-      "bytes": 4542,
+      "sha256": "dacda143b908c94980a510081907bf9eb8fe7a25faa27b1e349dc8cb4d7309dc",
+      "bytes": 5138,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/database/src/models/messages/ops/mongodb.rs",
-      "sha256": "f204be1b64cb51af5dc53544735bf66781bf06ab48f892cd68e64bcb817e7824",
-      "bytes": 25475,
+      "sha256": "733e787c05da12f1811fe932e14f185bfa3b106a3da2769863d00950c3d896e3",
+      "bytes": 27431,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/database/src/models/messages/ops/reference.rs",
-      "sha256": "58c71c60f71131e3de750ef18f34711df11f1049b6a1561ee97d5eb22b3b58dd",
-      "bytes": 17578,
+      "sha256": "c3902b807b652de09a8c48b320b77cd195aad14fcb9e6b8d1e939c845e862c53",
+      "bytes": 18583,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -2242,8 +2272,8 @@
     },
     {
       "path": "crates/core/database/src/models/mod.rs",
-      "sha256": "4504707d4663b090a1cb99f2f0d1f3c1d82a2c73e100340929647debcfd43746",
-      "bytes": 4735,
+      "sha256": "34f5827e72d40aa91bb0ded383b533381ada8b67c1b2be503d8c5f91116e105d",
+      "bytes": 4830,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -2470,8 +2500,8 @@
     },
     {
       "path": "crates/core/database/src/models/ratelimit_events/model.rs",
-      "sha256": "ee9c27bbf466b799ee349032a39f6441b7e553d3d6f4c4b260ff7a563f1eb709",
-      "bytes": 1091,
+      "sha256": "0d61ddc3ad6d0e5e9f3c0ca1c15d644c91758b8ed5c78376002ca9bcf516b0ef",
+      "bytes": 1192,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -2758,8 +2788,8 @@
     },
     {
       "path": "crates/core/database/src/models/server_members/ops/reference.rs",
-      "sha256": "5aceaf663df332596c7021ab6aaf1228deb0599b043e505a43290f47e4178d89",
-      "bytes": 8204,
+      "sha256": "c90d8046e4ac985db8c8a1c2ffe32922227fc19bb6078a6e5a6d85114978dba0",
+      "bytes": 9217,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -2770,8 +2800,8 @@
     },
     {
       "path": "crates/core/database/src/models/servers/model.rs",
-      "sha256": "b2cfbc9d5f40cb2fa42dd0ed938386c7751d4fe111768e3f8d19d9709dfab03e",
-      "bytes": 43001,
+      "sha256": "67659a25c0a401202375eaa13ce431a84eba9b12b58ca350ada664d982847a26",
+      "bytes": 43597,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -2788,8 +2818,8 @@
     },
     {
       "path": "crates/core/database/src/models/servers/ops/reference.rs",
-      "sha256": "1aeb45b2a1eb71ca88457b1b65ac93e7b12be8a027153f09db7a063e63cfdba7",
-      "bytes": 5189,
+      "sha256": "00bd4d95905245ab9de43f7f46e2995bf9418d0ec40c2ced7df1d37b373eb7ca",
+      "bytes": 5734,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -3028,8 +3058,8 @@
     },
     {
       "path": "crates/core/database/src/models/users/model.rs",
-      "sha256": "f434c0af62914ddc4efd6ebee1ca0f23211043ae29fa287b3ffe86667a791c6d",
-      "bytes": 67298,
+      "sha256": "29f4933bb4623f0f548e3272d79a3a71ddf06742fc3a4df1e01ff094a3a982b9",
+      "bytes": 78795,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -3135,9 +3165,15 @@
       "category": "product-source-or-build-manifest"
     },
     {
+      "path": "crates/core/database/src/staff_deletion.rs",
+      "sha256": "28994c76be13ed97e0843e925c0be68d62410c48039b3527fdc90825b9bde2ab",
+      "bytes": 18750,
+      "category": "product-source-or-build-manifest"
+    },
+    {
       "path": "crates/core/database/src/tasks/ack.rs",
-      "sha256": "02b560d3f7a79ada11af2a2a375fbe26c5dff0de4a435dbd4cfd48aa733cfde7",
-      "bytes": 11257,
+      "sha256": "75fbe63744f8cf71aecc299bf02c5eb6663f0e0ab5e0d3dd13be596087c05afd",
+      "bytes": 11271,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -3162,6 +3198,12 @@
       "path": "crates/core/database/src/util/acker.rs",
       "sha256": "87c6aa8cf3e362bfba67f0e3a948b494fec784bf7a239ec6c329527558a5ee88",
       "bytes": 8902,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/core/database/src/util/activity.rs",
+      "sha256": "6277c3f7cb25b59758dd4e07eaeb3556ee313ec4d04c5f291cccc690e1f11e75",
+      "bytes": 43531,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -3190,8 +3232,8 @@
     },
     {
       "path": "crates/core/database/src/util/bridge/v0.rs",
-      "sha256": "2a753ae3b6bf22c3bbc6f5cb7744eda1327b1c83e55e1ef0239c49185906a175",
-      "bytes": 90481,
+      "sha256": "7a2a8ecadeb4376eac86c09d382844de67775299d5762d9f488181e40f74fc7e",
+      "bytes": 91124,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -3214,8 +3256,8 @@
     },
     {
       "path": "crates/core/database/src/util/cdn_purge.rs",
-      "sha256": "15c508cc3048e55dc1f02cdc65d0ba5e1bab3b4f5adbd895a2822b2f3b38cbdd",
-      "bytes": 10879,
+      "sha256": "a40fe5ec031e7a929106ca0d4243f6ee448d9b77c267ae5e294b17e39fdd3e65",
+      "bytes": 11734,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -3280,8 +3322,8 @@
     },
     {
       "path": "crates/core/database/src/util/mod.rs",
-      "sha256": "0bf9faf5fe7f3bb4d8c0b1b952cc0357b7e86dbaed2dece63d662d98dab63053",
-      "bytes": 774,
+      "sha256": "0823a16c8077c557d77a925c5f5664e958ad503906f2f7e8e97f03e532641d2b",
+      "bytes": 792,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -3574,14 +3616,14 @@
     },
     {
       "path": "crates/core/files/src/implementation/s3_impl.rs",
-      "sha256": "d856982f9e009cc9d2ed294ee1dca84a0ed2cd71ea1e15400a94653fdb66d42c",
-      "bytes": 3317,
+      "sha256": "5f6564de05f9ff209fdd1f9c098cb6e4e1021e8a388454f56796420294d10b1f",
+      "bytes": 11896,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/files/src/lib.rs",
-      "sha256": "a663cd6ec4b92067f0027aae734109b0f5ab01a0caf49309dec9560fe3c347fd",
-      "bytes": 7484,
+      "sha256": "0a43f7f64909500f5110fe82d703068f352eeeb46bc83ff42aac221daa87d94f",
+      "bytes": 9083,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -3705,6 +3747,12 @@
       "category": "product-source-or-build-manifest"
     },
     {
+      "path": "crates/core/models/src/v0/activities.rs",
+      "sha256": "0fb8c64eb3c47119fad08651b22fda8e6990c5bd2f20e5d9479c52fa742ea361",
+      "bytes": 6834,
+      "category": "product-source-or-build-manifest"
+    },
+    {
       "path": "crates/core/models/src/v0/applications.rs",
       "sha256": "952b9450e1a4c5c14e6deb90b94f806319b7ea0373605678e9ed96bc68318f70",
       "bytes": 30612,
@@ -3766,8 +3814,8 @@
     },
     {
       "path": "crates/core/models/src/v0/community.rs",
-      "sha256": "310f5f96316e86ce7285fae58209427e1faf10de288ea452a452c092bbc8d84c",
-      "bytes": 15949,
+      "sha256": "8a6b30e83990bdf0d64177067991b0104baffe45edc1acd3094af82a08a38e00",
+      "bytes": 16041,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -3802,8 +3850,8 @@
     },
     {
       "path": "crates/core/models/src/v0/interactions.rs",
-      "sha256": "1d0d6f981aa158fdf383f95de6b1f82123be3dcfb2a265b91a1fa987a1af507c",
-      "bytes": 15799,
+      "sha256": "4436a29ccce963bd094f3917bd4145cbeb8828d42fab20032cdb10ed76267e5a",
+      "bytes": 15836,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -3832,14 +3880,14 @@
     },
     {
       "path": "crates/core/models/src/v0/mod.rs",
-      "sha256": "747ab1ef9ecd4a5d32439a2de8726d0c1f7f54391137c35be273492273e672b7",
-      "bytes": 1617,
+      "sha256": "c688c96a623819e599071b37cd565523ae0b7e6596afeed4445b264f62d661be",
+      "bytes": 1656,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/models/src/v0/oauth.rs",
-      "sha256": "b9aed4641b3d44d2aff240adfe8cdf5097bcdac9898f66d5809b91f6b3d9eac5",
-      "bytes": 7999,
+      "sha256": "182f23e65c90c9a905dc09c7ea6754f6c55a9661cc0611daefca37faeb8958e4",
+      "bytes": 8844,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -3898,8 +3946,8 @@
     },
     {
       "path": "crates/core/models/src/v0/servers.rs",
-      "sha256": "c1d9298ed06d4c81eaf16e3d319270b5cb2e008bb782ee52d481733d28260ad3",
-      "bytes": 46654,
+      "sha256": "87b44e42afe76515da283bed83bd9c1fa309504b40353782159013d7565ca84d",
+      "bytes": 49268,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -3916,8 +3964,8 @@
     },
     {
       "path": "crates/core/models/src/v0/trust_safety.rs",
-      "sha256": "662ee8c7addf42e1464178b51c50eb77505df80057625faeb4bf9ec4a56c6edc",
-      "bytes": 38770,
+      "sha256": "6c8c78ae2361dd5a603728e515f2c8a4c192778323d47ed31670673d93843f39",
+      "bytes": 39391,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -3928,8 +3976,8 @@
     },
     {
       "path": "crates/core/models/src/v0/users.rs",
-      "sha256": "323b7f31cbc4ace5efdadf20b3cc090035ae0b17a6d68869a662c54243dbb520",
-      "bytes": 38934,
+      "sha256": "d4e6603846cfdb190c55fa433b2c4adcd0dda3f40d0ce0e853d17ee2a3f7b110",
+      "bytes": 46555,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -3988,8 +4036,8 @@
     },
     {
       "path": "crates/core/permissions/src/models/channel.rs",
-      "sha256": "70c555979d07e8a8521b0af1073477a3cb79167aa97c3e4688a77226ce23a7e2",
-      "bytes": 7320,
+      "sha256": "74330986ad55b0f64ba0d671e1e65e85894596b27a6c3fac829bd8197bc5605b",
+      "bytes": 8297,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4036,8 +4084,8 @@
     },
     {
       "path": "crates/core/presence/src/lib.rs",
-      "sha256": "f05619f66cb9b3f4f562e52423f7c2ed8fcc67ddac55bd14e645a5b43fd9480c",
-      "bytes": 8592,
+      "sha256": "f40f330632faf550d77505bd89c072865f1e88315d9aefce905636077a214ce1",
+      "bytes": 9861,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4090,20 +4138,20 @@
     },
     {
       "path": "crates/core/result/error-codes.txt",
-      "sha256": "47ee134c728ff79e7b0207dd62b094149e838af535c33208444fd25c7cd767bc",
-      "bytes": 3124,
+      "sha256": "10b690b455575371204afa5f0f68257c32a84ca00a5aa812e8097e442a07f329",
+      "bytes": 3142,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/result/src/axum.rs",
-      "sha256": "8de519076e41fda4719bbf416a3a70aca5d5c257e300210916e2b96e7ac3e985",
-      "bytes": 12521,
+      "sha256": "33d9e03c35d38bb84a2418cbfd9d14f5050c4e193c80fd0d0c5328e096661340",
+      "bytes": 12595,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/result/src/lib.rs",
-      "sha256": "d0c8892eb0845fe37da6f107723991e171b219dbd6d06fb3b548e085721782d4",
-      "bytes": 24439,
+      "sha256": "206864eede6a3af954993c7a65aef620d099eb8a925576291c7f10963095aaee",
+      "bytes": 24964,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4114,8 +4162,8 @@
     },
     {
       "path": "crates/core/result/src/rocket.rs",
-      "sha256": "be1e4f9c098b31d5b608764430fb48f120bd1b85f28d064cab621a9c8ffeac19",
-      "bytes": 12532,
+      "sha256": "1f86fe3d71327690816ba403c4ccb101b26d0eb2e13779c969ec23d673cf5188",
+      "bytes": 12602,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4138,8 +4186,8 @@
     },
     {
       "path": "crates/daemons/crond/src/main.rs",
-      "sha256": "32081f19c7cc3bc1c7effa6ffff514ea69e4be87c9595ab5629373bb1043c454",
-      "bytes": 3233,
+      "sha256": "4e989ee605f3d853242d85b4d1abb06566272f29d017a7f70e8b30f66f4ceacf",
+      "bytes": 3306,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4192,8 +4240,8 @@
     },
     {
       "path": "crates/daemons/crond/src/tasks/file_deletion.rs",
-      "sha256": "768cbe7647239e6237f88de99e30853f616b8f1ff636a208d97f7d924ab5bc8f",
-      "bytes": 2025,
+      "sha256": "f84c15d4ee828154f663a9b6f3356e8c162522c576db836d4f047c0e3f63035a",
+      "bytes": 7814,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4204,8 +4252,8 @@
     },
     {
       "path": "crates/daemons/crond/src/tasks/mod.rs",
-      "sha256": "6221b5431870cd2fab3767fb7c3d68b1a25c45b15da6e8919fd5bc5fa4fa2d7c",
-      "bytes": 516,
+      "sha256": "917250ae19f7e75f6f3df96f4da26221f7d9bd3fbfb3cf6b71fc7ba08cafe99a",
+      "bytes": 538,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4260,6 +4308,12 @@
       "path": "crates/daemons/crond/src/tasks/team_volunteers.rs",
       "sha256": "14949c14f4b3a476942efbccec64cf3bb805df0869965ee796c04b1771f7525f",
       "bytes": 1970,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/daemons/crond/src/tasks/vanity_links.rs",
+      "sha256": "3c0a62e63c7233a1d544ee4f31af3d1ea609f9932622db7fd103ccde8a61e71d",
+      "bytes": 1737,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4318,8 +4372,8 @@
     },
     {
       "path": "crates/daemons/pushd/src/consumers/inbound/mass_mention.rs",
-      "sha256": "7638f3401fb9495a2f3bd75847ead19ee19578f34a0ae51a8b09b70f7dcb5a5a",
-      "bytes": 9299,
+      "sha256": "4c0eea0d2bf4e0dae92b74ec8ce10922d7588e459f0a8597d48de39b2f3e1ab1",
+      "bytes": 9360,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4444,8 +4498,8 @@
     },
     {
       "path": "crates/delta/Dockerfile",
-      "sha256": "cf381c95f47ab0a2683617172bdf6a33b8a2459fb32a5e707c065c171199c737",
-      "bytes": 483,
+      "sha256": "3ac197535a1d55a877b8c3945647d2f90230e68e7f29c67d83bdc1ad4536e85f",
+      "bytes": 628,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4456,20 +4510,20 @@
     },
     {
       "path": "crates/delta/assets/official/ar.json",
-      "sha256": "b6ac3b88b3a5a249db7e16161806ac8ca01c82ab6404e37e82e639374cfb80d7",
-      "bytes": 21172,
+      "sha256": "c68ab5e559ab252451e485c55b015bc9fef966fd1800fdddde3ed644f29e2390",
+      "bytes": 22957,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/delta/assets/official/de.json",
-      "sha256": "8c0641e46d0d9288c83b8dd8e5ff3065035a866675a3590c1742d10596d393da",
-      "bytes": 19422,
+      "sha256": "e3ff9045b6779dcd134def360fcac7a07ecbf12e4a5360c36d11a6716020a987",
+      "bytes": 21011,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/delta/assets/official/en.json",
-      "sha256": "398072c83769205ffb1359328e182e75882e9ab7c44ff0ee58890580449bce0e",
-      "bytes": 17854,
+      "sha256": "4d43bbdd73d7b0a7c3635bd64640343adba1eeb8c06f63edea88ffcf42b3079c",
+      "bytes": 19278,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4528,14 +4582,14 @@
     },
     {
       "path": "crates/delta/src/bin/zrzur-staff.rs",
-      "sha256": "21c9df59213c730950c1e9c376bcd39feab18223e11eb76ba4f441517057f095",
-      "bytes": 9160,
+      "sha256": "7e5033aa23135c02ac3239fc75b26237df384a654897c4b7e42ee7ce5de42e72",
+      "bytes": 11056,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/delta/src/main.rs",
-      "sha256": "b3032565a998ec5473880d009c7289937ce88992a6063f18bf9c63280ba25d89",
-      "bytes": 5135,
+      "sha256": "f5928be7e03c1a27841f7806f4e54788cf1926d839147f83f92734374549b46a",
+      "bytes": 5261,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4762,8 +4816,8 @@
     },
     {
       "path": "crates/delta/src/routes/bots/delete.rs",
-      "sha256": "d6f4954bcfafa86f8ad9581f6fd84bc39f084df930abbc715af38325783270cb",
-      "bytes": 5477,
+      "sha256": "f99966c6bd78e5d6e27b3e8f645bc9aa1e05f36f9300a70e96e2a9843121085d",
+      "bytes": 5783,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4798,8 +4852,8 @@
     },
     {
       "path": "crates/delta/src/routes/bots/edit.rs",
-      "sha256": "0381395020ee855d234511e01f925595e55fdce5e46e2ea6c681be546b084ec8",
-      "bytes": 9687,
+      "sha256": "7a9ac8e788f20823105235af2c916e13df3abff46a487d4ee0c168d319252ba7",
+      "bytes": 10135,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4846,8 +4900,8 @@
     },
     {
       "path": "crates/delta/src/routes/bots/mod.rs",
-      "sha256": "dd152cbb57249bf5e6d7dca5c16cd47c6716bb5cb741d7d7776de911e7571e06",
-      "bytes": 1260,
+      "sha256": "145a5c56e9a1f6c295adfbbba5f576cab2f771e08a078c121c6239cf690ae60a",
+      "bytes": 1271,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4888,8 +4942,8 @@
     },
     {
       "path": "crates/delta/src/routes/channels/channel_ack.rs",
-      "sha256": "6ddaa2f5dca6be0b69059164825455a6a3db0142caf1bdeba7a2f1a88257a4c6",
-      "bytes": 2641,
+      "sha256": "5833f1e1e34fecaf8dd1ccbd91f016e36f6218a7e11e3fdc36dfc87a9cc1b24e",
+      "bytes": 5345,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -5206,14 +5260,14 @@
     },
     {
       "path": "crates/delta/src/routes/community/mod.rs",
-      "sha256": "43fd9295e12601a1ec380175a33fc1c320d16a071476fb1f068d2b89dfe07c6b",
-      "bytes": 54369,
+      "sha256": "dca8385f2395d407919d039c9629d98f597aa4fd319692ea2abbd12e13a0f180",
+      "bytes": 56900,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/delta/src/routes/community/test.rs",
-      "sha256": "87acd1c03b6c776fd0f1ed484813174762e6df0b0b3a16cc816b3a0fe937ac22",
-      "bytes": 84715,
+      "sha256": "f508672cc2519ea108775343dd324126f3ccca0619fd4a3218acc2b943f96d4f",
+      "bytes": 89278,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -5278,8 +5332,8 @@
     },
     {
       "path": "crates/delta/src/routes/discover/list_servers.rs",
-      "sha256": "68c962307134faa50a8a98b46d1c487b0d7ac76e331cc9147baa135a0b14d87c",
-      "bytes": 10757,
+      "sha256": "d3e599fe55e0d89fda8e4d5cb467e9b8dbbd98ec2ebac03d4c2d94a2a0a1f1f6",
+      "bytes": 10838,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -5332,8 +5386,8 @@
     },
     {
       "path": "crates/delta/src/routes/interactions/create.rs",
-      "sha256": "6afe1dccb86f4ee999b23bc0ca65ab2c33c3957d22eac352cfc0140e20562aba",
-      "bytes": 35377,
+      "sha256": "e2ea7821088edd6b737b003908bb658f7f08c74e1fcabee5953a9e34dbb0d02b",
+      "bytes": 37413,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -5374,8 +5428,8 @@
     },
     {
       "path": "crates/delta/src/routes/interactions/tests.rs",
-      "sha256": "0d66d2cc9f4568eef41faa15514d94c3764d2201909dea426f2ded5b67cce5e0",
-      "bytes": 22527,
+      "sha256": "5c07774105bc39abb8af95454bfb0ef2c996d55e2041e1ce5e22e96f5a42139c",
+      "bytes": 23945,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -5470,8 +5524,8 @@
     },
     {
       "path": "crates/delta/src/routes/oauth/authorize.rs",
-      "sha256": "d1ccf24b32815d9370ec0796c79f4d0b41a01858a12473f32931af522940788d",
-      "bytes": 7841,
+      "sha256": "349c7d578b539e43ca720c8601c75d183189db73f49f5e0a33f5b184aa5abf2d",
+      "bytes": 7460,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -5482,20 +5536,20 @@
     },
     {
       "path": "crates/delta/src/routes/oauth/mod.rs",
-      "sha256": "4c97e342c032372480ced673556fe12b57bb6402bd97ff37c83ed88080cce2dc",
-      "bytes": 3662,
+      "sha256": "a112cf71f972cc8016f863d9cd703687387897292f8f2dd775c661439eef4f19",
+      "bytes": 4653,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/delta/src/routes/oauth/resources.rs",
-      "sha256": "20ba6fab4a1995326ad4a7cd09fe1033aaa54faafcccf8ea64d73be651d30fb7",
-      "bytes": 3410,
+      "sha256": "c6831347446a353678d708c3f732ae113eecc27a1e5fdcbf3aa624eb052d31a5",
+      "bytes": 4305,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/delta/src/routes/oauth/tests.rs",
-      "sha256": "512285c6d9d5dc75bcfd1018245b5fc4842a1f5e2991f2142b752ccbd05197ac",
-      "bytes": 23409,
+      "sha256": "6ae5d4cc40a07f1e45ac723deb37ad9e996ffc8bd6580353de8f44e99ee0a29e",
+      "bytes": 29537,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -5578,20 +5632,20 @@
     },
     {
       "path": "crates/delta/src/routes/root.rs",
-      "sha256": "724b9e2ed0f201165fc2ab792ae0d0f478eec2de7a75003317a5fe21a483c11b",
-      "bytes": 20887,
+      "sha256": "0ce5f0a00f5a557ac8f9ac7321f24a5bac7a9492e4717e1c7327e9136b1dd658",
+      "bytes": 21713,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/delta/src/routes/safety/actions.rs",
-      "sha256": "fafa19c4941fe2e93fab1edcd38ea5af7609d1c99b11ee5990ca06c5cf613bf5",
-      "bytes": 40306,
+      "sha256": "6fcbaad05368d116efdfdd958c5674121ac736872cbe395917151bcc08fe8b53",
+      "bytes": 42995,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/delta/src/routes/safety/appeals.rs",
-      "sha256": "2b6c1279ec17bcb1dbd29d9ccfec0962069502a5799b9f5f0493800bcb0d8815",
-      "bytes": 13229,
+      "sha256": "797e4b8922b45f2640d1a9cc1daac7dd8b13945f0aefd275c1ecdbf1dac10172",
+      "bytes": 13373,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -5626,14 +5680,14 @@
     },
     {
       "path": "crates/delta/src/routes/safety/targets.rs",
-      "sha256": "fdd2c131d2b5dab6df8313c325ef36da9a8feb733be7e7e68cc670d2bc1ad6be",
-      "bytes": 23950,
+      "sha256": "3189c8509981b4bf8cc6a6ed919318dde6cc97a5d7f6fec5d8826f24bf0e0b2f",
+      "bytes": 24556,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/delta/src/routes/safety/test.rs",
-      "sha256": "deaa38b20f1e38d66be3538cc9c245b74a4b200ae3b7021f4d56c0bd1cd4d1f4",
-      "bytes": 72678,
+      "sha256": "bf4457bf71d07f69542813899200fe1ad49fbb902d6c96ba8605a05397218c2e",
+      "bytes": 78656,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -5866,8 +5920,8 @@
     },
     {
       "path": "crates/delta/src/routes/servers/mod.rs",
-      "sha256": "9a5ae5f94deac3fb9fa6c7bb46e23d9069f9e4aad3e8174111dc01b25abbbdc0",
-      "bytes": 4904,
+      "sha256": "45ce1355370fab9c8f8c6a6d365c72cc5afe81a5cf5ba9781e11e4c0fcb60fce",
+      "bytes": 4944,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -5956,8 +6010,8 @@
     },
     {
       "path": "crates/delta/src/routes/servers/server_delete.rs",
-      "sha256": "4c2aca2aa1775c85108687228ef2dcac54650c29ecbbe05c16b30f802dc53a6a",
-      "bytes": 4888,
+      "sha256": "c650a387f743041e228eecae4c017fa1b95bfcccb96b1eb26fa1bca13d205442",
+      "bytes": 5029,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6004,8 +6058,8 @@
     },
     {
       "path": "crates/delta/src/routes/servers/vanity.rs",
-      "sha256": "2e7bb5e2a55f3b83fc3e476a0adbe1b36c0028e28cd83740d00e2c1ba3720ec5",
-      "bytes": 20110,
+      "sha256": "4877962e99999b65f46706d5b8ee0255e7f2be57fb5dd1304d7f793733ff8f63",
+      "bytes": 40150,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6100,8 +6154,8 @@
     },
     {
       "path": "crates/delta/src/routes/staff/bots.rs",
-      "sha256": "30c7d647dd73714aae4e836504e0245e2f84b3d5e24373c7463163f689d4c4e8",
-      "bytes": 15007,
+      "sha256": "5ad12537d5c26d689d6e3cda65bdae08ed2868a77cdbf64afa7b2788980abc23",
+      "bytes": 16542,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6112,14 +6166,20 @@
     },
     {
       "path": "crates/delta/src/routes/staff/content.rs",
-      "sha256": "f4113bcbb80ff5bc49bd1013ca38732b2c97301446ee5b713254ba3a9b982bc3",
-      "bytes": 9308,
+      "sha256": "c3ae8f55915dd37267e0aec7557842d4e5211da9f4e7fe78b467762d61b41cc8",
+      "bytes": 9365,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/delta/src/routes/staff/creators.rs",
       "sha256": "8d3d2dab2289a9ad11cce6b1d8ff718f6c0d9ceb611251f1961cf1dfd7dd956f",
       "bytes": 3903,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/delta/src/routes/staff/deletion.rs",
+      "sha256": "223ffff6fbff49a36f603978432ff83fe96da0ab15cba584e9748e840c0f1d72",
+      "bytes": 3803,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6142,8 +6202,8 @@
     },
     {
       "path": "crates/delta/src/routes/staff/mod.rs",
-      "sha256": "4656d2e8d6b3ddaaacd0dee87a0baeb4ed13e64e183481caa32263a26804c022",
-      "bytes": 23238,
+      "sha256": "763f1a8a554cc0ff94f40e849d5ab5814edf481f9e1822a3821876b08e593df0",
+      "bytes": 23306,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6172,8 +6232,8 @@
     },
     {
       "path": "crates/delta/src/routes/staff/safety.rs",
-      "sha256": "cf352e6c726d79f77b82a393501f3fecb3c7544561799073110fb687947071ee",
-      "bytes": 16792,
+      "sha256": "0bf1e01e592943c649300ae3f7d50e2142608e89f17ee9401bcb691de6b7a78f",
+      "bytes": 16830,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6184,8 +6244,8 @@
     },
     {
       "path": "crates/delta/src/routes/staff/servers.rs",
-      "sha256": "99726b112b3703cf805330eaf7b1deeae4559ac117ab2299a2daa09c678483ca",
-      "bytes": 5204,
+      "sha256": "4e6dabf2a0171ed24b75728796f710b5cbaaee65711ab0ef1fa10bb3de1f76bf",
+      "bytes": 7343,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6202,8 +6262,14 @@
     },
     {
       "path": "crates/delta/src/routes/staff/test.rs",
-      "sha256": "708c733660fe7eb0ce7aecec9da10ce168f75d1576b55699bd89aeb02928e663",
-      "bytes": 129774,
+      "sha256": "8c42dcce045c7302e26252d2a09a829526b704f32db4b3e44a2af4f9cb49df0e",
+      "bytes": 132372,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/delta/src/routes/staff/test_delete.rs",
+      "sha256": "599455329e47d09963f4af0bed9433ede2e2a13824bba196278838901aed86d0",
+      "bytes": 29636,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6267,9 +6333,21 @@
       "category": "product-source-or-build-manifest"
     },
     {
+      "path": "crates/delta/src/routes/users/activity_tests.rs",
+      "sha256": "77038f1a709c33ee16cada104954d9ea26c110da12e3c38cfcb7997696f7e6de",
+      "bytes": 16805,
+      "category": "product-source-or-build-manifest"
+    },
+    {
       "path": "crates/delta/src/routes/users/add_friend.rs",
       "sha256": "553733a9b17c456f2402d56c16fdf44391c4cfd2b543be0fe7b8c59a46d1ab2b",
       "bytes": 737,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/delta/src/routes/users/appearance_fanout_tests.rs",
+      "sha256": "890bd4e595ba6ba509f2cc2f3f0a66662a8715036051450411224dc1f454a3f3",
+      "bytes": 13562,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6340,8 +6418,8 @@
     },
     {
       "path": "crates/delta/src/routes/users/connections.rs",
-      "sha256": "e31a35df5e7b653fe55aa94498af4af6836f5737af5034fdca19efb9b38ca0ff",
-      "bytes": 15887,
+      "sha256": "f64ec4326f53d80083f252129822ddf268638a11468eac33d99b0b006bdd3cc5",
+      "bytes": 16264,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6364,8 +6442,8 @@
     },
     {
       "path": "crates/delta/src/routes/users/edit_user.rs",
-      "sha256": "156d8705bf5c442c9db8b917188853c10f72971c224645ebe7dbea348110e1ff",
-      "bytes": 12225,
+      "sha256": "dfc9ba9810408f3c7363068e3e7a01ea6d5deb8f6c3360d58aa3b4e9fd3fef8e",
+      "bytes": 13293,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6418,8 +6496,8 @@
     },
     {
       "path": "crates/delta/src/routes/users/mod.rs",
-      "sha256": "7f0882ac6aa2fa42a9db67e6b72dc014f7072106bcdc94fbcd7a5a4ce17c3b0c",
-      "bytes": 2329,
+      "sha256": "7afc7e1f06a948fc3707fde2e2248f87d373e80f59afac782c508c67dddafdb1",
+      "bytes": 2404,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6430,8 +6508,8 @@
     },
     {
       "path": "crates/delta/src/routes/users/privacy.rs",
-      "sha256": "6eae58fa9b0fd40991a7f89051f4d3c89e9dc0e79f12e62424e112a332fd50cf",
-      "bytes": 20924,
+      "sha256": "7025dbac89aa00bf5e66587fe3d806830e445ac082ef023b116c3a00b0223b56",
+      "bytes": 23315,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6820,8 +6898,8 @@
     },
     {
       "path": "crates/delta/src/util/mod.rs",
-      "sha256": "ed4ac47fd9f82905320067ff252607cf81a1412f0508cfc9cf151e67f9871afc",
-      "bytes": 318,
+      "sha256": "03670e503cfaea30174e83f83ff0c28008c8b15de0947cda1f4f1e62754aa6f8",
+      "bytes": 345,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6832,8 +6910,8 @@
     },
     {
       "path": "crates/delta/src/util/official.rs",
-      "sha256": "07a7a9c4271cdfb7afa7347255f8a68a6bee5b1ea7b95710fb73a4370bdc6189",
-      "bytes": 38052,
+      "sha256": "f53733c7ca49792f99545e3eb2fb171fb166410d9d60e9c5e0ac1b92756a9a9b",
+      "bytes": 38371,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6844,8 +6922,8 @@
     },
     {
       "path": "crates/delta/src/util/ratelimits.rs",
-      "sha256": "a5038c25abb9c0718eff9f12e739a6261e4680cc751cde68d815e135a63dbf92",
-      "bytes": 15559,
+      "sha256": "439076100dcc32181f14b0265286d11caeead6d65fde57e56de3ede3693e9deb",
+      "bytes": 17429,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6856,8 +6934,14 @@
     },
     {
       "path": "crates/delta/src/util/steam.rs",
-      "sha256": "f5f1c81088a173c546bfb3e697d698020a5feb27d2642526b3b0074b2ac41131",
-      "bytes": 34140,
+      "sha256": "62507c1ef7ad32271c9efb7996cd2d6db5d35d864c4946d24a221c7dac2f26e1",
+      "bytes": 37093,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/delta/src/util/steam_now_playing.rs",
+      "sha256": "d13e180a8b658a6fc5fe0fc5247109394c57877f71778315877633e8ae101a23",
+      "bytes": 9585,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6886,8 +6970,8 @@
     },
     {
       "path": "crates/services/autumn/Cargo.toml",
-      "sha256": "ef3cceacb377fb71a02e4937af1a43b594969579a612e3658ca69e3ca00d8706",
-      "bytes": 1958,
+      "sha256": "1a06661941764d0a07ff5c5ea9937cc339bd6dca6d159c17ffe152d67291c2ab",
+      "bytes": 1995,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6898,8 +6982,8 @@
     },
     {
       "path": "crates/services/autumn/src/api.rs",
-      "sha256": "2387f013b3babc2012f57316437dd0d0a188353dedf757a1aa50d62297fd3682",
-      "bytes": 45818,
+      "sha256": "1c49d510da56cbbb2c2ced268b04d19afe70c410abefb59d880f02f90444f2d8",
+      "bytes": 51981,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6910,8 +6994,8 @@
     },
     {
       "path": "crates/services/autumn/src/cache.rs",
-      "sha256": "2054adb291f627c556052d370ae5bb8a532bae3b44b89f7e2d8a0bee80f2abb5",
-      "bytes": 4985,
+      "sha256": "349775862612c42a343c23bdcb0b400d458f741a53dd6648eeaf8f7b3c5690f0",
+      "bytes": 11094,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6922,8 +7006,8 @@
     },
     {
       "path": "crates/services/autumn/src/effects.rs",
-      "sha256": "8bb410df32127964262cedd0c95464b2ecbb7b695f3c188066859c3c21944e4b",
-      "bytes": 51467,
+      "sha256": "121fe9b12e5d104a831d5242fa9c4f34041a2fe1d839e5e4c48aa24c3b0723b1",
+      "bytes": 56027,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6940,8 +7024,8 @@
     },
     {
       "path": "crates/services/autumn/src/main.rs",
-      "sha256": "fe00264f0ef2171bce8f16af29a1c7c16ed9773d3b1d53eec714509013faf441",
-      "bytes": 4373,
+      "sha256": "568669d6dd8e97fd426d9d20da72391d277d6a539a0dc6546f56874924b41c3f",
+      "bytes": 4400,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6964,8 +7048,8 @@
     },
     {
       "path": "crates/services/autumn/src/ratelimits.rs",
-      "sha256": "c4a0aef06dae42d8ac73cd20843ad3e0edd9576a05c34ecb8a7fb3e2b6169613",
-      "bytes": 2371,
+      "sha256": "d01774fe3e5a92be3ff75e592c02c49ab29a1fd7d01ba5dae0e66ef26cf93c0f",
+      "bytes": 4019,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6984,6 +7068,18 @@
       "path": "crates/services/autumn/src/utils.rs",
       "sha256": "017364e591ecaaec66ee55f4e91960336c8d55a7df287384ee93b78676fb5549",
       "bytes": 1043,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/services/autumn/src/voice.rs",
+      "sha256": "b1d68010bc2ae191c8f4153b6350e6ecb6176fe45778ebecd131bd42a560ed5d",
+      "bytes": 22796,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/services/autumn/src/voice_copy.rs",
+      "sha256": "5edf15adcd4c00ea056f2b6fc56954bdf2e1217a720f5c5116f4411ec677ab5b",
+      "bytes": 24484,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -7198,8 +7294,8 @@
     },
     {
       "path": "docs/docs/developers/api/uploading-files.md",
-      "sha256": "f58167ef94e9932a97bb84bb39f38dc7dc96da99116ecb4815f03eeb3992ba4d",
-      "bytes": 1874,
+      "sha256": "bd3e754b61f8993d61c48d4cbee7bd5cb2f36071c01950b1a6f592a4478bad70",
+      "bytes": 3377,
       "category": "public-documentation"
     },
     {
@@ -7216,14 +7312,14 @@
     },
     {
       "path": "docs/docs/developers/events/establishing.md",
-      "sha256": "d1fefe190f63c5819e16f9f9a25375edaf4ecb343ca26f3e93373cc3fc54feb6",
-      "bytes": 3802,
+      "sha256": "c16cb55bb080577e4960876e07f4dd1cca3fa93ebddc5ab98dfff4334a84a2cc",
+      "bytes": 4078,
       "category": "public-documentation"
     },
     {
       "path": "docs/docs/developers/events/protocol.md",
-      "sha256": "4e380c52874985bfa2a79a82c4723d9a39d11ae552f324b4ccbbf04e76083932",
-      "bytes": 9433,
+      "sha256": "dd0e00090f3ff2e50455237106025827390d05c282dc95ccacfcabd0d4eec7ed",
+      "bytes": 10523,
       "category": "public-documentation"
     },
     {
@@ -7408,7 +7504,7 @@
     },
     {
       "path": "scripts/check-version-selftest.sh",
-      "sha256": "c24a50c4f7f1b587b348a5715f49cc0f2cf076b848f022f9473050ba913adb65",
+      "sha256": "67a23352563b64fa64f044e6e822b9621b08c65f6403baf63855eaaf758ac20b",
       "bytes": 1327,
       "category": "reviewed-build-and-ci"
     },
