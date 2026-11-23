@@ -2106,6 +2106,12 @@ pub struct FeaturesCommunity {
     /// takes a restart of delta and autumn. Zrzur's own effects are not touched.
     #[serde(default = "community_effects_enabled")]
     pub effects_enabled: bool,
+    /// Creator profile frames are open: uploads, the gallery and wearing them.
+    /// Off (the default until they are approved) refuses new community frames
+    /// and wearing one; Zrzur's built-in frames are not touched. Takes a
+    /// restart of delta.
+    #[serde(default = "community_frames_enabled")]
+    pub frames_enabled: bool,
     /// Largest width or height of an effect in pixels
     #[serde(default = "community_max_dimension")]
     pub effect_max_dimension: u32,
@@ -2148,6 +2154,9 @@ fn community_webm_timeout_ms() -> u64 {
 fn community_effects_enabled() -> bool {
     true
 }
+fn community_frames_enabled() -> bool {
+    false
+}
 fn community_effect_max_frames() -> u32 {
     120
 }
@@ -2166,6 +2175,7 @@ impl Default for FeaturesCommunity {
             max_frames: community_max_frames(),
             max_duration_ms: community_max_duration_ms(),
             effects_enabled: community_effects_enabled(),
+            frames_enabled: community_frames_enabled(),
             effect_max_dimension: community_max_dimension(),
             effect_max_frames: community_effect_max_frames(),
             effect_max_duration_ms: community_effect_max_duration_ms(),

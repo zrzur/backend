@@ -213,9 +213,10 @@ pub async fn edit(
                 if item.kind != kind {
                     return Err(create_error!(InvalidOperation));
                 }
-                if kind == CommunityItemKind::Effect
-                    && !revolt_config::config().await.features.community.effects_enabled
-                {
+                if !crate::routes::community::kind_open(
+                    &kind,
+                    &revolt_config::config().await.features.community,
+                ) {
                     return Err(create_error!(InvalidOperation));
                 }
                 // what the user wears now, so saving other fields keeps it

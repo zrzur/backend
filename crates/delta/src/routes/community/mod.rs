@@ -80,9 +80,23 @@ fn kind_of(kind: &str) -> Result<CommunityItemKind> {
     }
 }
 
-/// Effects are a feature of their own, off until the machine check is trusted
+/// Whether creators' items of this kind are open under these settings.
+/// Effects are off until the machine check is trusted, community frames until
+/// they are approved; decorations and nameplates are always open.
+pub(crate) fn kind_open(
+    kind: &CommunityItemKind,
+    community: &revolt_config::FeaturesCommunity,
+) -> bool {
+    match kind {
+        CommunityItemKind::Effect => community.effects_enabled,
+        CommunityItemKind::Frame => community.frames_enabled,
+        CommunityItemKind::Decoration | CommunityItemKind::Nameplate => true,
+    }
+}
+
+/// Refuses a kind that is switched off (effects, community frames)
 async fn effects_open(kind: &CommunityItemKind) -> Result<()> {
-    if *kind == CommunityItemKind::Effect && !config().await.features.community.effects_enabled {
+    if !kind_open(kind, &config().await.features.community) {
         return Err(create_error!(NotFound));
     }
     Ok(())
@@ -1587,3 +1601,23 @@ pub async fn report(db: &State<Database>, user: User, id: &str) -> Result<EmptyR
 
 #[cfg(test)]
 mod test;
+
+#[cfg(test)]
+mod kind_open_tests {
+    use super::*;
+
+    #[test]
+    fn community_frames_follow_their_own_switch() {
+        let mut community = revolt_config::FeaturesCommunity::default();
+        // off by default: community frames are not approved yet
+        assert!(!community.frames_enabled);
+        assert!(!kind_open(&CommunityItemKind::Frame, &community));
+        assert!(kind_open(&CommunityItemKind::Decoration, &community));
+        assert!(kind_open(&CommunityItemKind::Nameplate, &community));
+        community.frames_enabled = true;
+        assert!(kind_open(&CommunityItemKind::Frame, &community));
+        community.effects_enabled = false;
+        assert!(!kind_open(&CommunityItemKind::Effect, &community));
+        assert!(kind_open(&CommunityItemKind::Frame, &community));
+    }
+}

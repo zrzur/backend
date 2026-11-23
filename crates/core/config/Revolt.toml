@@ -594,6 +594,10 @@ max_duration_ms = 12_000
 # the gallery and the files closed, and stops all of them at once (restart
 # delta and autumn). The file size limit is the `effects` upload limit.
 effects_enabled = false
+# Creator profile frames (`/community/frames`). Off refuses new community
+# frames and wearing one, and the gallery is empty; the built-in frames stay.
+# Not approved yet: keep off (restart delta after a change).
+frames_enabled = false
 effect_max_dimension = 1024
 effect_max_frames = 120
 effect_max_duration_ms = 4_000

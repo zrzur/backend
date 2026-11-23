@@ -76,6 +76,9 @@ pub struct RevoltFeatures {
     pub webhooks: bool,
     /// Whether profile effects are open
     pub community_effects: bool,
+    /// Whether creators' profile frames are open (uploads, the gallery,
+    /// wearing one). Zrzur's built-in frames do not depend on it
+    pub community_frames: bool,
     /// Whether plugins are open on this server. Off, every plugin route
     /// answers `PluginsDisabled` and clients load no plugin
     pub plugins: bool,
@@ -270,6 +273,7 @@ pub async fn root() -> Result<Json<RevoltConfig>> {
             invite_only: config.api.registration.invite_only,
             webhooks: config.features.webhooks_enabled,
             community_effects: config.features.community.effects_enabled,
+            community_frames: config.features.community.frames_enabled,
             plugins: config.features.plugins_enabled,
             forwarding: config.features.message_forwarding_enabled,
             polls: config.features.polls_enabled,

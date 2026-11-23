@@ -1,5 +1,51 @@
 # Changelog
 
+## 26.3.0-beta.6 (2026-11-23)
+
+### Name styles (2026-11-22)
+
+- `UserStyle.name_effect`: an effect drawn on the display name, one of `USER_STYLE_NAME_EFFECTS` (`halo`, `edge`, `lifted`, `sheen`); the client draws each one. Unknown values are refused (`unknown name_effect`).
+- `UserStyle.name_colour` takes up to five `#rrggbb` colours (`USER_STYLE_NAME_MAX_COLOURS`): one is solid, two a gradient, three to five a spectrum. A sixth colour or a value that is not `#rrggbb` is refused.
+
+### Community profile frames stay closed until approved (2026-11-23)
+
+- New setting `[features.community] frames_enabled`, off by default (the built-in `crystal` frame does not depend on it). While it is off, `POST /community/frames` and restoring a frame answer `NotFound`, `GET /community/frames` is empty, and saving a style that wears a `c:<id>` frame is refused (`InvalidOperation`). `GET /` gains `features.community_frames` so clients can hide them.
+
+### Custom invite links: 500 members (2026-11-21, owner's decision)
+
+- A server needs 500 members (was 1,000) for a custom invite link (`[features.vanity] min_members`); the four official Zrzur servers keep theirs.
+
+### Profile frames (2026-11-21, owner's request)
+
+- `UserStyle.profile_frame`: a frame drawn round the whole profile card, one of `USER_STYLE_PROFILE_FRAMES` (`crystal` for now: frames are added one at a time) or `c:<id>` for a community frame; `profile_frame_file` is filled in by the server. Validated like the other style fields; saving checks that a `c:<id>` is a published `Frame`.
+- `CommunityItemKind::Frame`, listed and created under `/community/frames` (creator rate limit as decorations). A frame file is one still PNG or WebP of exactly 800 x 1020 px with transparency, on the 400 x 510 template in `PROFILE_FRAME_TEMPLATE` (card 30,70 .. 370,470). It shares the `decorations` upload tag, so no new file-server setting is needed. Refused: another size (`frame_size`), a moving file (`frame_still`), and, in the file server, any pixel over the card's content: the card less 10 px on every side, except the crest window over the middle of the banner (`covers_content`). User-made SVG is not accepted: it can carry script; the built-in frames are drawn by the client.
+- A takedown takes a frame off its wearers like the other kinds, with its own notice in ar, en and de.
+
+### Rich presence (2026-11-22, behind `[features.rich_presence] enabled`, off by default)
+
+- Users carry `activities` (`UserActivity`: source `Rpc` / `Desktop` / `Steam`, type `Playing` / `Listening` / `Watching` / `Streaming` / `Competing` / `Using`, name, details, state, start and end, pictures, up to two buttons), the main one first. Only for users shown online: never while offline, invisible, or between two people where either blocked the other; a bot sees them only with the Presence intent. On `Ready`, user fetches, member and DM lists. `UserUpdate` carries the whole list (`[]` clears); going offline sends `[]` with `online: false`.
+- New gateway message `SetActivity { source, activity }` from a person's own session (`Rpc` or `Desktop`; `Steam` is the server's). Every text is checked (lengths, one line of plain text: control characters, line and paragraph separators and invisible format characters are refused, the joiners U+200C/U+200D allowed), run through the platform word list; buttons are `https://` only; a picture is kept on the file server or proxy, any other `https://` picture is shown through the proxy. 5 changes in 20 seconds per person (Redis counter; `updates_per_window`, `window_seconds`). A refusal is the event `ActivityRefused { source, error }` (`FeatureDisabled`, `IsBot`, `RateLimited`, `FailedValidation`, `ProfileTextFiltered`) and the connection stays open. Application ids may hold letters, digits, `.`, `_` and `-` (64 at most).
+- Never stored in MongoDB: a Redis hash `activity:{user_id}` holds one entry per source. What a session set goes when its socket goes; the last session removes all (also after a crash, through `clear_region`); the hash expires after a day at the latest. A value is stored only while the person has a session (one Redis script: no write for someone who just went offline).
+- Privacy (legal check RP-01, RP-02): `UserPrivacy.share_activity` is off for everyone until the person turns it on (unset = off; answers carry the value in force); `share_steam_activity` off until chosen; `activity_intro_seen` notes that the one-time question was answered. Accounts under 18, with no stated age, or whose age cannot be read count as under 18: `activity_friends_only` (set by the server) and only friends get the activity, whatever the switch. Turning sharing off removes what others see at once; while it is off `SetActivity` is ignored. Every privacy change is sent to the person's own sessions as `PrivacyUpdate { privacy }`.
+- Gateway: a session's Redis subscriber holds up to 512 events (fred's default was 32) and follows all its topics with one command. An update about someone comes once per server they are in; someone in many servers whose app sent an activity right after `Ready` lost the connection without a word. A full queue that still ends a session is now logged, and the client is told to connect again at once (close 1013, "try again") for a fresh Ready. Topics added or removed later go in one command each way, never an empty one.
+- Activities go to servers with at most `broadcast_max_members` (1,000) members; bigger servers get none (member counts cached).
+- Reports and staff (RP-07): a user report keeps a copy of the activities the reporter could see. Staff actions `ClearActivity`, `BlockActivityApp` and `BlockActivityPicture` (with `activity_value`) clear or block platform-wide (collection `activity_blocks`, indexed by value and by case: `PENDING_ACTIVITY_BLOCKS_INDEX`), each with a statement of reasons through the safety path; reversing the action lifts the block. A blocked app or picture is refused with `ProfileTextFiltered { category: "ActivityBlocked" }`.
+- Steam "now playing" (`steam_enabled`): delta reads `GetPlayerSummaries` (game id and name only) for people online, visible, sharing Steam and linked under the current consent text, 100 accounts a call, at most `steam_daily_calls` (20,000) a day, rounds every `steam_interval_seconds` (60) or slower to stay within it; one delta at a time (Redis lock). Pictures go through the proxy unless the game is in `no_picture_appids`. Unlinking Steam, withdrawing the consent or no longer qualifying clears the Steam activity at once and tells everyone who saw it.
+- Going invisible or coming back sends the list again (empty to others while invisible).
+- `GET /` gains `features.rich_presence` and `features.rich_presence_steam`.
+
+### Dependency security (2026-11-22)
+
+- The gateway (bonfire) moves to `async-tungstenite` 0.23, so `tungstenite` 0.20.1: the 0.17 line let one client slow the server down with a crafted handshake (GHSA-9mcr-873m-xcxp). The protocol, limits and messages are unchanged.
+- Mail moves to `lettre` 0.11.22 (was 0.10.4; GHSA-4pj9-g833-qx53, which only hit the Boring TLS backend; Zrzur uses native TLS, which checks the host name). This also drops `idna` 0.3.
+- Logging moves to `pretty_env_logger` 0.5, which drops `atty` (no fixed version exists; GHSA-g98v-hv3f-hcfr).
+- The API's build script no longer uses `vergen`: nothing read its variables, and it pulled in `git2` 0.16 and `libgit2` 1.5 (GHSA-22q8-ghmq-63vf, GHSA-j39j-6gw9-jw6h). The build script still watches the checked-out commit for `ZRZUR_GIT_COMMIT`.
+
+### Speed: a compressed first answer and files that are not downloaded twice (2026-11-21)
+
+- **Gateway (bonfire):** a client that connects with `?compression=deflate` (JSON format only) gets every frame of 16 KB or more as a binary frame holding its raw DEFLATE stream (fast level, compressed before the socket is locked) (RFC 1951, what a browser's `DecompressionStream("deflate-raw")` reads); smaller frames stay text. The first answer (`Ready`) shrinks to about a fifth for a large account. Clients that do not ask, msgpack clients and bots get exactly the frames they got before. Behind `features.gateway_compression_enabled` (off by default; `REVOLT__FEATURES__GATEWAY_COMPRESSION_ENABLED=true`). New dependency `flate2` (already in the lockfile, through image crates).
+- **File server (autumn):** public files and their previews carry an `ETag` (the content hash with the variant: original, preview, small preview, per tag), and a request whose `If-None-Match` holds it gets `304 Not Modified` without the file (and without reading it from storage). Before, a browser whose copy was older than `max-age` downloaded every avatar and icon again in full. Preview validators carry a render version and the tag's configured size, so a changed rendering is fetched again. A `Range` request with an `If-Range` naming the same validator keeps its range. Private files (drafts, designs under review) get no validator: they are never stored.
+
 ## 26.3.0-beta.5 (2026-11-23)
 
 ### Voice messages recorded after 26.3.0-beta.4 play again
@@ -66,38 +112,6 @@
 - The consent page's `bot.install` server list carries the same fields.
 - **Changed:** in an interaction's `user_permissions`, the server-wide bits (Manage Server, Manage Roles, Kick, Ban, Timeout, Assign Roles, nicknames and avatars, Audit Log, Join Requests, Administrator, Manage Soundboard, Manage Events) are what the person holds on the server. A channel or category override no longer adds or removes them, so a bot that checks Manage Server there can't be fooled by a channel. Channel bits still follow the channel. New `SERVER_ONLY_PERMISSIONS` in `revolt-permissions`.
 
-## Unreleased
-
-### Profile frames (2026-11-21, owner's request)
-
-- `UserStyle.profile_frame`: a frame drawn round the whole profile card, one of `USER_STYLE_PROFILE_FRAMES` (`crystal` for now: frames are added one at a time) or `c:<id>` for a community frame; `profile_frame_file` is filled in by the server. Validated like the other style fields; saving checks that a `c:<id>` is a published `Frame`.
-- `CommunityItemKind::Frame`, listed and created under `/community/frames` (creator rate limit as decorations). A frame file is one still PNG or WebP of exactly 800 x 1020 px with transparency, on the 400 x 510 template in `PROFILE_FRAME_TEMPLATE` (card 30,70 .. 370,470). It shares the `decorations` upload tag, so no new file-server setting is needed. Refused: another size (`frame_size`), a moving file (`frame_still`), and, in the file server, any pixel over the card's content: the card less 10 px on every side, except the crest window over the middle of the banner (`covers_content`). User-made SVG is not accepted: it can carry script; the built-in frames are drawn by the client.
-- A takedown takes a frame off its wearers like the other kinds, with its own notice in ar, en and de.
-
-## Unreleased
-
-### Rich presence (2026-11-22, behind `[features.rich_presence] enabled`, off by default)
-
-- Users carry `activities` (`UserActivity`: source `Rpc` / `Desktop` / `Steam`, type `Playing` / `Listening` / `Watching` / `Streaming` / `Competing` / `Using`, name, details, state, start and end, pictures, up to two buttons), the main one first. Only for users shown online: never while offline, invisible, or between two people where either blocked the other; a bot sees them only with the Presence intent. On `Ready`, user fetches, member and DM lists. `UserUpdate` carries the whole list (`[]` clears); going offline sends `[]` with `online: false`.
-- New gateway message `SetActivity { source, activity }` from a person's own session (`Rpc` or `Desktop`; `Steam` is the server's). Every text is checked (lengths, one line of plain text: control characters, line and paragraph separators and invisible format characters are refused, the joiners U+200C/U+200D allowed), run through the platform word list; buttons are `https://` only; a picture is kept on the file server or proxy, any other `https://` picture is shown through the proxy. 5 changes in 20 seconds per person (Redis counter; `updates_per_window`, `window_seconds`). A refusal is the event `ActivityRefused { source, error }` (`FeatureDisabled`, `IsBot`, `RateLimited`, `FailedValidation`, `ProfileTextFiltered`) and the connection stays open. Application ids may hold letters, digits, `.`, `_` and `-` (64 at most).
-- Never stored in MongoDB: a Redis hash `activity:{user_id}` holds one entry per source. What a session set goes when its socket goes; the last session removes all (also after a crash, through `clear_region`); the hash expires after a day at the latest. A value is stored only while the person has a session (one Redis script: no write for someone who just went offline).
-- Privacy (legal check RP-01, RP-02): `UserPrivacy.share_activity` is off for everyone until the person turns it on (unset = off; answers carry the value in force); `share_steam_activity` off until chosen; `activity_intro_seen` notes that the one-time question was answered. Accounts under 18, with no stated age, or whose age cannot be read count as under 18: `activity_friends_only` (set by the server) and only friends get the activity, whatever the switch. Turning sharing off removes what others see at once; while it is off `SetActivity` is ignored. Every privacy change is sent to the person's own sessions as `PrivacyUpdate { privacy }`.
-- Gateway: a session's Redis subscriber holds up to 512 events (fred's default was 32) and follows all its topics with one command. An update about someone comes once per server they are in; someone in many servers whose app sent an activity right after `Ready` lost the connection without a word. A full queue that still ends a session is now logged, and the client is told to connect again at once (close 1013, "try again") for a fresh Ready. Topics added or removed later go in one command each way, never an empty one.
-- Activities go to servers with at most `broadcast_max_members` (1,000) members; bigger servers get none (member counts cached).
-- Reports and staff (RP-07): a user report keeps a copy of the activities the reporter could see. Staff actions `ClearActivity`, `BlockActivityApp` and `BlockActivityPicture` (with `activity_value`) clear or block platform-wide (collection `activity_blocks`, indexed by value and by case: `PENDING_ACTIVITY_BLOCKS_INDEX`), each with a statement of reasons through the safety path; reversing the action lifts the block. A blocked app or picture is refused with `ProfileTextFiltered { category: "ActivityBlocked" }`.
-- Steam "now playing" (`steam_enabled`): delta reads `GetPlayerSummaries` (game id and name only) for people online, visible, sharing Steam and linked under the current consent text, 100 accounts a call, at most `steam_daily_calls` (20,000) a day, rounds every `steam_interval_seconds` (60) or slower to stay within it; one delta at a time (Redis lock). Pictures go through the proxy unless the game is in `no_picture_appids`. Unlinking Steam, withdrawing the consent or no longer qualifying clears the Steam activity at once and tells everyone who saw it.
-- Going invisible or coming back sends the list again (empty to others while invisible).
-- `GET /` gains `features.rich_presence` and `features.rich_presence_steam`.
-
-## Unreleased
-
-### Dependency security (2026-11-22)
-
-- The gateway (bonfire) moves to `async-tungstenite` 0.23, so `tungstenite` 0.20.1: the 0.17 line let one client slow the server down with a crafted handshake (GHSA-9mcr-873m-xcxp). The protocol, limits and messages are unchanged.
-- Mail moves to `lettre` 0.11.22 (was 0.10.4; GHSA-4pj9-g833-qx53, which only hit the Boring TLS backend; Zrzur uses native TLS, which checks the host name). This also drops `idna` 0.3.
-- Logging moves to `pretty_env_logger` 0.5, which drops `atty` (no fixed version exists; GHSA-g98v-hv3f-hcfr).
-- The API's build script no longer uses `vergen`: nothing read its variables, and it pulled in `git2` 0.16 and `libgit2` 1.5 (GHSA-22q8-ghmq-63vf, GHSA-j39j-6gw9-jw6h). The build script still watches the checked-out commit for `ZRZUR_GIT_COMMIT`.
-
 ## 26.3.0-beta.2 (2026-11-21)
 
 ### The owner's /badge command (2026-11-21)
@@ -151,13 +165,6 @@
 - New staff routes for the admin console (Team page): `GET /staff/team`, `GET /staff/team/{id}`, `POST /staff/team/{id}/identity`, `/confirm`, `/counting`, `/away`, `/note`, `/remove`. Each needs the `TeamManage` staff permission; every act is written to the platform audit log before it happens.
 - Texts for volunteers in seven languages (en, ar, de, fr, es, ru, zh-Hans) in `crates/delta/assets/team/<language>.json`. The account data export carries the person's own volunteer records.
 - One database migration: indexes for the volunteer collections (`PENDING_TEAM_VOLUNTEER_INDEXES`), safe to run twice.
-
-## Unreleased
-
-### Speed: a compressed first answer and files that are not downloaded twice (2026-11-21)
-
-- **Gateway (bonfire):** a client that connects with `?compression=deflate` (JSON format only) gets every frame of 16 KB or more as a binary frame holding its raw DEFLATE stream (fast level, compressed before the socket is locked) (RFC 1951, what a browser's `DecompressionStream("deflate-raw")` reads); smaller frames stay text. The first answer (`Ready`) shrinks to about a fifth for a large account. Clients that do not ask, msgpack clients and bots get exactly the frames they got before. Behind `features.gateway_compression_enabled` (off by default; `REVOLT__FEATURES__GATEWAY_COMPRESSION_ENABLED=true`). New dependency `flate2` (already in the lockfile, through image crates).
-- **File server (autumn):** public files and their previews carry an `ETag` (the content hash with the variant: original, preview, small preview, per tag), and a request whose `If-None-Match` holds it gets `304 Not Modified` without the file (and without reading it from storage). Before, a browser whose copy was older than `max-age` downloaded every avatar and icon again in full. Preview validators carry a render version and the tag's configured size, so a changed rendering is fetched again. A `Range` request with an `If-Range` naming the same validator keeps its range. Private files (drafts, designs under review) get no validator: they are never stored.
 
 ## 26.2.0 (2026-11-20)
 

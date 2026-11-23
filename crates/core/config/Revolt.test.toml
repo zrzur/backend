@@ -22,6 +22,7 @@ plugins_enabled = true
 
 [features.community]
 effects_enabled = true
+frames_enabled = true
 
 [features.rich_presence]
 enabled = true
