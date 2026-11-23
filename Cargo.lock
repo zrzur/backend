@@ -7281,6 +7281,7 @@ dependencies = [
  "async-channel",
  "async-tungstenite",
  "bincode",
+ "flate2",
  "fred",
  "futures",
  "log",

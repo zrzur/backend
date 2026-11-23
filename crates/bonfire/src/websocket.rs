@@ -242,11 +242,19 @@ async fn client_with_limits(
     let Ok(mut config) = receiver.await else {
         return;
     };
+    // compressed frames only where the server allows them
+    config.allow_compression(
+        revolt_config::config()
+            .await
+            .features
+            .gateway_compression_enabled,
+    );
 
     info!(
-        "User {addr:?} provided protocol configuration (version = {}, format = {:?})",
+        "User {addr:?} provided protocol configuration (version = {}, format = {:?}, compression = {:?})",
         config.get_protocol_version(),
-        config.get_protocol_format()
+        config.get_protocol_format(),
+        config.get_compression()
     );
 
     // Split the socket for simultaneously read and write.
@@ -422,8 +430,9 @@ async fn client_with_limits(
         *session_id = gateway_session_id.clone();
     }
 
-    if report_internal_error!(write.lock().await.send(config.encode(&ready_payload)).await).is_err()
-    {
+    // serialised (and compressed) before the socket is locked
+    let ready_frame = config.encode(&ready_payload);
+    if report_internal_error!(write.lock().await.send(ready_frame).await).is_err() {
         return;
     }
 
@@ -1527,6 +1536,16 @@ mod socket_tests {
     type Socket = async_tungstenite::WebSocketStream<tokio_util::compat::Compat<TcpStream>>;
 
     async fn connect(db: &'static Database, token: &str, check_every: StdDuration) -> Socket {
+        connect_with(db, token, check_every, "").await
+    }
+
+    /// `connect` with more query parameters (`extra` starts with `&`)
+    async fn connect_with(
+        db: &'static Database,
+        token: &str,
+        check_every: StdDuration,
+        extra: &str,
+    ) -> Socket {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         tokio::spawn(async move {
@@ -1535,7 +1554,7 @@ mod socket_tests {
         });
 
         let stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
-        let url = format!("ws://127.0.0.1:{port}/?format=json&version=1&token={token}");
+        let url = format!("ws://127.0.0.1:{port}/?format=json&version=1&token={token}{extra}");
         async_tungstenite::client_async(url, stream.compat())
             .await
             .unwrap()
@@ -1582,6 +1601,32 @@ mod socket_tests {
         db.delete_session(&session.id).await.unwrap();
 
         expect_logout_and_close(&mut socket).await;
+    }
+
+    /// The shipped settings have `gateway_compression_enabled = false`: a
+    /// client that asks for compression still gets every frame as text
+    #[tokio::test]
+    async fn with_the_switch_off_a_client_asking_for_compression_gets_text() {
+        let db = database().await;
+        let session = person(db).await;
+        let mut socket = connect_with(db, &session.token, NEVER, "&compression=deflate").await;
+        loop {
+            let message = tokio::time::timeout(PATIENCE, socket.next())
+                .await
+                .expect("the socket stayed open and silent")
+                .expect("the socket ended before Ready")
+                .expect("a frame");
+            match message {
+                Message::Binary(_) => panic!("a binary frame although the switch is off"),
+                Message::Text(text) => {
+                    let event: serde_json::Value = serde_json::from_str(&text).unwrap();
+                    if event["type"] == "Ready" {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 
     #[tokio::test]
