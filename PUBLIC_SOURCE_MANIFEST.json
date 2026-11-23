@@ -202,8 +202,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "b387abebc8d95d2c03da0f25521986bf69d79a5f6db78de5d8602b8718a9b89c",
-      "bytes": 134877,
+      "sha256": "7e37cb52cc7f0a8d6055a12ef48828f5265788aaf29a831fa2eb42cc469c7e1d",
+      "bytes": 135897,
       "category": "public-documentation"
     },
     {
@@ -358,8 +358,8 @@
     },
     {
       "path": "crates/bonfire/src/events/impl.rs",
-      "sha256": "5d490851a518f2bf2e8b7155b66fcd8fe079ca0e02e93ba0f34b13ea7f87e059",
-      "bytes": 52511,
+      "sha256": "e676463f161c690bcd8e2f8f306846fa511f69c875958e3a4580de4a160dd424",
+      "bytes": 54358,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -376,8 +376,8 @@
     },
     {
       "path": "crates/bonfire/src/events/tests.rs",
-      "sha256": "1c4609ff4c37ba7a48b00ffda937d90a095c65315f2fbbf2c0b736107c30bca4",
-      "bytes": 59674,
+      "sha256": "53e4f6ace8e34ec246d75e28ac07fea608fa7efa3b22fba42c1f1d978d91d7b5",
+      "bytes": 67192,
       "category": "product-source-or-build-manifest"
     },
     {
