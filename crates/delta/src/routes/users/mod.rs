@@ -2,6 +2,8 @@ use revolt_rocket_okapi::revolt_okapi::openapi3::OpenApi;
 use rocket::Route;
 
 mod add_friend;
+#[cfg(test)]
+mod appearance_fanout_tests;
 mod block_user;
 mod change_username;
 pub(crate) mod connections;

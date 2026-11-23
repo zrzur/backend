@@ -77,19 +77,22 @@ pub async fn edit_bot(
     }
     if let Some(name) = data.name {
         let previous = user.username.clone();
-        user.update_username(db, v0::bot_username(&name)).await?;
+        // the username and the display name change one after the other: the
+        // servers the bot is in hear about the new name once, at the end
+        let mut renamed = user.update_username_held(db, v0::bot_username(&name)).await?;
         match v0::bot_display_name(&name) {
             // a name with spaces is shown as typed
             Some(display_name) => {
-                user.update(
-                    db,
-                    revolt_database::PartialUser {
-                        display_name: Some(display_name),
-                        ..Default::default()
-                    },
-                    vec![],
-                )
-                .await?
+                renamed |= user
+                    .update_held(
+                        db,
+                        revolt_database::PartialUser {
+                            display_name: Some(display_name),
+                            ..Default::default()
+                        },
+                        vec![],
+                    )
+                    .await?
             }
             // a name without one: the display name made from the old name
             // goes, so the new name shows; one set some other way stays
@@ -98,10 +101,18 @@ pub async fn edit_bot(
                 .as_deref()
                 .is_some_and(|shown| shown.replace(' ', "_") == previous) =>
             {
-                user.update(db, Default::default(), vec![revolt_database::FieldsUser::DisplayName])
+                renamed |= user
+                    .update_held(
+                        db,
+                        Default::default(),
+                        vec![revolt_database::FieldsUser::DisplayName],
+                    )
                     .await?
             }
             None => {}
+        }
+        if renamed {
+            user.announce_appearance(db);
         }
     }
 
