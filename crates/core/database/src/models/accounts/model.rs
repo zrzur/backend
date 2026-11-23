@@ -582,20 +582,20 @@ impl Account {
             // an error counts as "has content", so nothing is erased by mistake
             if !db.user_has_content(&account.id).await.unwrap_or(true) {
                 if let Err(error) = account.erase_completely(db).await {
-                    log::warn!("Could not erase unconfirmed account {}: {error:?}", account.id);
+                    log::warn!("Could not erase an unconfirmed account: {error:?}");
                 }
                 continue;
             }
 
             if let Ok(mut user) = db.fetch_user(&account.id).await {
                 if let Err(error) = user.delete(db).await {
-                    log::warn!("Could not delete user {}: {error:?}", account.id);
+                    log::warn!("Could not delete the user of an unconfirmed account: {error:?}");
                     continue;
                 }
             }
             account.provisional = None;
             if let Err(error) = account.mark_deleted(db).await {
-                log::warn!("Could not delete unconfirmed account {}: {error:?}", account.id);
+                log::warn!("Could not delete an unconfirmed account: {error:?}");
             }
         }
 
@@ -639,7 +639,7 @@ impl Account {
             .close_sessions_over_limit(db, &session.id, config.api.sessions.limit)
             .await
         {
-            log::warn!("Could not apply the session limit to {}: {error:?}", self.id);
+            log::warn!("Could not apply the session limit: {error:?}");
         }
 
         Ok(session)
@@ -1056,22 +1056,22 @@ impl Account {
         db.delete_reminders_of(&self.id).await?;
         db.remove_account(&self.id).await?;
         if let Err(error) = db.delete_staff_sessions_for_user(&self.id).await {
-            log::warn!("Could not remove the staff sessions of {}: {error:?}", self.id);
+            log::warn!("Account erase: could not remove the staff sessions: {error:?}");
         }
 
         if let Err(error) = self.delete_all_sessions(db, None).await {
-            log::warn!("Could not remove the sessions of {}: {error:?}", self.id);
+            log::warn!("Account erase: could not remove the sessions: {error:?}");
         }
         if let Ok(mut user) = db.fetch_user(&self.id).await {
             if let Err(error) = user.delete(db).await {
-                log::warn!("Could not remove user {}: {error:?}", self.id);
+                log::warn!("Account erase: could not remove the user: {error:?}");
             }
             if let Err(error) = db.delete_user(&self.id).await {
-                log::warn!("Could not remove user {}: {error:?}", self.id);
+                log::warn!("Account erase: could not remove the user: {error:?}");
             }
         }
         if let Err(error) = db.delete_user_settings(&self.id).await {
-            log::warn!("Could not remove the settings of {}: {error:?}", self.id);
+            log::warn!("Account erase: could not remove the settings: {error:?}");
         }
         db.remove_data_exports_for_user(&self.id).await.ok();
         // again, in case a request in flight saved it in the meantime
