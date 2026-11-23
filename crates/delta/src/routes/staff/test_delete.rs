@@ -58,6 +58,15 @@ async fn stepped_up_owner(harness: &TestHarness) -> (Member, String) {
     (owner, token)
 }
 
+/// The custom link rule (`vanity_eligibility`) met by a one-member server
+/// with no messages, the same way the vanity tests lower it, so these tests
+/// can claim a link and check that a staff delete frees it
+fn rule_met_by_any_server(config: &mut revolt_config::Settings) {
+    config.features.vanity.min_members = 1;
+    config.features.vanity.active_messages = 0;
+    config.features.vanity.active_authors = 0;
+}
+
 fn delete_body(reason: &str) -> Value {
     json!({ "action": "delete", "reason": reason })
 }
@@ -70,6 +79,7 @@ fn count(actions: &[(String, String)], action: &str, outcome: &str) -> usize {
 async fn staff_delete_removes_a_server_and_frees_its_custom_link() {
     overwrite_config(|config| {
         config.features.billing.enabled = false;
+        rule_met_by_any_server(config);
     })
     .await;
     let harness = TestHarness::new().await;
@@ -134,6 +144,7 @@ async fn an_official_server_is_never_deleted() {
 async fn deleting_a_server_never_frees_another_servers_link() {
     overwrite_config(|config| {
         config.features.billing.enabled = false;
+        rule_met_by_any_server(config);
     })
     .await;
     let harness = TestHarness::new().await;
