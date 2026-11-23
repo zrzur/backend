@@ -608,3 +608,39 @@ async fn every_modmail_command_reaches_the_bot_in_a_thread() {
         }
     }
 }
+
+/// A channel override can't make someone a server manager for a bot: the
+/// server-wide bits in `user_permissions` come from the server and roles,
+/// while channel bits still follow the channel
+#[rocket::async_test]
+async fn channel_overrides_never_grant_server_wide_bits() {
+    use revolt_permissions::{ChannelPermission, OverrideField};
+
+    let mut s = setup().await;
+    let server_wide = ChannelPermission::ManageServer as u64
+        | ChannelPermission::BanMembers as u64
+        | ChannelPermission::Administrator as u64;
+    let manage_messages = ChannelPermission::ManageMessages as u64;
+    s.channel
+        .set_member_permission(
+            &s.harness.db,
+            &s.user.id,
+            OverrideField {
+                a: (server_wide | manage_messages) as i64,
+                d: 0,
+            },
+        )
+        .await
+        .unwrap();
+
+    let mut bot_events = PubSubTestHelper::new(&format!("{}!", s.bot.id)).await;
+    let (status, _) = s
+        .invoke(s.body("mask", json!([{ "type": "String", "name": "name", "value": "x" }])))
+        .await;
+    assert_eq!(status, Status::Ok);
+    let interaction = next_interaction(&mut bot_events).await;
+    let held: u64 = interaction.user_permissions_string.parse().unwrap();
+    assert_eq!(held, interaction.user_permissions);
+    assert_eq!(held & server_wide, 0, "{held:#x}");
+    assert_ne!(held & manage_messages, 0, "{held:#x}");
+}

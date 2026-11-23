@@ -7,8 +7,11 @@
 //! Access tokens only work on `/oauth2/@me...`: they never act as the user
 //! on the rest of the API, so scopes cannot bypass any permission.
 
-use revolt_database::{Bot, Database};
-use revolt_models::v0::{parse_scopes, oauth_limits, oauth_scopes};
+use revolt_database::{
+    util::permissions::DatabasePermissionQuery, Bot, Database, Member, Server, User,
+};
+use revolt_models::v0::{parse_scopes, oauth_limits, oauth_scopes, OAuthServer};
+use revolt_permissions::{calculate_server_permissions, ChannelPermission};
 use revolt_result::{create_error, Result};
 use revolt_rocket_okapi::revolt_okapi::openapi3::OpenApi;
 use rocket::Route;
@@ -37,6 +40,29 @@ pub fn invalid(error: impl Into<String>) -> revolt_result::Error {
     create_error!(FailedValidation {
         error: error.into()
     })
+}
+
+/// A server as an OAuth2 app sees it, with what `user` may do there
+/// (server-wide: the owner, the default permissions and the roles; never a
+/// channel's overrides). `member` is the user's membership, already loaded.
+pub async fn oauth_server(
+    db: &Database,
+    user: &User,
+    member: &Member,
+    server: Server,
+) -> OAuthServer {
+    let mut query = DatabasePermissionQuery::new(db, user)
+        .server(&server)
+        .member(member);
+    let permissions = calculate_server_permissions(&mut query).await;
+    OAuthServer {
+        owner: server.owner == user.id,
+        can_manage: permissions.has_channel_permission(ChannelPermission::ManageServer),
+        permissions: u64::from(permissions).to_string(),
+        id: server.id,
+        name: server.name,
+        icon: server.icon.map(Into::into),
+    }
 }
 
 /// Everything about an authorization request that does not depend on the user

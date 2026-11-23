@@ -10,6 +10,15 @@
 
 - A session's Redis subscriber holds up to 512 events (fred's default was 32) and follows all its topics with one command. An update about someone is published once per server they are in; someone in many servers (221 in the test) whose app sent something right after `Ready` lost the connection every time, without a word. A full queue that still ends a session is now logged, and the client is told to connect again at once (close 1013, "try again") for a fresh Ready. Topics added or removed later go in one command each way, never an empty one.
 
+### OAuth2: the server list says who may manage (security, 2026-11-22)
+
+- `GET /oauth2/@me/servers` lists every server the user is a member of, and nothing said whether they may manage it; its type was described as "A server the user can install the app into". Bot dashboards that took the list as "servers you manage" let plain members change a bot's settings for the whole server. Each entry now has `owner`, `can_manage` (owner or Manage Server) and `permissions` (server-wide, a decimal string; channel overrides never count). `?manageable=true` lists only the servers the user can manage. Additive: old fields are unchanged.
+- A staff account's override never reaches a third-party site: through OAuth2 it holds what its roles give.
+- `manageable` takes only `true` or `false`; anything else (`1`, `yes`) is `400 FailedValidation`. The list uses the memberships it already read: no extra lookup per server.
+- Interactions: a staff account's override never reaches a bot either; `user_permissions` is what the person holds through the server.
+- The consent page's `bot.install` server list carries the same fields.
+- **Changed:** in an interaction's `user_permissions`, the server-wide bits (Manage Server, Manage Roles, Kick, Ban, Timeout, Assign Roles, nicknames and avatars, Audit Log, Join Requests, Administrator, Manage Soundboard, Manage Events) are what the person holds on the server. A channel or category override no longer adds or removes them, so a bot that checks Manage Server there can't be fooled by a channel. Channel bits still follow the channel. New `SERVER_ONLY_PERMISSIONS` in `revolt-permissions`.
+
 ## 26.3.0-beta.2 (2026-11-21)
 
 ### The owner's /badge command (2026-11-21)
