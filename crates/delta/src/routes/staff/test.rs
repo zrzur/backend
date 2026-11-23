@@ -618,6 +618,8 @@ async fn ending_user_sessions_is_guarded() {
     let (_, victim_session, victim) = harness.new_user().await;
     let senior = member(&harness, vec![StaffRole::SeniorSupport]).await;
     let token = sign_in(&harness, &senior, 0).await;
+    // ending a user's sessions is on the step-up list
+    step_up(&harness, &senior, &token).await;
     let owner = member(&harness, vec![StaffRole::Owner]).await;
     let o_token = sign_in(&harness, &owner, 0).await;
 
@@ -1683,6 +1685,8 @@ async fn bug_reports_follow_staff_roles() {
     let (status, _) = send(&harness, &support, &support_token, Post, &format!("/staff/bugs/{secret_id}/review"),
         json!({ "action": "triage", "updated_at": secret["updated_at"] })).await;
     assert_eq!(status, Status::NotFound);
+    // security.respond is on the step-up list
+    step_up(&harness, &security, &security_token).await;
     let (status, body) = send(&harness, &security, &security_token, Post, &format!("/staff/bugs/{secret_id}/review"),
         json!({ "action": "triage", "updated_at": secret["updated_at"] })).await;
     assert_eq!(status, Status::Ok, "{body}");
@@ -2587,6 +2591,39 @@ async fn wrong_staff_codes_lock_the_account() {
     let _ = sign_in(&harness, &other, 0).await;
 }
 
+/// Other records after the wrong codes never push them out of view
+#[rocket::async_test]
+async fn step_up_missing_records_do_not_hide_wrong_codes() {
+    let harness = TestHarness::new().await;
+    let m = member(&harness, vec![StaffRole::SeniorSupport]).await;
+    let record = |action: &str| revolt_database::AuditRecord {
+        actor_id: m.user.id.clone(),
+        action: action.to_string(),
+        ..Default::default()
+    };
+    for _ in 0..5 {
+        revolt_database::record_platform_audit(
+            &harness.db,
+            record("staff.session.step_up"),
+            revolt_database::AuditOutcome::Denied,
+        )
+        .await
+        .unwrap();
+    }
+    for _ in 0..60 {
+        revolt_database::record_platform_audit(
+            &harness.db,
+            record("staff.step_up.missing"),
+            revolt_database::AuditOutcome::Denied,
+        )
+        .await
+        .unwrap();
+    }
+    let (status, body) = open(&harness, &m.session, &code(0)).await;
+    assert_ne!(status, Status::Ok, "{body}");
+    assert_eq!(body["type"], "LockedOut", "{body}");
+}
+
 /// Four recent failures still let the right code through
 #[rocket::async_test]
 async fn a_few_wrong_staff_codes_do_not_lock() {
@@ -2608,8 +2645,196 @@ async fn a_few_wrong_staff_codes_do_not_lock() {
     let _ = sign_in(&harness, &m, 0).await;
 }
 
+async fn audit_entries(harness: &TestHarness) -> Vec<revolt_database::PlatformAuditEntry> {
+    harness
+        .db
+        .fetch_platform_audit(revolt_database::PlatformAuditQuery {
+            limit: 500,
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+}
+
+/// The step-up list holds every high-risk permission, and only those
+#[test]
+fn the_step_up_list_is_the_single_list() {
+    use revolt_database::StaffPermission::{self, *};
+    let listed = [
+        UsersDeleteRequest,
+        ServersDeleteRequest,
+        BillingManage,
+        StaffManage,
+        SettingsManage,
+        UsersSessionsRevoke,
+        UsersSuspend,
+        SecurityRespond,
+    ];
+    for p in StaffPermission::ALL.iter() {
+        assert_eq!(p.needs_step_up(), listed.contains(p), "{}", p.name());
+    }
+}
+
+/// Signing a user out everywhere is on the list: without a fresh code
+/// nothing happens, with one it works
+#[rocket::async_test]
+async fn revoke_user_sessions_needs_step_up() {
+    use rocket::http::Method::Post;
+    let harness = TestHarness::new().await;
+    let (_, victim_session, victim) = harness.new_user().await;
+    let senior = member(&harness, vec![StaffRole::SeniorSupport]).await;
+    let token = sign_in(&harness, &senior, 0).await;
+    let path = format!("/staff/users/{}/revoke-sessions", victim.id);
+    let body = json!({ "reason": "account reported as compromised" });
+
+    let (status, answer) = send(&harness, &senior, &token, Post, &path, body.clone()).await;
+    assert_eq!(status, Status::Forbidden, "{answer}");
+    assert_eq!(answer["type"], "NotElevated");
+    assert!(harness.db.fetch_session_by_token(&victim_session.token).await.is_ok());
+    assert!(!audit_actions(&harness)
+        .await
+        .contains(&("staff.user.revoke_sessions".to_string(), "Success".to_string())));
+
+    step_up(&harness, &senior, &token).await;
+    let (status, answer) = send(&harness, &senior, &token, Post, &path, body).await;
+    assert_eq!(status, Status::Ok, "{answer}");
+    assert!(harness.db.fetch_session_by_token(&victim_session.token).await.is_err());
+}
+
+/// A refused step-up leaves a Denied record with the path and permission
+#[rocket::async_test]
+async fn missing_step_up_is_audited() {
+    use rocket::http::Method::Post;
+    let harness = TestHarness::new().await;
+    let (_, _, victim) = harness.new_user().await;
+    let senior = member(&harness, vec![StaffRole::SeniorSupport]).await;
+    let token = sign_in(&harness, &senior, 0).await;
+    let path = format!("/staff/users/{}/revoke-sessions", victim.id);
+
+    let (status, answer) = send(&harness, &senior, &token, Post, &path, json!({ "reason": "account reported as compromised" })).await;
+    assert_eq!(status, Status::Forbidden, "{answer}");
+    assert_eq!(answer["type"], "NotElevated");
+
+    let entries = audit_entries(&harness).await;
+    let missing = entries
+        .iter()
+        .find(|e| e.action == "staff.step_up.missing")
+        .expect("a staff.step_up.missing record");
+    assert!(matches!(missing.outcome, revolt_database::AuditOutcome::Denied));
+    assert_eq!(missing.actor_id, senior.user.id);
+    assert_eq!(missing.summary.as_deref(), Some(path.as_str()));
+    assert_eq!(missing.permission.as_deref(), Some("platform.users.sessions.revoke"));
+    assert!(missing.staff_session_id.is_some());
+    // a missing step-up is not a wrong code: it never counts towards the lockout
+    for _ in 0..6 {
+        send(&harness, &senior, &token, Post, &path, json!({ "reason": "account reported as compromised" })).await;
+    }
+    step_up(&harness, &senior, &token).await;
+}
+
+/// Security can end a staff member's sessions, but not an Owner's
+#[rocket::async_test]
+async fn security_cannot_lock_owner() {
+    use rocket::http::Method::Post;
+    let harness = TestHarness::new().await;
+    let security = member(&harness, vec![StaffRole::Security]).await;
+    let owner = member(&harness, vec![StaffRole::Owner]).await;
+    let token = sign_in(&harness, &security, 0).await;
+    let o_token = sign_in(&harness, &owner, -1).await;
+    step_up(&harness, &security, &token).await;
+
+    let lock = format!("/staff/security/members/{}/lock", owner.user.id);
+    let (status, answer) = send(&harness, &security, &token, Post, &lock, json!({ "reason": "session looks stolen" })).await;
+    assert_eq!(status, Status::Forbidden, "{answer}");
+    assert_eq!(answer["type"], "NotPrivileged");
+    // the Owner is still signed in
+    assert_eq!(get(&harness, &owner, &o_token, "/staff/me").await.0, Status::Ok);
+
+    let entries = audit_entries(&harness).await;
+    let denied = entries
+        .iter()
+        .find(|e| e.action == "staff.security.lock")
+        .expect("a staff.security.lock record");
+    assert!(matches!(denied.outcome, revolt_database::AuditOutcome::Denied));
+    assert_eq!(denied.summary.as_deref(), Some("owner target"));
+    assert_eq!(denied.target_id.as_deref(), Some(owner.user.id.as_str()));
+    assert_eq!(denied.actor_id, security.user.id);
+
+    // an Owner may lock another Owner
+    let second = member(&harness, vec![StaffRole::Owner]).await;
+    let s_token = sign_in(&harness, &second, 0).await;
+    step_up(&harness, &owner, &o_token).await;
+    let lock = format!("/staff/security/members/{}/lock", second.user.id);
+    let (status, answer) = send(&harness, &owner, &o_token, Post, &lock, json!({ "reason": "session looks stolen" })).await;
+    assert_eq!(status, Status::Ok, "{answer}");
+    assert_eq!(get(&harness, &second, &s_token, "/staff/me").await.0, Status::Unauthorized);
+}
+
+/// Ending staff sessions stays protective (no step-up) for other targets;
+/// an Owner target needs an Owner with a step-up
+#[rocket::async_test]
+async fn revoke_member_sessions_owner_target_needs_owner() {
+    use rocket::http::Method::Post;
+    let harness = TestHarness::new().await;
+    let owner = member(&harness, vec![StaffRole::Owner]).await;
+    let second = member(&harness, vec![StaffRole::Owner]).await;
+    let support = member(&harness, vec![StaffRole::Support]).await;
+    let senior = member(&harness, vec![StaffRole::SeniorSupport]).await;
+    let token = sign_in(&harness, &owner, 0).await;
+    let s_token = sign_in(&harness, &second, 0).await;
+    let support_token = sign_in(&harness, &support, 0).await;
+    let senior_token = sign_in(&harness, &senior, 0).await;
+    let body = json!({ "reason": "lost laptop" });
+
+    // a non-Owner target: protective, works without a step-up
+    let path = format!("/staff/members/{}/revoke-sessions", support.user.id);
+    let (status, answer) = send(&harness, &owner, &token, Post, &path, body.clone()).await;
+    assert_eq!(status, Status::Ok, "{answer}");
+    assert_eq!(get(&harness, &support, &support_token, "/staff/me").await.0, Status::Unauthorized);
+
+    // a non-Owner can't end an Owner's sessions
+    let path = format!("/staff/members/{}/revoke-sessions", second.user.id);
+    let (status, answer) = send(&harness, &senior, &senior_token, Post, &path, body.clone()).await;
+    assert_eq!(status, Status::Forbidden, "{answer}");
+    assert_eq!(answer["type"], "MissingPlatformPermission");
+    assert_eq!(get(&harness, &second, &s_token, "/staff/me").await.0, Status::Ok);
+
+    // an Owner target needs a step-up, even from an Owner
+    let (status, answer) = send(&harness, &owner, &token, Post, &path, body.clone()).await;
+    assert_eq!(status, Status::Forbidden, "{answer}");
+    assert_eq!(answer["type"], "NotElevated");
+    assert_eq!(get(&harness, &second, &s_token, "/staff/me").await.0, Status::Ok);
+    step_up(&harness, &owner, &token).await;
+    let (status, answer) = send(&harness, &owner, &token, Post, &path, body).await;
+    assert_eq!(status, Status::Ok, "{answer}");
+    assert_eq!(get(&harness, &second, &s_token, "/staff/me").await.0, Status::Unauthorized);
+}
+
 #[path = "test_team.rs"]
 mod team_page;
 
 #[path = "test_delete.rs"]
 mod delete_tests;
+
+/// A step-up refusal on a permission that is not on the step-up list
+/// (official confirm) is audited exactly once
+#[rocket::async_test]
+async fn unlisted_missing_step_up_is_audited_once() {
+    use rocket::http::Method::Post;
+    let harness = TestHarness::new().await;
+    let owner = member(&harness, vec![StaffRole::Owner]).await;
+    let token = sign_in(&harness, &owner, 0).await;
+    let path = "/staff/official/requests/none/confirm".to_string();
+
+    let (status, answer) = send(&harness, &owner, &token, Post, &path, Value::Null).await;
+    assert_eq!(status, Status::Forbidden, "{answer}");
+    assert_eq!(answer["type"], "NotElevated");
+
+    let entries = audit_entries(&harness).await;
+    let missing: Vec<_> = entries.iter().filter(|e| e.action == "staff.step_up.missing").collect();
+    assert_eq!(missing.len(), 1, "{entries:?}");
+    assert!(matches!(missing[0].outcome, revolt_database::AuditOutcome::Denied));
+    assert_eq!(missing[0].summary.as_deref(), Some(path.as_str()));
+    assert_eq!(missing[0].permission.as_deref(), Some("platform.official.manage"));
+    assert!(missing[0].staff_session_id.is_some());
+}

@@ -1,0 +1,121 @@
+//! Zrzur Desk: the staff bot (`[features.staff_desk]`), mounted at
+//! `/staff/desk`. Kept out of the public OpenAPI document, like the other
+//! bot desks.
+//!
+//! The bot decides nothing. It hands back the press it received (the
+//! interaction's id and token, nothing else); the server checks that the
+//! press is genuine, single use, from a configured place, and that the
+//! person who pressed holds an active staff grant now and an open desk
+//! session. It then builds the console's own [`StaffContext`], so every
+//! permission check, step-up and audit record is the console's code, run
+//! as the presser. A stolen bot token gains nothing: without a person's
+//! press, their grant and their desk session, every route refuses.
+//!
+//! [`StaffContext`]: super::StaffContext
+
+mod actor;
+mod overview;
+mod session;
+#[cfg(test)]
+mod tests;
+
+// for the desk routes of later phases
+#[allow(unused_imports)]
+pub(crate) use actor::{desk_actor, field, DataDeskInteraction, Expect};
+
+use revolt_config::{config, FeaturesStaffDesk};
+use revolt_database::User;
+use revolt_result::{create_error, Result};
+use rocket::Route;
+
+/// The command's name as the bot registers it (`/desk me`, `/desk logout`)
+pub const COMMAND: &str = "desk";
+/// The desk's forms have custom ids starting with this
+pub const FORM_PREFIX: &str = "zd:";
+/// The form field that carries the TOTP code
+pub const CODE_FIELD: &str = "code";
+
+/// The routes, mounted under `/staff` (so at `/staff/desk/...`)
+pub fn routes() -> Vec<Route> {
+    routes![session::open, session::close, session::step_up, session::me, overview::overview]
+}
+
+#[cfg(test)]
+pub(crate) mod test_settings {
+    //! Tests run side by side, each with its own bot: a test's settings are
+    //! looked up by the calling bot instead of the one config.
+    use revolt_config::FeaturesStaffDesk;
+    use std::{collections::HashMap, sync::Mutex};
+
+    static SETTINGS: Mutex<Option<HashMap<String, FeaturesStaffDesk>>> = Mutex::new(None);
+
+    pub fn register(settings: FeaturesStaffDesk) {
+        SETTINGS
+            .lock()
+            .unwrap()
+            .get_or_insert_with(HashMap::new)
+            .insert(settings.bot.trim().to_string(), settings);
+    }
+
+    pub fn get(bot: &str) -> Option<FeaturesStaffDesk> {
+        SETTINGS.lock().unwrap().as_ref().and_then(|all| all.get(bot).cloned())
+    }
+}
+
+/// The settings, if the desk is on and `caller` is its bot. Anyone else
+/// gets "not found": the routes do not exist for them.
+pub(crate) async fn settings(caller: &User) -> Result<FeaturesStaffDesk> {
+    if caller.bot.is_none() {
+        return Err(create_error!(NotFound));
+    }
+    match current(&caller.id).await {
+        Some(settings) if settings.bot == caller.id => Ok(settings),
+        _ => Err(create_error!(NotFound)),
+    }
+}
+
+/// The settings that apply to `bot`, ids trimmed; `None` when off
+async fn current(bot: &str) -> Option<FeaturesStaffDesk> {
+    let trimmed = |s: FeaturesStaffDesk| FeaturesStaffDesk {
+        bot: s.bot.trim().to_string(),
+        places: s
+            .places
+            .iter()
+            .map(|p| p.trim().to_string())
+            .filter(|p| !p.is_empty())
+            .collect(),
+        areas: s
+            .areas
+            .iter()
+            .map(|a| a.trim().to_string())
+            .filter(|a| !a.is_empty())
+            .collect(),
+        ..s
+    };
+    #[cfg(test)]
+    if let Some(settings) = test_settings::get(bot) {
+        return Some(trimmed(settings)).filter(|s| s.on());
+    }
+    let _ = bot;
+    Some(trimmed(config().await.features.staff_desk)).filter(|s| s.on())
+}
+
+/// Whether a submitted form's `code` field is kept from the bot: any `zd:`
+/// form of the configured desk bot, also while the desk is switched off
+pub(crate) async fn hides_field_from_bot(bot: &str, form: &str) -> bool {
+    if !form.starts_with(FORM_PREFIX) || bot.is_empty() {
+        return false;
+    }
+    #[cfg(test)]
+    if let Some(settings) = test_settings::get(bot) {
+        return settings.bot.trim() == bot;
+    }
+    config().await.features.staff_desk.bot.trim() == bot
+}
+
+/// Whether a new command interaction keeps its options: only `/desk` of
+/// the configured desk bot, so the desk routes can read the sub-command
+/// the server itself checked; no other bot's options are ever stored
+pub(crate) async fn keeps_options(bot: &str, command_name: &str) -> bool {
+    command_name == COMMAND && current(bot).await.is_some_and(|s| s.bot == bot)
+}

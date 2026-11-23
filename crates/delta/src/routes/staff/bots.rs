@@ -22,6 +22,7 @@ use revolt_result::{create_error, Result};
 use rocket::{serde::json::Json, State};
 use serde::{Deserialize, Serialize};
 
+use super::audited::{audited, audited_noting};
 use super::{reason, StaffContext};
 use crate::routes::{
     bots::verification::{status_name, VERIFIED},
@@ -372,8 +373,6 @@ pub async fn decide_verification(
     record.target_id = Some(bot.id.clone());
     record.reason = note.clone();
     record.summary = Some(if data.approve { "approve" } else { "deny" }.to_string());
-    record_platform_audit(db, record, AuditOutcome::Success).await?;
-
     request.status = if data.approve {
         BotVerificationStatus::Approved
     } else {
@@ -382,16 +381,36 @@ pub async fn decide_verification(
     request.decided_at = Some(staff.now);
     request.decided_by = Some(staff.user.id.clone());
     request.decision_note = note;
-    // two reviewers at once: only the first decision counts
-    if !db
-        .decide_bot_verification(&request, BotVerificationStatus::Pending)
-        .await?
-    {
-        return Err(create_error!(InvalidOperation));
-    }
-    if data.approve {
-        set_verified(db, &bot.id, true, request.intents).await?;
-    }
+    let approve = data.approve;
+    let intents = request.intents;
+    let mut reverted = request.clone();
+    reverted.status = BotVerificationStatus::Pending;
+    reverted.decided_at = None;
+    reverted.decided_by = None;
+    reverted.decision_note = None;
+    audited_noting(db, record, async {
+        // two reviewers at once: only the first decision counts
+        if !db
+            .decide_bot_verification(&request, BotVerificationStatus::Pending)
+            .await
+            .map_err(|error| (error, None))?
+        {
+            return Err((create_error!(InvalidOperation), None));
+        }
+        if approve {
+            if let Err(error) = set_verified(db, &bot.id, true, intents).await {
+                // put the request back so it can be decided again
+                let back = db.decide_bot_verification(&reverted, request.status).await;
+                if matches!(back, Ok(true)) {
+                    return Err((error, None));
+                }
+                log::error!("bot verification {} could not be put back", request.id);
+                return Err((error, Some("revert failed")));
+            }
+        }
+        Ok(())
+    })
+    .await?;
     let bot_name = db.fetch_user(&bot.id).await.map(|u| u.username).unwrap_or_default();
     let key = if data.approve { "bot.verified" } else { "bot.denied" };
     crate::util::official::bot(db, &bot.owner, key, &bot_name, request.decision_note.as_deref()).await;
@@ -421,21 +440,24 @@ pub async fn unverify(
     record.target_kind = Some("bot".to_string());
     record.target_id = Some(bot.id.clone());
     record.reason = Some(why.clone());
-    record_platform_audit(db, record, AuditOutcome::Success).await?;
-    set_verified(db, &bot.id, false, 0).await?;
-    if let Some(mut approved) = db
-        .fetch_bot_verifications_for_bot(&bot.id)
-        .await?
-        .into_iter()
-        .find(|r| r.status == BotVerificationStatus::Approved)
-    {
-        approved.status = BotVerificationStatus::Revoked;
-        approved.decided_at = Some(staff.now);
-        approved.decided_by = Some(staff.user.id.clone());
-        approved.decision_note = Some(why.clone());
-        db.decide_bot_verification(&approved, BotVerificationStatus::Approved)
-            .await?;
-    }
+    audited(db, record, async {
+        set_verified(db, &bot.id, false, 0).await?;
+        if let Some(mut approved) = db
+            .fetch_bot_verifications_for_bot(&bot.id)
+            .await?
+            .into_iter()
+            .find(|r| r.status == BotVerificationStatus::Approved)
+        {
+            approved.status = BotVerificationStatus::Revoked;
+            approved.decided_at = Some(staff.now);
+            approved.decided_by = Some(staff.user.id.clone());
+            approved.decision_note = Some(why.clone());
+            db.decide_bot_verification(&approved, BotVerificationStatus::Approved)
+                .await?;
+        }
+        Ok(())
+    })
+    .await?;
     let name = db.fetch_user(&bot.id).await.map(|u| u.username).unwrap_or_default();
     crate::util::official::bot(db, &bot.owner, "bot.unverified", &name, Some(&why)).await;
     Ok(())

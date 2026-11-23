@@ -3,7 +3,7 @@ use revolt_result::Result;
 
 use crate::{
     Bot, PlatformAuditEntry, ReferenceDb, Server, StaffCollectionStat, StaffCounted, StaffDbStats,
-    StaffGrant, StaffSession, User,
+    StaffGrant, StaffSession, StaffSessionKind, User,
 };
 
 fn in_range(id: &str, from: Option<&str>, to: Option<&str>) -> bool {
@@ -96,6 +96,48 @@ impl AbstractPlatformStaff for ReferenceDb {
         let mut count = 0;
         for s in store.sessions.values_mut() {
             if s.user_id == user_id && s.revoked_at.is_none() {
+                s.revoked_at = Some(at);
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
+
+    async fn delete_staff_sessions_for_user(&self, user_id: &str) -> Result<usize> {
+        let mut store = self.platform_staff.lock().await;
+        let before = store.sessions.len();
+        store.sessions.retain(|_, s| s.user_id != user_id);
+        Ok(before - store.sessions.len())
+    }
+
+    async fn fetch_desk_session(
+        &self,
+        user_id: &str,
+        bot_id: &str,
+        now: i64,
+    ) -> Result<Option<StaffSession>> {
+        Ok(self
+            .platform_staff
+            .lock()
+            .await
+            .sessions
+            .values()
+            .filter(|s| {
+                s.kind == StaffSessionKind::Desk
+                    && s.user_id == user_id
+                    && s.bot_id.as_deref() == Some(bot_id)
+                    && s.revoked_at.is_none()
+                    && now < s.expires_at
+            })
+            .max_by_key(|s| s.created_at)
+            .cloned())
+    }
+
+    async fn revoke_desk_sessions_for_user(&self, user_id: &str, at: i64) -> Result<usize> {
+        let mut store = self.platform_staff.lock().await;
+        let mut count = 0;
+        for s in store.sessions.values_mut() {
+            if s.kind == StaffSessionKind::Desk && s.user_id == user_id && s.revoked_at.is_none() {
                 s.revoked_at = Some(at);
                 count += 1;
             }
