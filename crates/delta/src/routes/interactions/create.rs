@@ -285,10 +285,14 @@ async fn command(
     }
     // the badge bot's `/badge` keeps what the person chose for a later route:
     // there the version the person saw is required, not only checked when sent
-    let keeps = !autocomplete && crate::routes::badges::command::keeps_options(&scope.bot.id, &command.name).await;
+    let keeps_badge = !autocomplete && crate::routes::badges::command::keeps_options(&scope.bot.id, &command.name).await;
+    // the staff desk bot's `/desk` keeps its sub-command for `/staff/desk`,
+    // which reads only the sub-command's name (no version needed there)
+    let keeps = keeps_badge
+        || (!autocomplete && crate::routes::staff::desk_keeps_options(&scope.bot.id, &command.name).await);
     let version_differs = match data.command_version.as_ref() {
         Some(version) => version != &command.version,
-        None => keeps,
+        None => keeps_badge,
     };
     if version_differs {
         return Err(invalid("this command changed, reload and try again"));
@@ -364,7 +368,8 @@ async fn command(
     interaction.command_name = Some(command.name.clone());
     interaction.autocomplete_type = context.focused_type;
     // kept only for `/badge` of the configured badge bot, whose route acts
-    // on what the person chose (`/badges/command`); no other bot's options
+    // on what the person chose (`/badges/command`), and `/desk` of the
+    // configured staff desk bot (`/staff/desk`); no other bot's options
     // are stored, and an autocomplete's half-typed text never is
     if keeps {
         interaction.command_options = options.clone();

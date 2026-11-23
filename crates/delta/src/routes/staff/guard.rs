@@ -8,7 +8,8 @@ use std::collections::BTreeSet;
 use revolt_config::config;
 use revolt_database::{
     record_platform_audit, staff_now, staff_token_hash, AuditOutcome, AuditRecord, Database,
-    Session, StaffGrant, StaffPermission, StaffSession, User, STAFF_SESSION_IDLE_MS,
+    Session, StaffGrant, StaffPermission, StaffSession, StaffSessionKind, User,
+    STAFF_SESSION_IDLE_MS,
 };
 use revolt_result::{create_error, Error, Result};
 use rocket::{
@@ -20,7 +21,7 @@ use rocket::{
 pub const STAFF_HEADER: &str = "x-staff-session";
 
 /// Only write `last_seen_at` once a minute
-const TOUCH_EVERY_MS: i64 = 60 * 1000;
+pub(crate) const TOUCH_EVERY_MS: i64 = 60 * 1000;
 
 /// Requests from a browser must come from a configured admin origin.
 /// Requests without an `Origin` header (curl, server-side) still need
@@ -79,7 +80,10 @@ impl<'r> FromRequest<'r> for StaffContext {
             return unauthorized();
         };
         let now = staff_now();
-        let valid = staff.revoked_at.is_none()
+        // a desk session is never accepted here (and has no ordinary
+        // session to match anyway)
+        let valid = staff.kind == StaffSessionKind::Console
+            && staff.revoked_at.is_none()
             && now < staff.expires_at
             && now - staff.last_seen_at < STAFF_SESSION_IDLE_MS
             && staff.user_id == user.id

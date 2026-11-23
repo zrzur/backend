@@ -15,6 +15,7 @@ mod content;
 mod creators;
 mod bots;
 mod deletion;
+mod desk;
 mod discover;
 mod metrics;
 mod official;
@@ -32,12 +33,14 @@ mod audited;
 mod test;
 
 pub use guard::StaffContext;
+pub(crate) use desk::keeps_options as desk_keeps_options;
 pub use metrics::Metrics;
 
 use revolt_database::{
     check_staff_change, new_staff_token, record_platform_audit, staff_now, staff_token_hash,
     verify_audit_chain, verify_staff_totp, AuditOutcome, AuditRecord, Database, PlatformAuditEntry,
-    PlatformAuditQuery, Session, StaffGrant, StaffPermission, StaffRole, StaffSession, Totp, User,
+    PlatformAuditQuery, Session, StaffGrant, StaffPermission, StaffRole, StaffSession,
+    StaffSessionKind, Totp, User,
     STAFF_SESSION_IDLE_MS, STAFF_SESSION_MAX_MS, STAFF_STEP_UP_MS,
 };
 use revolt_result::{create_error, Result};
@@ -47,7 +50,7 @@ use ulid::Ulid;
 
 pub fn routes() -> Vec<Route> {
     platform::mark_started();
-    routes![
+    let mut all = routes![
         words::list,
         words::add,
         words::remove,
@@ -156,7 +159,10 @@ pub fn routes() -> Vec<Route> {
         revoke_member_sessions,
         audit,
         verify_audit
-    ]
+    ];
+    // Zrzur Desk, called only by the configured bot (`/staff/desk/...`)
+    all.extend(desk::routes());
+    all
 }
 
 // ---- request and response bodies ----
@@ -221,9 +227,35 @@ pub struct StaffMember {
     pub active: bool,
     pub expires_at: Option<i64>,
     pub open_sessions: usize,
+    /// The open sessions themselves (never their token hashes)
+    pub sessions: Vec<MemberSession>,
     pub version: i64,
     pub updated_at: i64,
     pub updated_by: String,
+}
+
+/// One open staff session of a member, as the members list shows it
+#[derive(Serialize)]
+pub struct MemberSession {
+    pub id: String,
+    /// `console` or `desk`
+    pub kind: StaffSessionKind,
+    /// The desk bot, for a desk session
+    pub bot_id: Option<String>,
+    pub created_at: i64,
+    pub last_seen_at: i64,
+}
+
+impl From<StaffSession> for MemberSession {
+    fn from(session: StaffSession) -> Self {
+        MemberSession {
+            id: session.id,
+            kind: session.kind,
+            bot_id: session.bot_id,
+            created_at: session.created_at,
+            last_seen_at: session.last_seen_at,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -272,7 +304,7 @@ const CODE_FAILURE_WINDOW_MS: i64 = 15 * 60 * 1000;
 /// sign-in records (`staff.session.*`, console and desk alike) are read, so
 /// other records (refused requests, missing step-ups) can never push wrong
 /// codes out of the window.
-async fn too_many_code_failures(db: &Database, user_id: &str) -> Result<bool> {
+pub(crate) async fn too_many_code_failures(db: &Database, user_id: &str) -> Result<bool> {
     let since = staff_now() - CODE_FAILURE_WINDOW_MS;
     let recent = db
         .fetch_platform_audit(PlatformAuditQuery {
@@ -298,7 +330,7 @@ async fn too_many_code_failures(db: &Database, user_id: &str) -> Result<bool> {
 }
 
 /// Check a TOTP code for a staff member and use it up
-async fn check_code(db: &Database, grant: &StaffGrant, code: &str) -> Result<()> {
+pub(crate) async fn check_code(db: &Database, grant: &StaffGrant, code: &str) -> Result<()> {
     if too_many_code_failures(db, &grant.id).await? {
         return Err(create_error!(LockedOut));
     }
@@ -485,10 +517,12 @@ async fn members(db: &State<Database>, staff: StaffContext) -> Result<Json<Vec<S
     let users = db.fetch_users(&ids).await.unwrap_or_default();
     let mut out = Vec::with_capacity(grants.len());
     for grant in grants {
-        let open_sessions = db
+        let sessions: Vec<MemberSession> = db
             .fetch_staff_sessions_for_user(&grant.id, staff.now)
             .await?
-            .len();
+            .into_iter()
+            .map(MemberSession::from)
+            .collect();
         out.push(StaffMember {
             username: users
                 .iter()
@@ -499,7 +533,8 @@ async fn members(db: &State<Database>, staff: StaffContext) -> Result<Json<Vec<S
             roles: grant.roles,
             disabled: grant.disabled,
             expires_at: grant.expires_at,
-            open_sessions,
+            open_sessions: sessions.len(),
+            sessions,
             version: grant.version,
             updated_at: grant.updated_at,
             updated_by: grant.updated_by,
@@ -618,6 +653,7 @@ async fn set_member(
         disabled: false,
         expires_at: None,
         open_sessions: 0,
+        sessions: vec![],
         version: grant.version,
         updated_at: grant.updated_at,
         updated_by: grant.updated_by,
