@@ -58,7 +58,7 @@
     },
     {
       "path": ".github/workflows/source-check.yml",
-      "sha256": "71c47312c619e1fe74dc6f768b6cb0ccee05095248858f36c5cb0a99a2886552",
+      "sha256": "08b3921ba1b48725b1d13315b8411b735101a7bc07cc0cc2c0c5dc24ad452b48",
       "bytes": 963,
       "category": "reviewed-build-and-ci"
     },
