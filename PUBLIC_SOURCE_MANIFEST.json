@@ -58,7 +58,7 @@
     },
     {
       "path": ".github/workflows/source-check.yml",
-      "sha256": "d2fd29e853507c72f9e0bf6096d0bd5fc5c9f580291c05790682bef938622747",
+      "sha256": "05041235cfebe425745bec46cb61ab0a902bc1b7bae8e413b2dfd48ec79cfabb",
       "bytes": 959,
       "category": "reviewed-build-and-ci"
     },
@@ -220,7 +220,7 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "7b92eca858c512d41eb45277fbac0d72235097b8c4d091a4c6a42ff820f9520e",
+      "sha256": "cfe9fb1a200e31b20379ef5121e477b6bd908e50b6812e8343f3e279ac6d34b5",
       "bytes": 266493,
       "category": "product-source-or-build-manifest"
     },
