@@ -149,7 +149,12 @@ async fn open_desk_session(db: &Database, presser: &str, bot: &str, now: i64) ->
 /// ordinary sessions.
 pub(super) async fn session_alive(db: &Database, id: &str, user: &str) -> Result<bool> {
     match db.fetch_session(id).await {
-        Ok(session) => Ok(session.user_id == user),
+        Ok(session) => {
+            // the same rule as the User guard: not idle (see `Session::is_open`)
+            let idle_days = revolt_config::config().await.api.sessions.idle_days;
+            let now = iso8601_timestamp::Timestamp::now_utc();
+            Ok(session.user_id == user && !session.is_idle_at(now, idle_days))
+        }
         Err(error) if matches!(error.error_type, ErrorType::UnknownUser | ErrorType::NotFound) => {
             Ok(false)
         }

@@ -165,10 +165,15 @@ impl StaffContext {
     pub async fn require_step_up(&self, db: &Database, permission: StaffPermission) -> Result<()> {
         self.require(db, permission).await?;
         if self.stepped_up() {
-            Ok(())
-        } else {
-            Err(create_error!(NotElevated))
+            return Ok(());
         }
+        // Only reachable for a permission that is not on the step-up list
+        // (`require` already recorded the listed ones), so one refusal is
+        // recorded exactly once.
+        let mut record = self.record("staff.step_up.missing", Some(permission));
+        record.summary = Some(self.path.clone());
+        record_platform_audit(db, record, AuditOutcome::Denied).await?;
+        Err(create_error!(NotElevated))
     }
 
     fn stepped_up(&self) -> bool {

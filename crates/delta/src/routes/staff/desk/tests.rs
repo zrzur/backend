@@ -1074,3 +1074,22 @@ async fn wrong_code_is_not_kept() {
     let stored = s.harness.db.fetch_interaction(&pressed.0).await.unwrap();
     assert!(stored.modal_fields.is_empty());
 }
+
+/// A form with no code is refused and never recorded or counted, so cleared
+/// forms cannot burn a person's lockout
+#[rocket::async_test]
+async fn empty_code_refused_unrecorded() {
+    let s = stage().await;
+    let staff = s.person(vec![StaffRole::Support]).await;
+    for _ in 0..6 {
+        let pressed = s.press(&staff, Kind::Modal(LOGIN_MODAL, "")).await;
+        let (status, body) = s.hand("session", &pressed).await;
+        assert_eq!(status, Status::Unauthorized, "{body}");
+        assert_eq!(error_type(&body), "InvalidCredentials");
+    }
+    assert!(s.records(&staff).await.is_empty());
+    assert!(s.desk_sessions(&staff).await.is_empty());
+    // still not locked out
+    let (status, body) = s.console_open(&staff, 0).await;
+    assert_eq!(status, Status::Ok, "{body}");
+}

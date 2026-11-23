@@ -2815,3 +2815,26 @@ mod team_page;
 
 #[path = "test_delete.rs"]
 mod delete_tests;
+
+/// A step-up refusal on a permission that is not on the step-up list
+/// (official confirm) is audited exactly once
+#[rocket::async_test]
+async fn unlisted_missing_step_up_is_audited_once() {
+    use rocket::http::Method::Post;
+    let harness = TestHarness::new().await;
+    let owner = member(&harness, vec![StaffRole::Owner]).await;
+    let token = sign_in(&harness, &owner, 0).await;
+    let path = "/staff/official/requests/none/confirm".to_string();
+
+    let (status, answer) = send(&harness, &owner, &token, Post, &path, Value::Null).await;
+    assert_eq!(status, Status::Forbidden, "{answer}");
+    assert_eq!(answer["type"], "NotElevated");
+
+    let entries = audit_entries(&harness).await;
+    let missing: Vec<_> = entries.iter().filter(|e| e.action == "staff.step_up.missing").collect();
+    assert_eq!(missing.len(), 1, "{entries:?}");
+    assert!(matches!(missing[0].outcome, revolt_database::AuditOutcome::Denied));
+    assert_eq!(missing[0].summary.as_deref(), Some(path.as_str()));
+    assert_eq!(missing[0].permission.as_deref(), Some("platform.official.manage"));
+    assert!(missing[0].staff_session_id.is_some());
+}

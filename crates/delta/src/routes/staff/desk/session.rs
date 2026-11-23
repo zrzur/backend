@@ -73,6 +73,12 @@ pub async fn open(
         Some(id) if session_alive(db, &id, &press.user.id).await? => id,
         _ => return Err(create_error!(InvalidSession)),
     };
+    // a form with no code (already cleared, or never filled) is refused
+    // before anything is counted or recorded: nobody typed a wrong code, so
+    // it must not burn the person's lockout
+    if press.field(CODE_FIELD).is_empty() {
+        return Err(create_error!(InvalidCredentials));
+    }
     let base = press.record("staff.session.create", "desk sign-in");
     if let Err(error) = check_code(db, &press.grant, press.field(CODE_FIELD)).await {
         let mut record = base;
@@ -154,6 +160,10 @@ pub async fn step_up(
     data: Json<DataDeskInteraction>,
 ) -> Result<Json<StepUp>> {
     let (staff, interaction) = desk_actor(db, &user, &data, Expect::Modal(STEP_UP_MODAL), PATH_STEP_UP).await?;
+    if field(&interaction, CODE_FIELD).is_empty() {
+        // see `open`: an empty form is not a wrong code and is not recorded
+        return Err(create_error!(InvalidCredentials));
+    }
     if let Err(error) = check_code(db, &staff.grant, field(&interaction, CODE_FIELD)).await {
         let mut record = staff.record("staff.session.step_up", None);
         record.summary = Some("desk: second factor wrong".to_string());
