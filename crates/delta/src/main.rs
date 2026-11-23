@@ -12,7 +12,7 @@ use revolt_config::config;
 use revolt_database::AMQP;
 use revolt_ratelimits::rocket as ratelimiter;
 use rocket::{Build, Rocket};
-use revolt_config::{CorsOrigins, LOCAL_ORIGIN_PATTERNS};
+use revolt_config::{CorsOrigins, LOCAL_ORIGIN_PATTERNS, PREFLIGHT_MAX_AGE_SECS};
 use rocket_cors::{AllowedOrigins, CorsOptions};
 use rocket_prometheus::PrometheusMetrics;
 use std::net::Ipv4Addr;
@@ -65,6 +65,7 @@ pub async fn web() -> Rocket<Build> {
         .iter()
         .map(|s| s.to_string())
         .collect(),
+        max_age: Some(PREFLIGHT_MAX_AGE_SECS),
         ..Default::default()
     }
     .to_cors()
@@ -152,4 +153,55 @@ async fn rocket() -> _ {
 
     // Start web server
     web().await
+}
+
+#[cfg(test)]
+mod cors_test {
+    use rocket::http::Header;
+
+    use crate::util::test::TestHarness;
+
+    /// A browser asks the API before every call with the session header (a
+    /// preflight). Without a lifetime it asks again before nearly every call:
+    /// one more round trip each, 0.6 s on a slow mobile line. The answer now
+    /// says how long it holds; Chrome keeps it up to 2 h, Firefox 24 h.
+    #[rocket::async_test]
+    async fn preflight_answer_is_kept_by_the_browser() {
+        revolt_config::overwrite_config(|config| {
+            config.hosts.app = "https://app.zrzur.com".to_string();
+        })
+        .await;
+        let harness = TestHarness::new().await;
+        for path in ["/users/@me", "/channels/01HCHANNEL00000000000000000/messages"] {
+            let res = harness
+                .client
+                .options(path)
+                .header(Header::new("origin", "https://app.zrzur.com"))
+                .header(Header::new("access-control-request-method", "GET"))
+                .header(Header::new("access-control-request-headers", "x-session-token"))
+                .dispatch()
+                .await;
+            assert!(res.status().class().is_success(), "{path}: {}", res.status());
+            assert_eq!(
+                res.headers().get_one("access-control-max-age"),
+                Some("86400"),
+                "{path}"
+            );
+        }
+    }
+
+    /// A site that may not call the API learns nothing new from the change
+    #[rocket::async_test]
+    async fn other_sites_still_get_no_cors_answer() {
+        let harness = TestHarness::new().await;
+        let res = harness
+            .client
+            .options("/users/@me")
+            .header(Header::new("origin", "https://evil.example"))
+            .header(Header::new("access-control-request-method", "GET"))
+            .header(Header::new("access-control-request-headers", "x-session-token"))
+            .dispatch()
+            .await;
+        assert_eq!(res.headers().get_one("access-control-allow-origin"), None);
+    }
 }
