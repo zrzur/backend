@@ -2,7 +2,7 @@ use revolt_rocket_okapi::revolt_okapi::openapi3::OpenApi;
 use rocket::Route;
 
 mod create;
-mod delete;
+pub(crate) mod delete;
 mod discover;
 mod edit;
 mod fetch;
@@ -43,3 +43,5 @@ mod verification_tests;
 mod group_tests;
 #[cfg(test)]
 mod owner_privacy_tests;
+#[cfg(test)]
+mod platform_audit_tests;

@@ -108,12 +108,21 @@ impl AbstractServers for ReferenceDb {
 
     /// Delete a server by its id
     async fn delete_server(&self, id: &str) -> Result<()> {
-        let mut servers = self.servers.lock().await;
-        if servers.remove(id).is_some() {
-            Ok(())
-        } else {
-            Err(create_error!(NotFound))
+        let Some(server) = self.servers.lock().await.remove(id) else {
+            return Err(create_error!(NotFound));
+        };
+        // what the MongoDB driver removes with the server: its members and
+        // bans, its channels and the invites to it
+        self.server_members.lock().await.retain(|key, _| key.server != id);
+        self.server_bans.lock().await.retain(|key, _| key.server != id);
+        self.channel_invites.lock().await.retain(|_, invite| {
+            !matches!(invite, crate::Invite::Server { server, .. } if server == id)
+        });
+        let mut channels = self.channels.lock().await;
+        for channel in &server.channels {
+            channels.remove(channel);
         }
+        Ok(())
     }
 
     /// Insert a new role into server object

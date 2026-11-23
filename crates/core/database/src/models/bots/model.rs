@@ -125,6 +125,21 @@ impl Bot {
     where
         D: Into<Option<PartialBot>>,
     {
+        Bot::create_with_display_name(db, username, None, owner, data).await
+    }
+
+    /// [`Bot::create`] with the name people see set in the same write as the
+    /// bot's user, so a failure never leaves a bot without it
+    pub async fn create_with_display_name<D>(
+        db: &Database,
+        username: String,
+        display_name: Option<String>,
+        owner: &User,
+        data: D,
+    ) -> Result<(Bot, User)>
+    where
+        D: Into<Option<PartialBot>>,
+    {
         if owner.bot.is_some() {
             return Err(create_error!(IsBot));
         }
@@ -171,6 +186,7 @@ impl Bot {
                     owner: owner.id.to_string(),
                     verified: false,
                 }),
+                display_name,
                 ..Default::default()
             }),
         )
@@ -246,10 +262,20 @@ impl Bot {
         Ok(())
     }
 
-    /// Delete this bot
+    /// Delete this bot: it leaves every server and group, its open
+    /// connections close, and its user is marked deleted
     pub async fn delete(&self, db: &Database) -> Result<()> {
         for member in db.fetch_all_memberships(&self.id).await? {
-            let server = db.fetch_server(&member.id.server).await?;
+            let server = match db.fetch_server(&member.id.server).await {
+                Ok(server) => server,
+                // a membership left behind by a server that is gone: drop it,
+                // or the bot could never be deleted
+                Err(error) if matches!(error.error_type, revolt_result::ErrorType::NotFound) => {
+                    db.force_delete_member(&member.id).await?;
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
 
             member
                 .remove(db, &server, RemovalIntention::Leave, true)
@@ -257,14 +283,24 @@ impl Bot {
 
             server.cleanup_managed_bot_role(db, &self.id).await?;
         }
-        
-        db.fetch_user(&self.id).await?.mark_deleted(db).await?;
+
+        let user = db.fetch_user(&self.id).await?;
+        // group DMs it was added to
+        user.remove_from_all_groups(db).await?;
+
+        let mut user = user;
+        user.mark_deleted(db).await?;
         // its paid Discover places go to whoever waits next
         db.delete_promotions_for_target(&self.id).await?;
         // its slash commands go with it, in every server
         db.delete_all_application_commands(&self.id).await?;
         db.delete_oauth_application(&self.id).await?;
-        db.delete_bot(&self.id).await
+        db.delete_bot(&self.id).await?;
+        // its gateway connections end now, not at the next request. Only
+        // after the bot is gone: a connection that reconnects at once must
+        // find its token refused, not log in again.
+        EventV1::Logout.p(self.id.clone()).await;
+        Ok(())
     }
 }
 

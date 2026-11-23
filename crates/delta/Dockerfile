@@ -5,6 +5,8 @@ FROM debian:13 AS debian
 
 FROM gcr.io/distroless/cc-debian13:nonroot
 COPY --from=builder /home/rust/src/target/release/revolt-delta ./
+# the platform staff command line (`docker compose exec api ./zrzur-staff …`)
+COPY --from=builder /home/rust/src/target/release/zrzur-staff ./
 COPY --from=debian /usr/bin/uname /usr/bin/uname
 COPY LICENSE /licenses/LICENSE
 

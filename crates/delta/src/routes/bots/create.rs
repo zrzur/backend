@@ -21,7 +21,16 @@ pub async fn create_bot(
     let info = info.into_inner();
     info.validate().map_err(|error| revolt_database::util::validation::validation_failed(&error))?;
 
-    let (bot, user) = Bot::create(db, info.name, &user, None).await?;
+    // "Liro Bot": the username is Liro_Bot, people see the name as typed;
+    // both are written with the bot's user, in one write
+    let (bot, user) = Bot::create_with_display_name(
+        db,
+        v0::bot_username(&info.name),
+        v0::bot_display_name(&info.name),
+        &user,
+        None,
+    )
+    .await?;
     Ok(Json(v0::BotWithUserResponse {
         bot: bot.into(),
         user: user.into_self(false).await,

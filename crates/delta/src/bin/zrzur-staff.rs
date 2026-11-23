@@ -11,6 +11,13 @@
 //!       token once
 //!   zrzur-staff official-bot <bot-id> <reason...>        (gives the mark)
 //!   zrzur-staff official-bot-off <bot-id> <reason...>    (removes the mark)
+//!   zrzur-staff delete-owned <user-id> [--dry-run] <reason...>
+//!       deletes every server and bot of an account staff banned, except
+//!       official ones (the same code and audit records as the admin
+//!       console's `POST /staff/users/<id>/delete-owned`); prints the plan
+//!       and asks for the account's exact username#discriminator first.
+//!       `--dry-run` prints the plan only. There is no way to skip the
+//!       question.
 //!
 //! The official bot mark changes only here.
 //!
@@ -26,7 +33,7 @@ use revolt_database::{
 
 fn usage() -> ! {
     eprintln!(
-        "usage: zrzur-staff list | grant-owner <user-id> <reason> | break-glass <user-id> <reason> | revoke <user-id> <reason> | verify-audit | system-bot <owner-user-id> <name> <reason> | official-bot <bot-id> <reason> | official-bot-off <bot-id> <reason>"
+        "usage: zrzur-staff list | grant-owner <user-id> <reason> | break-glass <user-id> <reason> | revoke <user-id> <reason> | verify-audit | system-bot <owner-user-id> <name> <reason> | official-bot <bot-id> <reason> | official-bot-off <bot-id> <reason> | delete-owned <user-id> [--dry-run] <reason>"
     );
     std::process::exit(2)
 }
@@ -138,6 +145,38 @@ async fn set_roles(
     );
 }
 
+/// `delete-owned`: plan, typed confirmation, then the shared deletion
+async fn delete_owned(db: &Database, user_id: &str, rest: &[String]) {
+    let actor = AuditRecord {
+        actor_id: STAFF_ACTOR_CLI.to_string(),
+        ..Default::default()
+    };
+    // what the API sets up at start: events go out through RabbitMQ (and
+    // Redis), voice rooms are closed through LiveKit. Connected before the
+    // question, so a refused connection stops the run before anything.
+    let setup = || async {
+        let amqp = rocket::tokio::spawn(revolt_database::AMQP::new_auto());
+        match rocket::tokio::time::timeout(std::time::Duration::from_secs(15), amqp).await {
+            Ok(Ok(_)) => {}
+            Ok(Err(_)) => return Err("could not connect to RabbitMQ".to_string()),
+            Err(_) => return Err("RabbitMQ did not answer within 15 seconds".to_string()),
+        }
+        let config = revolt_config::config().await;
+        Ok(revolt_database::voice::VoiceClient::new(config.api.livekit.nodes.clone()))
+    };
+    let code = revolt_database::staff_deletion::run_delete_owned_command(
+        db,
+        &actor,
+        user_id,
+        rest,
+        &mut std::io::BufReader::new(std::io::stdin()),
+        &mut std::io::stdout(),
+        setup,
+    )
+    .await;
+    std::process::exit(code)
+}
+
 #[rocket::main]
 async fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -219,6 +258,7 @@ async fn main() {
                 .unwrap_or_else(|e| fail(format!("{e:?}")));
             println!("{} ({}): official bot {mark}", user.id, user.username);
         }
+        ("delete-owned", Some(user)) => delete_owned(&db, user, &args[2..]).await,
         ("verify-audit", _) => {
             let mut from = 1;
             let mut before = None;

@@ -48,6 +48,9 @@ database_derived!(
         pub notice_dismissals: Arc<Mutex<std::collections::HashSet<(String, String)>>>,
         pub support_tickets: Arc<Mutex<HashMap<String, crate::SupportTicket>>>,
         pub team_applications: Arc<Mutex<HashMap<String, crate::TeamApplication>>>,
+        pub team_identities: Arc<Mutex<HashMap<String, crate::TeamIdentity>>>,
+        pub team_members: Arc<Mutex<HashMap<String, crate::TeamMember>>>,
+        pub team_activity_days: Arc<Mutex<HashMap<String, crate::TeamActivityDay>>>,
         pub linked_accounts: Arc<Mutex<HashMap<String, crate::LinkedAccount>>>,
         pub saved_messages: Arc<Mutex<HashMap<String, crate::SavedMessage>>>,
         pub message_reminders: Arc<Mutex<HashMap<String, crate::MessageReminder>>>,
@@ -82,6 +85,9 @@ database_derived!(
         pub server_insights_cursor: Arc<Mutex<Option<(i64, Option<i64>)>>>,
         pub server_insights_attempts: Arc<Mutex<Option<(i64, u32)>>>,
         pub server_members: Arc<Mutex<HashMap<MemberCompositeKey, Member>>>,
+        /// Members who left while timed out: kept apart (as MongoDB keeps them with
+        /// `pending_deletion_at`) so no member query finds them until they rejoin
+        pub pending_member_deletions: Arc<Mutex<HashMap<MemberCompositeKey, Member>>>,
         pub servers: Arc<Mutex<HashMap<String, Server>>>,
         pub safety_reports: Arc<Mutex<HashMap<String, Report>>>,
         pub safety_snapshots: Arc<Mutex<HashMap<String, Snapshot>>>,

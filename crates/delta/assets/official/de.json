@@ -71,6 +71,10 @@
     "title": "Wir haben einen deiner Bots deaktiviert",
     "body": "„{name}“ kann sich vorerst nicht anmelden.\n{note}"
   },
+  "bot.deleted": {
+    "title": "Wir haben einen deiner Bots gelöscht",
+    "body": "„{name}“ wurde auf Entscheidung des Plattform-Teams gelöscht. Er hat alle Server verlassen und kann sich nicht mehr anmelden.\n{note}"
+  },
   "discover.approved": {
     "title": "Du bist bei Discover",
     "body": "„{name}“ ist jetzt bei Discover gelistet."
@@ -147,6 +151,10 @@
     "title": "Dir gehört jetzt ein Server",
     "body": "Du bist jetzt Eigentümer:in von „{name}“."
   },
+  "server.deleted": {
+    "title": "Wir haben einen deiner Server gelöscht",
+    "body": "„{name}“ wurde auf Entscheidung des Plattform-Teams gelöscht, zusammen mit seinen Kanälen, Einladungen und dem eigenen Link.\n{note}"
+  },
   "creator.granted": {
     "title": "Du bist Design-Ersteller:in",
     "body": "Du kannst jetzt Designs in der Community-Galerie veröffentlichen."
@@ -170,6 +178,14 @@
   "badge.revoked": {
     "title": "Ein Abzeichen wurde entfernt",
     "body": "Das Abzeichen „{name}“ wurde aus deinem Profil entfernt.\n{note}"
+  },
+  "badge.command_given": {
+    "title": "Ein Abzeichen wurde vergeben",
+    "body": "Du hast {user} das Abzeichen „{name}“ gegeben.\n{note}"
+  },
+  "badge.command_taken": {
+    "title": "Ein Abzeichen wurde entzogen",
+    "body": "Du hast {user} das Abzeichen „{name}“ entzogen.\n{note}"
   },
   "bug.triage": {
     "title": "Wir sehen uns deinen Fehlerbericht an",

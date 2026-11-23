@@ -71,6 +71,10 @@
     "title": "We disabled one of your bots",
     "body": "“{name}” can't sign in for now.\n{note}"
   },
+  "bot.deleted": {
+    "title": "We deleted one of your bots",
+    "body": "“{name}” was deleted at the platform team's decision. It has left every server and can't sign in again.\n{note}"
+  },
   "discover.approved": {
     "title": "You're on Discover",
     "body": "“{name}” is now listed on Discover."
@@ -147,6 +151,10 @@
     "title": "You now own a server",
     "body": "You are now the owner of “{name}”."
   },
+  "server.deleted": {
+    "title": "We deleted one of your servers",
+    "body": "“{name}” was deleted at the platform team's decision, together with its channels, invites and custom link.\n{note}"
+  },
   "creator.granted": {
     "title": "You're a design creator",
     "body": "You can now publish designs in the community gallery."
@@ -170,6 +178,14 @@
   "badge.revoked": {
     "title": "A badge was removed",
     "body": "The badge “{name}” was removed from your profile.\n{note}"
+  },
+  "badge.command_given": {
+    "title": "A badge was given",
+    "body": "You gave the badge “{name}” to {user}.\n{note}"
+  },
+  "badge.command_taken": {
+    "title": "A badge was taken away",
+    "body": "You took the badge “{name}” from {user}.\n{note}"
   },
   "bug.triage": {
     "title": "We're looking at your bug report",

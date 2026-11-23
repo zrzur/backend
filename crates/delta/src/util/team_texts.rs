@@ -14,122 +14,34 @@
 //! `description`, `rules`) replace the English text; a role of no known
 //! kind shows those words in every language.
 
-use std::{collections::HashMap, sync::LazyLock};
-
 use revolt_config::{TeamQuestion, TeamRole};
 use revolt_database::{send_official_message, Database, OfficialAccount};
 
-/// Languages we have texts for, the first is the fallback
-pub const LANGUAGES: &[(&str, &str)] = &[
-    ("en", include_str!("../../assets/team/en.json")),
-    ("ar", include_str!("../../assets/team/ar.json")),
-    ("de", include_str!("../../assets/team/de.json")),
-    ("fr", include_str!("../../assets/team/fr.json")),
-    ("es", include_str!("../../assets/team/es.json")),
-    ("ru", include_str!("../../assets/team/ru.json")),
-    ("zh-Hans", include_str!("../../assets/team/zh-Hans.json")),
-];
+// The text files and the helpers live in the database crate, so crond's
+// volunteer job sends the same texts; the files stay in `assets/team/`.
+pub use revolt_database::util::team_texts::{is_format, language_of, plain, text, LANGUAGES};
+#[allow(unused_imports)]
+pub(crate) use revolt_database::util::team_texts::{fill, message, TEXTS};
 
-static TEXTS: LazyLock<HashMap<&'static str, HashMap<String, String>>> = LazyLock::new(|| {
-    LANGUAGES
-        .iter()
-        .map(|(code, json)| (*code, serde_json::from_str(json).expect("valid team text file")))
-        .collect()
-});
-
-/// Our language code for a locale such as `de-DE` or `zh-CN`, or English
-pub fn language_of(locale: Option<&str>) -> &'static str {
-    let wanted = locale.unwrap_or_default().to_lowercase().replace('_', "-");
-    let base = wanted.split('-').next().unwrap_or_default();
-    if base == "zh" {
-        return "zh-Hans";
+/// An age typed by a person: ASCII digits or Arabic-Indic digits (`١٧`),
+/// trimmed, and nothing else (no words, signs, spaces inside or Persian
+/// digits). `None` for anything that is not a plain number up to 255; the
+/// range that counts is the caller's to check.
+pub fn parse_age(text: &str) -> Option<u8> {
+    let text = text.trim();
+    if text.is_empty() || text.chars().count() > 3 {
+        return None;
     }
-    LANGUAGES
-        .iter()
-        .map(|(code, _)| *code)
-        .find(|code| code.to_lowercase() == wanted || *code == base)
-        .unwrap_or(LANGUAGES[0].0)
-}
-
-/// The text `key` in `language`, in English when that language lacks it
-pub fn text(language: &str, key: &str) -> String {
-    TEXTS
-        .get(language)
-        .and_then(|texts| texts.get(key))
-        .or_else(|| TEXTS[LANGUAGES[0].0].get(key))
-        .cloned()
-        .unwrap_or_default()
-}
-
-/// Words that come from a person (a name, a rejection reason) made harmless
-/// for a message of the official account: no link that can be pressed, no
-/// mention, no formatting, nothing that reads as a blank of the template
-pub fn plain(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for c in text.trim().chars() {
-        match c {
-            // without its square brackets a link is plain text; round
-            // brackets stay as they are (they are common in names)
-            '\\' | '*' | '_' | '~' | '`' | '>' | '|' | '[' | ']' | '<' => {
-                out.push('\\');
-                out.push(c);
-            }
-            // a zero-width space breaks mentions and blanks without changing how it reads
-            '@' | '{' => {
-                out.push(c);
-                out.push('\u{200b}');
-            }
-            c if c.is_control() && c != '\n' => out.push(' '),
-            c => out.push(c),
-        }
+    let mut value: u32 = 0;
+    for c in text.chars() {
+        let digit = match c {
+            '0'..='9' => c as u32 - '0' as u32,
+            '\u{0660}'..='\u{0669}' => c as u32 - 0x0660,
+            _ => return None,
+        };
+        value = value * 10 + digit;
     }
-    let out = out.replace("://", ":\u{200b}//");
-    // a line that starts with `#` would be a heading
-    out.split('\n')
-        .map(|line| {
-            if line.trim_start().starts_with('#') {
-                format!("\\{line}")
-            } else {
-                line.to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-/// Fill the `{blanks}` of a template in one pass: a value is never read
-/// again, so words a person wrote cannot pull in another blank
-fn fill(template: &str, vars: &[(&str, String)]) -> String {
-    let mut out = String::with_capacity(template.len());
-    let mut rest = template;
-    while let Some(start) = rest.find('{') {
-        out.push_str(&rest[..start]);
-        let after = &rest[start + 1..];
-        match after.find('}') {
-            Some(end) => {
-                let name = &after[..end];
-                match vars.iter().find(|(known, _)| *known == name) {
-                    Some((_, value)) => out.push_str(value),
-                    None => {
-                        out.push('{');
-                        out.push_str(name);
-                        out.push('}');
-                    }
-                }
-                rest = &after[end + 1..];
-            }
-            None => {
-                out.push('{');
-                rest = after;
-            }
-        }
-    }
-    out.push_str(rest);
-    // a value left empty must not leave a gap
-    while out.contains("\n\n\n") {
-        out = out.replace("\n\n\n", "\n\n");
-    }
-    out.trim().to_string()
+    u8::try_from(value).ok()
 }
 
 /// The kind a role key belongs to: the key itself or its part before a
@@ -189,7 +101,8 @@ pub fn questions(role: &TeamRole, language: &str) -> Vec<TeamQuestion> {
 /// Send the message `key` about an application to one person, in their
 /// language, from the official Zrzur account. `{role}`, `{rules}` and
 /// `{terms}` are filled here; `role_key` names the role when the settings
-/// no longer have it. Best effort: the decision is already saved.
+/// no longer have it. Best effort: the decision is already saved. Returns
+/// whether the message went out.
 pub async fn send(
     db: &Database,
     user_id: &str,
@@ -197,7 +110,7 @@ pub async fn send(
     role: Option<&TeamRole>,
     role_key: &str,
     vars: &[(&str, &str)],
-) {
+) -> bool {
     let locale = db.fetch_user(user_id).await.ok().and_then(|user| user.locale);
     let language = language_of(locale.as_deref());
     let name = role
@@ -213,7 +126,11 @@ pub async fn send(
         .iter()
         .map(|(name, value)| {
             let value = match *name {
-                "channel" | "privacy" | "days" => value.trim().to_string(),
+                // from the settings or made by the server (a channel
+                // mention, a link, a number, a date mark `<t:..:D>`)
+                "channel" | "privacy" | "days" | "until" => value.trim().to_string(),
+                // a status word: its text in the person's language
+                "state" => text(language, &format!("volunteer.state.{}", value.trim())),
                 _ => plain(value),
             };
             (*name, value)
@@ -222,16 +139,25 @@ pub async fn send(
     all.push(("role", name));
     all.push(("rules", rules));
     all.push(("terms", text(language, "terms")));
-    let message = format!(
-        "**{}**\n\n{}\n\n{}",
-        fill(&text(language, &format!("{key}.title")), &all),
-        fill(&text(language, &format!("{key}.body")), &all),
-        text(language, "signature")
-    );
-    if let Err(error) =
-        send_official_message(db, None, OfficialAccount::Zrzur, user_id, message).await
-    {
-        log::warn!("team message to {user_id} not sent: {:?}", error.error_type);
+    // `counting` asks for the counting notice (`volunteer.counting`, with
+    // `{days}` and `{privacy}` of the same call); left out or empty, the
+    // blank stays empty
+    if let Some(at) = all.iter().position(|(name, _)| *name == "counting") {
+        all[at].1 = if all[at].1.is_empty() {
+            String::new()
+        } else {
+            fill(&text(language, "volunteer.counting"), &all)
+        };
+    } else {
+        all.push(("counting", String::new()));
+    }
+    let message = message(language, key, &all);
+    match send_official_message(db, None, OfficialAccount::Zrzur, user_id, message).await {
+        Ok(_) => true,
+        Err(error) => {
+            log::warn!("team message to {user_id} not sent: {:?}", error.error_type);
+            false
+        }
     }
 }
 
@@ -247,6 +173,21 @@ mod tests {
             .collect();
         found.sort();
         found
+    }
+
+    #[test]
+    fn an_age_is_digits_and_nothing_else() {
+        assert_eq!(parse_age("17"), Some(17));
+        assert_eq!(parse_age(" 25 "), Some(25));
+        assert_eq!(parse_age("\u{0661}\u{0667}"), Some(17));
+        assert_eq!(parse_age("17 years"), None);
+        assert_eq!(parse_age("1 7"), None);
+        assert_eq!(parse_age("-5"), None);
+        assert_eq!(parse_age("+17"), None);
+        assert_eq!(parse_age("1.5"), None);
+        assert_eq!(parse_age(""), None);
+        assert_eq!(parse_age("256"), None);
+        assert_eq!(parse_age("\u{06F1}\u{06F7}"), None);
     }
 
     #[test]
@@ -317,6 +258,92 @@ mod tests {
         assert!(english["terms"].contains("It is not a job and not employment"));
     }
 
+    /// The texts a volunteer reads (Task 10): in each person's own words,
+    /// never left in English; only the staff notice stays English
+    #[test]
+    fn every_language_has_every_volunteer_text_in_its_own_words() {
+        let english = &TEXTS["en"];
+        let volunteer_keys: Vec<&String> = english
+            .keys()
+            .filter(|key| {
+                key.starts_with("volunteer.")
+                    || key.starts_with("about_")
+                    || key.starts_with("identity_missing.")
+            })
+            .collect();
+        assert!(volunteer_keys.len() >= 24, "{} volunteer texts", volunteer_keys.len());
+        for (code, _) in LANGUAGES.iter().skip(1) {
+            let texts = &TEXTS[code];
+            for key in &volunteer_keys {
+                assert_ne!(texts[*key], english[*key], "{code} {key} is still English");
+            }
+            // the notice to the staff is English in every file (official servers are English)
+            for key in ["staff.trial_ended.title", "staff.trial_ended.body"] {
+                assert_eq!(texts[key], english[key], "{code} {key}");
+            }
+            // a button label of the leave question
+            assert!(texts["volunteer.leave_confirm.label"].chars().count() <= 80, "{code} leave label");
+        }
+        let thanks = [
+            ("en", "Thank you"),
+            ("ar", "شكر"),
+            ("de", "Danke"),
+            ("fr", "Merci"),
+            ("es", "Gracias"),
+            ("ru", "Спасибо"),
+            ("zh-Hans", "感谢"),
+        ];
+        for (code, word) in thanks {
+            for key in ["volunteer.left.body", "volunteer.removed.body", "volunteer.reminder.body"] {
+                assert!(text(code, key).contains(word), "{code} {key} says thank you");
+            }
+        }
+        // a count reads right for any number: "Days away: 1", never "1 days"
+        for (code, _) in LANGUAGES {
+            for key in &volunteer_keys {
+                let value = &TEXTS[code][*key];
+                assert!(!value.contains("(s)"), "{code} {key}");
+                assert!(!value.contains("{days} days"), "{code} {key}");
+            }
+        }
+    }
+
+    /// No text calls a volunteer role a job, a shift, a duty or a penalty, in
+    /// any language. `terms` alone names a job, to say that it is not one.
+    #[test]
+    fn never_a_job_a_shift_a_duty_or_a_penalty_in_any_language() {
+        // lower-case words, looked for in the lower-cased text
+        let words: [(&str, &[&str]); 6] = [
+            ("en", &["job", "shift", "duty", "duties", "penalt"]),
+            ("ar", &["وظيف", "دوام", "عقوب", "مناوب"]),
+            ("fr", &["emploi", "travail", "pénalit", "sanction"]),
+            ("es", &["trabajo", "empleo", "turno", "penaliz", "sanción", "sancion"]),
+            ("ru", &["работа", "смена", "смены", "смену", "дежурств", "штраф", "наказан"]),
+            ("zh-Hans", &["工作", "上班", "值班", "惩罚", "处罚"]),
+        ];
+        for (code, list) in words {
+            for (key, value) in &TEXTS[code] {
+                if key == "terms" {
+                    continue;
+                }
+                let lower = value.to_lowercase();
+                for word in list {
+                    assert!(!lower.contains(word), "{code} {key} says {word}");
+                }
+            }
+        }
+        // German nouns are written with a capital, so the case matters:
+        // "Verpflichtung" (a commitment, said to be none) is fine
+        for (key, value) in &TEXTS["de"] {
+            if key == "terms" {
+                continue;
+            }
+            for word in ["Job", "Schicht", "Pflicht", "Strafe"] {
+                assert!(!value.contains(word), "de {key} says {word}");
+            }
+        }
+    }
+
     #[test]
     fn words_from_people_are_made_harmless_and_cannot_pull_in_a_blank() {
         let reason = "[Re-verify your account](https://evil.example) @everyone <@01X> {terms} {rules}";
@@ -334,6 +361,31 @@ mod tests {
         assert_eq!(filled.matches("TERMS").count(), 1);
         assert!(filled.ends_with("B TERMS"));
         assert_eq!(fill("{a}{b} {c}", &[("a", "{b}".to_string()), ("b", "x".to_string())]), "{b}x {c}");
+    }
+
+    #[test]
+    fn invisible_format_characters_from_people_are_dropped() {
+        // a right-to-left override, isolates, marks and zero-width characters
+        let sneaky = "Sara\u{202E}gnp.exe\u{2066}\u{2069}\u{200E}\u{200F}\u{200B}\u{FEFF}\u{2060} Haddad";
+        let shown = plain(sneaky);
+        assert_eq!(shown, "Saragnp.exe Haddad");
+        for c in shown.chars() {
+            assert!(!is_format(c), "{:?} left in", c);
+        }
+        // the rest of the Cf set: Arabic number signs, the end of ayah, the
+        // Syriac abbreviation mark, Kaithi, musical and tag characters
+        for c in [
+            '\u{0600}', '\u{0605}', '\u{06DD}', '\u{070F}', '\u{08E2}', '\u{110BD}',
+            '\u{110CD}', '\u{1D173}', '\u{1D17A}', '\u{E0001}', '\u{E0020}', '\u{E007F}',
+        ] {
+            assert!(is_format(c), "{:?}", c);
+            assert_eq!(plain(&format!("a{c}b")), "ab", "{:?}", c);
+        }
+        assert!(!is_format('a') && !is_format('\u{0627}') && !is_format(' '));
+        // Arabic text itself stays as it is
+        assert_eq!(plain("لينا حداد"), "لينا حداد");
+        // the zero-width space plain() puts after `@` is its own, not the person's
+        assert_eq!(plain("@everyone"), "@\u{200b}everyone");
     }
 
     #[test]

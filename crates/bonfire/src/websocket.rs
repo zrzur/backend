@@ -53,6 +53,18 @@ const CLOSE_DISALLOWED_INTENTS: u16 = 4014;
 /// Longest a write to a socket may take; a client that reads nothing must
 /// not hold its session's events
 const WRITE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Events the Redis subscriber may hold for a session before it reads them.
+/// An update about someone is published once to each server they are in, so
+/// a person in many servers gets it many times over (the copies are dropped
+/// by event id). With fred's default of 32 the queue overflowed while the
+/// session was still following its topics, and the session ended without a
+/// word (found by the rich presence e2e run, 2026-11-23). 512 held for a
+/// person in 221 servers (about 220 copies of one update). fred makes each
+/// of its 9 notification channels this size, so the size is paid nine times
+/// per session: measured with that person and 60 sessions, 3,930 KiB per
+/// session at 512 against 7,216 KiB at 2048 (2026-11-23).
+const SUBSCRIBER_QUEUE: usize = 512;
 /// Longest the missed events of a resume may take to send
 const REPLAY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 /// Refused resumes one socket may try before it is closed
@@ -820,6 +832,9 @@ async fn listen(
     let redis_config = RedisConfig::from_url(&url).unwrap();
     let mut builder = fred::types::Builder::from_config(redis_config);
     builder.set_policy(ReconnectPolicy::new_exponential(8, 100, 30_000, 2));
+    builder.with_performance_config(|performance| {
+        performance.broadcast_channel_capacity = SUBSCRIBER_QUEUE;
+    });
     let subscriber = match report_internal_error!(builder.build_subscriber_client()) {
         Ok(subscriber) => subscriber,
         Err(_) => return,
@@ -858,31 +873,35 @@ async fn listen(
                     break 'out;
                 }
 
-                let subscribed = state.subscribed.read().await;
-                for id in subscribed.iter() {
-                    if report_internal_error!(subscriber.subscribe(id).await).is_err() {
-                        break 'out;
-                    }
+                // one command for all topics: following them one by one took
+                // a round trip each, while events for the first were coming
+                let topics: Vec<String> = state.subscribed.read().await.iter().cloned().collect();
+                if !topics.is_empty()
+                    && report_internal_error!(subscriber.subscribe(topics).await).is_err()
+                {
+                    break 'out;
                 }
 
                 #[cfg(debug_assertions)]
                 info!("{addr:?} has reset their subscriptions");
             }
             SubscriptionStateChange::Change { add, remove } => {
-                for id in remove {
+                // one command each way; never an empty one: an UNSUBSCRIBE
+                // without topics leaves every topic
+                if !remove.is_empty() {
                     #[cfg(debug_assertions)]
-                    info!("{addr:?} unsubscribing from {id}");
+                    info!("{addr:?} unsubscribing from {remove:?}");
 
-                    if report_internal_error!(subscriber.unsubscribe(id).await).is_err() {
+                    if report_internal_error!(subscriber.unsubscribe(remove).await).is_err() {
                         break 'out;
                     }
                 }
 
-                for id in add {
+                if !add.is_empty() {
                     #[cfg(debug_assertions)]
-                    info!("{addr:?} subscribing to {id}");
+                    info!("{addr:?} subscribing to {add:?}");
 
-                    if report_internal_error!(subscriber.subscribe(id).await).is_err() {
+                    if report_internal_error!(subscriber.subscribe(add).await).is_err() {
                         break 'out;
                     }
                 }
@@ -950,9 +969,22 @@ async fn listen(
             },
             message = t1 => {
                 // Handle incoming events.
-                let message = match report_internal_error!(message) {
-                    Ok(message) => message,
-                    Err(_) => break 'out
+                let message = match received(message) {
+                    Received::Message(message) => message,
+                    // events were lost: the session ends (a resume would miss
+                    // them too) and the client is told to reconnect at once,
+                    // for a fresh Ready. Before, it ended without a word.
+                    Received::Lagged(missed) => {
+                        warn!("{addr:?} missed {missed} events (subscriber queue full), the session ends");
+                        if let Some(outlet) = &delivery.outlet {
+                            send_in_time(&outlet.write, lagged_close(), addr).await;
+                        }
+                        break 'out;
+                    }
+                    Received::Closed(error) => {
+                        report_internal_error!(Err::<(), _>(error)).ok();
+                        break 'out;
+                    }
                 };
 
                 let event = match *REDIS_PAYLOAD_TYPE {
@@ -1194,6 +1226,32 @@ async fn session_still_open(
     open.unwrap_or(true)
 }
 
+/// What the subscriber's queue gave
+enum Received<T> {
+    Message(T),
+    /// The queue was full: this many events were lost
+    Lagged(u64),
+    Closed(tokio::sync::broadcast::error::RecvError),
+}
+
+fn received<T>(result: Result<T, tokio::sync::broadcast::error::RecvError>) -> Received<T> {
+    match result {
+        Ok(message) => Received::Message(message),
+        Err(tokio::sync::broadcast::error::RecvError::Lagged(missed)) => Received::Lagged(missed),
+        Err(error) => Received::Closed(error),
+    }
+}
+
+/// The close frame after lost events: "try again", which clients answer by
+/// connecting again (no Logout: the login session is fine)
+fn lagged_close() -> async_tungstenite::tungstenite::Message {
+    use async_tungstenite::tungstenite::protocol::{frame::coding::CloseCode, CloseFrame};
+    async_tungstenite::tungstenite::Message::Close(Some(CloseFrame {
+        code: CloseCode::Again,
+        reason: "Missed events, connect again".into(),
+    }))
+}
+
 /// Tell the client its session is over and end the socket
 async fn end_session_socket(
     addr: SocketAddr,
@@ -1246,6 +1304,33 @@ async fn fetch_user_slowmodes(user_id: &str) -> Option<Vec<v0::ChannelSlowmode>>
     }
 
     Some(slowmodes)
+}
+
+#[cfg(test)]
+mod queue_tests {
+    use async_tungstenite::tungstenite::{protocol::frame::coding::CloseCode, Message};
+
+    use super::{lagged_close, received, Received};
+
+    /// A full queue is told apart from a closed one, and is answered with
+    /// "try again", not a Logout
+    #[tokio::test]
+    async fn a_full_queue_takes_the_warn_close_and_end_path() {
+        let (send, mut queue) = tokio::sync::broadcast::channel::<u32>(2);
+        for n in 0..5 {
+            send.send(n).unwrap();
+        }
+        assert!(matches!(received(queue.recv().await), Received::Lagged(3)));
+        assert!(matches!(received(queue.recv().await), Received::Message(3)));
+        drop(send);
+        queue.recv().await.unwrap();
+        assert!(matches!(received(queue.recv().await), Received::Closed(_)));
+
+        let Message::Close(Some(frame)) = lagged_close() else {
+            panic!("not a close frame");
+        };
+        assert_eq!(frame.code, CloseCode::Again);
+    }
 }
 
 #[cfg(test)]

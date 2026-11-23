@@ -24,18 +24,66 @@ pub fn bot_suspended(bot: &crate::Bot) -> bool {
     bot.flags.unwrap_or_default() & BOT_FLAG_SUSPENDED != 0
 }
 
-/// Whether a bot may be handed people's data: not when it was disabled, or
-/// when its owner was suspended, banned or removed as spam.
-pub async fn bot_may_receive(db: &crate::Database, bot: &crate::Bot) -> bool {
+/// Owners' standing, kept a few seconds so every bot request does not read
+/// the owner again (as `bot_for_token` keeps tokens). Suspending or banning
+/// someone forgets their entry at once ([`forget_owner_standing`]).
+static OWNER_STANDING: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, (bool, std::time::Instant)>>,
+> = std::sync::OnceLock::new();
+
+/// How long an owner's standing is kept
+const OWNER_STANDING_SECS: u64 = 5;
+
+fn owner_standing() -> &'static std::sync::Mutex<std::collections::HashMap<String, (bool, std::time::Instant)>> {
+    OWNER_STANDING.get_or_init(Default::default)
+}
+
+/// Forget what is kept about this owner's standing; call it after changing
+/// their flags
+pub fn forget_owner_standing(owner_id: &str) {
+    if let Ok(mut cache) = owner_standing().lock() {
+        cache.remove(owner_id);
+    }
+}
+
+/// Whether a bot may act and be handed people's data: not when it was
+/// disabled, or when its owner was suspended, banned or removed as spam (or
+/// is gone). A database fault is an error, not a "no": a bot is not signed
+/// out because the database did not answer.
+pub async fn bot_may_act(db: &crate::Database, bot: &crate::Bot) -> revolt_result::Result<bool> {
     use revolt_models::v0::UserFlags;
     if bot_suspended(bot) {
-        return false;
+        return Ok(false);
+    }
+    if let Some((standing, at)) = owner_standing()
+        .lock()
+        .ok()
+        .and_then(|cache| cache.get(&bot.owner).copied())
+    {
+        if at.elapsed() < std::time::Duration::from_secs(OWNER_STANDING_SECS) {
+            return Ok(standing);
+        }
     }
     let blocked =
         UserFlags::SuspendedUntil as i32 | UserFlags::Banned as i32 | UserFlags::Spam as i32;
-    db.fetch_user(&bot.owner)
-        .await
-        .is_ok_and(|owner| owner.flags.unwrap_or_default() & blocked == 0)
+    let standing = match db.fetch_user(&bot.owner).await {
+        Ok(owner) => owner.flags.unwrap_or_default() & blocked == 0,
+        Err(error) if matches!(error.error_type, revolt_result::ErrorType::NotFound) => false,
+        Err(_) => return Err(revolt_result::create_error!(InternalError)),
+    };
+    if let Ok(mut cache) = owner_standing().lock() {
+        if cache.len() > 50_000 {
+            cache.clear();
+        }
+        cache.insert(bot.owner.clone(), (standing, std::time::Instant::now()));
+    }
+    Ok(standing)
+}
+
+/// [`bot_may_act`] where only a yes lets the bot through (installs,
+/// interactions): a database fault counts as no
+pub async fn bot_may_receive(db: &crate::Database, bot: &crate::Bot) -> bool {
+    bot_may_act(db, bot).await.unwrap_or(false)
 }
 
 /// Milliseconds since the epoch

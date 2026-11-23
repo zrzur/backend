@@ -11,7 +11,8 @@ use revolt_models::v0::{
     INTERACTION_VERSION,
 };
 use revolt_permissions::{
-    calculate_channel_permissions, ChannelPermission, PermissionQuery, PermissionValue,
+    calculate_channel_permissions, calculate_server_permissions, ChannelPermission,
+    PermissionQuery, PermissionValue,
 };
 use revolt_result::{create_error, Result};
 use rocket::{serde::json::Json, State};
@@ -64,6 +65,11 @@ async fn scope(
         _ => return Err(invalid("interactions are only available in server channels")),
     };
 
+    // A staff account's override is for Zrzur's own tools: a bot sees what
+    // the person holds through the server, like anyone else
+    let mut user = user.clone();
+    user.privileged = false;
+    let user = &user;
     let mut query = DatabasePermissionQuery::new(db, user).channel(&channel);
     let user_permissions = calculate_channel_permissions(&mut query).await;
     user_permissions.throw_if_lacking_channel_permission(ChannelPermission::ViewChannel)?;
@@ -87,6 +93,19 @@ async fn scope(
     let server = match &server_id {
         Some(id) => Some(db.fetch_server(id).await?),
         None => None,
+    };
+    // Server-wide bits (Manage Server, Ban Members, Administrator, ...) come
+    // from the server and the roles, never from a channel override: a bot
+    // that checks Manage Server here must not let a channel make someone a
+    // manager of the whole server
+    let user_permissions = match &server {
+        Some(server) => {
+            let mut server_query = DatabasePermissionQuery::new(db, user).server(server);
+            let server_wide = u64::from(calculate_server_permissions(&mut server_query).await);
+            let only = *revolt_permissions::SERVER_ONLY_PERMISSIONS;
+            PermissionValue::from((u64::from(user_permissions) & !only) | (server_wide & only))
+        }
+        None => user_permissions,
     };
 
     let bot = db
@@ -264,11 +283,14 @@ async fn command(
     {
         return Err(create_error!(UnknownCommand));
     }
-    if data
-        .command_version
-        .as_ref()
-        .is_some_and(|version| version != &command.version)
-    {
+    // the badge bot's `/badge` keeps what the person chose for a later route:
+    // there the version the person saw is required, not only checked when sent
+    let keeps = !autocomplete && crate::routes::badges::command::keeps_options(&scope.bot.id, &command.name).await;
+    let version_differs = match data.command_version.as_ref() {
+        Some(version) => version != &command.version,
+        None => keeps,
+    };
+    if version_differs {
         return Err(invalid("this command changed, reload and try again"));
     }
     let channel_nsfw = matches!(&scope.channel, Channel::TextChannel { nsfw: true, .. });
@@ -341,6 +363,13 @@ async fn command(
     interaction.command_id = Some(command.id.clone());
     interaction.command_name = Some(command.name.clone());
     interaction.autocomplete_type = context.focused_type;
+    // kept only for `/badge` of the configured badge bot, whose route acts
+    // on what the person chose (`/badges/command`); no other bot's options
+    // are stored, and an autocomplete's half-typed text never is
+    if keeps {
+        interaction.command_options = options.clone();
+        interaction.command_version = Some(command.version.clone());
+    }
 
     let mut payload = payload(db, user, &scope, &interaction, token, data.locale).await;
     payload.command = Some(InteractionCommandData {
@@ -945,4 +974,31 @@ pub async fn request_autocomplete(
 
     let (interaction, payload) = command(db, &user, data).await?;
     dispatch(db, amqp, interaction, payload).await.map(Json)
+}
+
+#[cfg(test)]
+mod privilege_tests {
+    use revolt_permissions::ChannelPermission;
+
+    use super::scope;
+    use crate::routes::interactions::tests::setup;
+
+    /// A staff account in effect still shows a bot only what it holds on the
+    /// server: never Manage Server or anything else from the staff override
+    #[rocket::async_test]
+    async fn staff_override_never_reaches_a_bot() {
+        let s = setup().await;
+        let mut staff = s.user.clone();
+        staff.privileged = true;
+        let plain = scope(&s.harness.db, &s.user, s.channel.id(), &s.bot.id, true, false)
+            .await
+            .unwrap();
+        let seen = scope(&s.harness.db, &staff, s.channel.id(), &s.bot.id, true, false)
+            .await
+            .unwrap();
+        let held = u64::from(seen.user_permissions);
+        assert_eq!(held, u64::from(plain.user_permissions));
+        assert_eq!(held & ChannelPermission::ManageServer as u64, 0, "{held:#x}");
+        assert_eq!(held & ChannelPermission::Administrator as u64, 0, "{held:#x}");
+    }
 }

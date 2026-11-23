@@ -23,6 +23,17 @@ async fn scope(
     Ok(())
 }
 
+/// Whether a sync changed anything: a command added, removed or edited
+/// (an edit gives a new version; unchanged commands keep id and version)
+pub(crate) fn changed(before: &[ApplicationCommand], after: &[ApplicationCommand]) -> bool {
+    let key = |c: &ApplicationCommand| (c.id.clone(), c.version.clone());
+    let mut before: Vec<_> = before.iter().map(key).collect();
+    let mut after: Vec<_> = after.iter().map(key).collect();
+    before.sort();
+    after.sort();
+    before != after
+}
+
 /// Tell the servers where these commands show up to refetch them
 async fn notify(db: &Database, application_id: &str, server_id: Option<&str>) {
     if server_id.is_none() {
@@ -105,8 +116,12 @@ pub async fn sync_global_commands(
     data: Json<Vec<DataApplicationCommand>>,
 ) -> Result<Json<Vec<ApplicationCommand>>> {
     scope(db, &user, application_id, None).await?;
+    let before = db.fetch_application_commands(application_id, None).await?;
     let result = sync_application_commands(db, application_id, None, data.into_inner()).await?;
-    notify(db, application_id, None).await;
+    // bots often sync on every start: an unchanged list tells nobody
+    if changed(&before, &result) {
+        notify(db, application_id, None).await;
+    }
     Ok(Json(result))
 }
 
@@ -203,8 +218,13 @@ pub async fn sync_server_commands(
     data: Json<Vec<DataApplicationCommand>>,
 ) -> Result<Json<Vec<ApplicationCommand>>> {
     scope(db, &user, application_id, Some(server_id)).await?;
+    let before = db
+        .fetch_application_commands(application_id, Some(server_id))
+        .await?;
     let result = sync_application_commands(db, application_id, Some(server_id), data.into_inner()).await?;
-    notify(db, application_id, Some(server_id)).await;
+    if changed(&before, &result) {
+        notify(db, application_id, Some(server_id)).await;
+    }
     Ok(Json(result))
 }
 

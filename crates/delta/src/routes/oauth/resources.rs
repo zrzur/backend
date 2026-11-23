@@ -6,7 +6,7 @@ use revolt_result::{create_error, Result};
 use rocket::{serde::json::Json, State};
 use rocket_empty::EmptyResponse;
 
-use super::bearer::Bearer;
+use super::{bearer::Bearer, invalid, oauth_server};
 
 /// # Current User (OAuth2)
 ///
@@ -27,19 +27,37 @@ pub async fn me(db: &State<Database>, bearer: Bearer) -> Result<Json<OAuthUser>>
 
 /// # Current User's Servers (OAuth2)
 ///
-/// Needs `servers.read`: id, name and icon of each server the user is in.
+/// Needs `servers.read`: every server the user is a member of, with whether
+/// they own it (`owner`), can manage it (`can_manage`, Manage Server) and
+/// their server-wide permissions (`permissions`, a decimal string). Being in
+/// this list does not mean the user may manage the server. With
+/// `manageable=true` only the servers they can manage are listed: use that
+/// for a bot dashboard.
 #[openapi(tag = "OAuth2")]
-#[get("/@me/servers")]
-pub async fn my_servers(db: &State<Database>, bearer: Bearer) -> Result<Json<Vec<OAuthServer>>> {
+#[get("/@me/servers?<manageable>")]
+pub async fn my_servers(
+    db: &State<Database>,
+    bearer: Bearer,
+    manageable: Option<&str>,
+) -> Result<Json<Vec<OAuthServer>>> {
     bearer.require(oauth_scopes::SERVERS_READ)?;
+    // only `true` or `false`: a dashboard that sends `1` must hear it was
+    // not understood, not get every server back
+    let only_manageable = match manageable {
+        None | Some("false") => false,
+        Some("true") => true,
+        Some(_) => return Err(invalid("manageable must be true or false")),
+    };
+    let mut user = db.fetch_user(&bearer.0.user_id).await?;
+    // a staff override belongs to Zrzur's own tools, never to a third-party site
+    user.privileged = false;
     let mut servers = vec![];
-    for membership in db.fetch_all_memberships(&bearer.0.user_id).await? {
+    for membership in db.fetch_all_memberships(&user.id).await? {
         if let Ok(server) = db.fetch_server(&membership.id.server).await {
-            servers.push(OAuthServer {
-                id: server.id,
-                name: server.name,
-                icon: server.icon.map(Into::into),
-            });
+            let server = oauth_server(db, &user, &membership, server).await;
+            if !only_manageable || server.can_manage {
+                servers.push(server);
+            }
         }
     }
     Ok(Json(servers))

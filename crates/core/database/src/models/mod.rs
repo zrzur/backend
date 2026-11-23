@@ -28,6 +28,7 @@ mod official_mark_requests;
 mod platform_notices;
 mod support_tickets;
 mod team_applications;
+mod team_volunteers;
 mod plugins;
 mod policy_changes;
 mod ratelimit_events;
@@ -77,6 +78,7 @@ pub use official_mark_requests::*;
 pub use platform_notices::*;
 pub use support_tickets::*;
 pub use team_applications::*;
+pub use team_volunteers::*;
 pub use plugins::*;
 pub use policy_changes::*;
 pub use ratelimit_events::*;
@@ -150,6 +152,7 @@ pub trait AbstractDatabase:
     + platform_notices::AbstractPlatformNotice
     + support_tickets::AbstractSupportTicket
     + team_applications::AbstractTeamApplications
+    + team_volunteers::AbstractTeamVolunteers
     + linked_accounts::AbstractLinkedAccounts
     + saved_reminders::AbstractSavedReminders
 {

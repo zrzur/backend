@@ -1052,3 +1052,57 @@ async fn updates_keep_blocks_that_point_at_the_message_files() {
         .await;
     assert_eq!(status, Status::BadRequest);
 }
+
+/// A2, second review: a refused `UpdateMessage` (the bot may no longer write
+/// in the channel) gives the interaction back, so a private answer works
+#[rocket::async_test]
+async fn a_refused_update_leaves_the_interaction_answerable() {
+    use revolt_permissions::ChannelPermission;
+    let s = setup().await;
+    let mut bot_events = PubSubTestHelper::new(&format!("{}!", s.bot.id)).await;
+    let message = s.bot_message(buttons()).await;
+
+    // from now on the bot may read here but not write
+    let mut channel = s.channel.clone();
+    channel
+        .update(
+            &s.harness.db,
+            revolt_database::PartialChannel {
+                member_permissions: Some(std::collections::HashMap::from([(
+                    s.bot.id.clone(),
+                    revolt_permissions::OverrideField {
+                        a: 0,
+                        d: ChannelPermission::SendMessage as i64,
+                    },
+                )])),
+                ..Default::default()
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
+
+    let (status, accepted) = s.interact(&s.session, s.click(&message.id, "ticket:open", None)).await;
+    assert_eq!(status, Status::Ok);
+    let interaction = next_interaction(&mut bot_events).await;
+    let id = accepted.unwrap().id;
+    let token = interaction.token.unwrap();
+
+    let status = s
+        .callback(&id, &token, json!({ "type": "UpdateMessage", "data": { "content": "Opened" } }))
+        .await;
+    assert_eq!(status, Status::Forbidden);
+    let stored = s.harness.db.fetch_interaction(&id).await.unwrap();
+    assert_eq!(stored.status, revolt_database::InteractionStatus::Pending, "not used up");
+
+    let status = s
+        .callback(
+            &id,
+            &token,
+            json!({ "type": "Message", "data": { "content": "only you", "ephemeral": true } }),
+        )
+        .await;
+    assert_eq!(status, Status::NoContent, "the private fallback is accepted");
+    let message = s.harness.db.fetch_message(&message.id).await.unwrap();
+    assert_eq!(message.content.as_deref(), Some("Pick one"), "the message did not change");
+}

@@ -37,6 +37,11 @@ pub async fn invite_bot(
     if !bot.public && bot.owner != user.id {
         return Err(create_error!(BotIsPrivate));
     }
+    // a disabled bot, or one whose owner was suspended or banned, is added
+    // nowhere, servers or groups
+    if !revolt_database::bot_may_receive(db, &bot).await {
+        return Err(create_error!(NotFound));
+    }
 
     let bot_user = db.fetch_user(&bot.id).await?;
 

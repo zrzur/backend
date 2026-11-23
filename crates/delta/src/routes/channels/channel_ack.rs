@@ -84,4 +84,68 @@ mod test {
             _ => unreachable!(),
         };
     }
+
+    /// Contract the web app relies on: a forum has no messages of its own,
+    /// and the app stores "seen up to the newest post" by acking the forum
+    /// with a post's ULID (web `channels/forum/unread.ts`). The ack must take
+    /// any ULID there, not only ids of the forum's own messages.
+    #[rocket::async_test]
+    async fn ack_a_forum_with_the_ulid_of_one_of_its_posts() {
+        use revolt_database::Member;
+        use rocket::http::ContentType;
+
+        let harness = TestHarness::new().await;
+        let (_, owner_session, owner) = harness.new_user().await;
+        let (server, _) = harness.new_server(&owner).await;
+        let (_, member_session, member) = harness.new_user().await;
+        Member::create(&harness.db, &server, &member, None)
+            .await
+            .unwrap();
+        let mut pubsub = PubSubTestHelper::new(&format!("{}!", member.id)).await;
+
+        let response = harness
+            .client
+            .post(format!("/servers/{}/channels", server.id))
+            .header(Header::new("x-session-token", owner_session.token.to_string()))
+            .header(ContentType::JSON)
+            .body(r#"{ "type": "Forum", "name": "help" }"#)
+            .dispatch()
+            .await;
+        assert_eq!(response.status(), Status::Ok);
+        let forum: serde_json::Value = response.into_json().await.unwrap();
+        let forum = forum["_id"].as_str().unwrap().to_string();
+
+        let response = harness
+            .client
+            .post(format!("/channels/{forum}/threads"))
+            .header(Header::new("x-session-token", owner_session.token.to_string()))
+            .header(ContentType::JSON)
+            .body(r#"{ "name": "Problem with tickets", "content": "first" }"#)
+            .dispatch()
+            .await;
+        assert_eq!(response.status(), Status::Ok);
+        let post: serde_json::Value = response.into_json().await.unwrap();
+        let post = post["_id"].as_str().unwrap().to_string();
+
+        // the post's id is not a message of the forum
+        let response = harness
+            .client
+            .put(format!("/channels/{forum}/ack/{post}"))
+            .header(Header::new("x-session-token", member_session.token.to_string()))
+            .dispatch()
+            .await;
+        assert_eq!(response.status(), Status::NoContent);
+        drop(response);
+
+        let event = pubsub
+            .wait_for_event(|event| match event {
+                EventV1::ChannelAck { id, .. } => id == &forum,
+                _ => false,
+            })
+            .await;
+        match event {
+            EventV1::ChannelAck { message_id, .. } => assert_eq!(message_id, post),
+            _ => unreachable!(),
+        };
+    }
 }

@@ -5,6 +5,9 @@
 
 pub mod beta;
 pub mod bugs;
+pub mod command;
+#[cfg(test)]
+mod command_tests;
 #[cfg(test)]
 mod test;
 
@@ -422,11 +425,23 @@ pub(crate) async fn grant_with(
     rights: BadgeRights,
     data: v0::DataGrantBadge,
 ) -> Result<v0::AdminBadgeGrant> {
+    grant_checked(db, actor_id, rights, data, false).await
+}
+
+/// [`grant_with`]; `retired_too`: a retired badge may be given again (the
+/// owner's `/badge` command only)
+pub(crate) async fn grant_checked(
+    db: &Database,
+    actor_id: &str,
+    rights: BadgeRights,
+    data: v0::DataGrantBadge,
+    retired_too: bool,
+) -> Result<v0::AdminBadgeGrant> {
     let data = validated(data)?;
     let definition = badge_definition(&data.badge).ok_or_else(|| create_error!(NotFound))?;
     let subject = db.fetch_user(&data.user).await?;
     check_rule(actor_id, rights, &subject, definition)?;
-    if definition.retired {
+    if definition.retired && !retired_too {
         return Err(create_error!(InvalidOperation));
     }
     if let Some(reason) = badge_eligibility(db, &subject.id, definition.id).await? {

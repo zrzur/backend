@@ -18,7 +18,7 @@ The server will now start sending relevant events as they come in.
 
 You should [Ping](./protocol.md#ping) the server every 10 to 30 seconds to prevent your connection being dropped.
 
-Bots receive all events, normal users do not receive UserUpdate events fanned out through servers by default, [read more here](./protocol.md#subscribe).
+A user's own changes reach the people who follow that user (friends, DM and group partners). A change of their avatar, display name or username also reaches every member of every server they are in, right away up to 5 times an hour per user (a later change in that hour arrives once the hour allows it, with the user's newest look); bots get those only with the Server Members intent. See [UserUpdate](./protocol.md#userupdate).
 
 ## Query Parameters
 

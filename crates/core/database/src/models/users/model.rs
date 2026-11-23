@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, HashSet},
     str::FromStr,
+    sync::atomic::{AtomicU64, Ordering},
     time::Duration,
 };
 
@@ -21,6 +22,24 @@ use revolt_presence::filter_online;
 use revolt_result::{create_error, Result};
 use serde_json::json;
 use ulid::Ulid;
+
+/// Most times an hour a user's avatar and names are sent to every server
+/// they are in (see [`User::announce_appearance`])
+pub const APPEARANCE_FANOUTS_PER_HOUR: usize = 5;
+
+/// The window of that limit in seconds (an hour; tests make it shorter)
+pub static APPEARANCE_FANOUT_WINDOW_SECS: AtomicU64 = AtomicU64::new(60 * 60);
+
+/// How often a held-back fan-out asks again whether the window has room
+pub static APPEARANCE_FANOUT_RETRY_SECS: AtomicU64 = AtomicU64::new(60);
+
+/// The limit is looked at and counted as one step (per process)
+static APPEARANCE_FANOUT_GATE: Lazy<futures::lock::Mutex<()>> =
+    Lazy::new(|| futures::lock::Mutex::new(()));
+
+/// Users with a trailing fan-out waiting for the window to open
+static APPEARANCE_FANOUT_TRAILING: Lazy<futures::lock::Mutex<HashSet<String>>> =
+    Lazy::new(|| futures::lock::Mutex::new(HashSet::new()));
 
 auto_derived_partial!(
     /// # User
@@ -581,7 +600,8 @@ impl User {
                     .fetch_bot_by_token(token)
                     .await
                     .map_err(User::token_lookup_error)?;
-                if crate::bot_suspended(&bot) {
+                // a disabled bot, or one whose owner was suspended or banned
+                if !crate::bot_may_act(db, &bot).await? {
                     return Err(create_error!(InvalidSession));
                 }
                 let user = db.fetch_user(&bot.id).await?.confirm_privileged(db, None).await;
@@ -756,6 +776,15 @@ impl User {
     /// twice in 24 hours; taking one's own name, or changing its capitals,
     /// is not counted.
     pub async fn update_username(&mut self, db: &Database, username: String) -> Result<()> {
+        if self.update_username_held(db, username).await? {
+            self.announce_appearance(db);
+        }
+        Ok(())
+    }
+
+    /// [`User::update_username`] without telling the servers (see
+    /// [`User::update_held`]); whether the name changed
+    pub async fn update_username_held(&mut self, db: &Database, username: String) -> Result<bool> {
         let new_username = User::sanitise_username(&username).await?;
         User::validate_username(&new_username)?;
 
@@ -781,7 +810,7 @@ impl User {
                 .await?
             };
             return self
-                .update(
+                .update_held(
                     db,
                     PartialUser {
                         discriminator: Some(discriminator),
@@ -816,7 +845,7 @@ impl User {
             .await?;
         }
 
-        self.update(
+        self.update_held(
             db,
             PartialUser {
                 discriminator: Some(discriminator),
@@ -1027,19 +1056,38 @@ impl User {
         }
     }
 
-    /// Update user data
+    /// Update user data; a new avatar or name also goes to every server
+    /// the user is in (see [`User::announce_appearance`])
     pub async fn update(
         &mut self,
         db: &Database,
         partial: PartialUser,
         remove: Vec<FieldsUser>,
     ) -> Result<()> {
+        if self.update_held(db, partial, remove).await? {
+            self.announce_appearance(db);
+        }
+        Ok(())
+    }
+
+    /// Update user data and tell the user's own topic (the user, friends,
+    /// DM and group partners), not the servers. Returns whether the avatar or
+    /// a name changed, so a caller making several changes in a row (a bot
+    /// rename) announces them to the servers once.
+    pub async fn update_held(
+        &mut self,
+        db: &Database,
+        partial: PartialUser,
+        remove: Vec<FieldsUser>,
+    ) -> Result<bool> {
         for field in &remove {
             self.remove_field(field);
         }
 
         self.apply_options(partial.clone());
         db.update_user(&self.id, &partial, remove.clone()).await?;
+
+        let appearance = Self::changes_appearance(&partial, &remove);
 
         EventV1::UserUpdate {
             id: self.id.clone(),
@@ -1050,7 +1098,179 @@ impl User {
         .p(self.id.clone())
         .await;
 
-        Ok(())
+        Ok(appearance)
+    }
+
+    /// Send the user's current avatar and names to every server they are in,
+    /// in the background (the request that changed them does not wait).
+    ///
+    /// The user's own topic reaches only them, friends and DM or group
+    /// partners; everyone else who shares a server saw the old picture and
+    /// name until they reloaded (bug #10, 2026-11-22). Presence already goes
+    /// to every server the same way. At most [`APPEARANCE_FANOUTS_PER_HOUR`]
+    /// times in the window: a change past that still reaches the user's own
+    /// topic at once, and one trailing fan-out per user goes out when the
+    /// window opens again, with the look the user has then.
+    pub fn announce_appearance(&self, db: &Database) {
+        let db = db.clone();
+        let id = self.id.clone();
+        tokio::spawn(async move {
+            User::fan_out_appearance(&db, &id).await;
+        });
+    }
+
+    /// The fan-out itself; whether it was sent now
+    pub async fn fan_out_appearance(db: &Database, user_id: &str) -> bool {
+        match Self::take_fanout_slot(db, user_id).await {
+            Some(true) => Self::publish_appearance(db, user_id).await,
+            Some(false) => {
+                Self::schedule_trailing_fanout(db, user_id).await;
+                false
+            }
+            None => false,
+        }
+    }
+
+    /// Count one fan-out if the window has room: `Some(true)` counted,
+    /// `Some(false)` over the limit, `None` the lookup failed (logged). The
+    /// look and the count are one step inside this process, so two changes
+    /// at once never both take the last slot.
+    async fn take_fanout_slot(db: &Database, user_id: &str) -> Option<bool> {
+        let _one_at_a_time = APPEARANCE_FANOUT_GATE.lock().await;
+        let window = Duration::from_secs(APPEARANCE_FANOUT_WINDOW_SECS.load(Ordering::Relaxed));
+        match db
+            .has_ratelimited(
+                user_id,
+                crate::RatelimitEventType::AppearanceFanOut,
+                window,
+                APPEARANCE_FANOUTS_PER_HOUR,
+            )
+            .await
+        {
+            Ok(true) => return Some(false),
+            Ok(false) => {}
+            Err(error) => {
+                log::error!("appearance fan-out: rate limit lookup failed: {error:?}");
+                return None;
+            }
+        }
+        if let Err(error) = RatelimitEvent::create(
+            db,
+            user_id.to_string(),
+            crate::RatelimitEventType::AppearanceFanOut,
+        )
+        .await
+        {
+            log::error!("appearance fan-out: could not count it: {error:?}");
+        }
+        Some(true)
+    }
+
+    /// One trailing fan-out per user while the window is full: it waits
+    /// until a slot is free, then sends the look the user has at that time
+    /// (read again), so the last change of a busy hour is not lost. More
+    /// changes meanwhile add nothing.
+    async fn schedule_trailing_fanout(db: &Database, user_id: &str) {
+        if !APPEARANCE_FANOUT_TRAILING
+            .lock()
+            .await
+            .insert(user_id.to_string())
+        {
+            return;
+        }
+        log::debug!("appearance: over the limit, sent when the window opens");
+        let db = db.clone();
+        let id = user_id.to_string();
+        tokio::spawn(async move {
+            // the window is at most an hour; a failing lookup is retried a
+            // bounded number of times
+            let mut failures = 0;
+            loop {
+                let wait = APPEARANCE_FANOUT_RETRY_SECS.load(Ordering::Relaxed);
+                tokio::time::sleep(Duration::from_secs(wait.max(1))).await;
+                match User::take_fanout_slot(&db, &id).await {
+                    Some(true) => break,
+                    Some(false) => {}
+                    None => {
+                        failures += 1;
+                        if failures >= 10 {
+                            APPEARANCE_FANOUT_TRAILING.lock().await.remove(&id);
+                            return;
+                        }
+                    }
+                }
+            }
+            APPEARANCE_FANOUT_TRAILING.lock().await.remove(&id);
+            User::publish_appearance(&db, &id).await;
+        });
+    }
+
+    /// Read the user again and send their look to every server they are in
+    /// (an older task never sends an older look after a newer one)
+    async fn publish_appearance(db: &Database, user_id: &str) -> bool {
+        let user = match db.fetch_user(user_id).await {
+            Ok(user) => user,
+            Err(error) => {
+                log::error!("appearance fan-out: user lookup failed: {error:?}");
+                return false;
+            }
+        };
+        let members = match db.fetch_all_memberships(user_id).await {
+            Ok(members) => members,
+            Err(error) => {
+                log::error!("appearance fan-out: membership lookup failed: {error:?}");
+                return false;
+            }
+        };
+        if members.is_empty() {
+            return false;
+        }
+        // one event id for every server, so a session in several takes it once
+        let event = user.appearance_event();
+        join_all(
+            members
+                .into_iter()
+                .map(|member| event.clone().p(member.id.server)),
+        )
+        .await;
+        true
+    }
+
+    /// The user's current avatar and names as a `UserUpdate`: what people
+    /// who share a server see anyway, nothing else
+    pub fn appearance_event(&self) -> EventV1 {
+        let mut clear = vec![];
+        if self.avatar.is_none() {
+            clear.push(v0::FieldsUser::Avatar);
+        }
+        if self.display_name.is_none() {
+            clear.push(v0::FieldsUser::DisplayName);
+        }
+        EventV1::UserUpdate {
+            id: self.id.clone(),
+            data: PartialUser {
+                avatar: self.avatar.clone(),
+                display_name: self.display_name.clone(),
+                username: Some(self.username.clone()),
+                discriminator: Some(self.discriminator.clone()),
+                ..Default::default()
+            }
+            .into(),
+            clear,
+            event_id: Some(Ulid::new().to_string()),
+        }
+    }
+
+    /// Whether a change touches what people sharing a server see: the
+    /// avatar, the display name or the username
+    pub fn changes_appearance(partial: &PartialUser, remove: &[FieldsUser]) -> bool {
+        partial.avatar.is_some()
+            || partial.display_name.is_some()
+            || partial.username.is_some()
+            || partial.discriminator.is_some()
+            || remove
+                .iter()
+                .any(|field| matches!(field, FieldsUser::Avatar | FieldsUser::DisplayName))
     }
 
     /// Clear custom statuses whose expiry has passed, at most 1000 a pass
@@ -1242,6 +1462,10 @@ impl User {
         db.scrub_user_fields(&self.id).await?;
         // Applications to join the team go with the account
         db.delete_team_applications_of(&self.id).await?;
+        // Volunteer identity, memberships and activity counts too
+        db.delete_team_identity(&self.id).await?;
+        db.delete_team_members_of(&self.id).await?;
+        db.delete_team_activity_of(&self.id).await?;
         self.locale = None;
         self.privacy = None;
         self.profile = None;
@@ -1337,6 +1561,65 @@ impl User {
 
 #[cfg(test)]
 mod tests {
+    /// Bug #10: what goes to the servers a user is in is only what their
+    /// members see anyway (the current avatar and names), and other changes
+    /// do not go there
+    #[test]
+    fn only_the_picture_and_names_go_to_shared_servers() {
+        use crate::{events::client::EventV1, FieldsUser, PartialUser, User, UserStatus};
+        use revolt_models::v0;
+
+        let named = PartialUser {
+            display_name: Some("Layla".into()),
+            status: Some(UserStatus::default()),
+            pronouns: Some("she/her".into()),
+            ..Default::default()
+        };
+        assert!(User::changes_appearance(&named, &[FieldsUser::StatusText]));
+        assert!(User::changes_appearance(&PartialUser::default(), &[FieldsUser::Avatar]));
+        let status_only = PartialUser {
+            status: Some(UserStatus::default()),
+            ..Default::default()
+        };
+        assert!(!User::changes_appearance(&status_only, &[FieldsUser::StatusText]));
+        assert!(!User::changes_appearance(&PartialUser::default(), &[FieldsUser::Pronouns]));
+
+        // the event carries the whole current look: a fan-out after one the
+        // hourly limit held back still brings the newest picture and name
+        let user = User {
+            id: "u".into(),
+            username: "layla".into(),
+            discriminator: "0001".into(),
+            display_name: Some("Layla".into()),
+            pronouns: Some("she/her".into()),
+            status: Some(UserStatus {
+                text: Some("away".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let EventV1::UserUpdate { data, clear, .. } = user.appearance_event() else {
+            unreachable!()
+        };
+        assert_eq!(data.display_name.as_deref(), Some("Layla"));
+        assert_eq!(data.username.as_deref(), Some("layla"));
+        assert_eq!(data.discriminator.as_deref(), Some("0001"));
+        assert!(data.status.is_none() && data.pronouns.is_none() && data.online.is_none());
+        assert_eq!(clear, vec![v0::FieldsUser::Avatar], "no avatar now: it is cleared");
+    }
+
+    /// A15: an unknown or reset token is an invalid session wherever it is
+    /// looked up (the API, and the file service through the same mapping);
+    /// other errors stay what they are
+    #[test]
+    fn an_unknown_token_is_an_invalid_session() {
+        use revolt_result::{create_error, ErrorType};
+        let mapped = super::User::token_lookup_error(create_error!(NotFound));
+        assert!(matches!(mapped.error_type, ErrorType::InvalidSession));
+        let mapped = super::User::token_lookup_error(create_error!(InternalError));
+        assert!(matches!(mapped.error_type, ErrorType::InternalError));
+    }
+
     use crate::{User, UserHint};
     use lapin::{options::ExchangeDeclareOptions, types::FieldTable, ExchangeKind};
     use revolt_result::{create_database_error, create_error, ErrorType};

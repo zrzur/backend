@@ -29,11 +29,28 @@ pub async fn install_bot(
     if !bot.public && bot.owner != user.id {
         return Err(create_error!(BotIsPrivate));
     }
+    // a disabled bot, or one whose owner was suspended or banned, joins nowhere
+    if !revolt_database::bot_may_receive(db, bot).await {
+        return Err(create_error!(NotFound));
+    }
     let bot_user = db.fetch_user(&bot.id).await?;
 
     let mut query = DatabasePermissionQuery::new(db, user).server(server);
     let user_permissions = calculate_server_permissions(&mut query).await;
     user_permissions.throw_if_lacking_channel_permission(ChannelPermission::ManageServer)?;
+
+    // No `?permissions=`: the bot gets what its owner set as its default
+    // permissions, through a role of its own, as an install from the portal
+    // does. The installer can only give what they hold, and only with Manage
+    // Roles; the rest is left out instead of failing the install. An explicit
+    // value keeps the strict check below, and an explicit 0 ("no
+    // permissions", what the add dialog sends with everything unticked)
+    // gives no role at all.
+    let permissions = match permissions {
+        Some(0) => None,
+        Some(permissions) => Some(permissions),
+        None => default_grant(bot.default_permissions, &user_permissions),
+    };
 
     // Check the permissions before anything changes
     if permissions.is_some_and(|p| p < 0) {
@@ -110,6 +127,19 @@ pub async fn install_bot(
         installed_at: Timestamp::now_utc(),
     })
     .await
+}
+
+/// The part of a bot's default permissions this installer can give, if any
+fn default_grant(
+    defaults: Option<i64>,
+    installer: &revolt_permissions::PermissionValue,
+) -> Option<i64> {
+    let defaults = defaults.filter(|p| *p > 0)? as u64;
+    if !installer.has_channel_permission(ChannelPermission::ManageRole) {
+        return None;
+    }
+    let granted = defaults & u64::from(*installer);
+    (granted != 0).then_some(granted as i64)
 }
 
 /// Members who manage the server may see and change its apps

@@ -10,7 +10,8 @@ use revolt_database::{
         permissions::DatabasePermissionQuery,
     },
     voice::{get_channel_voice_state, UserVoiceChannel},
-    Channel, Database, Member, MemberCompositeKey, Presence, RelationshipStatus, Role,
+    Channel, Database, Member, MemberCompositeKey, Presence, Relationship, RelationshipStatus,
+    Role, User,
 };
 use revolt_models::v0::{self, GatewayIntents};
 use revolt_permissions::{calculate_channel_permissions, ChannelPermission};
@@ -18,6 +19,28 @@ use revolt_presence::filter_online;
 use revolt_result::Result;
 
 use super::state::{Cache, State};
+
+/// Put a relationship from a UserRelationship event into the session's own
+/// cached user: replaced, added, or removed when it is None.
+fn set_cached_relationship(me: &mut User, other: &str, status: &v0::RelationshipStatus) {
+    let status = match status {
+        v0::RelationshipStatus::None => None,
+        v0::RelationshipStatus::User => return,
+        v0::RelationshipStatus::Friend => Some(RelationshipStatus::Friend),
+        v0::RelationshipStatus::Outgoing => Some(RelationshipStatus::Outgoing),
+        v0::RelationshipStatus::Incoming => Some(RelationshipStatus::Incoming),
+        v0::RelationshipStatus::Blocked => Some(RelationshipStatus::Blocked),
+        v0::RelationshipStatus::BlockedOther => Some(RelationshipStatus::BlockedOther),
+    };
+    let relations = me.relations.get_or_insert_with(Vec::new);
+    relations.retain(|relation| relation.id != other);
+    if let Some(status) = status {
+        relations.push(Relationship {
+            id: other.to_string(),
+            status,
+        });
+    }
+}
 
 /// Cache Manager
 impl Cache {
@@ -212,6 +235,17 @@ impl Cache {
                     .mentions
                     .is_some_and(|mentions| mentions.contains(&self.user_id))
         })
+    }
+
+    /// Whether this user's online changes may be told to others (not while invisible)
+    pub fn shows_presence(&self) -> bool {
+        match self.users.get(&self.user_id) {
+            Some(user) => user
+                .status
+                .as_ref()
+                .is_none_or(|status| status.presence != Some(Presence::Invisible)),
+            None => false,
+        }
     }
 
     /// Check whether we can subscribe to another user
@@ -695,11 +729,7 @@ impl State {
             return;
         }
 
-        if if let Some(status) = &self.cache.users.get(&self.cache.user_id).unwrap().status {
-            status.presence != Some(Presence::Invisible)
-        } else {
-            true
-        } {
+        if self.cache.shows_presence() {
             let event = EventV1::UserUpdate {
                 id: self.cache.user_id.clone(),
                 data: v0::PartialUser {
@@ -777,7 +807,7 @@ impl State {
             }
         }
 
-        if self.cache.is_bot && !self.allowed_by_intents(db, event).await {
+        if self.cache.is_bot && !self.allowed_by_intents(db, event, topic).await {
             return false;
         }
 
@@ -1087,12 +1117,20 @@ impl State {
                 *event_id = None;
             }
             EventV1::UserRelationship { id, user, .. } => {
-                self.cache.users.insert(id.clone(), user.clone().into());
+                // Sent privately to `id`, this session's user; `user` is the
+                // other person. Our own cached user is never replaced: every
+                // permission, presence and relationship check reads it.
+                if id == &self.cache.user_id && user.id != self.cache.user_id {
+                    if let Some(me) = self.cache.users.get_mut(&self.cache.user_id) {
+                        set_cached_relationship(me, &user.id, &user.relationship);
+                    }
+                    self.cache.users.insert(user.id.clone(), user.clone().into());
 
-                if self.cache.can_subscribe_to_user(id) {
-                    self.insert_subscription(id.clone()).await;
-                } else {
-                    self.remove_subscription(id).await;
+                    if self.cache.can_subscribe_to_user(&user.id) {
+                        self.insert_subscription(user.id.clone()).await;
+                    } else {
+                        self.remove_subscription(&user.id).await;
+                    }
                 }
             }
 
@@ -1194,7 +1232,7 @@ impl State {
 
     /// Drop or trim an event a bot's intents don't cover. Only events that
     /// don't change this connection's state are dropped here.
-    async fn allowed_by_intents(&self, db: &Database, event: &mut EventV1) -> bool {
+    async fn allowed_by_intents(&self, db: &Database, event: &mut EventV1, topic: &str) -> bool {
         let cache = &self.cache;
         let me = cache.user_id.as_str();
         let messages = |channel: &str| {
@@ -1257,6 +1295,24 @@ impl State {
                 return id.user == me || cache.has_intent(GatewayIntents::SERVER_MEMBERS)
             }
             EventV1::UserUpdate { id, data, clear, .. } => {
+                // another user's avatar and names reach a server topic for
+                // every member (bug #10); a bot sees those only with the
+                // member intent, as it sees joins and member changes
+                if id != me
+                    && cache.servers.contains_key(topic)
+                    && !cache.has_intent(GatewayIntents::SERVER_MEMBERS)
+                {
+                    data.avatar = None;
+                    data.display_name = None;
+                    data.username = None;
+                    data.discriminator = None;
+                    clear.retain(|field| {
+                        !matches!(field, v0::FieldsUser::Avatar | v0::FieldsUser::DisplayName)
+                    });
+                    if *data == v0::PartialUser::default() && clear.is_empty() {
+                        return false;
+                    }
+                }
                 if id != me && !cache.has_intent(GatewayIntents::PRESENCE) {
                     data.online = None;
                     data.status = None;

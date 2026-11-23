@@ -101,6 +101,7 @@ fn team_role(key: &str, server: &Server, role: &str) -> TeamRole {
         open: true,
         rules: format!("Rules of {key}"),
         questions: vec![],
+        work_channels: vec![],
     }
 }
 
@@ -341,6 +342,21 @@ impl Desk {
         modal: Value,
         fields: Value,
     ) -> (String, String) {
+        let (status, accepted) = self.form_raw(session, channel, parent, modal, fields).await;
+        assert_eq!(status, Status::Ok, "{accepted}");
+        let id = accepted["_id"].as_str().unwrap().to_string();
+        (id.clone(), self.token_of(&id).await)
+    }
+
+    /// As `form`, giving what the interaction check answered
+    async fn form_raw(
+        &mut self,
+        session: &str,
+        channel: &Channel,
+        parent: &(String, String),
+        modal: Value,
+        fields: Value,
+    ) -> (Status, Value) {
         let custom_id = modal["custom_id"].as_str().unwrap().to_string();
         let status = self
             .harness
@@ -365,9 +381,7 @@ impl Desk {
                 }),
             )
             .await;
-        assert_eq!(status, Status::Ok, "{accepted}");
-        let id = accepted["_id"].as_str().unwrap().to_string();
-        (id.clone(), self.token_of(&id).await)
+        (status, accepted)
     }
 
     /// A person presses Apply, gets the form of `role` and sends it; gives
@@ -624,6 +638,8 @@ fn the_routes_exist_only_for_the_desk_bot() {
         // the desk's bot: only roles that are open and set up, in order
         let (status, config) = d.as_bot(&d.bot.token, "/team/desk/config", None).await;
         assert_eq!(status, Status::Ok);
+        // the bot states how long counts are kept: never fewer than the 62 days kept anyway
+        assert!(config["volunteers"]["activity_keep_days"].as_i64().unwrap() >= 62, "{config}");
         let keys: Vec<&str> = config["roles"]
             .as_array()
             .unwrap()
@@ -1463,5 +1479,2011 @@ fn a_banned_account_is_not_taken_into_the_team() {
         assert_eq!(outcome["problem"], "not_eligible");
         assert_eq!(d.stored(&id).await.status, TeamApplicationStatus::Open);
         assert!(d.roles_of(&d.lounge, &d.applicant).await.is_empty());
+    });
+}
+
+// ---- "About you" ----
+
+impl Desk {
+    /// Switch the volunteer care on, with the rules at `version`
+    fn volunteers_on(&self, version: &str) {
+        let mut settings = super::test_settings::get(&self.bot.id).unwrap();
+        settings.volunteers.enabled = true;
+        settings.volunteers.rules_version = version.to_string();
+        super::test_settings::register(settings);
+    }
+
+    /// A person presses Apply, gets "About you" and sends it; gives what the
+    /// server answered to the hand-back
+    async fn about_with(&mut self, session: &str, role: &str, fields: Value) -> (Status, Value) {
+        let channel = self.apply.clone();
+        let (parent, modal) = self.about_modal(session, role).await;
+        let sent = self.form(session, &channel, &parent, modal, fields).await;
+        self.hand("about", &sent).await
+    }
+
+    /// The person opens "About you" for `role`: the form as the bot sends it
+    /// (the rules tick may be left empty; the server says what is missing)
+    async fn about_modal(&mut self, session: &str, role: &str) -> ((String, String), Value) {
+        let channel = self.apply.clone();
+        let panel = self.panel.clone();
+        let parent = self.press(session, &channel, &panel, "ta:start").await;
+        let text = |id: &str| {
+            json!({ "type": "Field", "label": id, "component": {
+                "type": "TextInput", "custom_id": id, "style": "Short", "label": id, "required": true
+            }})
+        };
+        let modal = json!({
+            "custom_id": format!("ta:about:{role}"),
+            "title": "About you",
+            "components": [
+                text("name"),
+                text("age"),
+                text("country"),
+                // as the bot draws it (team-bot `card.mjs` `aboutForm`)
+                { "type": "Field", "label": "Rules", "component": {
+                    "type": "CheckboxGroup", "custom_id": "rules", "required": true,
+                    "min_values": 1, "max_values": 1,
+                    "options": [{ "label": "I accept the volunteer rules", "value": "accept" }]
+                }},
+            ]
+        });
+        (parent, modal)
+    }
+
+    /// The reviewer accepted today's volunteer rules ("About you" on file)
+    async fn reviewer_accepts_rules(&self) {
+        let version = super::test_settings::get(&self.bot.id).unwrap().volunteers.rules_version;
+        self.harness
+            .db
+            .upsert_team_identity(&revolt_database::TeamIdentity {
+                id: self.reviewer.id.clone(),
+                name: "Rami Reviewer".to_string(),
+                age: 30,
+                country: "Jordan".to_string(),
+                rules_version: version,
+                rules_at: revolt_database::staff_now(),
+                purge_at: None,
+                reviewer: false,
+            })
+            .await
+            .unwrap();
+    }
+
+    async fn about_as(&mut self, session: &str, age: &str) -> (Status, Value) {
+        self.about_with(session, "support", about_fields(age, &["accept"])).await
+    }
+
+    async fn identity_of(&self, user: &User) -> Option<revolt_database::TeamIdentity> {
+        self.harness.db.fetch_team_identity(&user.id).await.unwrap()
+    }
+
+    /// The person takes the application `id` back
+    async fn withdraw_as(&mut self, session: &str, id: &str) -> (Status, Value) {
+        let channel = self.apply.clone();
+        let withdraw = self.message(&channel, &[&format!("ta:withdraw:{id}")]).await;
+        let pressed = self.press(session, &channel, &withdraw, &format!("ta:withdraw:{id}")).await;
+        self.hand("withdraw", &pressed).await
+    }
+}
+
+fn about_fields(age: &str, rules: &[&str]) -> Value {
+    json!([
+        { "custom_id": "name", "value": "Lina Haddad" },
+        { "custom_id": "age", "value": age },
+        { "custom_id": "country", "value": "Austria" },
+        { "custom_id": "rules", "values": rules },
+    ])
+}
+
+#[test]
+fn about_saves_identity_and_rules_version() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        d.volunteers_on("3");
+        let session = d.applicant_session.clone();
+        let (status, outcome) = d.about_as(&session, " 24 ").await;
+        assert_eq!(status, Status::Ok, "{outcome}");
+        assert_eq!(outcome["saved"], true);
+        let identity = d.identity_of(&d.applicant).await.unwrap();
+        assert_eq!(identity.id, d.applicant.id);
+        assert_eq!(identity.name, "Lina Haddad");
+        assert_eq!(identity.age, 24);
+        assert_eq!(identity.country, "Austria");
+        assert_eq!(identity.rules_version, "3");
+        assert!(identity.rules_at > 0);
+        // step 2 not sent yet: nothing holds it, it goes after one day
+        assert_eq!(
+            identity.purge_at,
+            Some(identity.rules_at + revolt_database::util::team_activity::ORPHAN_IDENTITY_MS)
+        );
+        // sending the application claims it
+        let (_, outcome) = d.apply_as(&session, "support").await;
+        assert_eq!(outcome["applied"], true, "{outcome}");
+        assert_eq!(d.identity_of(&d.applicant).await.unwrap().purge_at, None);
+        // a closed role takes nobody's answers
+        let (_, outcome) = d.about_with(&session, "closed", about_fields("24", &["accept"])).await;
+        assert_eq!(outcome["saved"], false);
+        assert_eq!(outcome["problem"], "role_closed");
+    });
+}
+
+#[test]
+fn about_under_16_stores_nothing() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        d.volunteers_on("1");
+        let session = d.applicant_session.clone();
+        for age in ["15", "12", "0"] {
+            let (status, outcome) = d.about_as(&session, age).await;
+            assert_eq!(status, Status::Ok, "{outcome}");
+            assert_eq!(outcome["saved"], false, "{age}");
+            assert_eq!(outcome["problem"], "too_young", "{age}");
+        }
+        assert!(d.identity_of(&d.applicant).await.is_none());
+    });
+}
+
+#[test]
+fn about_accepts_arabic_digits() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        d.volunteers_on("1");
+        let session = d.applicant_session.clone();
+        let (status, outcome) = d.about_as(&session, "\u{0661}\u{0667}").await;
+        assert_eq!(status, Status::Ok, "{outcome}");
+        assert_eq!(outcome["saved"], true, "{outcome}");
+        assert_eq!(d.identity_of(&d.applicant).await.unwrap().age, 17);
+    });
+}
+
+#[test]
+fn about_refuses_words_in_age() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        d.volunteers_on("1");
+        let session = d.applicant_session.clone();
+        for age in ["17 years", "seventeen", "1 7", "100", "-20"] {
+            let (status, outcome) = d.about_as(&session, age).await;
+            assert_eq!(status, Status::Ok, "{outcome}");
+            assert_eq!(outcome["saved"], false, "{age}");
+            assert_eq!(outcome["problem"], "bad_age", "{age}");
+        }
+        assert!(d.identity_of(&d.applicant).await.is_none());
+    });
+}
+
+#[test]
+fn about_needs_the_rules_tick() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        d.volunteers_on("1");
+        let session = d.applicant_session.clone();
+        // with the bot's form, neither an empty tick nor a forged value gets
+        // past the form check: nothing reaches the bot or "About you" (which
+        // refuses a missing tick on its own, `rules_not_accepted`)
+        let channel = d.apply.clone();
+        for rules in [vec![], vec!["something-else"]] {
+            let (parent, modal) = d.about_modal(&session, "support").await;
+            let (status, body) = d
+                .form_raw(&session, &channel, &parent, modal, about_fields("30", &rules))
+                .await;
+            assert_eq!(status, Status::BadRequest, "{rules:?}: {body}");
+            assert_eq!(body["type"], "FailedValidation");
+        }
+        assert!(d.identity_of(&d.applicant).await.is_none());
+    });
+}
+
+#[test]
+fn apply_needs_identity_when_enabled() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        d.volunteers_on("1");
+        let session = d.applicant_session.clone();
+        let (status, outcome) = d.apply_as(&session, "support").await;
+        assert_eq!(status, Status::Ok);
+        assert_eq!(outcome["applied"], false);
+        assert_eq!(outcome["problem"], "identity_missing");
+        assert!(d.harness.db.fetch_team_applications_of(&d.applicant.id).await.unwrap().is_empty());
+
+        d.about_as(&session, "24").await;
+        // the rules changed since: "About you" is asked again
+        d.volunteers_on("2");
+        let (_, outcome) = d.apply_as(&session, "support").await;
+        assert_eq!(outcome["problem"], "identity_missing");
+        d.about_as(&session, "24").await;
+        let (_, outcome) = d.apply_as(&session, "support").await;
+        assert_eq!(outcome["applied"], true, "{outcome}");
+    });
+}
+
+#[test]
+fn apply_works_without_identity_when_disabled() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let session = d.applicant_session.clone();
+        let (_, outcome) = d.apply_as(&session, "support").await;
+        assert_eq!(outcome["applied"], true, "{outcome}");
+        assert!(d.identity_of(&d.applicant).await.is_none());
+        let entry = d.queue().await.remove(0);
+        assert_eq!(entry["has_identity"], false);
+        assert_eq!(entry["age_note"], false);
+        // and "About you" does not exist while it is off
+        let (status, _) = d.about_as(&session, "24").await;
+        assert_ne!(status, Status::Ok);
+        assert!(d.identity_of(&d.applicant).await.is_none());
+    });
+}
+
+#[test]
+fn age_note_when_band_disagrees() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        d.volunteers_on("1");
+        // an account that states it is 17 ...
+        let (mut account, young_session, young) = d.harness.new_user().await;
+        let year: i32 = iso8601_timestamp::Timestamp::now_utc().format().to_string()[0..4]
+            .parse()
+            .unwrap();
+        account.age.as_mut().unwrap().birth_month = format!("{}-01", year - 17);
+        d.harness.db.save_account(&account).await.unwrap();
+        Member::create(&d.harness.db, &d.lounge, &young, None).await.unwrap();
+        // ... but says 25 in "About you"
+        let (_, outcome) = d.about_with(&young_session.token, "designer", about_fields("25", &["accept"])).await;
+        assert_eq!(outcome["saved"], true, "{outcome}");
+        let (_, outcome) = d.apply_as(&young_session.token, "designer").await;
+        assert_eq!(outcome["applied"], true, "{outcome}");
+        let queue = d.queue().await;
+        let entry = queue.iter().find(|e| e["user_id"] == young.id.as_str()).unwrap();
+        assert_eq!(entry["has_identity"], true);
+        assert_eq!(entry["age_note"], true);
+
+        // an adult account that agrees has no note
+        let session = d.applicant_session.clone();
+        d.about_as(&session, "25").await;
+        d.apply_as(&session, "support").await;
+        let queue = d.queue().await;
+        let entry = queue.iter().find(|e| e["user_id"] == d.applicant.id.as_str()).unwrap();
+        assert_eq!(entry["has_identity"], true);
+        assert_eq!(entry["age_note"], false);
+        // the card never carries the values
+        assert!(!entry.to_string().contains("Lina Haddad"));
+    });
+}
+
+#[test]
+fn withdraw_erases_identity_without_membership() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        d.volunteers_on("1");
+        let session = d.applicant_session.clone();
+        d.about_as(&session, "24").await;
+        let (_, outcome) = d.apply_as(&session, "support").await;
+        let (status, outcome) = d.withdraw_as(&session, &id_of(&outcome)).await;
+        assert_eq!(status, Status::Ok, "{outcome}");
+        assert_eq!(outcome["applied"], true);
+        assert!(d.identity_of(&d.applicant).await.is_none());
+
+        // a current volunteer in another role keeps theirs
+        let (_, other_session, other) = d.harness.new_user().await;
+        Member::create(&d.harness.db, &d.lounge, &other, None).await.unwrap();
+        d.about_as(&other_session.token, "40").await;
+        d.harness
+            .db
+            .insert_team_member(&revolt_database::TeamMember {
+                id: ulid::Ulid::new().to_string(),
+                user_id: other.id.clone(),
+                role: "designer".to_string(),
+                server: d.lounge.id.clone(),
+                status: revolt_database::TeamMemberStatus::Active,
+                joined_at: 1,
+                trial_ends_at: 2,
+                confirmed_at: None,
+                away_until: None,
+                left_at: None,
+                low_months: 0,
+                notes: None,
+                invite: None,
+                history: vec![],
+            })
+            .await
+            .unwrap();
+        let (_, outcome) = d.apply_as(&other_session.token, "support").await;
+        let (_, outcome) = d.withdraw_as(&other_session.token, &id_of(&outcome)).await;
+        assert_eq!(outcome["applied"], true, "{outcome}");
+        assert!(d.identity_of(&other).await.is_some());
+    });
+}
+
+#[test]
+fn reject_erases_identity_at_once() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        d.volunteers_on("1");
+        let session = d.applicant_session.clone();
+        let reviewer_session = d.reviewer_session.clone();
+        d.about_as(&session, "24").await;
+        let (_, outcome) = d.apply_as(&session, "support").await;
+        let id = id_of(&outcome);
+        let card = d.card(&id).await;
+        let (status, outcome) = d.reject(&reviewer_session, &card, &id, "Not a fit right now.").await;
+        assert_eq!(status, Status::Ok, "{outcome}");
+        assert_eq!(outcome["applied"], true, "{outcome}");
+        // the application stays for the cooldown; "About you" does not
+        assert!(d.stored(&id).await.purge_at.is_some());
+        assert!(d.identity_of(&d.applicant).await.is_none());
+        // "About you" again, with nothing to hold it: kept for a day only
+        d.about_as(&session, "24").await;
+        assert!(d.identity_of(&d.applicant).await.unwrap().purge_at.is_some());
+    });
+}
+
+#[test]
+fn a_stale_identity_does_not_pass_apply() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        d.volunteers_on("1");
+        let session = d.applicant_session.clone();
+        let reviewer_session = d.reviewer_session.clone();
+        d.about_as(&session, "24").await;
+        let (_, outcome) = d.apply_as(&session, "support").await;
+        let id = id_of(&outcome);
+        let card = d.card(&id).await;
+        d.reject(&reviewer_session, &card, &id, "Not a fit right now.").await;
+        // "About you" again; time is up for it and the application, but the
+        // clean-up task has not run
+        d.about_as(&session, "24").await;
+        let mut identity = d.identity_of(&d.applicant).await.unwrap();
+        identity.purge_at = Some(1);
+        d.harness.db.upsert_team_identity(&identity).await.unwrap();
+        let mut application = d.stored(&id).await;
+        application.purge_at = Some(1);
+        assert!(d
+            .harness
+            .db
+            .replace_team_application_if(&application, TeamApplicationStatus::Rejected)
+            .await
+            .unwrap());
+        let (status, outcome) = d.apply_as(&session, "support").await;
+        assert_eq!(status, Status::Ok, "{outcome}");
+        assert_eq!(outcome["applied"], false);
+        assert_eq!(outcome["problem"], "identity_missing");
+        assert!(d.identity_of(&d.applicant).await.is_none());
+    });
+}
+
+// ---- "Show identity" ----
+
+impl Desk {
+    /// A reviewer presses "Show identity" on the card of `id`
+    async fn identity_press(&mut self, session: &str, id: &str) -> (Status, Value) {
+        let channel = self.review.clone();
+        let card = self.message(&channel, &[&format!("ta:identity:{id}")]).await;
+        let pressed = self.press(session, &channel, &card, &format!("ta:identity:{id}")).await;
+        self.hand("identity", &pressed).await
+    }
+
+    /// An application with an identity of `name`, ready to be looked at
+    async fn applied_as(&mut self, name: &str) -> String {
+        self.volunteers_on("1");
+        let session = self.applicant_session.clone();
+        let fields = json!([
+            { "custom_id": "name", "value": name },
+            { "custom_id": "age", "value": "24" },
+            { "custom_id": "country", "value": "Austria" },
+            { "custom_id": "rules", "values": ["accept"] },
+        ]);
+        let (_, outcome) = self.about_with(&session, "support", fields).await;
+        assert_eq!(outcome["saved"], true, "{outcome}");
+        let (_, outcome) = self.apply_as(&session, "support").await;
+        self.reviewer_accepts_rules().await;
+        id_of(&outcome)
+    }
+
+    fn identity_views(entries: Vec<(String, String, String)>) -> Vec<(String, String, String)> {
+        entries
+            .into_iter()
+            .filter(|(action, _, _)| action == "team.identity.view")
+            .collect()
+    }
+}
+
+#[test]
+fn reviewer_sees_identity_and_view_is_logged() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.applied_as("Lina Haddad").await;
+        let session = d.reviewer_session.clone();
+        let (status, view) = d.identity_press(&session, &id).await;
+        assert_eq!(status, Status::Ok, "{view}");
+        assert_eq!(view["name"], "Lina Haddad");
+        assert_eq!(view["age"], 24);
+        // P-128: when the age was given
+        let given = d.identity_of(&d.applicant).await.unwrap().rules_at;
+        assert_eq!(view["age_given_at"], given);
+        assert_eq!(view["country"], "Austria");
+        assert_eq!(view["age_note"], false);
+        assert_eq!(view["missing"], false);
+        assert_eq!(view["rules_needed"], false);
+        let views: Vec<_> = d
+            .audit(&d.applicant)
+            .await
+            .into_iter()
+            .filter(|(action, _, _)| action == "team.identity.view")
+            .collect();
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0].1, d.reviewer.id);
+        assert_eq!(views[0].2, "Success");
+        // the record names nobody's details
+        let log = format!("{:?}", d.harness.db.fetch_platform_audit(revolt_database::PlatformAuditQuery {
+            limit: 500,
+            ..Default::default()
+        }).await.unwrap());
+        for secret in ["Lina Haddad", "Austria"] {
+            assert!(!log.contains(secret), "{secret} in the log");
+        }
+    });
+}
+
+#[test]
+fn former_reviewer_is_refused_and_logged() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.applied_as("Lina Haddad").await;
+        let session = d.reviewer_session.clone();
+        // the card was drawn while they were a reviewer; the role is gone now
+        let channel = d.review.clone();
+        let card = d.message(&channel, &[&format!("ta:identity:{id}")]).await;
+        give_role(&d.harness, &d.lounge, &d.reviewer.clone(), vec![]).await;
+        let pressed = d.press(&session, &channel, &card, &format!("ta:identity:{id}")).await;
+        let (status, body) = d.hand("identity", &pressed).await;
+        assert_eq!(status, Status::Forbidden);
+        assert!(!body.to_string().contains("Lina"));
+        let refused: Vec<_> = d
+            .audit(&d.applicant)
+            .await
+            .into_iter()
+            .filter(|(action, _, _)| action == "team.identity.view")
+            .collect();
+        assert_eq!(refused.len(), 1);
+        assert_eq!(refused[0].1, d.reviewer.id);
+        assert_eq!(refused[0].2, "Failed");
+    });
+}
+
+#[test]
+fn identity_is_off_while_the_switch_is_off() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let session = d.reviewer_session.clone();
+        let (_, outcome) = d.apply_as(&d.applicant_session.clone(), "support").await;
+        let id = id_of(&outcome);
+        let (status, _) = d.identity_press(&session, &id).await;
+        assert_eq!(status, Status::BadRequest);
+        assert!(d
+            .audit(&d.applicant)
+            .await
+            .iter()
+            .all(|(action, _, _)| action != "team.identity.view"));
+    });
+}
+
+#[test]
+fn identity_press_is_single_use() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.applied_as("Lina Haddad").await;
+        let session = d.reviewer_session.clone();
+        let channel = d.review.clone();
+        let card = d.message(&channel, &[&format!("ta:identity:{id}")]).await;
+        let pressed = d.press(&session, &channel, &card, &format!("ta:identity:{id}")).await;
+        let (status, view) = d.hand("identity", &pressed).await;
+        assert_eq!(status, Status::Ok, "{view}");
+        assert_eq!(view["name"], "Lina Haddad");
+        let (status, body) = d.hand("identity", &pressed).await;
+        assert_ne!(status, Status::Ok);
+        assert!(!body.to_string().contains("Lina"));
+        let views: Vec<_> = d
+            .audit(&d.applicant)
+            .await
+            .into_iter()
+            .filter(|(action, _, _)| action == "team.identity.view")
+            .collect();
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0].2, "Success");
+    });
+}
+
+#[test]
+fn identity_missing_when_never_filled_or_unknown_application() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let session = d.reviewer_session.clone();
+        let (_, outcome) = d.apply_as(&d.applicant_session.clone(), "support").await;
+        let id = id_of(&outcome);
+        d.volunteers_on("1");
+        d.reviewer_accepts_rules().await;
+        // the person never filled "About you"
+        let (status, view) = d.identity_press(&session, &id).await;
+        assert_eq!(status, Status::Ok, "{view}");
+        assert_eq!(view["missing"], true);
+        assert_eq!(view["name"], "");
+        assert_eq!(view["age"], 0);
+        let seen: Vec<_> = d
+            .audit(&d.applicant)
+            .await
+            .into_iter()
+            .filter(|(action, _, _)| action == "team.identity.view")
+            .collect();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].2, "Success");
+        // an application that does not exist
+        let (status, view) = d.identity_press(&session, "01ZZZZZZZZZZZZZZZZZZZZZZZZ").await;
+        assert_eq!(status, Status::Ok, "{view}");
+        assert_eq!(view["missing"], true);
+    });
+}
+
+#[test]
+fn identity_of_own_application_is_refused_and_logged() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        d.volunteers_on("1");
+        let session = d.reviewer_session.clone();
+        let (_, outcome) = d.about_with(&session, "support", about_fields("30", &["accept"])).await;
+        assert_eq!(outcome["saved"], true, "{outcome}");
+        let (_, outcome) = d.apply_as(&session, "support").await;
+        let id = id_of(&outcome);
+        let (status, body) = d.identity_press(&session, &id).await;
+        assert_eq!(status, Status::Forbidden);
+        assert!(!body.to_string().contains("Lina"));
+        let refused: Vec<_> = d
+            .audit(&d.reviewer)
+            .await
+            .into_iter()
+            .filter(|(action, _, _)| action == "team.identity.view")
+            .collect();
+        assert_eq!(refused.len(), 1);
+        assert_eq!(refused[0].2, "Failed");
+    });
+}
+
+#[test]
+fn identity_pressed_outside_a_review_channel_is_refused_and_logged() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.applied_as("Lina Haddad").await;
+        let session = d.reviewer_session.clone();
+        let channel = d.apply.clone();
+        let card = d.message(&channel, &[&format!("ta:identity:{id}")]).await;
+        let pressed = d.press(&session, &channel, &card, &format!("ta:identity:{id}")).await;
+        let (status, body) = d.hand("identity", &pressed).await;
+        assert_eq!(status, Status::Forbidden);
+        assert!(!body.to_string().contains("Lina"));
+        let refused: Vec<_> = d
+            .audit(&d.applicant)
+            .await
+            .into_iter()
+            .filter(|(action, _, _)| action == "team.identity.view")
+            .collect();
+        assert_eq!(refused.len(), 1);
+        assert_eq!(refused[0].2, "Failed");
+    });
+}
+
+#[test]
+fn identity_carries_the_age_note() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        d.volunteers_on("1");
+        let (mut account, young_session, young) = d.harness.new_user().await;
+        let year: i32 = iso8601_timestamp::Timestamp::now_utc().format().to_string()[0..4]
+            .parse()
+            .unwrap();
+        account.age.as_mut().unwrap().birth_month = format!("{}-01", year - 17);
+        d.harness.db.save_account(&account).await.unwrap();
+        Member::create(&d.harness.db, &d.lounge, &young, None).await.unwrap();
+        let (_, outcome) = d.about_with(&young_session.token, "designer", about_fields("25", &["accept"])).await;
+        assert_eq!(outcome["saved"], true, "{outcome}");
+        let (_, outcome) = d.apply_as(&young_session.token, "designer").await;
+        let id = id_of(&outcome);
+        d.reviewer_accepts_rules().await;
+        let session = d.reviewer_session.clone();
+        let (status, view) = d.identity_press(&session, &id).await;
+        assert_eq!(status, Status::Ok, "{view}");
+        assert_eq!(view["age"], 25);
+        assert_eq!(view["age_note"], true);
+        assert_eq!(view["missing"], false);
+    });
+}
+
+#[test]
+fn identity_ages_with_the_years_since_it_was_given() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        d.volunteers_on("1");
+        // an adult account that said "17" two years ago is 19 now: no note
+        let (mut account, adult_session, adult) = d.harness.new_user().await;
+        let year: i32 = iso8601_timestamp::Timestamp::now_utc().format().to_string()[0..4]
+            .parse()
+            .unwrap();
+        account.age.as_mut().unwrap().birth_month = format!("{}-01", year - 30);
+        d.harness.db.save_account(&account).await.unwrap();
+        Member::create(&d.harness.db, &d.lounge, &adult, None).await.unwrap();
+        let (_, outcome) = d.about_with(&adult_session.token, "designer", about_fields("17", &["accept"])).await;
+        assert_eq!(outcome["saved"], true, "{outcome}");
+        let (_, outcome) = d.apply_as(&adult_session.token, "designer").await;
+        let id = id_of(&outcome);
+        d.reviewer_accepts_rules().await;
+        let session = d.reviewer_session.clone();
+        // given today: 17 against an adult account disagrees
+        let (_, view) = d.identity_press(&session, &id).await;
+        assert_eq!(view["age_note"], true, "{view}");
+        // given two years ago: 19 today, no note; the stated age and its date are shown
+        let mut identity = d.identity_of(&adult).await.unwrap();
+        identity.rules_at -= 2 * 366 * super::DAY_MS;
+        d.harness.db.upsert_team_identity(&identity).await.unwrap();
+        let (status, view) = d.identity_press(&session, &id).await;
+        assert_eq!(status, Status::Ok, "{view}");
+        assert_eq!(view["age"], 17);
+        assert_eq!(view["age_given_at"], identity.rules_at);
+        assert_eq!(view["age_note"], false, "{view}");
+    });
+}
+
+#[test]
+fn identity_needs_the_viewer_to_have_accepted_the_rules() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.applied_as("Lina Haddad").await;
+        let session = d.reviewer_session.clone();
+        // the rules changed since the reviewer accepted them
+        d.volunteers_on("2");
+        let (status, view) = d.identity_press(&session, &id).await;
+        assert_eq!(status, Status::Ok, "{view}");
+        assert_eq!(view["rules_needed"], true);
+        assert_eq!(view["missing"], true);
+        assert!(!view.to_string().contains("Lina"), "{view}");
+        let views = Desk::identity_views(d.audit(&d.applicant).await);
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0].2, "Failed");
+        // a reviewer with no "About you" at all: the same
+        d.harness.db.delete_team_identity(&d.reviewer.id).await.unwrap();
+        let (_, view) = d.identity_press(&session, &id).await;
+        assert_eq!(view["rules_needed"], true);
+        // accepting today's rules opens it
+        d.reviewer_accepts_rules().await;
+        let (_, view) = d.identity_press(&session, &id).await;
+        assert_eq!(view["name"], "Lina Haddad", "{view}");
+        assert_eq!(view["rules_needed"], false);
+
+        // the owner of the desk server may look without "About you"
+        d.harness.db.delete_team_identity(&d.reviewer.id).await.unwrap();
+        d.harness
+            .db
+            .update_server(
+                &d.lounge.id,
+                &revolt_database::PartialServer {
+                    owner: Some(d.reviewer.id.clone()),
+                    ..Default::default()
+                },
+                vec![],
+            )
+            .await
+            .unwrap();
+        let (_, view) = d.identity_press(&session, &id).await;
+        assert_eq!(view["name"], "Lina Haddad", "{view}");
+    });
+}
+
+#[test]
+fn a_reviewer_without_a_membership_accepts_the_rules_with_add_my_details() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.applied_as("Lina Haddad").await;
+        // not the helper: this reviewer has no identity and no membership
+        d.harness.db.delete_team_identity(&d.reviewer.id).await.unwrap();
+        assert!(d.members_of(&d.reviewer.clone()).await.is_empty());
+        let session = d.reviewer_session.clone();
+
+        // "My team status" offers "Add my details" to a reviewer
+        let channel = d.apply.clone();
+        let panel = d.message(&channel, &["ta:status"]).await;
+        let pressed = d.press(&session, &channel, &panel, "ta:status").await;
+        let (status, mine) = d.hand("status", &pressed).await;
+        assert_eq!(status, Status::Ok, "{mine}");
+        assert_eq!(mine["memberships"].as_array().unwrap().len(), 0);
+        assert_eq!(mine["can_add_details"], true);
+
+        let (_, outcome) = d.about_with(&session, "me", about_fields("31", &["accept"])).await;
+        assert_eq!(outcome["saved"], true, "{outcome}");
+        let identity = d.identity_of(&d.reviewer.clone()).await.unwrap();
+        assert!(identity.reviewer);
+        // held by the reviewer role: no deletion time
+        assert_eq!(identity.purge_at, None);
+        let (status, view) = d.identity_press(&session, &id).await;
+        assert_eq!(status, Status::Ok, "{view}");
+        assert_eq!(view["name"], "Lina Haddad", "{view}");
+
+        // someone with neither a membership nor a reviewer role still cannot
+        let guest = d.guest_session.clone();
+        let pressed = d.press(&guest, &channel, &panel, "ta:status").await;
+        let (_, mine) = d.hand("status", &pressed).await;
+        assert_eq!(mine["can_add_details"], false);
+        let (_, outcome) = d.about_with(&guest, "me", about_fields("31", &["accept"])).await;
+        assert_eq!(outcome["problem"], "not_a_volunteer");
+    });
+}
+
+#[test]
+fn identity_only_while_the_application_is_open() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.applied_as("Lina Haddad").await;
+        let session = d.reviewer_session.clone();
+        // in interview: still shown
+        let mut application = d.stored(&id).await;
+        application.status = TeamApplicationStatus::Interview;
+        assert!(d
+            .harness
+            .db
+            .replace_team_application_if(&application, TeamApplicationStatus::Open)
+            .await
+            .unwrap());
+        let (status, view) = d.identity_press(&session, &id).await;
+        assert_eq!(status, Status::Ok, "{view}");
+        assert_eq!(view["name"], "Lina Haddad");
+        // decided: refused and logged, even from a stale card
+        application.status = TeamApplicationStatus::Accepted;
+        assert!(d
+            .harness
+            .db
+            .replace_team_application_if(&application, TeamApplicationStatus::Interview)
+            .await
+            .unwrap());
+        let (status, body) = d.identity_press(&session, &id).await;
+        assert_eq!(status, Status::Forbidden, "{body}");
+        assert!(!body.to_string().contains("Lina"));
+        let views = Desk::identity_views(d.audit(&d.applicant).await);
+        assert_eq!(views.len(), 2);
+        assert_eq!(views.iter().filter(|v| v.2 == "Failed").count(), 1);
+    });
+}
+
+#[test]
+fn identity_never_in_queue_or_card_entry() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.applied_as("Lina Haddad").await;
+        let queue = d.queue().await;
+        let entry = queue.iter().find(|e| e["id"] == id.as_str()).unwrap();
+        assert_eq!(entry["has_identity"], true);
+        let text = Value::Array(queue.clone()).to_string();
+        for secret in ["Lina", "Haddad", "Austria"] {
+            assert!(!text.contains(secret), "{secret} in the queue");
+        }
+        let (_, state) = d
+            .as_bot(&d.bot.token, &format!("/team/desk/applications/{id}"), None)
+            .await;
+        assert!(!state.to_string().contains("Haddad"));
+    });
+}
+
+#[test]
+fn identity_escaped() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.applied_as("@everyone [x](http://a)").await;
+        let session = d.reviewer_session.clone();
+        let (status, view) = d.identity_press(&session, &id).await;
+        assert_eq!(status, Status::Ok, "{view}");
+        let name = view["name"].as_str().unwrap();
+        assert!(name.contains("@\u{200b}everyone"), "mention alive: {name}");
+        assert!(name.contains("\\[x\\]"), "link brackets alive: {name}");
+        assert!(!name.contains("://"), "link alive: {name}");
+        assert_eq!(name, crate::util::team_texts::plain("@everyone [x](http://a)"));
+    });
+}
+
+impl Desk {
+    /// Apply for `role`, and a reviewer accepts; gives the application id
+    async fn accepted_as(&mut self, session: &str, role: &str) -> String {
+        let enabled = super::test_settings::get(&self.bot.id).unwrap().volunteers.enabled;
+        let user = self.users.iter().find(|(s, _)| s == session).map(|(_, u)| u.clone()).unwrap();
+        let has_identity = self.harness.db.fetch_team_identity(&user).await.unwrap().is_some();
+        if enabled && !has_identity {
+            let (_, outcome) = self.about_with(session, role, about_fields("30", &["accept"])).await;
+            assert_eq!(outcome["saved"], true, "{outcome}");
+        }
+        let (_, outcome) = self.apply_as(session, role).await;
+        let id = id_of(&outcome);
+        let card = self.card(&id).await;
+        let reviewer = self.reviewer_session.clone();
+        let (status, outcome) = self.review_press(&reviewer, &card, "accept", &id).await;
+        assert_eq!(status, Status::Ok, "{outcome}");
+        assert_eq!(outcome["applied"], true, "{outcome}");
+        id
+    }
+
+    async fn members_of(&self, user: &User) -> Vec<revolt_database::TeamMember> {
+        self.harness.db.fetch_team_members_of(&user.id).await.unwrap()
+    }
+}
+
+#[test]
+fn accept_creates_trial_member() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        d.volunteers_on("1");
+        let session = d.applicant_session.clone();
+        d.about_as(&session, "30").await;
+        // applying alone makes no record
+        let (_, outcome) = d.apply_as(&session, "support").await;
+        assert!(d.members_of(&d.applicant).await.is_empty());
+        let id = id_of(&outcome);
+        let card = d.card(&id).await;
+        let reviewer = d.reviewer_session.clone();
+        d.review_press(&reviewer, &card, "interview", &id).await;
+        assert!(d.members_of(&d.applicant).await.is_empty());
+
+        let (_, outcome) = d.review_press(&reviewer, &card, "accept", &id).await;
+        assert_eq!(outcome["applied"], true, "{outcome}");
+        let members = d.members_of(&d.applicant).await;
+        assert_eq!(members.len(), 1);
+        let member = &members[0];
+        assert_eq!(member.role, "support");
+        assert_eq!(member.server, d.lounge.id);
+        assert_eq!(member.status, revolt_database::TeamMemberStatus::Trial);
+        assert_eq!(member.trial_ends_at - member.joined_at, 30 * super::DAY_MS);
+        assert_eq!(member.history.len(), 2);
+        assert_eq!(member.history[0].action, "accepted");
+        assert_eq!(member.history[0].actor, d.reviewer.id);
+        // P-114: the welcome says contributions are counted, and that is noted
+        assert_eq!(member.history[1].action, "counting_notice");
+        let told = d.told(&d.applicant).await;
+        assert!(
+            told.iter().any(|m| m.contains("Welcome") && m.contains("we count how often you help") && m.contains("object at any time")),
+            "{told:?}"
+        );
+        // P-116: the receipt names "About you" while the care is on
+        assert!(told.iter().any(|m| m.contains("name, age and country you gave in “About you”")), "{told:?}");
+    });
+}
+
+#[test]
+fn a_rejection_and_a_disabled_switch_make_no_record() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        d.volunteers_on("1");
+        let session = d.applicant_session.clone();
+        d.about_as(&session, "30").await;
+        let (_, outcome) = d.apply_as(&session, "support").await;
+        let id = id_of(&outcome);
+        let card = d.card(&id).await;
+        let reviewer = d.reviewer_session.clone();
+        d.reject(&reviewer, &card, &id, "Not this time, thank you").await;
+        assert!(d.members_of(&d.applicant).await.is_empty());
+
+        // switched off: the live behaviour, no record, no extra message
+        let mut settings = super::test_settings::get(&d.bot.id).unwrap();
+        settings.volunteers.enabled = false;
+        settings.volunteers.team_server = d.other.id.clone();
+        super::test_settings::register(settings);
+        let (_, other_session, other) = d.harness.new_user().await;
+        Member::create(&d.harness.db, &d.lounge, &other, None).await.unwrap();
+        d.know(&other_session.token, &other);
+        d.accepted_as(&other_session.token, "support").await;
+        assert!(d.members_of(&other).await.is_empty());
+        let told = d.told(&other).await;
+        assert!(told.iter().all(|m| !m.contains("zrzur.cc/")), "{told:?}");
+    });
+}
+
+#[test]
+fn accept_twice_keeps_one_member() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        d.volunteers_on("1");
+        let settings = super::test_settings::get(&d.bot.id).unwrap();
+        let session = d.applicant_session.clone();
+        d.accepted_as(&session, "support").await;
+        let application = d
+            .harness
+            .db
+            .fetch_team_applications_of(&d.applicant.id)
+            .await
+            .unwrap()
+            .remove(0);
+        // the same acceptance looked at again
+        let again = super::volunteers::enrol(&d.harness.db, &settings, &application, "x")
+            .await
+            .unwrap();
+        assert_eq!(d.members_of(&d.applicant).await.len(), 1);
+        assert_eq!(again.history.len(), 2, "accepted, counting_notice");
+
+        // one who left is reopened as a trial, with a history entry
+        let mut member = again;
+        super::volunteers::end_membership(&d.harness.db, &settings, &mut member, "x", "left", None)
+            .await
+            .unwrap();
+        let back = super::volunteers::enrol(&d.harness.db, &settings, &application, "x")
+            .await
+            .unwrap();
+        assert_eq!(back.id, member.id);
+        assert_eq!(back.status, revolt_database::TeamMemberStatus::Trial);
+        assert_eq!(back.left_at, None);
+        assert_eq!(back.history.last().unwrap().action, "rejoined");
+        assert_eq!(d.members_of(&d.applicant).await.len(), 1);
+    });
+}
+
+#[test]
+fn existing_accepted_get_a_member_on_settle() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        // accepted while the switch was off: no record
+        let session = d.applicant_session.clone();
+        d.accepted_as(&session, "support").await;
+        assert!(d.members_of(&d.applicant).await.is_empty());
+
+        d.volunteers_on("1");
+        let (status, _) = d.as_bot(&d.bot.token, "/team/desk/settle", Some(json!({}))).await;
+        assert_eq!(status, Status::Ok);
+        let members = d.members_of(&d.applicant).await;
+        assert_eq!(members.len(), 1);
+        assert!(members[0].history.iter().any(|h| h.action == "identity_requested"));
+        let told = d.told(&d.applicant).await;
+        assert!(told.iter().any(|m| m.contains("Add my details")), "{told:?}");
+        // P-115: why, voluntary, how long
+        let request = told.iter().find(|m| m.contains("Add my details")).unwrap();
+        assert!(request.contains("voluntary") && request.contains("nothing changes for you"), "{request}");
+        assert!(request.contains("days kept after leaving: 90"), "{request}");
+
+        // once: a second look sends nothing more
+        let before = d.told(&d.applicant).await.len();
+        d.as_bot(&d.bot.token, "/team/desk/settle", Some(json!({}))).await;
+        assert_eq!(d.told(&d.applicant).await.len(), before);
+        assert_eq!(d.members_of(&d.applicant).await.len(), 1);
+
+        // they fill it in with the bot's "Add my details"
+        let (_, outcome) = d.about_with(&session, "me", about_fields("30", &["accept"])).await;
+        assert_eq!(outcome["saved"], true, "{outcome}");
+        // held by the membership: no deletion time
+        assert_eq!(d.identity_of(&d.applicant).await.unwrap().purge_at, None);
+        // someone who is not a volunteer cannot
+        let guest = d.guest_session.clone();
+        let (_, outcome) = d.about_with(&guest, "me", about_fields("30", &["accept"])).await;
+        assert_eq!(outcome["saved"], false);
+        assert!(d.identity_of(&d.guest).await.is_none());
+    });
+}
+
+#[test]
+fn leaving_one_of_two_teams_keeps_zrzur_team_role() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        d.volunteers_on("1");
+        // a second team in the same lounge, with the same Zrzur Team role
+        let mut settings = super::test_settings::get(&d.bot.id).unwrap();
+        let mut designer = settings.role("designer").unwrap().clone();
+        designer.team_role = d.team_role.clone();
+        designer.role = d.admin_role.clone();
+        settings.roles.retain(|r| r.key != "designer");
+        settings.roles.push(designer);
+        super::test_settings::register(settings.clone());
+
+        let session = d.applicant_session.clone();
+        let first = d.accepted_as(&session, "support").await;
+        // a decision starts the cooldown, an acceptance too: it is over
+        let mut accepted = d.stored(&first).await;
+        accepted.acted_at = Some(1);
+        assert!(d
+            .harness
+            .db
+            .replace_team_application_if(&accepted, TeamApplicationStatus::Accepted)
+            .await
+            .unwrap());
+        d.accepted_as(&session, "designer").await;
+        let mut members = d.members_of(&d.applicant).await;
+        assert_eq!(members.len(), 2);
+        assert!(d.roles_of(&d.lounge, &d.applicant).await.contains(&d.team_role));
+
+        let at = members.iter().position(|m| m.role == "support").unwrap();
+        let mut first = members.remove(at);
+        super::volunteers::end_membership(&d.harness.db, &settings, &mut first, "x", "left", None)
+            .await
+            .unwrap();
+        let roles = d.roles_of(&d.lounge, &d.applicant).await;
+        assert!(!roles.contains(&d.support_role), "{roles:?}");
+        assert!(roles.contains(&d.team_role), "Zrzur Team role went too early: {roles:?}");
+
+        let mut second = members.remove(0);
+        super::volunteers::end_membership(&d.harness.db, &settings, &mut second, "x", "removed", None)
+            .await
+            .unwrap();
+        let roles = d.roles_of(&d.lounge, &d.applicant).await;
+        assert!(!roles.contains(&d.team_role), "{roles:?}");
+        assert!(d.members_of(&d.applicant).await.iter().all(|m| !m.is_current()));
+        let told = d.told(&d.applicant).await;
+        assert!(told.iter().any(|m| m.contains("has ended")), "{told:?}");
+    });
+}
+
+#[test]
+fn welcome_dm_has_team_server_invite_when_set() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        d.volunteers_on("1");
+        let (team_server, _) = d.harness.new_server(&d.owner).await;
+        let mut settings = super::test_settings::get(&d.bot.id).unwrap();
+        settings.volunteers.team_server = team_server.id.clone();
+        super::test_settings::register(settings.clone());
+
+        // no current membership: no invite
+        assert!(
+            super::volunteers::invite_to_team_server(&d.harness.db, &settings, &d.applicant.id)
+                .await
+                .is_none()
+        );
+
+        let session = d.applicant_session.clone();
+        d.accepted_as(&session, "support").await;
+        let told = d.told(&d.applicant).await;
+        let invite = told
+            .iter()
+            .find(|m| m.contains("https://zrzur.cc/"))
+            .expect("an invite");
+        let code = invite
+            .split("https://zrzur.cc/")
+            .nth(1)
+            .unwrap()
+            .split(|c: char| !c.is_alphanumeric())
+            .next()
+            .unwrap();
+        match d.harness.db.fetch_invite(code).await.unwrap() {
+            revolt_database::Invite::Server { server, max_uses, expires, .. } => {
+                assert_eq!(server, team_server.id);
+                assert_eq!(max_uses, Some(1));
+                assert!(expires.is_some());
+            }
+            other => panic!("{other:?}"),
+        }
+        // kept on the membership, and deleted when it ends
+        let settings_now = super::test_settings::get(&d.bot.id).unwrap();
+        let mut member = d.members_of(&d.applicant).await.remove(0);
+        assert_eq!(member.invite.as_deref(), Some(code));
+        super::volunteers::end_membership(&d.harness.db, &settings_now, &mut member, "x", "left", None)
+            .await
+            .unwrap();
+        assert!(d.harness.db.fetch_invite(code).await.is_err(), "the invite outlived the volunteer");
+        assert_eq!(d.members_of(&d.applicant).await[0].invite, None);
+
+        // no team server set: quietly nothing
+        settings.volunteers.team_server = String::new();
+        assert!(
+            super::volunteers::invite_to_team_server(&d.harness.db, &settings, &d.applicant.id)
+                .await
+                .is_none()
+        );
+    });
+}
+
+// ---- the volunteer's own buttons ----
+
+impl Desk {
+    /// The applicant becomes a volunteer in `support`; gives the member id
+    async fn volunteer(&mut self) -> String {
+        self.volunteers_on("1");
+        let session = self.applicant_session.clone();
+        self.accepted_as(&session, "support").await;
+        self.members_of(&self.applicant.clone()).await.remove(0).id
+    }
+
+    /// A person presses "My status" in the apply channel
+    async fn status_as(&mut self, session: &str) -> (Status, Value) {
+        let channel = self.apply.clone();
+        let message = self.message(&channel, &["ta:status"]).await;
+        let pressed = self.press(session, &channel, &message, "ta:status").await;
+        self.hand("status", &pressed).await
+    }
+
+    /// A person sends the away form with `days` typed in
+    async fn away_as(&mut self, session: &str, days: &str) -> (Status, Value) {
+        let channel = self.apply.clone();
+        let panel = self.panel.clone();
+        let parent = self.press(session, &channel, &panel, "ta:start").await;
+        let modal = json!({
+            "custom_id": "ta:away",
+            "title": "Away",
+            "components": [{ "type": "Field", "label": "Days", "component": {
+                "type": "TextInput", "custom_id": "days", "style": "Short",
+                "label": "Days", "required": true
+            }}]
+        });
+        let sent = self
+            .form(session, &channel, &parent, modal, json!([{ "custom_id": "days", "value": days }]))
+            .await;
+        self.hand("away", &sent).await
+    }
+
+    /// Step one: a person presses `ta:leave:<member id>`
+    async fn leave_press(&mut self, session: &str, member: &str) -> (Status, Value) {
+        let channel = self.apply.clone();
+        let id = format!("ta:leave:{member}");
+        let message = self.message(&channel, &[&id]).await;
+        let pressed = self.press(session, &channel, &message, &id).await;
+        self.hand("leave", &pressed).await
+    }
+
+    /// Step two: the bot asks in private with `content` and one button
+    /// `label`; the person presses it. Gives what the bot received.
+    async fn leave_confirm_press(
+        &mut self,
+        session: &str,
+        member: &str,
+        content: &str,
+        label: &str,
+    ) -> (String, String) {
+        let user_id = self
+            .users
+            .iter()
+            .find(|(known, _)| known == session)
+            .map(|(_, user)| user.clone())
+            .expect("a known session");
+        let mut user_events = PubSubTestHelper::new(&format!("{user_id}!")).await;
+        let channel = self.apply.clone();
+        let id = format!("ta:leave:{member}");
+        let message = self.message(&channel, &[&id]).await;
+        let asked = self.press(session, &channel, &message, &id).await;
+        let status = self
+            .harness
+            .client
+            .post(format!("/interactions/{}/{}/callback", asked.0, asked.1))
+            .header(ContentType::JSON)
+            .body(
+                json!({ "type": "Message", "data": {
+                    "content": content, "ephemeral": true,
+                    "components": [{ "type": "ActionRow", "components": [
+                        { "type": "Button", "style": "Danger", "label": label,
+                          "custom_id": format!("ta:leave_confirm:{member}") }
+                    ]}]
+                }})
+                .to_string(),
+            )
+            .dispatch()
+            .await
+            .status();
+        assert_eq!(status, Status::NoContent);
+        let question = match user_events
+            .wait_for_event(|e| matches!(e, EventV1::EphemeralMessageCreate { .. }))
+            .await
+        {
+            EventV1::EphemeralMessageCreate { message } => message,
+            _ => unreachable!(),
+        };
+        self.last_question = Some((asked.0.clone(), asked.1.clone()));
+        self.press(session, &channel, &question.id, &format!("ta:leave_confirm:{member}"))
+            .await
+    }
+
+    /// The words the server wants for leaving `member`
+    async fn leave_words(&mut self, session: &str, member: &str) -> String {
+        let (status, shown) = self.leave_press(session, member).await;
+        assert_eq!(status, Status::Ok, "{shown}");
+        shown["confirm"]["text"].as_str().unwrap().to_string()
+    }
+
+    async fn member(&self, id: &str) -> revolt_database::TeamMember {
+        self.members_of(&self.applicant)
+            .await
+            .into_iter()
+            .find(|member| member.id == id)
+            .unwrap()
+    }
+}
+
+#[test]
+fn month_total_adds_all_five_kinds() {
+    let count = |n: u32| revolt_database::TeamActivityCount {
+        server: "s".to_string(),
+        messages: n,
+        replies: n,
+        moderation: n,
+        reviews: n,
+        tickets: n,
+    };
+    let day = |counts| revolt_database::TeamActivityDay {
+        id: "u:20261101".to_string(),
+        user_id: "u".to_string(),
+        day: 20261101,
+        counts,
+    };
+    assert_eq!(super::volunteers::month_total(&[]), 0);
+    assert_eq!(
+        super::volunteers::month_total(&[day(vec![count(1), count(2)]), day(vec![count(3)])]),
+        30
+    );
+    assert_eq!(super::volunteers::month_bounds(1_794_000_000_000), (20261101, 20261131));
+    assert_eq!(super::volunteers::parse_days("٩٠"), Some(90));
+    assert_eq!(super::volunteers::parse_days("0"), Some(0));
+    for bad in ["", "ten", "-3", "5 days", "1.5", "12345"] {
+        assert_eq!(super::volunteers::parse_days(bad), None, "{bad}");
+    }
+}
+
+#[test]
+fn status_shows_month_against_minimum() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.volunteer().await;
+        let session = d.applicant_session.clone();
+        let (status, shown) = d.status_as(&session).await;
+        assert_eq!(status, Status::Ok, "{shown}");
+        assert_eq!(shown["month"]["contributions"], 0);
+        assert_eq!(shown["month"]["minimum"], 2);
+        let places = shown["memberships"].as_array().unwrap();
+        assert_eq!(places.len(), 1);
+        assert_eq!(places[0]["id"], id);
+        assert_eq!(places[0]["role"], "support");
+        assert_eq!(places[0]["status"], "trial");
+        assert_eq!(places[0]["server_name"], d.lounge.name);
+        assert!(places[0]["trial_ends_at"].as_i64().unwrap() > 0);
+        assert!(shown.get("confirm").is_none());
+
+        // counts of this month, all five kinds; last month's do not count
+        let (first, _) = super::volunteers::month_bounds(revolt_database::staff_now());
+        let count = |n: u32| revolt_database::TeamActivityCount {
+            server: d.lounge.id.clone(),
+            messages: n,
+            replies: n,
+            moderation: n,
+            reviews: n,
+            tickets: n,
+        };
+        for (day, n) in [(first, 1), (first + 1, 2), (first - 100, 9)] {
+            d.harness
+                .db
+                .upsert_team_activity_day(&revolt_database::TeamActivityDay {
+                    id: format!("{}:{day}", d.applicant.id),
+                    user_id: d.applicant.id.clone(),
+                    day,
+                    counts: vec![count(n)],
+                })
+                .await
+                .unwrap();
+        }
+        let (_, shown) = d.status_as(&session).await;
+        assert_eq!(shown["month"]["contributions"], 15);
+    });
+}
+
+#[test]
+fn status_only_shows_my_own() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let mine = d.volunteer().await;
+        let (_, other_session, other) = d.harness.new_user().await;
+        Member::create(&d.harness.db, &d.lounge, &other, None).await.unwrap();
+        d.know(&other_session.token, &other);
+        d.accepted_as(&other_session.token, "support").await;
+        let theirs = d.members_of(&other).await.remove(0).id;
+        assert_ne!(mine, theirs);
+
+        let session = d.applicant_session.clone();
+        let (_, shown) = d.status_as(&session).await;
+        let ids: Vec<_> = shown["memberships"].as_array().unwrap().iter().map(|m| m["id"].clone()).collect();
+        assert_eq!(ids, vec![json!(mine)]);
+        let (_, shown) = d.status_as(&other_session.token).await;
+        let ids: Vec<_> = shown["memberships"].as_array().unwrap().iter().map(|m| m["id"].clone()).collect();
+        assert_eq!(ids, vec![json!(theirs)]);
+        // someone who is no volunteer sees nothing of anybody
+        let guest = d.guest_session.clone();
+        let (status, shown) = d.status_as(&guest).await;
+        assert_eq!(status, Status::Ok);
+        assert!(shown["memberships"].as_array().unwrap().is_empty());
+        assert!(!shown.to_string().contains(&mine));
+        assert!(!shown.to_string().contains(&theirs));
+    });
+}
+
+#[test]
+fn away_sets_status_and_until() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.volunteer().await;
+        let session = d.applicant_session.clone();
+        let before = revolt_database::staff_now();
+        // Arabic-Indic digits are digits
+        let (status, shown) = d.away_as(&session, "١٠").await;
+        assert_eq!(status, Status::Ok, "{shown}");
+        assert_eq!(shown["memberships"][0]["status"], "away");
+        let member = d.member(&id).await;
+        assert_eq!(member.status, revolt_database::TeamMemberStatus::Away);
+        let until = member.away_until.unwrap();
+        assert!(until >= before + 10 * super::DAY_MS && until <= revolt_database::staff_now() + 10 * super::DAY_MS);
+        let last = member.history.last().unwrap();
+        assert_eq!((last.action.as_str(), last.actor.as_str()), ("away", d.applicant.id.as_str()));
+        assert_eq!(shown["memberships"][0]["away_until"], until);
+        let told = d.told(&d.applicant).await;
+        assert!(told.iter().any(|m| m.contains("You are away")), "{told:?}");
+    });
+}
+
+#[test]
+fn away_over_max_refused() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.volunteer().await;
+        let session = d.applicant_session.clone();
+        for bad in ["91", "5 days", "ten", "-3", "1.5"] {
+            let (status, _) = d.away_as(&session, bad).await;
+            assert_ne!(status, Status::Ok, "{bad}");
+            assert_eq!(d.member(&id).await.status, revolt_database::TeamMemberStatus::Trial, "{bad}");
+        }
+        // the longest allowed is allowed
+        let (status, _) = d.away_as(&session, "90").await;
+        assert_eq!(status, Status::Ok);
+        assert_eq!(d.member(&id).await.status, revolt_database::TeamMemberStatus::Away);
+    });
+}
+
+#[test]
+fn away_zero_ends_away() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.volunteer().await;
+        let session = d.applicant_session.clone();
+        // zero while not away changes nothing
+        let (status, _) = d.away_as(&session, "0").await;
+        assert_eq!(status, Status::Ok);
+        assert_eq!(d.member(&id).await.history.len(), 2, "accepted, counting_notice");
+
+        d.away_as(&session, "10").await;
+        let (status, shown) = d.away_as(&session, "0").await;
+        assert_eq!(status, Status::Ok, "{shown}");
+        let member = d.member(&id).await;
+        // the trial is not over and not confirmed: back to the trial
+        assert_eq!(member.status, revolt_database::TeamMemberStatus::Trial);
+        assert_eq!(member.away_until, None);
+        assert_eq!(member.history.last().unwrap().action, "back");
+        let told = d.told(&d.applicant).await;
+        assert!(told.iter().any(|m| m.contains("Welcome back")), "{told:?}");
+
+        // confirmed: back to active
+        let mut confirmed = member;
+        confirmed.confirmed_at = Some(revolt_database::staff_now());
+        d.harness.db.update_team_member(&confirmed).await.unwrap();
+        d.away_as(&session, "5").await;
+        assert_eq!(d.member(&id).await.status, revolt_database::TeamMemberStatus::Away);
+        d.away_as(&session, "0").await;
+        assert_eq!(d.member(&id).await.status, revolt_database::TeamMemberStatus::Active);
+    });
+}
+
+#[test]
+fn away_keeps_inactive_on_return() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.volunteer().await;
+        let session = d.applicant_session.clone();
+        let mut member = d.member(&id).await;
+        member.status = revolt_database::TeamMemberStatus::Inactive;
+        d.harness.db.update_team_member(&member).await.unwrap();
+        d.away_as(&session, "5").await;
+        assert_eq!(d.member(&id).await.status, revolt_database::TeamMemberStatus::Away);
+        d.away_as(&session, "0").await;
+        let back = d.member(&id).await;
+        assert_eq!(back.status, revolt_database::TeamMemberStatus::Inactive);
+        assert_eq!(back.away_until, None);
+    });
+}
+
+#[test]
+fn away_cannot_be_renewed_past_the_max() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.volunteer().await;
+        let session = d.applicant_session.clone();
+        d.away_as(&session, "80").await;
+        // the away began 50 days ago
+        let mut member = d.member(&id).await;
+        let start = revolt_database::staff_now() - 50 * super::DAY_MS;
+        member.history.last_mut().unwrap().at = start;
+        d.harness.db.update_team_member(&member).await.unwrap();
+
+        let (status, _) = d.away_as(&session, "90").await;
+        assert_eq!(status, Status::Ok);
+        let member = d.member(&id).await;
+        assert_eq!(member.away_until, Some(start + 90 * super::DAY_MS));
+        assert_eq!(member.history.last().unwrap().action, "away_renewed");
+        // a shorter renewal is taken as asked
+        let before = revolt_database::staff_now();
+        d.away_as(&session, "5").await;
+        let until = d.member(&id).await.away_until.unwrap();
+        assert!(until >= before + 5 * super::DAY_MS && until <= start + 90 * super::DAY_MS);
+        // a left membership is not touched by a late away
+        let mut gone = d.member(&id).await;
+        let settings = super::test_settings::get(&d.bot.id).unwrap();
+        super::volunteers::end_membership(&d.harness.db, &settings, &mut gone, "x", "left", None)
+            .await
+            .unwrap();
+        let mut stale = member;
+        let changed = super::volunteers::set_away(&d.harness.db, &mut stale, "x", 5, 90).await.unwrap();
+        assert!(!changed);
+        assert_eq!(d.member(&id).await.status, revolt_database::TeamMemberStatus::Left);
+    });
+}
+
+#[test]
+fn leave_needs_the_servers_confirm() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.volunteer().await;
+        let session = d.applicant_session.clone();
+        // step one gives the server's words and the one button, ends nothing
+        let words = d.leave_words(&session, &id).await;
+        // the words come from the text files, in the person's language (here none: English)
+        assert!(words.starts_with("Leave the Zrzur Team as “Role support” in "), "{words}");
+        let template = crate::util::team_texts::text("en", "volunteer.leave_confirm.text");
+        assert!(words.ends_with(template.rsplit("{server}").next().unwrap()), "{words}");
+        assert!(d.member(&id).await.is_current());
+        let (_, shown) = d.leave_press(&session, &id).await;
+        assert_eq!(shown["confirm"]["label"], "Yes, leave");
+        assert_eq!(shown["confirm"]["custom_id"], format!("ta:leave_confirm:{id}"));
+
+        // a plain message button that says "confirm" ends nothing
+        let channel = d.apply.clone();
+        let custom = format!("ta:leave_confirm:{id}");
+        let stray = d.message(&channel, &[&custom]).await;
+        let pressed = d.press(&session, &channel, &stray, &custom).await;
+        let (status, _) = d.hand("leave", &pressed).await;
+        assert_eq!(status, Status::BadRequest);
+        assert!(d.member(&id).await.is_current());
+    });
+}
+
+/// Give the applicant another app language
+async fn set_locale(d: &Desk, locale: &str) {
+    let mut person = d.harness.db.fetch_user(&d.applicant.id).await.unwrap();
+    person
+        .update(
+            &d.harness.db,
+            revolt_database::PartialUser {
+                locale: Some(locale.into()),
+                ..Default::default()
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
+}
+
+#[test]
+fn leave_is_asked_and_confirmed_in_the_persons_language() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.volunteer().await;
+        let session = d.applicant_session.clone();
+        set_locale(&d, "de-DE").await;
+        let (status, shown) = d.leave_press(&session, &id).await;
+        assert_eq!(status, Status::Ok, "{shown}");
+        let words = shown["confirm"]["text"].as_str().unwrap().to_string();
+        assert!(words.starts_with("Das Zrzur-Team als „"), "{words}");
+        assert_eq!(shown["confirm"]["label"], "Ja, verlassen");
+        // the reply names the language, so the bot's goodbye matches the question
+        assert_eq!(shown["language"], "de");
+
+        // the English label under the German words ends nothing
+        let pressed = d.leave_confirm_press(&session, &id, &words, "Yes, leave").await;
+        let (status, _) = d.hand("leave", &pressed).await;
+        assert_eq!(status, Status::BadRequest);
+        // the language changed between the two presses: the words differ, nothing ends
+        let words = d.leave_words(&session, &id).await;
+        set_locale(&d, "en-GB").await;
+        let pressed = d.leave_confirm_press(&session, &id, &words, "Ja, verlassen").await;
+        let (status, _) = d.hand("leave", &pressed).await;
+        assert_eq!(status, Status::BadRequest);
+        assert!(d.member(&id).await.is_current());
+
+        // the German question with the German button ends the membership
+        set_locale(&d, "de-DE").await;
+        let words = d.leave_words(&session, &id).await;
+        let pressed = d.leave_confirm_press(&session, &id, &words, "Ja, verlassen").await;
+        let (status, shown) = d.hand("leave", &pressed).await;
+        assert_eq!(status, Status::Ok, "{shown}");
+        assert_eq!(shown["language"], "de");
+        assert_eq!(d.member(&id).await.status, revolt_database::TeamMemberStatus::Left);
+    });
+}
+
+#[test]
+fn leave_confirm_text_must_be_unchanged() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.volunteer().await;
+        let session = d.applicant_session.clone();
+        let words = d.leave_words(&session, &id).await;
+
+        // other words
+        let pressed = d.leave_confirm_press(&session, &id, "Stay a while?", "Yes, leave").await;
+        let (status, _) = d.hand("leave", &pressed).await;
+        assert_eq!(status, Status::BadRequest);
+        // the right words under another label
+        let pressed = d.leave_confirm_press(&session, &id, &words, "Stay").await;
+        let (status, _) = d.hand("leave", &pressed).await;
+        assert_eq!(status, Status::BadRequest);
+        // other words, edited to the right ones before the hand-back
+        let pressed = d.leave_confirm_press(&session, &id, "Stay a while?", "Yes, leave").await;
+        let question = d.last_question.clone().unwrap();
+        let response = d
+            .harness
+            .client
+            .patch(format!("/interactions/{}/{}/original", question.0, question.1))
+            .header(ContentType::JSON)
+            .body(json!({ "content": words }).to_string())
+            .dispatch()
+            .await;
+        assert!(response.status().code < 300, "{:?}", response.status());
+        drop(response);
+        let (status, _) = d.hand("leave", &pressed).await;
+        assert_eq!(status, Status::BadRequest);
+        assert!(d.member(&id).await.is_current());
+    });
+}
+
+#[test]
+fn leave_ends_membership() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.volunteer().await;
+        let session = d.applicant_session.clone();
+        assert!(d.roles_of(&d.lounge, &d.applicant).await.contains(&d.support_role));
+        let words = d.leave_words(&session, &id).await;
+        let pressed = d.leave_confirm_press(&session, &id, &words, "Yes, leave").await;
+        let (status, shown) = d.hand("leave", &pressed).await;
+        assert_eq!(status, Status::Ok, "{shown}");
+        assert!(shown["memberships"].as_array().unwrap().is_empty());
+        let member = d.member(&id).await;
+        assert_eq!(member.status, revolt_database::TeamMemberStatus::Left);
+        let last = member.history.last().unwrap();
+        assert_eq!((last.action.as_str(), last.actor.as_str()), ("left", d.applicant.id.as_str()));
+        assert!(!d.roles_of(&d.lounge, &d.applicant).await.contains(&d.support_role));
+        let told = d.told(&d.applicant).await;
+        assert!(told.iter().any(|m| m.contains("has ended")), "{told:?}");
+        // the press is single-use, and a left membership cannot be left again
+        let (status, _) = d.hand("leave", &pressed).await;
+        assert_ne!(status, Status::Ok);
+        assert_eq!(d.member(&id).await.history.len(), 3, "accepted, counting_notice, left");
+    });
+}
+
+#[test]
+fn someone_else_cannot_leave_for_me() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let id = d.volunteer().await;
+        let guest = d.guest_session.clone();
+        // step one with another person's member id
+        let (status, _) = d.leave_press(&guest, &id).await;
+        assert_eq!(status, Status::NotFound);
+        // step two with a confirmation that carries the right words
+        let words = d.leave_words(&d.applicant_session.clone(), &id).await;
+        let pressed = d.leave_confirm_press(&guest, &id, &words, "Yes, leave").await;
+        let (status, _) = d.hand("leave", &pressed).await;
+        assert_eq!(status, Status::NotFound);
+        let member = d.member(&id).await;
+        assert!(member.is_current());
+        assert_eq!(member.history.len(), 2, "accepted, counting_notice");
+    });
+}
+
+#[test]
+fn own_buttons_are_off_while_the_switch_is_off_and_single_use() {
+    on_big_stack(|| async {
+        let mut d = desk().await;
+        let session = d.applicant_session.clone();
+        let (status, _) = d.status_as(&session).await;
+        assert_eq!(status, Status::BadRequest);
+        let (status, _) = d.away_as(&session, "5").await;
+        assert_eq!(status, Status::BadRequest);
+        let (status, _) = d.leave_press(&session, "x").await;
+        assert_eq!(status, Status::BadRequest);
+
+        d.volunteer().await;
+        let channel = d.apply.clone();
+        let message = d.message(&channel, &["ta:status"]).await;
+        let pressed = d.press(&session, &channel, &message, "ta:status").await;
+        let (status, _) = d.hand("status", &pressed).await;
+        assert_eq!(status, Status::Ok);
+        let (status, _) = d.hand("status", &pressed).await;
+        assert_ne!(status, Status::Ok);
+        // only the desk bot can ask
+        let (status, _) = d.as_bot(&d.bot.token, "/team/desk/status", Some(json!({}))).await;
+        assert_ne!(status, Status::Ok);
+    });
+}
+
+// ---- the weekly report ----
+
+/// Monday 2026-11-09 00:00 UTC, and the length of a day
+const WEEK: i32 = 20261109;
+const WEEK_START: i64 = 1_794_182_400_000;
+const WEEK_DAY: i64 = 86_400_000;
+
+impl Desk {
+    async fn report_as(&self, token: &str, week: &str) -> (Status, Value) {
+        self.as_bot(token, &format!("/team/desk/report?week={week}"), None).await
+    }
+
+    async fn the_report(&self, week: &str) -> (Status, Value) {
+        let token = self.bot.token.clone();
+        self.report_as(&token, week).await
+    }
+
+    /// Put a membership of `user` in `role`, with the dates given
+    async fn place(
+        &self,
+        user: &User,
+        role: &str,
+        server: &str,
+        status: revolt_database::TeamMemberStatus,
+        joined_at: i64,
+        left_at: Option<i64>,
+    ) {
+        self.harness
+            .db
+            .insert_team_member(&revolt_database::TeamMember {
+                id: ulid::Ulid::new().to_string(),
+                user_id: user.id.clone(),
+                role: role.to_string(),
+                server: server.to_string(),
+                status,
+                joined_at,
+                trial_ends_at: joined_at + 1,
+                confirmed_at: None,
+                away_until: None,
+                left_at,
+                low_months: 0,
+                notes: None,
+                invite: None,
+                history: vec![],
+            })
+            .await
+            .unwrap();
+    }
+
+    async fn counted(&self, user: &User, day: i32, server: &str, n: u32) {
+        self.harness
+            .db
+            .upsert_team_activity_day(&revolt_database::TeamActivityDay {
+                id: format!("{}:{day}", user.id),
+                user_id: user.id.clone(),
+                day,
+                counts: vec![revolt_database::TeamActivityCount {
+                    server: server.to_string(),
+                    messages: n,
+                    replies: n,
+                    moderation: n,
+                    reviews: n,
+                    tickets: n,
+                }],
+            })
+            .await
+            .unwrap();
+    }
+}
+
+fn team_of<'a>(report: &'a Value, role: &str) -> &'a Value {
+    report["teams"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|team| team["role"] == role)
+        .unwrap()
+}
+
+#[test]
+fn report_counts_by_status() {
+    on_big_stack(|| async {
+        use revolt_database::TeamMemberStatus as S;
+        let d = desk().await;
+        d.volunteers_on("1");
+        let lounge = d.lounge.id.clone();
+        let (_, _, fourth) = d.harness.new_user().await;
+        for (user, status) in [
+            (&d.applicant, S::Trial),
+            (&d.guest, S::Active),
+            (&d.reviewer, S::Away),
+            (&fourth, S::Inactive),
+        ] {
+            d.place(user, "support", &lounge, status, WEEK_START - 30 * WEEK_DAY, None).await;
+        }
+        let (status, report) = d.the_report("20261109").await;
+        assert_eq!(status, Status::Ok, "{report}");
+        assert_eq!(report["week"], WEEK);
+        let team = team_of(&report, "support");
+        assert_eq!(team["volunteers"], 4);
+        assert_eq!(team["trial"], 1);
+        assert_eq!(team["active"], 1);
+        assert_eq!(team["away"], 1);
+        assert_eq!(team["inactive"], 1);
+        assert_eq!(team["server_name"], d.lounge.name);
+        assert_eq!(team["contributions"], 0);
+        assert_eq!(team_of(&report, "elsewhere")["volunteers"], 0);
+    });
+}
+
+#[test]
+fn report_has_no_identity() {
+    on_big_stack(|| async {
+        use revolt_database::TeamMemberStatus as S;
+        let d = desk().await;
+        d.volunteers_on("1");
+        d.harness
+            .db
+            .upsert_team_identity(&revolt_database::TeamIdentity {
+                id: d.applicant.id.clone(),
+                name: "Lina Haddad".to_string(),
+                age: 33,
+                country: "Narnia".to_string(),
+                rules_version: "1".to_string(),
+                rules_at: 1,
+                purge_at: None,
+                reviewer: false,
+            })
+            .await
+            .unwrap();
+        let lounge = d.lounge.id.clone();
+        d.place(&d.applicant, "support", &lounge, S::Trial, WEEK_START + WEEK_DAY, None).await;
+        let (status, report) = d.the_report("20261109").await;
+        assert_eq!(status, Status::Ok, "{report}");
+        let text = report.to_string();
+        for secret in ["Lina Haddad", "Haddad", "Narnia", "\"age\"", "country", "\"name\"", "identity"] {
+            assert!(!text.contains(secret), "{secret} in {text}");
+        }
+        // the account's own display name is what is shown
+        let names = team_of(&report, "support")["new_names"].as_array().unwrap().clone();
+        assert_eq!(names.len(), 1);
+        assert_eq!(
+            names[0],
+            crate::util::team_texts::plain(
+                &d.applicant.display_name.clone().unwrap_or(d.applicant.username.clone())
+            )
+        );
+    });
+}
+
+#[test]
+fn report_only_for_the_desk_bot() {
+    on_big_stack(|| async {
+        let d = desk().await;
+        d.volunteers_on("1");
+        // a person, with a session
+        let response = d
+            .harness
+            .client
+            .get("/team/desk/report?week=20261109")
+            .header(Header::new("x-session-token", d.reviewer_session.clone()))
+            .dispatch()
+            .await;
+        assert_eq!(response.status(), Status::NotFound);
+        // another bot
+        let (other_bot, _) = d.harness.new_bot(&d.owner).await;
+        let (status, _) = d.report_as(&other_bot.token, "20261109").await;
+        assert_eq!(status, Status::NotFound);
+        // the desk's bot
+        let (status, _) = d.the_report("20261109").await;
+        assert_eq!(status, Status::Ok);
+    });
+}
+
+#[test]
+fn report_refuses_while_volunteers_off() {
+    on_big_stack(|| async {
+        let d = desk().await;
+        let (status, _) = d.the_report("20261109").await;
+        assert_eq!(status, Status::BadRequest);
+    });
+}
+
+#[test]
+fn report_refuses_unfinished_week() {
+    on_big_stack(|| async {
+        use revolt_database::util::team_activity::{add_days, day_of};
+        let d = desk().await;
+        d.volunteers_on("1");
+        // not a Monday, not a date, nonsense
+        for bad in ["20261110", "20261113", "20261345", "0", "-20261109"] {
+            let (status, _) = d.the_report(bad).await;
+            assert_eq!(status, Status::BadRequest, "{bad}");
+        }
+        let (status, _) = d.the_report("abc").await;
+        assert_ne!(status, Status::Ok);
+        // the current week and a future one
+        let now_day = revolt_database::staff_now() / WEEK_DAY;
+        let monday = day_of((now_day - (now_day + 3).rem_euclid(7)) * WEEK_DAY);
+        let (status, _) = d.the_report(&monday.to_string()).await;
+        assert_eq!(status, Status::BadRequest, "current week {monday}");
+        let (status, _) = d.the_report(&add_days(monday, 7).to_string()).await;
+        assert_eq!(status, Status::BadRequest);
+        // the week before the current one is finished
+        let (status, _) = d.the_report(&add_days(monday, -7).to_string()).await;
+        assert_eq!(status, Status::Ok);
+    });
+}
+
+#[test]
+fn report_left_member_counted_in_volunteers_only() {
+    on_big_stack(|| async {
+        use revolt_database::TeamMemberStatus as S;
+        let d = desk().await;
+        d.volunteers_on("1");
+        let lounge = d.lounge.id.clone();
+        // left in the middle of the week
+        d.place(&d.applicant, "support", &lounge, S::Left, WEEK_START - 10 * WEEK_DAY, Some(WEEK_START + 2 * WEEK_DAY)).await;
+        // left before the week began: not in it at all
+        d.place(&d.guest, "support", &lounge, S::Left, WEEK_START - 20 * WEEK_DAY, Some(WEEK_START - WEEK_DAY)).await;
+        // joined after the week ended: not in it either
+        d.place(&d.reviewer, "support", &lounge, S::Trial, WEEK_START + 7 * WEEK_DAY, None).await;
+        let (_, report) = d.the_report("20261109").await;
+        let team = team_of(&report, "support");
+        assert_eq!(team["volunteers"], 1, "{report}");
+        // a team of one shows only how many it has
+        for bucket in ["trial", "active", "away", "inactive", "contributions"] {
+            assert_eq!(team[bucket], Value::Null, "{bucket}");
+        }
+        assert!(team["new_names"].as_array().unwrap().is_empty());
+    });
+}
+
+#[test]
+fn report_contributions_only_for_that_teams_server() {
+    on_big_stack(|| async {
+        use revolt_database::TeamMemberStatus as S;
+        let d = desk().await;
+        d.volunteers_on("1");
+        let lounge = d.lounge.id.clone();
+        let other = d.other.id.clone();
+        d.place(&d.applicant, "support", &lounge, S::Active, WEEK_START - WEEK_DAY, None).await;
+        d.place(&d.guest, "elsewhere", &other, S::Active, WEEK_START - WEEK_DAY, None).await;
+        // two more in support, so the team shows totals (three or more)
+        for _ in 0..2 {
+            let (_, _, more) = d.harness.new_user().await;
+            d.place(&more, "support", &lounge, S::Active, WEEK_START - WEEK_DAY, None).await;
+        }
+        // n = 1 gives 5 (five kinds) on Monday, n = 2 gives 10 on Sunday;
+        // days outside the week count for nothing
+        d.counted(&d.applicant, 20261109, &lounge, 1).await;
+        d.counted(&d.applicant, 20261115, &lounge, 2).await;
+        d.counted(&d.applicant, 20261108, &lounge, 7).await;
+        d.counted(&d.applicant, 20261116, &lounge, 7).await;
+        // the other team's person: only the count in their own team's server
+        d.counted(&d.guest, 20261110, &lounge, 9).await;
+        d.counted(&d.guest, 20261111, &other, 3).await;
+        // someone who is not in the team at all
+        d.counted(&d.reviewer, 20261110, &lounge, 4).await;
+        let (_, report) = d.the_report("20261109").await;
+        assert_eq!(team_of(&report, "support")["contributions"], 15, "{report}");
+        // the other team has one volunteer: its total would be that person's number
+        assert_eq!(team_of(&report, "elsewhere")["contributions"], Value::Null, "{report}");
+        assert_eq!(team_of(&report, "elsewhere")["volunteers"], 1, "{report}");
+    });
+}
+
+#[test]
+fn report_hides_totals_of_teams_under_three() {
+    on_big_stack(|| async {
+        use revolt_database::TeamMemberStatus as S;
+        let d = desk().await;
+        d.volunteers_on("1");
+        let lounge = d.lounge.id.clone();
+        d.place(&d.applicant, "support", &lounge, S::Inactive, WEEK_START - WEEK_DAY, None).await;
+        d.place(&d.guest, "support", &lounge, S::Active, WEEK_START - WEEK_DAY, None).await;
+        d.counted(&d.applicant, 20261110, &lounge, 1).await;
+        let (_, report) = d.the_report("20261109").await;
+        let team = team_of(&report, "support");
+        assert_eq!(team["volunteers"], 2, "{report}");
+        for bucket in ["trial", "active", "away", "inactive", "contributions"] {
+            assert_eq!(team[bucket], Value::Null, "{bucket}: {report}");
+        }
+        // a third: the totals are there
+        let (_, _, third) = d.harness.new_user().await;
+        d.place(&third, "support", &lounge, S::Active, WEEK_START - WEEK_DAY, None).await;
+        let (_, report) = d.the_report("20261109").await;
+        let team = team_of(&report, "support");
+        assert_eq!(team["inactive"], 1, "{report}");
+        assert_eq!(team["active"], 2, "{report}");
+        assert_eq!(team["trial"], 0, "{report}");
+        assert_eq!(team["away"], 0, "{report}");
+        assert_eq!(team["contributions"], 5, "{report}");
+    });
+}
+
+#[test]
+fn an_objection_stays_with_the_person_after_a_rejoin() {
+    on_big_stack(|| async {
+        use revolt_database::util::team_activity::{self, COUNTING_NOTICE, COUNTING_STOPPED};
+        let mut d = desk().await;
+        d.volunteers_on("1");
+        let settings = super::test_settings::get(&d.bot.id).unwrap();
+        let session = d.applicant_session.clone();
+        let first = d.accepted_as(&session, "support").await;
+        // the person objects (as the staff route writes it), then leaves
+        let mut member = d.members_of(&d.applicant).await.remove(0);
+        member.history.push(revolt_database::TeamHistory {
+            at: revolt_database::staff_now(),
+            actor: "boss".to_string(),
+            action: COUNTING_STOPPED.to_string(),
+        });
+        d.harness.db.update_team_member(&member).await.unwrap();
+        super::volunteers::end_membership(&d.harness.db, &settings, &mut member, "x", "left", None)
+            .await
+            .unwrap();
+
+        // accepted again later (the cooldown is over): the same record reopens
+        let mut accepted = d.stored(&first).await;
+        accepted.acted_at = Some(1);
+        assert!(d
+            .harness
+            .db
+            .replace_team_application_if(&accepted, TeamApplicationStatus::Accepted)
+            .await
+            .unwrap());
+        d.accepted_as(&session, "support").await;
+        let members = d.members_of(&d.applicant).await;
+        assert_eq!(members.len(), 1);
+        let reopened = &members[0];
+        assert!(reopened.is_current());
+        assert!(team_activity::counting_stopped(&members), "{:?}", reopened.history);
+        // copied onto the reopened record, and no new counting notice
+        let after_rejoin: Vec<&str> = reopened
+            .history
+            .iter()
+            .skip_while(|h| h.action != "rejoined")
+            .map(|h| h.action.as_str())
+            .collect();
+        assert!(after_rejoin.contains(&COUNTING_STOPPED), "{after_rejoin:?}");
+        assert!(!after_rejoin.contains(&COUNTING_NOTICE), "{after_rejoin:?}");
+        // the welcome does not say they are counted
+        // (two welcomes; only the first, before the objection, names the counting)
+        let told = d.told(&d.applicant).await;
+        assert_eq!(told.iter().filter(|m| m.contains("Welcome to the Zrzur Team")).count(), 2, "{told:?}");
+        assert_eq!(told.iter().filter(|m| m.contains("we count how often you help")).count(), 1, "{told:?}");
+
+        // the daily job counts nothing of them and sends no notice
+        let day = d.harness.db.fetch_team_activity(&d.applicant.id, 0, 99_991_231).await.unwrap();
+        assert!(day.is_empty());
+    });
+}
+
+#[test]
+fn an_objection_comes_along_to_a_new_team() {
+    on_big_stack(|| async {
+        use revolt_database::util::team_activity::{self, COUNTING_STOPPED};
+        let mut d = desk().await;
+        d.volunteers_on("1");
+        let session = d.applicant_session.clone();
+        let first = d.accepted_as(&session, "support").await;
+        let mut member = d.members_of(&d.applicant).await.remove(0);
+        member.history.push(revolt_database::TeamHistory {
+            at: revolt_database::staff_now(),
+            actor: "boss".to_string(),
+            action: COUNTING_STOPPED.to_string(),
+        });
+        d.harness.db.update_team_member(&member).await.unwrap();
+        let mut accepted = d.stored(&first).await;
+        accepted.acted_at = Some(1);
+        assert!(d
+            .harness
+            .db
+            .replace_team_application_if(&accepted, TeamApplicationStatus::Accepted)
+            .await
+            .unwrap());
+        d.accepted_as(&session, "designer").await;
+        let members = d.members_of(&d.applicant).await;
+        let designer = members.iter().find(|m| m.role == "designer").unwrap();
+        // the new record carries the objection on its own
+        assert!(team_activity::counting_stopped(std::slice::from_ref(designer)), "{:?}", designer.history);
     });
 }

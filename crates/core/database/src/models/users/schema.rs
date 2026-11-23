@@ -12,11 +12,13 @@ impl OpenApiFromRequest<'_> for User {
         _name: String,
         _required: bool,
     ) -> revolt_rocket_okapi::Result<RequestHeaderInput> {
+        // A session token or a bot token: the API's document builder turns this
+        // name into the two alternatives (delta `routes::openapi_security`)
         let mut requirements = schemars::Map::new();
-        requirements.insert("Session Token".to_owned(), vec![]);
+        requirements.insert("Session or Bot Token".to_owned(), vec![]);
 
         Ok(RequestHeaderInput::Security(
-            "Session Token".to_owned(),
+            "Session or Bot Token".to_owned(),
             SecurityScheme {
                 data: SecuritySchemeData::ApiKey {
                     name: "x-session-token".to_owned(),

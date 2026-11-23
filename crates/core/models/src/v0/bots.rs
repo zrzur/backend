@@ -1,5 +1,22 @@
 ﻿use super::User;
 
+/// A bot's name: words of letters, numbers and `_ . -`, with one space
+/// between words (no space at either end, no zero-width characters)
+pub static RE_BOT_NAME: once_cell::sync::Lazy<regex::Regex> =
+    once_cell::sync::Lazy::new(|| regex::Regex::new(r"^(\p{L}|[\d_.-])+( (\p{L}|[\d_.-])+)*$").unwrap());
+
+/// The username a bot gets for its name: spaces become `_`, so mentions,
+/// uniqueness and the discriminator work as for any name
+pub fn bot_username(name: &str) -> String {
+    name.replace(' ', "_")
+}
+
+/// The display name a bot gets for its name: the name as typed when it has
+/// spaces; a name without one needs none
+pub fn bot_display_name(name: &str) -> Option<String> {
+    name.contains(' ').then(|| name.to_string())
+}
+
 auto_derived!(
     /// Bot
     #[derive(Default)]
@@ -201,10 +218,12 @@ auto_derived!(
     #[derive(Default)]
     #[cfg_attr(feature = "validator", derive(validator::Validate))]
     pub struct DataCreateBot {
-        /// Bot username
+        /// Bot name: letters, numbers and `_ . -`, with single spaces
+        /// between words (2 to 32 characters). With spaces, it is the bot's
+        /// display name and its username has `_` in their place.
         #[cfg_attr(
             feature = "validator",
-            validate(length(min = 2, max = 32), regex = "super::RE_USERNAME")
+            validate(length(min = 2, max = 32), regex = "RE_BOT_NAME")
         )]
         pub name: String,
     }
@@ -213,10 +232,10 @@ auto_derived!(
     #[derive(Default)]
     #[cfg_attr(feature = "validator", derive(validator::Validate))]
     pub struct DataEditBot {
-        /// Bot username
+        /// Bot name, by the same rule as when it was created
         #[cfg_attr(
             feature = "validator",
-            validate(length(min = 2, max = 32), regex = "super::RE_USERNAME")
+            validate(length(min = 2, max = 32), regex = "RE_BOT_NAME")
         )]
         #[serde(skip_serializing_if = "Option::is_none")]
         pub name: Option<String>,

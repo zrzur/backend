@@ -14,6 +14,7 @@ mod billing;
 mod content;
 mod creators;
 mod bots;
+mod deletion;
 mod discover;
 mod metrics;
 mod official;
@@ -24,6 +25,7 @@ mod safety;
 mod security;
 mod servers;
 mod support;
+mod team;
 mod words;
 #[cfg(test)]
 mod test;
@@ -80,6 +82,8 @@ pub fn routes() -> Vec<Route> {
         bots::verifications,
         bots::decide_verification,
         bots::unverify,
+        bots::delete,
+        deletion::delete_owned,
         change_requests::list,
         change_requests::create,
         change_requests::cancel,
@@ -132,6 +136,14 @@ pub fn routes() -> Vec<Route> {
         beta::save,
         beta::members,
         beta::member,
+        team::list,
+        team::detail,
+        team::identity,
+        team::confirm,
+        team::away,
+        team::note,
+        team::counting,
+        team::remove,
         open_session,
         close_session,
         step_up,

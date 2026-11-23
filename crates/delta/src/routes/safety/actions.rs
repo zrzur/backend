@@ -111,6 +111,7 @@ async fn enforce(
                 }))?;
                 // no email: the user sees the reason in their account standing
                 user.suspend(db, Some(days as usize), None).await?;
+                log_out_bots_of(db, &user.id).await;
                 Ok((Some(owner), Some(now + days as i64 * 24 * 60 * 60 * 1000)))
             } else {
                 let mut account = db.fetch_account(&user.id).await?;
@@ -124,6 +125,7 @@ async fn enforce(
                     vec![],
                 )
                 .await?;
+                log_out_bots_of(db, &user.id).await;
                 Ok((Some(owner), None))
             }
         }
@@ -966,5 +968,21 @@ mod statement_tests {
         let with = with.statement.unwrap();
         assert!(!with.automated_detection && !with.automated_decision);
         assert_eq!(with.territorial_scope, "worldwide");
+    }
+}
+
+/// A suspended or banned owner's bots stop at once: their tokens are refused
+/// from now on (`bot_may_receive`), and open gateway connections close.
+/// The bots themselves are not changed, so they work again when the
+/// suspension ends.
+async fn log_out_bots_of(db: &revolt_database::Database, owner: &str) {
+    revolt_database::forget_owner_standing(owner);
+    match db.fetch_bots_by_user(owner).await {
+        Ok(bots) => {
+            for bot in bots {
+                EventV1::Logout.p(bot.id.clone()).await;
+            }
+        }
+        Err(error) => log::warn!("could not read the bots of {owner}: {error:?}"),
     }
 }

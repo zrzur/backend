@@ -180,6 +180,99 @@ async fn a_bot_cant_answer_in_a_closed_thread() {
     assert_eq!(status, Status::NoContent);
 }
 
+/// A public answer the server refuses (the bot may not write here) does not
+/// use up the interaction: the same interaction still takes a private
+/// answer, so the user is not left on "thinking…" (audit 2026-11-21, A2).
+/// The same holds for a deferred interaction finished through the original.
+#[rocket::async_test]
+async fn a_refused_public_answer_leaves_the_interaction_answerable() {
+    use revolt_permissions::ChannelPermission;
+    let mut s = setup().await;
+    let mut bot_events = PubSubTestHelper::new(&format!("{}!", s.bot.id)).await;
+    let mut user_events = PubSubTestHelper::new(&format!("{}!", s.user.id)).await;
+
+    // the bot may read here but not write
+    let mut channel = s.channel.clone();
+    channel
+        .update(
+            &s.harness.db,
+            revolt_database::PartialChannel {
+                member_permissions: Some(std::collections::HashMap::from([(
+                    s.bot.id.clone(),
+                    revolt_permissions::OverrideField {
+                        a: 0,
+                        d: ChannelPermission::SendMessage as i64,
+                    },
+                )])),
+                ..Default::default()
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
+    s.channel = channel;
+
+    let callback = |id: &str, token: &str| format!("/interactions/{id}/{token}/callback");
+    let public = json!({ "type": "Message", "data": { "content": "for everyone" } });
+    let private = json!({ "type": "Message", "data": { "content": "only you", "ephemeral": true } });
+
+    // straight answer: refused, then the private fallback on the same interaction
+    let (id, token) = s.invoke(&mut bot_events).await;
+    let (status, _) = s.send("POST", callback(&id, &token), Some(public.clone())).await;
+    assert_eq!(status, Status::Forbidden);
+    let (status, _) = s.send("POST", callback(&id, &token), Some(private)).await;
+    assert_eq!(status, Status::NoContent, "the fallback answer is accepted");
+    user_events
+        .wait_for_event(|event| {
+            matches!(event, EventV1::EphemeralMessageCreate { message } if message.interaction_id == id)
+        })
+        .await;
+
+    // deferred, then a public finish that is refused, then a private-safe edit
+    let (id, token) = s.invoke(&mut bot_events).await;
+    let (status, _) = s
+        .send("POST", callback(&id, &token), Some(json!({ "type": "DeferredMessage" })))
+        .await;
+    assert_eq!(status, Status::NoContent);
+    let original = format!("/interactions/{id}/{token}/original");
+    let (status, _) = s.send("PATCH", original.clone(), Some(json!({ "content": "done" }))).await;
+    assert_eq!(status, Status::Forbidden);
+    let interaction = s.harness.db.fetch_interaction(&id).await.unwrap();
+    assert_eq!(
+        interaction.status,
+        revolt_database::InteractionStatus::Deferred,
+        "still waiting for its answer, not used up"
+    );
+}
+
+/// Public follow-ups sent at the same moment can not pass the limit of 5
+/// (audit 2026-11-21, A17): the count is checked again where it is stored
+#[rocket::async_test]
+async fn concurrent_public_followups_stay_within_the_limit() {
+    let s = setup().await;
+    let mut bot_events = PubSubTestHelper::new(&format!("{}!", s.bot.id)).await;
+    let (id, token) = s.invoke(&mut bot_events).await;
+    let (status, _) = s
+        .send("POST", format!("/interactions/{id}/{token}/callback"), Some(json!({ "type": "Message", "data": { "content": "first" } })))
+        .await;
+    assert_eq!(status, Status::NoContent);
+
+    let path = format!("/interactions/{id}/{token}/followups");
+    for n in 0..3 {
+        let (status, _) = s.send("POST", path.clone(), Some(json!({ "content": format!("f{n}") }))).await;
+        assert_eq!(status, Status::Ok);
+    }
+    // two slots left, four tries at once
+    let tries = futures::future::join_all(
+        (0..4).map(|n| s.send("POST", path.clone(), Some(json!({ "content": format!("race{n}") })))),
+    )
+    .await;
+    let accepted = tries.iter().filter(|(status, _)| *status == Status::Ok).count();
+    assert_eq!(accepted, 2, "{tries:?}");
+    let interaction = s.harness.db.fetch_interaction(&id).await.unwrap();
+    assert_eq!(interaction.followup_count(), revolt_database::MAX_FOLLOWUPS);
+}
+
 #[rocket::async_test]
 async fn followups_are_bounded_and_editable() {
     let s = setup().await;

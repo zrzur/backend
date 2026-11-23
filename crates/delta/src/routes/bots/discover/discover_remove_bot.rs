@@ -19,7 +19,8 @@ pub async fn discover_remove_bot(
 ) -> Result<EmptyResponse> {
     let bot = bot_id.as_bot(db).await?;
     if (bot.owner != user.id && bot.id != user.id) && !user.privileged {
-        return Err(create_error!(NotOwner));
+        // as on every bot route: someone else's bot is not found
+        return Err(create_error!(NotFound));
     }
 
     listing::withdraw(db, DiscoverRequestType::Bot, &bot.id).await?;

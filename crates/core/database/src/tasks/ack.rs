@@ -102,7 +102,7 @@ pub async fn handle_ack_event(
                 let before_mentions = before.mentions.unwrap_or_default().len();
                 let after_mentions = after.mentions.unwrap_or_default().len();
 
-                let mentions_acked = before_mentions - after_mentions;
+                let mentions_acked = before_mentions.saturating_sub(after_mentions);
 
                 if mentions_acked > 0 {
                     if let Err(err) = amqp

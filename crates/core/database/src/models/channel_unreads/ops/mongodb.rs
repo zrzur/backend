@@ -12,6 +12,39 @@ use super::AbstractChannelUnreads;
 
 static COL: &str = "channel_unreads";
 
+/// Add mentions, but only of messages after the reader's read mark, in the
+/// same write that reads the mark. Mentions are added by a debounced task
+/// seconds after the message; a read that landed in between must win, or
+/// the mention comes back after it was read.
+fn unread_mentions_pipeline(message_ids: &[String]) -> Vec<Document> {
+    vec![doc! {
+        "$set": {
+            "mentions": {
+                "$let": {
+                    "vars": {
+                        "new": {
+                            "$filter": {
+                                "input": message_ids.to_vec(),
+                                "as": "id",
+                                "cond": { "$gt": ["$$id", { "$ifNull": ["$last_id", ""] }] }
+                            }
+                        }
+                    },
+                    // nothing new: the field stays as it was (absent stays
+                    // absent, as in the reference database), never `[]`
+                    "in": {
+                        "$cond": [
+                            { "$eq": [{ "$size": "$$new" }, 0] },
+                            { "$ifNull": ["$mentions", "$$REMOVE"] },
+                            { "$concatArrays": [{ "$ifNull": ["$mentions", []] }, "$$new"] }
+                        ]
+                    }
+                }
+            }
+        }
+    }]
+}
+
 #[async_trait]
 impl AbstractChannelUnreads for MongoDb {
     /// Acknowledge a message, and returns updated channel unread.
@@ -95,13 +128,7 @@ impl AbstractChannelUnreads for MongoDb {
                     "_id.channel": channel_id,
                     "_id.user": user_id,
                 },
-                doc! {
-                    "$push": {
-                        "mentions": {
-                            "$each": message_ids
-                        }
-                    }
-                },
+                unread_mentions_pipeline(message_ids),
             )
             .with_options(UpdateOptions::builder().upsert(true).build())
             .await
@@ -124,13 +151,7 @@ impl AbstractChannelUnreads for MongoDb {
                         "$in": user_ids
                     },
                 },
-                doc! {
-                    "$push": {
-                        "mentions": {
-                            "$each": message_ids
-                        }
-                    }
-                },
+                unread_mentions_pipeline(message_ids),
             )
             .with_options(UpdateOptions::builder().upsert(true).build())
             .await

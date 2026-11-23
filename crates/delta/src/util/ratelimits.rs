@@ -158,6 +158,13 @@ impl<'a> RatelimitResolver<Request<'a>> for DeltaRatelimits {
                 // Posting through a webhook has limits per webhook and per
                 // channel in the route; this one only stops floods from one
                 // address, which may serve many webhooks (a CI, a forge)
+                // a new token and a test delivery are management, not sending:
+                // they must not share the 100-per-10-s room of the posts
+                ("webhooks", Some(id), Method::Post)
+                    if matches!(extra, Some("token") | Some("test")) =>
+                {
+                    ("webhook_manage", Some(id))
+                }
                 ("webhooks", Some(_), Method::Post) if extra.is_some() => ("webhook_send", None),
                 ("safety", Some("report"), _) => ("safety_report", Some("report")),
                 // new reports and appeals share the strict bucket
@@ -195,6 +202,7 @@ impl<'a> RatelimitResolver<Request<'a>> for DeltaRatelimits {
             "typing" => 5,
             "poll_votes" => 10,
             "webhook_send" => 100,
+            "webhook_manage" => 5,
             "channels" => 15,
             "soundboard_play" => 4,
             "stage" => 20,
@@ -274,6 +282,38 @@ mod test {
             .await
     }
 
+    /// Making a new webhook token and sending a test delivery are counted in
+    /// a small bucket of their own (5 per 10 s per webhook), not in the 100
+    /// of the posts through the webhook (audit 2026-11-21, A21)
+    #[rocket::async_test]
+    async fn webhook_management_has_its_own_bucket() {
+        let harness = TestHarness::new().await;
+        let limit_of = |path: String| {
+            let harness = &harness;
+            async move {
+                let res = harness
+                    .client
+                    .post(path.clone())
+                    .header(Header::new("content-type", "application/json"))
+                    .body("{}")
+                    .dispatch()
+                    .await;
+                (
+                    res.headers().get_one("x-ratelimit-limit").map(str::to_string),
+                    res.headers().get_one("x-ratelimit-bucket").map(str::to_string),
+                )
+            }
+        };
+        let id = "01HWEBHOOK0000000000000000";
+        let (token_limit, token_bucket) = limit_of(format!("/webhooks/{id}/token")).await;
+        let (test_limit, _) = limit_of(format!("/webhooks/{id}/test")).await;
+        let (send_limit, send_bucket) = limit_of(format!("/webhooks/{id}/some-secret-token")).await;
+        assert_eq!(token_limit.as_deref(), Some("5"));
+        assert_eq!(test_limit.as_deref(), Some("5"));
+        assert_eq!(send_limit.as_deref(), Some("100"));
+        assert_ne!(token_bucket, send_bucket);
+    }
+
     /// The default stays strict whatever a test stack sets
     #[rocket::async_test]
     async fn auth_limit_defaults_to_fifteen() {
@@ -312,5 +352,47 @@ mod test {
             .await;
         assert_ne!(res.status(), Status::NotFound);
         assert!(res.headers().get_one("x-ratelimit-bucket").is_some());
+    }
+
+    /// Saving the profile (`PATCH /users/@me`) has a bucket of its own: the
+    /// reads of `/users` an app makes when it opens and when Settings opens
+    /// never use up a save (review of 2026-11-22). Reads of other users and
+    /// of your own profile share the `users` bucket.
+    #[rocket::async_test]
+    async fn a_profile_save_is_not_counted_with_the_users_reads() {
+        let harness = TestHarness::new().await;
+        let (_, session, user) = harness.new_user().await;
+        let headers = |res: &rocket::local::asynchronous::LocalResponse<'_>| {
+            (
+                res.headers().get_one("x-ratelimit-limit").map(str::to_string),
+                res.headers().get_one("x-ratelimit-bucket").map(str::to_string),
+            )
+        };
+        let token = Header::new("x-session-token", session.token.clone());
+
+        let read = harness.client.get("/users/@me").header(token.clone()).dispatch().await;
+        let profile = harness
+            .client
+            .get(format!("/users/{}/profile", user.id))
+            .header(token.clone())
+            .dispatch()
+            .await;
+        let save = harness
+            .client
+            .patch("/users/@me")
+            .header(token)
+            .header(Header::new("content-type", "application/json"))
+            .body(r#"{"display_name":"Layla"}"#)
+            .dispatch()
+            .await;
+
+        let (read_limit, read_bucket) = headers(&read);
+        let (_, profile_bucket) = headers(&profile);
+        let (save_limit, save_bucket) = headers(&save);
+        assert_eq!(read_limit.as_deref(), Some("20"));
+        assert_eq!(read_bucket, profile_bucket, "reads share one bucket");
+        assert_eq!(save_limit.as_deref(), Some("2"));
+        assert!(save_bucket.is_some());
+        assert_ne!(save_bucket, read_bucket, "a save has its own bucket");
     }
 }

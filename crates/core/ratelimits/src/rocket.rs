@@ -13,7 +13,7 @@ use revolt_database::{Database, Session, util::ip::rocket::to_real_ip};
 
 use crate::ratelimiter::RequestKind;
 use crate::ratelimiter::{
-    RatelimitInformation, Ratelimiter, address_blocked, bot_for_token, count_refused, counts_as_refused, identifier_for_bucket,
+    RatelimitInformation, Ratelimiter, address_blocked, bot_for_token, count_refused, identifier_for_bucket,
 };
 
 #[derive(Clone, Copy)]
@@ -37,17 +37,6 @@ impl<'r> FromRequest<'r> for Ratelimiter {
                 let storage = request.guard::<&State<RatelimitStorage>>().await.unwrap();
                 let ip = to_real_ip(request).await;
 
-                // an address blocked for too many refused requests gets nothing
-                if let Some(seconds) = address_blocked(&ip).await {
-                    return Err(Ratelimiter {
-                        key: 0,
-                        limit: 0,
-                        remaining: 0,
-                        reset: seconds as u128 * 1000,
-                        global: false,
-                    });
-                }
-
                 // bots are counted by their id, from whichever address they call
                 let bot = match (
                     request.headers().get_one("x-bot-token"),
@@ -56,6 +45,23 @@ impl<'r> FromRequest<'r> for Ratelimiter {
                     (Some(token), Outcome::Success(db)) => bot_for_token(db, token).await,
                     _ => None,
                 };
+                request.local_cache(|| KnownBot(bot.is_some()));
+
+                // an address blocked for too many refused requests gets
+                // nothing, except a bot with a real token: many bots share one
+                // hosting address, and one guessing client there must not
+                // stop them all. Bots have their own limits by id.
+                if crate::ratelimiter::address_block_applies(bot.is_some()) {
+                    if let Some(seconds) = address_blocked(&ip).await {
+                        return Err(Ratelimiter {
+                            key: 0,
+                            limit: 0,
+                            remaining: 0,
+                            reset: seconds as u128 * 1000,
+                            global: false,
+                        });
+                    }
+                }
                 let session = if bot.is_none() {
                     match request.guard::<Session>().await {
                         Outcome::Success(session) => Some(session.id),
@@ -102,6 +108,9 @@ impl OpenApiFromRequest<'_> for Ratelimiter {
 fn is_preflight(request: &Request<'_>) -> bool {
     request.method() == Method::Options
 }
+
+/// Whether the request came with the token of an existing bot
+struct KnownBot(bool);
 
 /// Attach ratelimiter to the Rocket application
 pub struct RatelimitFairing;
@@ -161,8 +170,11 @@ impl Fairing for RatelimitFairing {
             response.set_raw_header("Retry-After", crate::ratelimiter::retry_after_seconds(reset).to_string());
         }
 
-        // refused requests count against the address (token guessing, floods)
-        if counts_as_refused(response.status().code) {
+        // refused requests count against the address (token guessing,
+        // floods). A bot with a real token is not guessing: its 403s are
+        // permission answers and count against nobody's address.
+        let known_bot = request.local_cache(|| KnownBot(false)).0;
+        if crate::ratelimiter::counts_against_address(response.status().code, known_bot) {
             count_refused(&to_real_ip(request).await).await;
         }
     }

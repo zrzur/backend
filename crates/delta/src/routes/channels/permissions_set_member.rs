@@ -47,8 +47,17 @@ pub async fn set_member_permissions(
     // only members of this server; others only below one's own rank. One's own
     // entry is allowed (a bot keeps itself in a room it hides from everyone);
     // the override check below limits it to permissions already held.
-    let member = db.fetch_member(&server.id, &user_id).await?;
-    if server.owner != user.id && user_id != user.id {
+    // Someone who is no longer a member: only an empty override goes through,
+    // so an entry left behind can always be removed (and nothing new given)
+    let clearing = data.permissions.allow == 0 && data.permissions.deny == 0;
+    let member = match db.fetch_member(&server.id, &user_id).await {
+        Ok(member) => Some(member),
+        Err(error) if clearing && matches!(error.error_type, revolt_result::ErrorType::NotFound) => {
+            None
+        }
+        Err(error) => return Err(error),
+    };
+    if let Some(member) = member.filter(|_| server.owner != user.id && user_id != user.id) {
         if user_id == server.owner
             || member.get_ranking(server) <= query.get_member_rank().unwrap_or(i64::MIN)
         {
@@ -63,6 +72,11 @@ pub async fn set_member_permissions(
         } => member_permissions.get(&user_id).map(|value| (*value).into()),
         _ => None,
     };
+    // nothing stored and nothing asked for: no write, no event, no audit entry
+    if clearing && current_value.is_none() {
+        return Ok(Json(channel.into()));
+    }
+
     permissions
         .throw_permission_override(current_value, &data.permissions)
         .await?;
@@ -90,6 +104,7 @@ pub async fn set_member_permissions(
 #[cfg(test)]
 mod test {
     use crate::{rocket, util::test::TestHarness};
+    use revolt_database::{AuditLogEntryAction, AuditLogQuery};
     use revolt_database::{
         util::permissions::DatabasePermissionQuery, Channel, Member, PartialMember, Role, Server, User,
     };
@@ -253,6 +268,125 @@ mod test {
     async fn only_members_of_the_server() {
         let s = setup().await;
         assert_eq!(put(&s, &s.moderator_token, &s.outsider, VIEW, 0).await, Status::NotFound);
+    }
+
+    /// The owner removes someone from the server: kick (DELETE member) or ban
+    async fn remove_from_server(s: &Setup, user: &User, ban: bool) -> Status {
+        let request = if ban {
+            s.harness
+                .client
+                .put(format!("/servers/{}/bans/{}", s.server.id, user.id))
+                .header(ContentType::JSON)
+                .body(json!({}).to_string())
+        } else {
+            s.harness
+                .client
+                .delete(format!("/servers/{}/members/{}", s.server.id, user.id))
+        };
+        request
+            .header(Header::new("X-Session-Token", s.owner_token.clone()))
+            .dispatch()
+            .await
+            .status()
+    }
+
+    #[rocket::async_test]
+    async fn a_kicked_member_loses_their_entry() {
+        let s = setup().await;
+        assert_eq!(put(&s, &s.owner_token, &s.member, VIEW | SEND, 0).await, Status::Ok);
+        assert!(stored(&s, &s.member).await.is_some());
+        assert_eq!(remove_from_server(&s, &s.member, false).await, Status::NoContent);
+        assert_eq!(stored(&s, &s.member).await, None);
+        // back in the server: no way into the hidden channel through an old entry
+        join(&s.harness, &s.server, &s.member, None).await;
+        assert!(!can(&s, &s.member, ChannelPermission::ViewChannel).await);
+    }
+
+    #[rocket::async_test]
+    async fn a_banned_member_loses_their_entry() {
+        let s = setup().await;
+        assert_eq!(put(&s, &s.owner_token, &s.member, VIEW, 0).await, Status::Ok);
+        assert!(stored(&s, &s.member).await.is_some());
+        assert_eq!(remove_from_server(&s, &s.member, true).await, Status::Ok);
+        assert_eq!(stored(&s, &s.member).await, None);
+    }
+
+    /// An entry left over for someone who is no longer a member (written
+    /// before members' entries were cleared on leave)
+    async fn stale_entry(s: &Setup, user: &User) {
+        let mut channel = s.harness.db.fetch_channel(s.channel.id()).await.unwrap();
+        channel
+            .set_member_permission(&s.harness.db, &user.id, OverrideField { a: VIEW, d: 0 })
+            .await
+            .unwrap();
+        assert!(stored(s, user).await.is_some());
+    }
+
+    #[rocket::async_test]
+    async fn an_empty_override_clears_the_entry_of_a_non_member() {
+        let s = setup().await;
+        stale_entry(&s, &s.outsider).await;
+        assert_eq!(put(&s, &s.moderator_token, &s.outsider, 0, 0).await, Status::Ok);
+        assert_eq!(stored(&s, &s.outsider).await, None);
+    }
+
+    #[rocket::async_test]
+    async fn a_non_empty_override_for_a_non_member_is_still_not_found() {
+        let s = setup().await;
+        stale_entry(&s, &s.outsider).await;
+        assert_eq!(put(&s, &s.moderator_token, &s.outsider, 0, VIEW).await, Status::NotFound);
+        assert_eq!(put(&s, &s.owner_token, &s.outsider, VIEW | SEND, 0).await, Status::NotFound);
+        assert_eq!(stored(&s, &s.outsider).await, Some(OverrideField { a: VIEW, d: 0 }));
+    }
+
+    /// The server's audit entries for member overrides on this channel
+    async fn logged(s: &Setup) -> usize {
+        s.harness
+            .db
+            .get_server_audit_logs(
+                &s.server.id,
+                AuditLogQuery {
+                    user: None,
+                    target: None,
+                    r#type: None,
+                    before: None,
+                    after: None,
+                    limit: 100,
+                },
+            )
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|entry| {
+                matches!(&entry.action, AuditLogEntryAction::ChannelMemberPermissionsEdit { channel, .. } if channel == s.channel.id())
+            })
+            .count()
+    }
+
+    #[rocket::async_test]
+    async fn an_empty_override_with_nothing_stored_changes_nothing() {
+        let s = setup().await;
+        // a real change is logged (and shows the log is read)
+        assert_eq!(put(&s, &s.owner_token, &s.member, VIEW, 0).await, Status::Ok);
+        let mut before = 0;
+        for _ in 0..40 {
+            before = logged(&s).await;
+            if before >= 1 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        assert_eq!(before, 1);
+
+        // a member and a non-member with no entry: answered, nothing written
+        let (_, _, other) = s.harness.new_user().await;
+        join(&s.harness, &s.server, &other, None).await;
+        assert_eq!(put(&s, &s.owner_token, &other, 0, 0).await, Status::Ok);
+        assert_eq!(put(&s, &s.moderator_token, &s.outsider, 0, 0).await, Status::Ok);
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert_eq!(logged(&s).await, 1);
+        assert_eq!(stored(&s, &other).await, None);
+        assert_eq!(stored(&s, &s.member).await, Some(OverrideField { a: VIEW, d: 0 }));
     }
 
     #[rocket::async_test]

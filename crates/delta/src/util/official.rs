@@ -510,6 +510,32 @@ pub async fn creator(db: &Database, user_id: &str, action: &str, note: &str) {
     send(db, user_id, key, &[("note", note)]).await;
 }
 
+/// A badge's name in every language we have texts for (the id where a
+/// language lacks it)
+pub fn badge_names(badge_id: &str) -> std::collections::BTreeMap<&'static str, String> {
+    let key = format!("badge_name.{badge_id}");
+    LANGUAGES
+        .iter()
+        .map(|(code, _)| {
+            let name = TEXTS[code]
+                .get(&key)
+                .map(|t| t.title.clone())
+                .unwrap_or_else(|| badge_id.to_string());
+            (*code, name)
+        })
+        .collect()
+}
+
+/// The owner's own confirmation of a `/badge` change, from Zrzur: it does
+/// not depend on what the bot shows
+pub async fn badge_command_done(db: &Database, owner_id: &str, granted: bool, badge_id: &str, user: &str, note: &str) {
+    let language = language_for(db, owner_id).await;
+    let name = badge_names(badge_id).remove(language).unwrap_or_else(|| badge_id.to_string());
+    let vars = [("name", name), ("user", user.to_string()), ("note", quote(note))];
+    let key = if granted { "badge.command_given" } else { "badge.command_taken" };
+    deliver(db, OfficialAccount::Zrzur, owner_id, render(language, key, &vars)).await;
+}
+
 pub async fn badge(db: &Database, user_id: &str, granted: bool, badge_id: &str, note: &str) {
     let language = language_for(db, user_id).await;
     let key = format!("badge_name.{badge_id}");

@@ -57,6 +57,31 @@ impl AbstractTeamApplications for MongoDb {
         .map_err(|_| create_database_error!("find", COL))
     }
 
+    async fn fetch_team_applications_accepted(&self) -> Result<Vec<TeamApplication>> {
+        self.find_with_options(
+            COL,
+            doc! { "status": "Accepted" },
+            FindOptions::builder().sort(doc! { "_id": -1 }).limit(2000).build(),
+        )
+        .await
+        .map_err(|_| create_database_error!("find", COL))
+    }
+
+    async fn fetch_team_applications_acted(
+        &self,
+        from: i64,
+        to: i64,
+    ) -> Result<Vec<TeamApplication>> {
+        // a small collection (held no longer than the retention days)
+        self.find_with_options(
+            COL,
+            doc! { "acted_at": { "$gte": from, "$lte": to } },
+            FindOptions::builder().sort(doc! { "_id": 1 }).limit(5000).build(),
+        )
+        .await
+        .map_err(|_| create_database_error!("find", COL))
+    }
+
     async fn replace_team_application_if(
         &self,
         application: &TeamApplication,

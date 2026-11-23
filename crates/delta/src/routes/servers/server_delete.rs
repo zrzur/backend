@@ -1,7 +1,7 @@
 use revolt_database::{
     util::reference::Reference,
     voice::{
-        delete_voice_channel, get_user_voice_channel_in_server, remove_user_from_voice_channel,
+        get_user_voice_channel_in_server, remove_user_from_voice_channel,
         UserVoiceChannel, VoiceClient,
     },
     Database, RemovalIntention, User, ValidatedTicket,
@@ -37,18 +37,7 @@ pub async fn delete(
             return Err(create_error!(InvalidCredentials));
         }
 
-        for channel_id in &server.channels {
-            delete_voice_channel(
-                voice_client,
-                &UserVoiceChannel {
-                    id: channel_id.clone(),
-                    server_id: Some(server.id.clone()),
-                },
-            )
-            .await?;
-        }
-
-        server.delete(db).await
+        remove_server(db, voice_client, server).await
     } else {
         if let Some(channel_id) = get_user_voice_channel_in_server(&user.id, &server.id).await? {
             remove_user_from_voice_channel(
@@ -72,6 +61,17 @@ pub async fn delete(
             .await
     }
     .map(|_| EmptyResponse)
+}
+
+/// Delete a server the way its owner does: voice rooms closed, then the
+/// server with everything that hangs off it, and `ServerDelete` sent to
+/// its members. Also used by platform staff (`/staff/servers/<id>/actions`).
+pub(crate) async fn remove_server(
+    db: &Database,
+    voice_client: &VoiceClient,
+    server: revolt_database::Server,
+) -> Result<()> {
+    revolt_database::staff_deletion::remove_server(db, voice_client, server).await
 }
 
 #[cfg(test)]

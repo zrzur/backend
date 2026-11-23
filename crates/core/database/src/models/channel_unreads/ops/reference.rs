@@ -21,7 +21,13 @@ impl AbstractChannelUnreads for ReferenceDb {
         };
 
         if let Some(unread) = unreads.get_mut(&key) {
-            unread.mentions = None;
+            // as in MongoDB: only mentions up to the acked message are read
+            if let Some(mentions) = unread.mentions.as_mut() {
+                mentions.retain(|id| id.as_str() > message_id);
+            }
+            if unread.mentions.as_ref().is_some_and(|m| m.is_empty()) {
+                unread.mentions = None;
+            }
             unread.last_id.replace(message_id.to_string());
         } else {
             unreads.insert(
@@ -62,18 +68,7 @@ impl AbstractChannelUnreads for ReferenceDb {
             user: user_id.to_string(),
         };
 
-        if let Some(unread) = unreads.get_mut(&key) {
-            unread.mentions.replace(message_ids.to_vec());
-        } else {
-            unreads.insert(
-                key.clone(),
-                ChannelUnread {
-                    id: key,
-                    last_id: None,
-                    mentions: Some(message_ids.to_vec()),
-                },
-            );
-        }
+        add_unread_mentions(&mut unreads, key, message_ids);
 
         Ok(())
     }
@@ -93,18 +88,7 @@ impl AbstractChannelUnreads for ReferenceDb {
                 user: user_id.to_string(),
             };
 
-            if let Some(unread) = unreads.get_mut(&key) {
-                unread.mentions.replace(message_ids.to_vec());
-            } else {
-                unreads.insert(
-                    key.clone(),
-                    ChannelUnread {
-                        id: key,
-                        last_id: None,
-                        mentions: Some(message_ids.to_vec()),
-                    },
-                );
-            }
+            add_unread_mentions(&mut unreads, key, message_ids);
         }
 
         Ok(())
@@ -139,5 +123,28 @@ impl AbstractChannelUnreads for ReferenceDb {
                 user: user_id.to_string(),
             })
             .cloned())
+    }
+}
+
+/// Add mentions of messages after the reader's read mark only, as MongoDB
+/// does: a read that landed before the debounced task wins
+fn add_unread_mentions(
+    unreads: &mut std::collections::HashMap<ChannelCompositeKey, ChannelUnread>,
+    key: ChannelCompositeKey,
+    message_ids: &[String],
+) {
+    let unread = unreads.entry(key.clone()).or_insert_with(|| ChannelUnread {
+        id: key,
+        last_id: None,
+        mentions: None,
+    });
+    let read = unread.last_id.clone().unwrap_or_default();
+    let new: Vec<String> = message_ids
+        .iter()
+        .filter(|id| id.as_str() > read.as_str())
+        .cloned()
+        .collect();
+    if !new.is_empty() {
+        unread.mentions.get_or_insert_with(Vec::new).extend(new);
     }
 }
