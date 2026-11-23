@@ -103,6 +103,13 @@ impl AbstractPlatformStaff for ReferenceDb {
         Ok(count)
     }
 
+    async fn delete_staff_sessions_for_user(&self, user_id: &str) -> Result<usize> {
+        let mut store = self.platform_staff.lock().await;
+        let before = store.sessions.len();
+        store.sessions.retain(|_, s| s.user_id != user_id);
+        Ok(before - store.sessions.len())
+    }
+
     async fn fetch_desk_session(
         &self,
         user_id: &str,

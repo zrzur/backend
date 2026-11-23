@@ -1106,3 +1106,122 @@ async fn a_refused_update_leaves_the_interaction_answerable() {
     let message = s.harness.db.fetch_message(&message.id).await.unwrap();
     assert_eq!(message.content.as_deref(), Some("Pick one"), "the message did not change");
 }
+
+/// DK-06: nothing a bot is sent or answered with carries the sign-in
+/// (`session_id`), for every kind of interaction, and the sign-in code of a
+/// Zrzur Desk form never reaches the desk bot. The sign-in is stored on the
+/// interaction, so the check is meaningful.
+#[rocket::async_test]
+async fn bot_payloads_never_carry_the_sign_in_or_the_desk_code() {
+    use revolt_config::FeaturesStaffDesk;
+
+    const CODE: &str = "424242";
+    let s = setup().await;
+    crate::routes::staff::desk_test_settings::register(FeaturesStaffDesk {
+        enabled: true,
+        bot: s.bot.id.clone(),
+        places: vec![s.channel.id().to_string()],
+        allow_dms: false,
+        areas: vec!["overview".to_string()],
+    });
+    let mut bot_events = PubSubTestHelper::new(&format!("{}!", s.bot.id)).await;
+    let message = s.bot_message(buttons()).await;
+
+    let check = |what: &str, accepted: &v0::InteractionAccepted, payload: &v0::Interaction| {
+        for (label, json) in [
+            ("payload", serde_json::to_string(payload).unwrap()),
+            ("accepted", serde_json::to_string(accepted).unwrap()),
+        ] {
+            assert!(!json.contains("session_id"), "{what} {label}: {json}");
+            assert!(!json.contains(CODE), "{what} {label}: {json}");
+        }
+    };
+
+    // command
+    let command = revolt_database::create_application_command(
+        &s.harness.db,
+        &s.bot.id,
+        None,
+        serde_json::from_value(json!({
+            "name": "city", "description": "Pick a city",
+            "options": [{ "type": "String", "name": "name", "description": "City", "autocomplete": true, "required": true }]
+        }))
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+    let request = |kind: &str| {
+        json!({
+            "type": kind,
+            "application_id": s.bot.id,
+            "channel_id": s.channel.id(),
+            "command_id": command.id,
+            "command_version": command.version,
+            "options": [{ "type": "String", "name": "name", "value": "Damascus" }],
+            "focused": "name",
+            "nonce": ulid::Ulid::new().to_string(),
+        })
+    };
+    let (status, accepted) = s.interact(&s.session, request("Command")).await;
+    assert_eq!(status, Status::Ok);
+    let payload = next_interaction(&mut bot_events).await;
+    assert_eq!(payload.kind, v0::InteractionType::Command);
+    check("command", &accepted.clone().unwrap(), &payload);
+    let stored = s.harness.db.fetch_interaction(&accepted.unwrap().id).await.unwrap();
+    assert!(stored.session_id.is_some(), "the sign-in is stored");
+
+    // autocomplete
+    let response = s
+        .harness
+        .client
+        .post("/interactions/autocomplete")
+        .header(Header::new("x-session-token", s.session.clone()))
+        .header(ContentType::JSON)
+        .body(request("Autocomplete").to_string())
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Ok);
+    let accepted: v0::InteractionAccepted = response.into_json().await.unwrap();
+    let payload = next_interaction(&mut bot_events).await;
+    assert_eq!(payload.kind, v0::InteractionType::Autocomplete);
+    check("autocomplete", &accepted, &payload);
+
+    // component, then a desk form opened from it and submitted with a code
+    let (_, accepted) = s.interact(&s.session, s.click(&message.id, "ticket:open", None)).await;
+    let accepted = accepted.unwrap();
+    let payload = next_interaction(&mut bot_events).await;
+    assert_eq!(payload.kind, v0::InteractionType::Component);
+    check("component", &accepted, &payload);
+    let modal = json!({
+        "custom_id": "zd:login",
+        "title": "Sign in",
+        "components": [{ "type": "ActionRow", "components": [{
+            "type": "TextInput", "custom_id": "code", "style": "Short",
+            "label": "Code", "min_length": 6, "max_length": 6
+        }]}]
+    });
+    let status = s
+        .callback(&accepted.id, &payload.token.unwrap(), json!({ "type": "Modal", "modal": modal }))
+        .await;
+    assert_eq!(status, Status::NoContent);
+    let (status, submitted) = s
+        .interact(
+            &s.session,
+            json!({
+                "type": "ModalSubmit",
+                "channel_id": s.channel.id(),
+                "parent_id": accepted.id,
+                "custom_id": "zd:login",
+                "fields": [{ "custom_id": "code", "value": CODE }],
+                "nonce": ulid::Ulid::new().to_string(),
+            }),
+        )
+        .await;
+    assert_eq!(status, Status::Ok);
+    let payload = next_interaction(&mut bot_events).await;
+    assert_eq!(payload.kind, v0::InteractionType::ModalSubmit);
+    check("desk modal", &submitted.clone().unwrap(), &payload);
+    // the code is kept on the stored interaction for the desk routes only
+    let stored = s.harness.db.fetch_interaction(&submitted.unwrap().id).await.unwrap();
+    assert_eq!(stored.modal_fields.len(), 1);
+}

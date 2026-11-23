@@ -991,6 +991,8 @@ impl Account {
         // the account stays Scheduled and crond tries again the next hour
         // Sessions hold the push subscriptions, so this removes those too
         self.delete_all_sessions(db, None).await?;
+        // staff sign-ins (console and desk) of this person
+        db.delete_staff_sessions_for_user(&self.id).await?;
         db.remove_data_exports_for_user(&self.id).await?;
         crate::erase_community_items_of(db, &self.id).await?;
         // linked accounts (Steam) and their copies
@@ -1053,6 +1055,9 @@ impl Account {
         db.delete_saved_messages_of(&self.id).await?;
         db.delete_reminders_of(&self.id).await?;
         db.remove_account(&self.id).await?;
+        if let Err(error) = db.delete_staff_sessions_for_user(&self.id).await {
+            log::warn!("Could not remove the staff sessions of {}: {error:?}", self.id);
+        }
 
         if let Err(error) = self.delete_all_sessions(db, None).await {
             log::warn!("Could not remove the sessions of {}: {error:?}", self.id);

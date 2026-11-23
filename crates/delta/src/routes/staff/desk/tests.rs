@@ -1098,3 +1098,54 @@ async fn empty_code_refused_unrecorded() {
     let (status, body) = s.console_open(&staff, 0).await;
     assert_eq!(status, Status::Ok, "{body}");
 }
+
+/// Deleting an account deletes the person's staff sessions, console and desk
+/// (DK-07a); another person's sessions stay
+#[rocket::async_test]
+async fn account_deletion_removes_staff_sessions() {
+    let s = stage().await;
+    for full_erase in [false, true] {
+        let gone = s.person(vec![StaffRole::Support]).await;
+        let kept = s.person(vec![StaffRole::Support]).await;
+        let now = staff_now();
+        let mut tokens = vec![];
+        for (who, kind) in [
+            (&gone, StaffSessionKind::Desk),
+            (&gone, StaffSessionKind::Console),
+            (&kept, StaffSessionKind::Desk),
+        ] {
+            let token = new_staff_token();
+            let session = StaffSession {
+                id: ulid::Ulid::new().to_string(),
+                token_hash: staff_token_hash(&token),
+                user_id: who.user.id.clone(),
+                session_id: who.session.id.clone(),
+                created_at: now,
+                last_seen_at: now,
+                expires_at: now + STAFF_SESSION_MAX_MS,
+                step_up_until: None,
+                revoked_at: None,
+                user_agent: None,
+                kind,
+                bot_id: Some(s.bot.id.clone()),
+            };
+            s.harness.db.insert_staff_session(&session).await.unwrap();
+            tokens.push(staff_token_hash(&token));
+        }
+
+        let mut account = s.harness.db.fetch_account(&gone.user.id).await.unwrap();
+        if full_erase {
+            account.erase_completely(&s.harness.db).await.unwrap();
+        } else {
+            account.mark_deleted(&s.harness.db).await.unwrap();
+        }
+
+        for hash in &tokens[..2] {
+            assert!(
+                s.harness.db.fetch_staff_session_by_hash(hash).await.unwrap().is_none(),
+                "full_erase={full_erase}"
+            );
+        }
+        assert!(s.harness.db.fetch_staff_session_by_hash(&tokens[2]).await.unwrap().is_some());
+    }
+}

@@ -1,3 +1,4 @@
+use iso8601_timestamp::Timestamp;
 use revolt_result::Result;
 
 use revolt_models::v0::EphemeralMessage;
@@ -138,6 +139,22 @@ impl AbstractInteractions for MongoDb {
             .await
             .map_err(|_| create_database_error!("update_one", COL))?;
         Ok(())
+    }
+
+    async fn clear_stale_desk_modal_fields(&self, expires_before: Timestamp) -> Result<u64> {
+        let result = self
+            .col::<Interaction>(COL)
+            .update_many(
+                doc! {
+                    "custom_id": { "$regex": "^zd:" },
+                    "modal_fields.0": { "$exists": true },
+                    "expires_at": { "$lte": to_bson(&expires_before)? },
+                },
+                doc! { "$unset": { "modal_fields": 1 } },
+            )
+            .await
+            .map_err(|_| create_database_error!("update_many", COL))?;
+        Ok(result.modified_count)
     }
 
     async fn push_interaction_followup(

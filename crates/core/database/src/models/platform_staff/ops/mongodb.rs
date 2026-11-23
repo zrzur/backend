@@ -134,6 +134,14 @@ impl AbstractPlatformStaff for MongoDb {
             .map_err(|_| create_database_error!("update_many", SESSIONS))
     }
 
+    async fn delete_staff_sessions_for_user(&self, user_id: &str) -> Result<usize> {
+        self.col::<StaffSession>(SESSIONS)
+            .delete_many(doc! { "user_id": user_id })
+            .await
+            .map(|result| result.deleted_count as usize)
+            .map_err(|_| create_database_error!("delete_many", SESSIONS))
+    }
+
     async fn fetch_desk_session(
         &self,
         user_id: &str,

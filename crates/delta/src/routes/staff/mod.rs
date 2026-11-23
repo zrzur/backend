@@ -37,6 +37,8 @@ pub(crate) use desk::{
     hides_field_from_bot as desk_hides_field_from_bot, keeps_options as desk_keeps_options,
     CODE_FIELD as DESK_CODE_FIELD,
 };
+#[cfg(test)]
+pub(crate) use desk::test_settings as desk_test_settings;
 pub use metrics::Metrics;
 
 use revolt_database::{
