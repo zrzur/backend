@@ -59,8 +59,10 @@ const WRITE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 /// a person in many servers gets it many times over (the copies are dropped
 /// by event id). With fred's default of 32 the queue overflowed while the
 /// session was still following its topics, and the session ended without a
-/// word (found by the rich presence e2e run, 2026-11-23).
-const SUBSCRIBER_QUEUE: usize = 2048;
+/// word (found by the rich presence e2e run, 2026-11-23). 512 held for a
+/// person in 221 servers (about 220 copies of one update); a larger queue
+/// costs memory in every session (measured: stream report rich-presence).
+const SUBSCRIBER_QUEUE: usize = 512;
 /// Longest the missed events of a resume may take to send
 const REPLAY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 /// Refused resumes one socket may try before it is closed
