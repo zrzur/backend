@@ -1774,8 +1774,8 @@
     },
     {
       "path": "crates/core/database/src/models/billing/vanity.rs",
-      "sha256": "a69b4d17980a4804431ac307b29598aaee18e6f7e8b8eeb89dc11391653e04a9",
-      "bytes": 21372,
+      "sha256": "c6f7c4a59a57dab871674f56df6628d971939e01a688e2bde4c48a228bcccd24",
+      "bytes": 21371,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6280,8 +6280,8 @@
     },
     {
       "path": "crates/delta/src/routes/staff/test_delete.rs",
-      "sha256": "3b5d47a461f713fb1c41db2b4dcb41d7c503e53ffbfead7a1cc8110a08d56140",
-      "bytes": 29709,
+      "sha256": "892f2234f663eff9eb64e61b2c5fa232039284aaa7b4012ff3008a151242a2b0",
+      "bytes": 30209,
       "category": "product-source-or-build-manifest"
     },
     {
