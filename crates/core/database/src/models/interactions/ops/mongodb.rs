@@ -132,6 +132,14 @@ impl AbstractInteractions for MongoDb {
         Ok(result.modified_count == 1)
     }
 
+    async fn clear_interaction_modal_fields(&self, id: &str) -> Result<()> {
+        self.col::<Interaction>(COL)
+            .update_one(doc! { "_id": id }, doc! { "$unset": { "modal_fields": 1 } })
+            .await
+            .map_err(|_| create_database_error!("update_one", COL))?;
+        Ok(())
+    }
+
     async fn push_interaction_followup(
         &self,
         id: &str,

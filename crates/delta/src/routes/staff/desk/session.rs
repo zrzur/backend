@@ -7,24 +7,25 @@ use revolt_database::{
     StaffPermission, StaffRole, StaffSession, StaffSessionKind, User, STAFF_SESSION_IDLE_MS,
     STAFF_SESSION_MAX_MS, STAFF_STEP_UP_MS,
 };
-use revolt_result::Result;
+use revolt_result::{create_error, Result};
 use rocket::{serde::json::Json, State};
 use serde::Serialize;
 use ulid::Ulid;
 
 use super::super::{check_code, StepUp};
-use super::actor::{context, desk_actor, field, press, DataDeskInteraction, Expect};
+use super::actor::{context, desk_actor, field, press, session_alive, DataDeskInteraction, Expect};
+pub use super::CODE_FIELD;
 
 /// The custom id of the sign-in form
 pub const LOGIN_MODAL: &str = "zd:login";
 /// The custom id of the step-up form
 pub const STEP_UP_MODAL: &str = "zd:stepup";
-/// The form field that carries the TOTP code
-pub const CODE_FIELD: &str = "code";
 
-/// Stand-in for the ordinary session a console session is bound to: a desk
-/// session has none, and no real session id ever equals this
-const DESK_SESSION_ID: &str = "desk";
+/// The routes' own paths, for the context's `path` and refused records
+const PATH_SESSION: &str = "/staff/desk/session";
+const PATH_CLOSE: &str = "/staff/desk/session/close";
+const PATH_STEP_UP: &str = "/staff/desk/step-up";
+const PATH_ME: &str = "/staff/desk/me";
 
 /// Areas the desk knows, and the permission each one needs
 const AREAS: &[(&str, StaffPermission)] = &[("overview", StaffPermission::DashboardRead)];
@@ -65,7 +66,13 @@ pub async fn open(
     user: User,
     data: Json<DataDeskInteraction>,
 ) -> Result<Json<DeskOpened>> {
-    let press = press(db, &user, &data, Expect::Modal(LOGIN_MODAL)).await?;
+    let press = press(db, &user, &data, Expect::Modal(LOGIN_MODAL), PATH_SESSION).await?;
+    // the desk session belongs to the sign-in the person typed the code in:
+    // signing out there ends it, and a press from elsewhere does not use it
+    let ordinary = match press.interaction.session_id.clone() {
+        Some(id) if session_alive(db, &id, &press.user.id).await? => id,
+        _ => return Err(create_error!(InvalidSession)),
+    };
     let base = press.record("staff.session.create", "desk sign-in");
     if let Err(error) = check_code(db, &press.grant, press.field(CODE_FIELD)).await {
         let mut record = base;
@@ -75,14 +82,13 @@ pub async fn open(
     }
 
     let now = press.now;
-    // one desk session per person
-    db.revoke_desk_sessions_for_user(&press.user.id, now).await?;
     let staff = StaffSession {
         id: Ulid::new().to_string(),
         // a random value nobody is given: no token opens this session
         token_hash: staff_token_hash(&new_staff_token()),
         user_id: press.user.id.clone(),
-        session_id: DESK_SESSION_ID.to_string(),
+        // kind `Desk`: the console guard refuses it whatever this says
+        session_id: ordinary,
         created_at: now,
         last_seen_at: now,
         expires_at: now + STAFF_SESSION_MAX_MS,
@@ -100,6 +106,13 @@ pub async fn open(
         db.revoke_staff_session(&staff.id, now).await?;
         return Err(error);
     }
+    // one desk session per person: every other one ends, also one opened by
+    // a sign-in running at the same moment
+    for other in db.fetch_staff_sessions_for_user(&press.user.id, now).await? {
+        if other.kind == StaffSessionKind::Desk && other.id != staff.id {
+            db.revoke_staff_session(&other.id, now).await?;
+        }
+    }
     Ok(Json(DeskOpened {
         expires_at: staff.expires_at,
     }))
@@ -110,7 +123,7 @@ pub async fn open(
 /// From `/desk logout`. Ends the presser's desk session.
 #[post("/desk/session/close", data = "<data>")]
 pub async fn close(db: &State<Database>, user: User, data: Json<DataDeskInteraction>) -> Result<()> {
-    let (staff, _) = desk_actor(db, &user, &data, Expect::Command("logout")).await?;
+    let (staff, _) = desk_actor(db, &user, &data, Expect::Command("logout"), PATH_CLOSE).await?;
     db.revoke_staff_session(&staff.session.id, staff.now).await?;
     let mut record = staff.record("staff.session.close", None);
     record.summary = Some("desk sign-out".to_string());
@@ -128,7 +141,7 @@ pub async fn step_up(
     user: User,
     data: Json<DataDeskInteraction>,
 ) -> Result<Json<StepUp>> {
-    let (staff, interaction) = desk_actor(db, &user, &data, Expect::Modal(STEP_UP_MODAL)).await?;
+    let (staff, interaction) = desk_actor(db, &user, &data, Expect::Modal(STEP_UP_MODAL), PATH_STEP_UP).await?;
     if let Err(error) = check_code(db, &staff.grant, field(&interaction, CODE_FIELD)).await {
         let mut record = staff.record("staff.session.step_up", None);
         record.summary = Some("desk: second factor wrong".to_string());
@@ -149,7 +162,7 @@ pub async fn step_up(
 /// this person may use.
 #[post("/desk/me", data = "<data>")]
 pub async fn me(db: &State<Database>, user: User, data: Json<DataDeskInteraction>) -> Result<Json<DeskMe>> {
-    let press = press(db, &user, &data, Expect::Command("me")).await?;
+    let press = press(db, &user, &data, Expect::Command("me"), PATH_ME).await?;
     let enabled = press.settings.areas.clone();
     let (staff, _) = context(db, press).await?;
     let mut areas: Vec<String> = Vec::new();

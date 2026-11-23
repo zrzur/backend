@@ -176,4 +176,11 @@ impl AbstractInteractions for ReferenceDb {
             _ => Ok(false),
         }
     }
+
+    async fn clear_interaction_modal_fields(&self, id: &str) -> Result<()> {
+        if let Some(interaction) = self.interactions.lock().await.get_mut(id) {
+            interaction.modal_fields.clear();
+        }
+        Ok(())
+    }
 }

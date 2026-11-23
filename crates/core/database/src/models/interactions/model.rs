@@ -58,6 +58,11 @@ pub struct Interaction {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub command_version: Option<String>,
     pub nonce: String,
+    /// The ordinary session (sign-in) the person used. A route acting on
+    /// the person's behalf can bind its own state to that sign-in, so
+    /// signing out ends it. `None` on old documents.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub session_id: Option<String>,
     pub token_hash: String,
     pub status: InteractionStatus,
     /// Whether the first answer is (or will be, when deferred) private
@@ -161,6 +166,7 @@ impl Interaction {
                 command_options: vec![],
                 command_version: None,
                 nonce,
+                session_id: None,
                 token_hash: hash_interaction_token(&token),
                 status: InteractionStatus::Pending,
                 ephemeral: false,

@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use revolt_database::{
     events::client::EventV1, util::permissions::DatabasePermissionQuery, Bot, Channel, Database,
-    Interaction, InteractionSource, Member, Server, User, AMQP,
+    Interaction, InteractionSource, Member, Server, Session, User, AMQP,
 };
 use revolt_models::v0::{
     self, find_component, interaction_limits, ApplicationCommandType, CommandOptionType,
@@ -861,6 +861,17 @@ async fn modal_submit(
         }
         None => {}
     }
+    // the staff desk's forms carry a TOTP code: it stays on the stored
+    // interaction for `/staff/desk` (which then forgets it) and never
+    // reaches the bot
+    let fields = if crate::routes::staff::desk_hides_field_from_bot(&scope.bot.id, &modal.custom_id).await {
+        fields
+            .into_iter()
+            .filter(|field| field.custom_id != crate::routes::staff::DESK_CODE_FIELD)
+            .collect()
+    } else {
+        fields
+    };
     let resolved = context.resolved;
     payload.modal = Some(InteractionModalData {
         custom_id: modal.custom_id,
@@ -930,6 +941,7 @@ pub async fn create_interaction(
     db: &State<Database>,
     amqp: &State<AMQP>,
     user: User,
+    session: Option<Session>,
     data: Json<DataCreateInteraction>,
 ) -> Result<Json<InteractionAccepted>> {
     let data = data.into_inner();
@@ -952,6 +964,9 @@ pub async fn create_interaction(
         InteractionType::ModalSubmit => modal_submit(db, &user, data).await?,
         InteractionType::Autocomplete => return Err(create_error!(InvalidOperation)),
     };
+    // the sign-in the person used, never shown to the bot
+    let mut interaction = interaction;
+    interaction.session_id = session.map(|session| session.id);
     dispatch(db, amqp, interaction, payload).await.map(Json)
 }
 

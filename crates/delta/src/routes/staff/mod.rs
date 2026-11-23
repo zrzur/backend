@@ -33,7 +33,10 @@ mod audited;
 mod test;
 
 pub use guard::StaffContext;
-pub(crate) use desk::keeps_options as desk_keeps_options;
+pub(crate) use desk::{
+    hides_field_from_bot as desk_hides_field_from_bot, keeps_options as desk_keeps_options,
+    CODE_FIELD as DESK_CODE_FIELD,
+};
 pub use metrics::Metrics;
 
 use revolt_database::{

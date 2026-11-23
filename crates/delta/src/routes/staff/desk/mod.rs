@@ -29,6 +29,10 @@ use rocket::Route;
 
 /// The command's name as the bot registers it (`/desk me`, `/desk logout`)
 pub const COMMAND: &str = "desk";
+/// The desk's forms have custom ids starting with this
+pub const FORM_PREFIX: &str = "zd:";
+/// The form field that carries the TOTP code
+pub const CODE_FIELD: &str = "code";
 
 /// The routes, mounted under `/staff` (so at `/staff/desk/...`)
 pub fn routes() -> Vec<Route> {
@@ -93,6 +97,19 @@ async fn current(bot: &str) -> Option<FeaturesStaffDesk> {
     }
     let _ = bot;
     Some(trimmed(config().await.features.staff_desk)).filter(|s| s.on())
+}
+
+/// Whether a submitted form's `code` field is kept from the bot: any `zd:`
+/// form of the configured desk bot, also while the desk is switched off
+pub(crate) async fn hides_field_from_bot(bot: &str, form: &str) -> bool {
+    if !form.starts_with(FORM_PREFIX) || bot.is_empty() {
+        return false;
+    }
+    #[cfg(test)]
+    if let Some(settings) = test_settings::get(bot) {
+        return settings.bot.trim() == bot;
+    }
+    config().await.features.staff_desk.bot.trim() == bot
 }
 
 /// Whether a new command interaction keeps its options: only `/desk` of

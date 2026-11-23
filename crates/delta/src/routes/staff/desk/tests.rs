@@ -147,6 +147,8 @@ impl Stage {
             ulid::Ulid::new().to_string(),
         );
         interaction.custom_id = custom_id;
+        // as `/interactions` stores it: the sign-in the person pressed from
+        interaction.session_id = Some(who.session.id.clone());
         match kind {
             Kind::Command(sub) => {
                 interaction.command_name = Some("desk".to_string());
@@ -241,6 +243,25 @@ impl Stage {
             .unwrap()
             .into_iter()
             .map(|e| (e.action, format!("{:?}", e.outcome), e.summary.unwrap_or_default()))
+            .collect();
+        records.reverse();
+        records
+    }
+
+    /// (action, outcome, staff_session_id) of a person's records, oldest first
+    async fn record_sessions(&self, who: &Person) -> Vec<(String, String, Option<String>)> {
+        let mut records: Vec<_> = self
+            .harness
+            .db
+            .fetch_platform_audit(PlatformAuditQuery {
+                actor_id: Some(who.user.id.clone()),
+                limit: 500,
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|e| (e.action, format!("{:?}", e.outcome), e.staff_session_id))
             .collect();
         records.reverse();
         records
@@ -352,6 +373,15 @@ async fn press_outside_places_denied() {
         .collect();
     assert_eq!(places.len(), 2);
     assert!(places.iter().all(|(_, outcome, summary)| outcome == "Denied" && summary.starts_with("desk")));
+    // the refusals name the open desk session
+    let sessions: Vec<_> = s
+        .record_sessions(&staff)
+        .await
+        .into_iter()
+        .filter(|(action, _, _)| action == "staff.desk.place")
+        .map(|(_, _, session)| session)
+        .collect();
+    assert_eq!(sessions, vec![Some(open[0].id.clone()), Some(open[0].id.clone())]);
 }
 
 /// With `allow_dms` the presser's DM with the bot is a place; another DM is not
@@ -540,10 +570,14 @@ async fn wrong_kind_of_press_refused() {
     // a button named like the sign-in form
     let pressed = s.press(&staff, Kind::Button(LOGIN_MODAL)).await;
     assert_eq!(s.hand("session", &pressed).await.0, Status::BadRequest);
-    // the step-up form handed to sign-in
+    // the step-up form handed to sign-in, and the sign-in form to step-up
     let code = code(0);
     let pressed = s.press(&staff, Kind::Modal(STEP_UP_MODAL, &code)).await;
     assert_eq!(s.hand("session", &pressed).await.0, Status::BadRequest);
+    let pressed = s.press(&staff, Kind::Modal(LOGIN_MODAL, &code)).await;
+    let (status, body) = s.hand("step-up", &pressed).await;
+    assert_eq!(status, Status::BadRequest, "{body}");
+    assert_eq!(error_type(&body), "InvalidOperation");
     // still signed in once
     assert_eq!(s.desk_sessions(&staff).await.len(), 1);
 }
@@ -601,8 +635,17 @@ async fn second_sign_in_revokes_first() {
     let second = s.desk_sessions(&staff).await;
     assert_eq!(second.len(), 1);
     assert_ne!(first[0].id, second[0].id);
-    assert_eq!(second[0].session_id, "desk");
+    // bound to the sign-in the code was typed in
+    assert_eq!(second[0].session_id, staff.session.id);
     assert_eq!(second[0].bot_id.as_deref(), Some(s.bot.id.as_str()));
+    let created: Vec<_> = s
+        .record_sessions(&staff)
+        .await
+        .into_iter()
+        .filter(|(action, outcome, _)| action == "staff.session.create" && outcome == "Success")
+        .map(|(_, _, session)| session)
+        .collect();
+    assert_eq!(created, vec![Some(first[0].id.clone()), Some(second[0].id.clone())]);
 
     // the records carry the desk session's id
     let creates: Vec<_> = s
@@ -705,4 +748,215 @@ async fn members_list_shows_session_kinds() {
         .find(|m| m["user_id"] == json!(owner.user.id))
         .unwrap();
     assert_eq!(mine["sessions"][0]["kind"], json!("console"));
+}
+
+// ---- security review fixes ----
+
+/// A second ordinary session of the same person, as signing in on another device gives
+async fn other_device(s: &Stage, who: &Person) -> Person {
+    let mut session = who.session.clone();
+    session.id = ulid::Ulid::new().to_string();
+    session.token = TestHarness::rand_string();
+    session.token_hash = TestHarness::rand_string();
+    s.harness.db.insert_session(&session).await.unwrap();
+    Person {
+        user: who.user.clone(),
+        session,
+    }
+}
+
+/// The desk session is bound to the sign-in the code was typed in: a press
+/// from another valid sign-in of the same person does not use it
+#[rocket::async_test]
+async fn desk_session_bound_to_its_sign_in() {
+    let s = stage().await;
+    let staff = s.person(vec![StaffRole::Support]).await;
+    s.sign_in(&staff, -1).await;
+    let phone = other_device(&s, &staff).await;
+
+    let (status, body) = s.me(&phone).await;
+    assert_eq!(status, Status::Unauthorized, "{body}");
+    assert_eq!(error_type(&body), "InvalidSession");
+    // the first device still works
+    assert_eq!(s.me(&staff).await.0, Status::Ok);
+
+    // a press with no sign-in on record (an old interaction) neither
+    let (mut interaction, token) = Interaction::new(
+        InteractionType::Command,
+        s.bot.id.clone(),
+        staff.user.id.clone(),
+        Some(s.server_id.clone()),
+        s.place.id().to_string(),
+        ulid::Ulid::new().to_string(),
+    );
+    interaction.command_name = Some("desk".to_string());
+    interaction.command_options = vec![InteractionDataOption {
+        name: "me".to_string(),
+        kind: CommandOptionType::SubCommand,
+        value: None,
+        options: None,
+    }];
+    s.harness.db.insert_interaction(&interaction).await.unwrap();
+    assert_eq!(s.hand("me", &(interaction.id, token)).await.0, Status::Unauthorized);
+}
+
+/// Signing out (the ordinary session deleted, as "log out everywhere" and a
+/// password change do) ends the desk session
+#[rocket::async_test]
+async fn ending_the_sign_in_ends_the_desk_session() {
+    let s = stage().await;
+    let staff = s.person(vec![StaffRole::Support]).await;
+    s.sign_in(&staff, -1).await;
+    assert_eq!(s.desk_sessions(&staff).await.len(), 1);
+
+    s.harness.db.delete_session(&staff.session.id).await.unwrap();
+    let (status, body) = s.me(&staff).await;
+    assert_eq!(status, Status::Unauthorized, "{body}");
+    assert!(s.desk_sessions(&staff).await.is_empty());
+
+    // and no sign-in from a sign-in that is gone
+    let code = code(0);
+    let pressed = s.press(&staff, Kind::Modal(LOGIN_MODAL, &code)).await;
+    assert_eq!(s.hand("session", &pressed).await.0, Status::Unauthorized);
+    assert!(s.desk_sessions(&staff).await.is_empty());
+}
+
+async fn next_interaction(
+    events: &mut crate::util::test::PubSubTestHelper,
+) -> revolt_models::v0::Interaction {
+    use revolt_database::events::client::EventV1;
+    match events
+        .wait_for_event(|e| matches!(e, EventV1::InteractionCreate { .. }))
+        .await
+    {
+        EventV1::InteractionCreate { interaction } => interaction,
+        _ => unreachable!(),
+    }
+}
+
+/// The real flow: `/desk me`, the bot opens `zd:login`, the person types the
+/// code. The bot never sees the code, and the stored press forgets it once
+/// `/staff/desk/session` has read it.
+#[rocket::async_test]
+async fn code_never_reaches_the_bot() {
+    use crate::util::test::PubSubTestHelper;
+    use revolt_database::Member;
+
+    let s = stage().await;
+    let staff = s.person(vec![StaffRole::Support]).await;
+    let server = s.harness.db.fetch_server(&s.server_id).await.unwrap();
+    let bot_user = s.harness.db.fetch_user(&s.bot.id).await.unwrap();
+    for member in [&staff.user, &bot_user] {
+        Member::create(&s.harness.db, &server, member, None).await.unwrap();
+    }
+    revolt_presence::create_session(&s.bot.id, 0).await;
+    let command = revolt_database::create_application_command(
+        &s.harness.db,
+        &s.bot.id,
+        None,
+        serde_json::from_value(json!({
+            "name": "desk",
+            "description": "Zrzur Desk",
+            "options": [
+                { "type": "SubCommand", "name": "me", "description": "me" },
+                { "type": "SubCommand", "name": "logout", "description": "logout" }
+            ]
+        }))
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+    let mut events = PubSubTestHelper::new(&format!("{}!", s.bot.id)).await;
+
+    let interact = |body: Value| {
+        s.harness
+            .client
+            .post("/interactions")
+            .header(Header::new("x-session-token", staff.session.token.clone()))
+            .header(ContentType::JSON)
+            .body(body.to_string())
+    };
+
+    // `/desk me`
+    let response = interact(json!({
+        "type": "Command",
+        "application_id": s.bot.id,
+        "channel_id": s.place.id(),
+        "command_id": command.id,
+        "options": [{ "type": "SubCommand", "name": "me" }],
+        "nonce": ulid::Ulid::new().to_string(),
+    }))
+    .dispatch()
+    .await;
+    assert_eq!(response.status(), Status::Ok);
+    let command_press = next_interaction(&mut events).await;
+    let stored = s.harness.db.fetch_interaction(&command_press.id).await.unwrap();
+    assert_eq!(stored.session_id.as_deref(), Some(staff.session.id.as_str()));
+
+    // the bot answers with the sign-in form
+    let status = s
+        .harness
+        .client
+        .post(format!(
+            "/interactions/{}/{}/callback",
+            command_press.id,
+            command_press.token.clone().unwrap()
+        ))
+        .header(ContentType::JSON)
+        .body(
+            json!({ "type": "Modal", "modal": {
+                "custom_id": LOGIN_MODAL,
+                "title": "Zrzur Desk",
+                "components": [{ "type": "ActionRow", "components": [{
+                    "type": "TextInput", "custom_id": CODE_FIELD, "style": "Short",
+                    "label": "Code", "min_length": 6, "max_length": 6
+                }]}]
+            }})
+            .to_string(),
+        )
+        .dispatch()
+        .await
+        .status();
+    assert_eq!(status, Status::NoContent);
+
+    // the person types the code
+    let typed = code(0);
+    let response = interact(json!({
+        "type": "ModalSubmit",
+        "channel_id": s.place.id(),
+        "parent_id": command_press.id,
+        "custom_id": LOGIN_MODAL,
+        "fields": [{ "custom_id": CODE_FIELD, "value": typed }],
+        "nonce": ulid::Ulid::new().to_string(),
+    }))
+    .dispatch()
+    .await;
+    assert_eq!(response.status(), Status::Ok);
+    let submit = next_interaction(&mut events).await;
+    let fields = submit.modal.clone().unwrap().fields;
+    assert!(fields.iter().all(|f| f.custom_id != CODE_FIELD), "{fields:?}");
+    assert!(!serde_json::to_string(&submit).unwrap().contains(&typed));
+    // stored until the desk reads it
+    let stored = s.harness.db.fetch_interaction(&submit.id).await.unwrap();
+    assert_eq!(stored.modal_fields.len(), 1);
+
+    let pressed = (submit.id.clone(), submit.token.clone().unwrap());
+    let (status, body) = s.hand("session", &pressed).await;
+    assert_eq!(status, Status::Ok, "{body}");
+    let stored = s.harness.db.fetch_interaction(&submit.id).await.unwrap();
+    assert!(stored.modal_fields.is_empty());
+    let open = s.desk_sessions(&staff).await;
+    assert_eq!(open.len(), 1);
+    assert_eq!(open[0].session_id, staff.session.id);
+}
+
+/// A wrong code is forgotten too
+#[rocket::async_test]
+async fn wrong_code_is_not_kept() {
+    let s = stage().await;
+    let staff = s.person(vec![StaffRole::Support]).await;
+    let pressed = s.press(&staff, Kind::Modal(LOGIN_MODAL, WRONG_CODE)).await;
+    assert_eq!(s.hand("session", &pressed).await.0, Status::Unauthorized);
+    let stored = s.harness.db.fetch_interaction(&pressed.0).await.unwrap();
+    assert!(stored.modal_fields.is_empty());
 }

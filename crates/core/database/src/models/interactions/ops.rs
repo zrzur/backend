@@ -56,6 +56,10 @@ pub trait AbstractInteractions: Sync + Send {
     /// Mark an interaction as used for a one-use action; `false` if it already was
     async fn claim_interaction_use(&self, id: &str) -> Result<bool>;
 
+    /// Forget the values of a submitted form (a secret such as a code must
+    /// not stay stored once it was read)
+    async fn clear_interaction_modal_fields(&self, id: &str) -> Result<()>;
+
     /// Record a follow-up (a private message, or the id of a channel message);
     /// `false` once the interaction has `MAX_FOLLOWUPS` of them
     async fn push_interaction_followup(

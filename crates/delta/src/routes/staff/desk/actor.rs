@@ -12,8 +12,10 @@
 //! 6. the presser is a person with an active staff grant now, else Denied
 //!    `staff.desk.no_grant`, their desk sessions revoked, and
 //!    `NotPrivileged`;
-//! 7. they have an open desk session, not idle, else `InvalidSession` (the
-//!    bot then offers sign-in). Skipped only by the sign-in route.
+//! 7. they have an open desk session, not idle, opened from the ordinary
+//!    session (sign-in) this press came from, which still exists; else
+//!    `InvalidSession` (the bot then offers sign-in). Skipped only by the
+//!    sign-in route.
 //!
 //! The place and the presser come from the stored interaction, never from
 //! anything the bot sends.
@@ -24,7 +26,7 @@ use revolt_database::{
     StaffGrant, User, STAFF_SESSION_IDLE_MS,
 };
 use revolt_models::v0::{CommandOptionType, InteractionType};
-use revolt_result::{create_error, Result};
+use revolt_result::{create_error, ErrorType, Result};
 use serde::{Deserialize, Serialize};
 
 use super::super::{guard::TOUCH_EVERY_MS, StaffContext};
@@ -50,14 +52,6 @@ pub enum Expect<'a> {
 }
 
 impl Expect<'_> {
-    /// The route's short name, for the context's `path`
-    fn route(&self) -> &str {
-        match self {
-            Expect::Command(sub) => sub,
-            Expect::Button(id) | Expect::Modal(id) => id.strip_prefix("zd:").unwrap_or(id),
-        }
-    }
-
     /// Whether the stored interaction is exactly this kind and name
     fn matches(&self, interaction: &Interaction) -> bool {
         match self {
@@ -88,7 +82,7 @@ pub(super) struct Press {
     pub user: User,
     pub grant: StaffGrant,
     pub now: i64,
-    /// `/staff/desk/<route>`
+    /// The route's own path (`/staff/desk/...`)
     pub path: String,
 }
 
@@ -144,13 +138,34 @@ async fn in_place(db: &Database, settings: &FeaturesStaffDesk, interaction: &Int
     }
 }
 
+/// The open desk session of the presser for this bot, if any (so refusals
+/// name it in `staff_session_id`)
+async fn open_desk_session(db: &Database, presser: &str, bot: &str, now: i64) -> Option<String> {
+    db.fetch_desk_session(presser, bot, now).await.ok().flatten().map(|s| s.id)
+}
+
+/// Whether the ordinary session (sign-in) `id` still exists and is
+/// `user`'s. Signing out, "log out everywhere" and a password change delete
+/// ordinary sessions.
+pub(super) async fn session_alive(db: &Database, id: &str, user: &str) -> Result<bool> {
+    match db.fetch_session(id).await {
+        Ok(session) => Ok(session.user_id == user),
+        Err(error) if matches!(error.error_type, ErrorType::UnknownUser | ErrorType::NotFound) => {
+            Ok(false)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 /// Steps 1 to 6: the press is genuine, of the expected kind, used once,
-/// from a configured place, by a person with an active staff grant now
+/// from a configured place, by a person with an active staff grant now.
+/// `path` is the route's own path (`/staff/desk/...`).
 pub(super) async fn press(
     db: &Database,
     caller: &User,
     data: &DataDeskInteraction,
     expect: Expect<'_>,
+    path: &str,
 ) -> Result<Press> {
     // 1. only the desk's bot, only while the desk is on
     let settings = settings(caller).await?;
@@ -176,30 +191,41 @@ pub(super) async fn press(
     if !db.claim_interaction_use(&interaction.id).await? {
         return Err(create_error!(InteractionExpired));
     }
+    // a form's code is read from the copy in hand; the stored one is gone
+    // now, whatever comes next
+    if matches!(expect, Expect::Modal(_)) {
+        db.clear_interaction_modal_fields(&interaction.id).await?;
+    }
 
-    let path = format!("/staff/desk/{}", expect.route());
     let presser = interaction.user_id.clone();
+    let now = staff_now();
 
     // 5. the place, from the stored interaction
     if !in_place(db, &settings, &interaction).await {
         let mut record = presser_record(&presser, "staff.desk.place", "desk: outside the desk's places");
         record.target_kind = Some("channel".to_string());
         record.target_id = Some(interaction.channel_id.clone());
+        record.staff_session_id = open_desk_session(db, &presser, &settings.bot, now).await;
         record_platform_audit(db, record, AuditOutcome::Denied).await?;
         return Err(create_error!(NotPrivileged));
     }
 
     // 6. a person with an active grant now, re-read on every press
-    let now = staff_now();
-    let user = db.fetch_user(&presser).await.ok().filter(|u| u.bot.is_none());
+    let user = match db.fetch_user(&presser).await {
+        Ok(user) if user.bot.is_none() => Some(user),
+        Ok(_) => None,
+        Err(error) if matches!(error.error_type, ErrorType::NotFound | ErrorType::UnknownUser) => None,
+        Err(error) => return Err(error),
+    };
     let grant = match &user {
         Some(_) => db.fetch_staff_grant(&presser).await?.filter(|g| g.is_active(now)),
         None => None,
     };
     let (Some(user), Some(grant)) = (user, grant) else {
+        let mut record = presser_record(&presser, "staff.desk.no_grant", "desk: no active staff grant");
+        record.staff_session_id = open_desk_session(db, &presser, &settings.bot, now).await;
         // access was removed (or never given): no desk session survives it
         db.revoke_desk_sessions_for_user(&presser, now).await?;
-        let record = presser_record(&presser, "staff.desk.no_grant", "desk: no active staff grant");
         record_platform_audit(db, record, AuditOutcome::Denied).await?;
         return Err(create_error!(NotPrivileged));
     };
@@ -210,18 +236,28 @@ pub(super) async fn press(
         user,
         grant,
         now,
-        path,
+        path: path.to_string(),
     })
 }
 
 /// Step 7 on a checked press: the presser's open desk session for this bot,
-/// not idle, as the console's own [`StaffContext`]
+/// not idle, opened from the same ordinary session (sign-in) the press came
+/// from, which must still exist; as the console's own [`StaffContext`]
 pub(super) async fn context(db: &Database, press: Press) -> Result<(StaffContext, Interaction)> {
     let session = db
         .fetch_desk_session(&press.user.id, &press.settings.bot, press.now)
         .await?
         .filter(|s| press.now - s.last_seen_at < STAFF_SESSION_IDLE_MS)
         .ok_or_else(|| create_error!(InvalidSession))?;
+    // the sign-in it was opened from is gone: the desk session ends with it
+    if !session_alive(db, &session.session_id, &press.user.id).await? {
+        db.revoke_staff_session(&session.id, press.now).await?;
+        return Err(create_error!(InvalidSession));
+    }
+    // pressed from another sign-in of the same person: not this session
+    if press.interaction.session_id.as_deref() != Some(session.session_id.as_str()) {
+        return Err(create_error!(InvalidSession));
+    }
     if press.now - session.last_seen_at > TOUCH_EVERY_MS {
         let _ = db.touch_staff_session(&session.id, press.now).await;
     }
@@ -240,13 +276,14 @@ pub(super) async fn context(db: &Database, press: Press) -> Result<(StaffContext
 
 /// Every check (steps 1 to 7), then the console's own [`StaffContext`] for
 /// the presser: user = presser, session = their desk session, permissions
-/// = their grant now, `path` = `/staff/desk/<route>`
+/// = their grant now, `path` = the route's own path
 pub(crate) async fn desk_actor(
     db: &Database,
     caller: &User,
     data: &DataDeskInteraction,
     expect: Expect<'_>,
+    path: &str,
 ) -> Result<(StaffContext, Interaction)> {
-    let press = press(db, caller, data, expect).await?;
+    let press = press(db, caller, data, expect, path).await?;
     context(db, press).await
 }
