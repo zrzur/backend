@@ -46,20 +46,20 @@
     },
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "64a49a70df922c9cfff78e7e5e90ffe22d6015fda0136a6c8a98f08db2ad9586",
-      "bytes": 6432,
+      "sha256": "e822d94a6157e373204e89b938a54cdcd98ba5f3ef31f4202550cfd281a63469",
+      "bytes": 6444,
       "category": "reviewed-build-and-ci"
     },
     {
       "path": ".github/workflows/images.yml",
-      "sha256": "5f0d5df022d734f593034829539e521ec0b8a981b46dedea3c8bbdb7349b9ed9",
-      "bytes": 5454,
+      "sha256": "2711d51518d5acdcbb63e6b33b951aab00f185aa8948de9f7728e067b5f81dfd",
+      "bytes": 5462,
       "category": "reviewed-build-and-ci"
     },
     {
       "path": ".github/workflows/source-check.yml",
-      "sha256": "05041235cfebe425745bec46cb61ab0a902bc1b7bae8e413b2dfd48ec79cfabb",
-      "bytes": 959,
+      "sha256": "06ea297c315dd673de57f7ddcc5eea97dca76dddafdd77aa18bed06d002a500f",
+      "bytes": 963,
       "category": "reviewed-build-and-ci"
     },
     {
@@ -208,14 +208,14 @@
     },
     {
       "path": "CODE_OF_CONDUCT.md",
-      "sha256": "d436e8246b2771a5501e3eac30c24d0a2a38f8dc851a06c8e4f8664168162808",
-      "bytes": 4838,
+      "sha256": "7e96e46b4b380023870b57578c9c6615b7068bc821923a6fff1bb51cbfa50ab2",
+      "bytes": 4955,
       "category": "public-documentation"
     },
     {
       "path": "CONTRIBUTING.md",
-      "sha256": "6bc7bb97b365a50274709c2fb6dd24a227a2aa7ae72fe26583d47a69687cc067",
-      "bytes": 987,
+      "sha256": "ea74efe678bdec135ea44c8944431a239aed5cbb5bab98f97069a748bf6636fa",
+      "bytes": 2238,
       "category": "public-documentation"
     },
     {
@@ -268,8 +268,8 @@
     },
     {
       "path": "README.md",
-      "sha256": "e0e4f5ea1e32ff2ff06a7c41b2e50d2c8270482479147f83009add5303edfc62",
-      "bytes": 6203,
+      "sha256": "4364265c092d0eb7e08f8936384d4054475e6b101e026a7fe12dc2489f211245",
+      "bytes": 6284,
       "category": "public-documentation"
     },
     {
@@ -286,8 +286,8 @@
     },
     {
       "path": "SECURITY.md",
-      "sha256": "5e8b6d39a56dd15e2a82a5c5e720ef8dfb267ce110ecefd1ff1f48cee23c896a",
-      "bytes": 535,
+      "sha256": "d313c63ae9f170232714cebeb2e1d7488d57cb93ae088bc3b4c2afa6c8988e93",
+      "bytes": 1992,
       "category": "public-documentation"
     },
     {
@@ -3058,8 +3058,8 @@
     },
     {
       "path": "crates/core/database/src/models/users/model.rs",
-      "sha256": "29f4933bb4623f0f548e3272d79a3a71ddf06742fc3a4df1e01ff094a3a982b9",
-      "bytes": 78795,
+      "sha256": "54e5dd5de9e01d275417a2526ec477df3a63f34b93853fe4a04d157edc831eea",
+      "bytes": 78730,
       "category": "product-source-or-build-manifest"
     },
     {
