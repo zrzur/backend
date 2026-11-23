@@ -202,8 +202,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "9cc85fa50efa6eb391ad2e165b55cd9086ee52f7343fb986ae94333f1c0310b0",
-      "bytes": 139109,
+      "sha256": "8d3b21173e88bad9794617d51d588fb52a63f8ac311ee1ae2b72cd42355e8051",
+      "bytes": 139277,
       "category": "public-documentation"
     },
     {
@@ -406,8 +406,8 @@
     },
     {
       "path": "crates/bonfire/src/websocket.rs",
-      "sha256": "7d39286e7463f34b587a8c090f31f7b5782620b5f701600360cefde6156232b9",
-      "bytes": 80911,
+      "sha256": "da95d7035b4daf80c4bb63f96df67843c630a27b6a146203678d1b4f4f950dde",
+      "bytes": 83442,
       "category": "product-source-or-build-manifest"
     },
     {
