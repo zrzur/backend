@@ -580,8 +580,8 @@
     },
     {
       "path": "crates/core/config/src/settings.rs",
-      "sha256": "2fc7bf402689b555bc22cca0f57b82ec1dae3392529d094061d55676c006be39",
-      "bytes": 120081,
+      "sha256": "ad20be91546161f50d1bf0fa062f968079c33b43b7e1b2d7105f39605fc5cfec",
+      "bytes": 120089,
       "category": "product-source-or-build-manifest"
     },
     {
