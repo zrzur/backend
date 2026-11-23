@@ -34,6 +34,8 @@ mod ratelimits;
 mod small;
 mod sound;
 mod utils;
+mod voice;
+mod voice_copy;
 mod webm;
 
 #[derive(FromRef, Clone)]

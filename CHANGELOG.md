@@ -19,6 +19,22 @@
 - The consent page's `bot.install` server list carries the same fields.
 - **Changed:** in an interaction's `user_permissions`, the server-wide bits (Manage Server, Manage Roles, Kick, Ban, Timeout, Assign Roles, nicknames and avatars, Audit Log, Join Requests, Administrator, Manage Soundboard, Manage Events) are what the person holds on the server. A channel or category override no longer adds or removes them, so a bot that checks Manage Server there can't be fooled by a channel. Channel bits still follow the channel. New `SERVER_ONLY_PERMISSIONS` in `revolt-permissions`.
 
+## Unreleased
+
+### Voice messages play on older iPhones (2026-11-22)
+
+- autumn keeps an AAC copy in MP4 of every `voice-message-<n>.<ext>` attachment: Safari plays Ogg only from 18.4 and WebM Opus only from 17.4. The copy is made right after the upload, and on the first `GET /attachments/{id}/{name}?format=m4a` for older uploads. An original that is AAC already is served as it is; any other `format` value is a 404. `/original?format=m4a` redirects with the question kept. The copy is a file hash of its own, `<hash>.m4a`, in the same bucket (no schema change); crond deletes it with the original, and the CDN purge of a voice message includes its `?format=m4a` links. ffmpeg (already in the autumn image) runs sandboxed as for WebM designs, two at once, 60 s at most.
+- Ogg Opus is served as `audio/ogg; codecs=opus` instead of `audio/opus` (the RTP type), for stored files too.
+- Limits on `?format=m4a` (anyone with the link can ask): nothing is done for a stored file over 8 MB or of a type that is not `audio/*`, `video/mp4` or `video/webm` (Chrome's WebM recordings are stored as `video/webm`); a failed file is remembered (unreadable or over the time limit: 1 h; a full queue or a missing ffmpeg: 1 min); one attempt per file at a time, run as a task of its own so a request that goes away never leaves it half done; two conversions at once; a rate-limit bucket `aac_copy` of 60 requests per 10 s per address. Only the decoded `format` value counts (`%66ormat=m4a` is `format=m4a`, a repeated `format=m4a` is one); any other parameter (a tracker on a shared link) is ignored. ffprobe (only for MP4 originals) and ffmpeg run under the same rules: empty environment, local files, the audio formats and decoders named, `-max_alloc`, a time limit, and `-fs 4000000` on the copy.
+- 503 with `Retry-After: 60` and `no-store` while a copy can't be made now (queue full, ffmpeg missing, storage unreachable); 404 only for a file that can't have one (unreadable, over the time limit, too big, not a sound, not a voice message).
+- A copy record's `processed_hash` is its own id `<hash>.m4a`, which no upload can match. A copy record without a key, or whose bytes are missing or don't decrypt, is forgotten and made again; forgetting removes the record only while it still points at the same path (`delete_attachment_hash_at`, new database operation) and deletes bytes only when the record really went. An unreachable storage never forgets anything.
+- A copy attempt and the wait for it run in a task of their own, so no request can cancel them; the original is read only after a conversion turn is taken; if the original is deleted while its copy is made, the new copy goes too. Only an S3 `NoSuchKey` counts as a missing copy; any other 404 is a storage problem (503).
+- crond deletes only bytes stored under a hash's own id, and for a voice message deletes every object under `<hash>.m4a.` (the copy in use and any left by a lost race), logging the prefix for a sweep when that fails. revolt-files: `fetch_from_s3_checked` (missing, undecryptable or unreachable) and `delete_prefix_from_s3`.
+- Each copy is stored under a path of its own and recorded once, path and key together, so two servers racing never leave a record that can't be read; a stored copy that can't be read is made again once. An AAC original is recorded as its own copy (pointing at the same bytes), so it is never probed again.
+- crond deletes the copy before the original and logs a failure instead of stopping.
+- API contract (accepted 2026-11-22): `?format=m4a` is a new optional query on autumn's `GET /{tag}/{file_id}/{file_name}`, in its OpenAPI description and on the developer page "Uploading Files". No route, event or SDK type changes.
+- One-off for the server after deploy, not run here: the internal launch script `voice-aac-backfill-2026-11-22.sh` asks autumn once for each voice message without a copy.
+
 ## 26.3.0-beta.2 (2026-11-21)
 
 ### The owner's /badge command (2026-11-21)

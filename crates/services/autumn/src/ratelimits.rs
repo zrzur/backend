@@ -28,6 +28,26 @@ mod tests {
         assert_eq!(bucket(Method::POST, "/attachments"), ("upload".into(), Some("attachments".into()), 10));
         assert_eq!(bucket(Method::GET, "/attachments/abc").2, u32::MAX);
     }
+
+    #[test]
+    fn aac_copies_have_a_limit_of_their_own() {
+        assert_eq!(
+            bucket(Method::GET, "/attachments/abc/voice-message-1.ogg?format=m4a"),
+            ("aac_copy".into(), None, 60)
+        );
+        assert_eq!(bucket(Method::GET, "/attachments/abc/original?format=m4a").0, "aac_copy");
+        // the same file without the question: free, as every download
+        assert_eq!(bucket(Method::GET, "/attachments/abc/voice-message-1.ogg").2, u32::MAX);
+        // written another way, or twice: still the same bucket
+        assert_eq!(bucket(Method::GET, "/attachments/abc/original?%66ormat=m4a").0, "aac_copy");
+        assert_eq!(
+            bucket(Method::GET, "/attachments/abc/original?format=m4a&format=m4a").0,
+            "aac_copy"
+        );
+        assert_eq!(bucket(Method::GET, "/attachments/abc/original?utm=1&format=m4a").0, "aac_copy");
+        // a tracker alone is an ordinary download
+        assert_eq!(bucket(Method::GET, "/attachments/abc/original?utm=1").2, u32::MAX);
+    }
 }
 
 pub struct AutumnRatelimits;
@@ -45,6 +65,15 @@ impl RatelimitResolver<Parts> for AutumnRatelimits {
             (&Method::POST, &[tag]) => ("upload", Some(tag)),
             // a webhook's files: counted per webhook (and address), never unlimited
             (&Method::POST, &["webhooks", webhook, "attachments"]) => ("webhook_upload", Some(webhook)),
+            // the AAC copy of a voice message may have to be made: counted
+            // per address (or account), whatever the file
+            // (the format as the file route reads it: decoded, trackers ignored)
+            (&Method::GET, &[_, _, _])
+                if crate::voice::wanted_format(parts.uri.query())
+                    == crate::voice::WantedFormat::M4a =>
+            {
+                ("aac_copy", None)
+            }
             _ => ("any_atmn", None),
         }
     }
@@ -55,6 +84,9 @@ impl RatelimitResolver<Parts> for AutumnRatelimits {
             // delta lets a webhook send 5 messages in 2 s with 5 files each:
             // 125 files in a 10 s window, so delta's own forwarding never hits this
             "webhook_upload" => 125,
+            // a conversation full of voice messages on an older iPhone: each
+            // one is a few range requests and one read for the waveform
+            "aac_copy" => 60,
             _ => u32::MAX,
         }
     }
