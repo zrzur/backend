@@ -148,7 +148,7 @@ impl<'a> RatelimitResolver<Request<'a>> for DeltaRatelimits {
                 ("swagger", _, _) => ("swagger", None),
                 ("discover", _, _) => ("discover", None),
                 // Creators submitting or revising designs
-                ("community", Some("decorations" | "nameplates"), Method::Post) => ("community_submit", None),
+                ("community", Some("decorations" | "nameplates" | "frames"), Method::Post) => ("community_submit", None),
                 ("community", Some("items"), Method::Patch) => ("community_submit", None),
                 ("community", _, _) => ("community", None),
                 // payment provider callbacks must never queue behind user purchases

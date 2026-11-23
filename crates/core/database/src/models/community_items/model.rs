@@ -9,6 +9,8 @@ auto_derived!(
         Nameplate,
         /// Transparent animation that plays once over a profile
         Effect,
+        /// Still picture drawn around the whole profile card
+        Frame,
     }
 
     /// What a creator promised about an item (L-20)

@@ -185,6 +185,7 @@ pub async fn edit(
         style.decoration_file = None;
         style.nameplate_file = None;
         style.effect_file = None;
+        style.profile_frame_file = None;
         for (value, file, kind) in [
             (
                 style.decoration.clone(),
@@ -200,6 +201,11 @@ pub async fn edit(
                 style.effect.clone(),
                 &mut style.effect_file,
                 CommunityItemKind::Effect,
+            ),
+            (
+                style.profile_frame.clone(),
+                &mut style.profile_frame_file,
+                CommunityItemKind::Frame,
             ),
         ] {
             if let Some(id) = value.as_deref().and_then(v0::community_item_ref) {
@@ -222,6 +228,9 @@ pub async fn edit(
                     }
                     (Some(s), CommunityItemKind::Effect) => {
                         (s.effect.clone(), s.effect_file.clone())
+                    }
+                    (Some(s), CommunityItemKind::Frame) => {
+                        (s.profile_frame.clone(), s.profile_frame_file.clone())
                     }
                     (None, _) => (None, None),
                 };

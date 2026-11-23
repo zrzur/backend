@@ -199,6 +199,7 @@ impl AbstractCommunityItems for MongoDb {
             ("style.decoration", "style.decoration_file"),
             ("style.nameplate", "style.nameplate_file"),
             ("style.effect", "style.effect_file"),
+            ("style.profile_frame", "style.profile_frame_file"),
         ] {
             self.col::<bson::Document>(USERS)
                 .update_many(
@@ -217,6 +218,7 @@ impl AbstractCommunityItems for MongoDb {
             ("style.decoration", "style.decoration_file"),
             ("style.nameplate", "style.nameplate_file"),
             ("style.effect", "style.effect_file"),
+            ("style.profile_frame", "style.profile_frame_file"),
         ] {
             self.col::<bson::Document>(USERS)
                 .update_many(doc! { field: &custom }, doc! { "$set": { file: file_id } })
@@ -234,6 +236,7 @@ impl AbstractCommunityItems for MongoDb {
                 { "style.decoration": &custom },
                 { "style.nameplate": &custom },
                 { "style.effect": &custom },
+                { "style.profile_frame": &custom },
             ] })
             .projection(doc! { "_id": 1 })
             .limit(limit as i64)
