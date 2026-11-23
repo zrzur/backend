@@ -706,6 +706,17 @@ impl Server {
         .p(self.id.clone())
         .await;
 
+        // free its custom link (zrzur.cc/<name>) at once, so another server
+        // can claim the name; not only through its landing channel's invites.
+        // Only the invite of this server: a field left stale (a repoint that
+        // failed) must never take another server's link with it.
+        if let Some(vanity) = &self.vanity_invite {
+            if let Ok(crate::Invite::Server { server, .. }) = db.fetch_invite(&vanity.code).await {
+                if server == self.id {
+                    db.delete_invite(&vanity.code).await.ok();
+                }
+            }
+        }
         db.unplace_supercharges_from_server(&self.id).await?;
         // its paid Discover places go to whoever waits next
         db.delete_promotions_for_target(&self.id).await?;

@@ -226,6 +226,10 @@ pub use amqp::amqp::AMQP;
 #[cfg(feature = "voice")]
 pub mod voice;
 
+/// Staff deletion of servers and bots (API and `zrzur-staff`)
+#[cfg(feature = "voice")]
+pub mod staff_deletion;
+
 /// Utility function to check if a boolean value is false
 pub fn if_false(t: &bool) -> bool {
     !t
