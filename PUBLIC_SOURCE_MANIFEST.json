@@ -1492,8 +1492,8 @@
     },
     {
       "path": "crates/core/database/src/models/accounts/model.rs",
-      "sha256": "cbe2f4d320d18eaf4dd4eccf4b33e75f881e69a10261a073515407d530d468fa",
-      "bytes": 40302,
+      "sha256": "b709c3322c724bc65cabcbc680041142d2c6409aad7bada9bc20c73bfe340b72",
+      "bytes": 40292,
       "category": "product-source-or-build-manifest"
     },
     {
