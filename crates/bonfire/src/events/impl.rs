@@ -710,11 +710,25 @@ impl State {
                 event_id: Some(ulid::Ulid::new().to_string()),
             };
 
-            for server in self.cache.servers.keys() {
-                event.clone().p(server.clone()).await;
-            }
+            let topics: Vec<String> = self
+                .cache
+                .servers
+                .keys()
+                .cloned()
+                .chain(std::iter::once(self.cache.user_id.clone()))
+                .collect();
 
-            event.p(self.cache.user_id.clone()).await;
+            // Published from a task of its own: this session follows the same
+            // topics, so about one event per server comes straight back to
+            // it, and its listener has to keep reading them meanwhile.
+            // Published inline, they overflowed the session's subscriber
+            // buffer (32 messages) for anyone in more than about 30 servers:
+            // the session ended at every drop, so no resume could find it.
+            tokio::spawn(async move {
+                for topic in topics {
+                    event.clone().p(topic).await;
+                }
+            });
         }
     }
 

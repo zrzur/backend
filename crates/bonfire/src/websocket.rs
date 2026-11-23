@@ -936,6 +936,7 @@ async fn listen(
 
         select! {
             _ = t4 => {
+                info!("{addr:?}: the session ends: its Redis subscriber was cancelled");
                 break 'out;
             },
             _ = t5 => {
@@ -951,6 +952,7 @@ async fn listen(
                         .is_some_and(|outlet| outlet.generation == generation);
                     if current {
                         if !delivery.resumable {
+                            info!("{addr:?}: the socket is gone and the session was not resumable");
                             break 'out;
                         }
                         delivery.detach(state).await;
@@ -959,13 +961,23 @@ async fn listen(
                 Ok(Control::Attach(attach)) => {
                     delivery.attach(db, state, attach, addr).await;
                 }
-                Ok(Control::SessionOver) | Err(_) => break 'out,
+                Ok(Control::SessionOver) => {
+                    info!("{addr:?}: the session ends: told it is over");
+                    break 'out;
+                }
+                Err(_) => {
+                    info!("{addr:?}: the session ends: nothing can reach it any more");
+                    break 'out;
+                }
             },
             message = t1 => {
                 // Handle incoming events.
                 let message = match report_internal_error!(message) {
                     Ok(message) => message,
-                    Err(_) => break 'out
+                    Err(_) => {
+                        info!("{addr:?}: the session ends: its event stream failed");
+                        break 'out;
+                    }
                 };
 
                 let event = match *REDIS_PAYLOAD_TYPE {
@@ -2141,6 +2153,54 @@ mod resume_tests {
         }
         assert!(!kinds.contains(&"Message".to_owned()), "{kinds:?}");
         assert!(kinds.contains(&"ChannelDelete".to_owned()), "{kinds:?}");
+    }
+
+    /// A person in more servers than their subscriber's buffer holds (32):
+    /// their own "offline" at the drop and "online" at the resume go to every
+    /// server they are in and come back to this very session. The session has
+    /// to keep reading meanwhile, or the buffer overflows and the session ends
+    /// at the drop (round 2 of the weak-network stream: every resume of the
+    /// 175-server test account was refused).
+    #[tokio::test]
+    async fn a_person_in_many_servers_can_resume() {
+        use revolt_database::{Member, Server};
+        let db = database().await;
+        let owner_session = person(db).await;
+        let owner = db.fetch_user(&owner_session.user_id).await.unwrap();
+        let session = person(db).await;
+        let member = db.fetch_user(&session.user_id).await.unwrap();
+        for n in 0..48 {
+            let (server, _) = Server::create(
+                db,
+                v0::DataCreateServer {
+                    name: format!("Many {n}"),
+                    ..Default::default()
+                },
+                &owner,
+                true,
+            )
+            .await
+            .unwrap();
+            Member::create(db, &server, &member, None).await.unwrap();
+        }
+
+        let limits = ResumeLimits::default();
+        let (socket, id, seen) = resumable_session(db, &session, limits).await;
+        drop_socket(socket).await;
+        tokio::time::sleep(StdDuration::from_millis(500)).await;
+
+        let mut socket = resume(db, &session.token, &id, seen, limits).await;
+        wait_for(&mut socket, "Resumed").await;
+
+        // and it goes on after its own "online" came back from every server
+        tokio::time::sleep(StdDuration::from_millis(500)).await;
+        ack(&session.user_id, "after").await;
+        loop {
+            let event = wait_for(&mut socket, "ChannelAck").await;
+            if event["message_id"] == "after" {
+                break;
+            }
+        }
     }
 
     /// Review nit: a socket gets two tries at a resume, then it is closed
