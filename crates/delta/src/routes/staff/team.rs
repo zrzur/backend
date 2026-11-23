@@ -280,18 +280,9 @@ pub async fn detail(db: &State<Database>, staff: StaffContext, id: &str) -> Resu
     Ok(Json(person(db, &settings, &member, staff.now).await?))
 }
 
-/// `require_step_up`, and a missing step-up is written to the audit log too
-/// (`team.step_up.missing`; the path only)
+/// `require_step_up`; the guard records a missing step-up itself
 async fn step_up(db: &Database, staff: &StaffContext) -> Result<()> {
-    match staff.require_step_up(db, StaffPermission::TeamManage).await {
-        Err(error) if matches!(error.error_type, revolt_result::ErrorType::NotElevated) => {
-            let mut record = staff.record("team.step_up.missing", Some(StaffPermission::TeamManage));
-            record.summary = Some(staff.path.clone());
-            record_platform_audit(db, record, AuditOutcome::Denied).await?;
-            Err(error)
-        }
-        other => other,
-    }
+    staff.require_step_up(db, StaffPermission::TeamManage).await
 }
 
 /// # Team: show identity

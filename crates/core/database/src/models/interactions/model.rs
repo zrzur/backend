@@ -58,6 +58,11 @@ pub struct Interaction {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub command_version: Option<String>,
     pub nonce: String,
+    /// The ordinary session (sign-in) the person used. A route acting on
+    /// the person's behalf can bind its own state to that sign-in, so
+    /// signing out ends it. `None` on old documents.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub session_id: Option<String>,
     pub token_hash: String,
     pub status: InteractionStatus,
     /// Whether the first answer is (or will be, when deferred) private
@@ -107,6 +112,9 @@ pub struct Interaction {
 
 /// Follow-up messages allowed per interaction
 pub const MAX_FOLLOWUPS: usize = 5;
+
+/// How long the stored values of a Zrzur Desk form (a sign-in code) may stay
+pub const DESK_FIELDS_KEEP_SECS: i64 = 2 * 60;
 
 impl Interaction {
     /// A private message of this interaction (the first answer or a follow-up)
@@ -161,6 +169,7 @@ impl Interaction {
                 command_options: vec![],
                 command_version: None,
                 nonce,
+                session_id: None,
                 token_hash: hash_interaction_token(&token),
                 status: InteractionStatus::Pending,
                 ephemeral: false,
@@ -191,6 +200,15 @@ impl Interaction {
         )
     }
 
+    /// Interactions that expire at or before the returned time were created
+    /// more than `DESK_FIELDS_KEEP_SECS` ago
+    pub fn desk_fields_expiry_cutoff(now: Timestamp) -> Timestamp {
+        now.checked_add(Duration::seconds(
+            interaction_limits::TOKEN_LIFETIME_SECS as i64 - DESK_FIELDS_KEEP_SECS,
+        ))
+        .unwrap_or(now)
+    }
+
     pub fn token_matches(&self, token: &str) -> bool {
         hash_interaction_token(token) == self.token_hash
     }
@@ -201,5 +219,59 @@ impl Interaction {
 
     pub fn past_ack_deadline(&self) -> bool {
         Timestamp::now_utc() >= self.respond_by
+    }
+}
+
+#[cfg(test)]
+mod desk_fields_tests {
+    use lapin::{options::ExchangeDeclareOptions, types::FieldTable, ExchangeKind};
+    use revolt_models::v0::{InteractionType, ModalFieldValue};
+
+    use super::*;
+
+    fn with_fields(custom_id: &str, age_secs: i64) -> Interaction {
+        let (mut i, _) = Interaction::new(
+            InteractionType::ModalSubmit,
+            "app".into(),
+            "user".into(),
+            None,
+            "chan".into(),
+            Ulid::new().to_string(),
+        );
+        i.custom_id = Some(custom_id.into());
+        i.modal_fields = vec![ModalFieldValue {
+            custom_id: "code".into(),
+            value: Some("123456".into()),
+            values: None,
+            checked: None,
+        }];
+        // pretend it was created `age_secs` ago
+        i.expires_at = Timestamp::now_utc()
+            .checked_add(Duration::seconds(
+                interaction_limits::TOKEN_LIFETIME_SECS as i64 - age_secs,
+            ))
+            .unwrap();
+        i
+    }
+
+    /// Only desk forms older than two minutes lose their fields; a second run
+    /// clears nothing more
+    #[tokio::test]
+    async fn stale_desk_fields_are_cleared_and_nothing_else() {
+        database_test!(|db| async move {
+            let old_desk = with_fields("zd:signin", 180);
+            let young_desk = with_fields("zd:signin", 30);
+            let old_other = with_fields("other:form", 180);
+            for i in [&old_desk, &young_desk, &old_other] {
+                db.insert_interaction(i).await.unwrap();
+            }
+
+            let cutoff = Interaction::desk_fields_expiry_cutoff(Timestamp::now_utc());
+            assert_eq!(db.clear_stale_desk_modal_fields(cutoff).await.unwrap(), 1);
+            assert!(db.fetch_interaction(&old_desk.id).await.unwrap().modal_fields.is_empty());
+            assert_eq!(db.fetch_interaction(&young_desk.id).await.unwrap().modal_fields.len(), 1);
+            assert_eq!(db.fetch_interaction(&old_other.id).await.unwrap().modal_fields.len(), 1);
+            assert_eq!(db.clear_stale_desk_modal_fields(cutoff).await.unwrap(), 0);
+        });
     }
 }

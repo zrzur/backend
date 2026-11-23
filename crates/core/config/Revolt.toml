@@ -661,6 +661,16 @@ bot = ""
 owner = ""
 bot = ""
 
+# [features.staff_desk]
+# Zrzur Desk: staff manage the platform from a bot, each with their own staff
+# grant. Off unless `enabled`, `bot` is set and `places` is not empty (or
+# `allow_dms` is true). Answers are always private.
+# enabled = false
+# bot = ""          # the Zrzur Desk bot id
+# places = []       # channel ids where desk interactions are accepted
+# allow_dms = false
+# areas = []        # Phase 0 knows only "overview"
+
 [features.team_applications]
 # "Join the Zrzur team": people apply for a team role through one bot in one
 # server; holders of one role there review the applications. The bot itself

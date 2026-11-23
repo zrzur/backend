@@ -1380,6 +1380,10 @@ pub struct Features {
     /// Who may hold a custom invite link (zrzur.cc/<name>)
     #[serde(default)]
     pub vanity: FeaturesVanity,
+    /// Zrzur Desk: staff manage the platform from a bot, each with their own
+    /// grant (off unless enabled, the bot is set and a place is allowed)
+    #[serde(default)]
+    pub staff_desk: FeaturesStaffDesk,
 
     /// Voice rooms step down on a weak connection (lighter voice, video
     /// lowered, then video paused with audio kept) and show a sign. The
@@ -1529,6 +1533,36 @@ impl Default for FeaturesRichPresence {
             steam_daily_calls: rich_presence_steam_budget(),
             broadcast_max_members: rich_presence_broadcast_max(),
         }
+    }
+}
+
+/// Zrzur Desk: the staff bot. The bot decides nothing; the server checks
+/// every press against the presser's own staff grant.
+#[derive(Deserialize, Debug, Clone, Default, PartialEq, Eq)]
+pub struct FeaturesStaffDesk {
+    /// The whole desk
+    #[serde(default)]
+    pub enabled: bool,
+    /// The Zrzur Desk bot id
+    #[serde(default)]
+    pub bot: String,
+    /// Channel ids where desk interactions are accepted
+    #[serde(default)]
+    pub places: Vec<String>,
+    /// Also accept DMs with the bot
+    #[serde(default)]
+    pub allow_dms: bool,
+    /// Areas the desk offers; Phase 0 knows only `overview`
+    #[serde(default)]
+    pub areas: Vec<String>,
+}
+
+impl FeaturesStaffDesk {
+    /// On only when enabled, the bot is set and a place is allowed
+    pub fn on(&self) -> bool {
+        self.enabled
+            && !self.bot.trim().is_empty()
+            && (self.allow_dms || self.places.iter().any(|p| !p.trim().is_empty()))
     }
 }
 
@@ -3346,5 +3380,47 @@ mod badge_command_settings_tests {
         assert!(!owner_only.features.badge_command.enabled());
         let blank = settings("[features.badge_command]\nowner = \" \"\nbot = \"01BOT\"\n");
         assert!(!blank.features.badge_command.enabled());
+    }
+}
+
+#[cfg(test)]
+mod staff_desk_settings_tests {
+    use config::{Config, File, FileFormat};
+
+    use super::{FeaturesStaffDesk, Settings};
+
+    fn settings(toml: &str) -> Settings {
+        Config::builder()
+            .add_source(File::from_str(include_str!("../Revolt.toml"), FileFormat::Toml))
+            .add_source(File::from_str(toml, FileFormat::Toml))
+            .build()
+            .unwrap()
+            .try_deserialize()
+            .unwrap()
+    }
+
+    #[test]
+    fn staff_desk_ships_switched_off() {
+        let shipped = settings("");
+        assert_eq!(shipped.features.staff_desk, FeaturesStaffDesk::default());
+        assert!(!shipped.features.staff_desk.on());
+    }
+
+    #[test]
+    fn staff_desk_needs_enabled_bot_and_a_place() {
+        let on = settings(
+            "[features.staff_desk]\nenabled = true\nbot = \"01BOT\"\nplaces = [\"01CH\"]\n",
+        );
+        assert!(on.features.staff_desk.on());
+        let dms = settings(
+            "[features.staff_desk]\nenabled = true\nbot = \"01BOT\"\nallow_dms = true\n",
+        );
+        assert!(dms.features.staff_desk.on());
+        let no_place = settings("[features.staff_desk]\nenabled = true\nbot = \"01BOT\"\n");
+        assert!(!no_place.features.staff_desk.on());
+        let no_bot = settings("[features.staff_desk]\nenabled = true\nplaces = [\"01CH\"]\n");
+        assert!(!no_bot.features.staff_desk.on());
+        let off = settings("[features.staff_desk]\nbot = \"01BOT\"\nplaces = [\"01CH\"]\n");
+        assert!(!off.features.staff_desk.on());
     }
 }

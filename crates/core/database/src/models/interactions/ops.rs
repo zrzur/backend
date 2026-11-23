@@ -1,3 +1,4 @@
+use iso8601_timestamp::Timestamp;
 use revolt_models::v0::{EphemeralMessage, Modal};
 use revolt_result::Result;
 
@@ -55,6 +56,16 @@ pub trait AbstractInteractions: Sync + Send {
 
     /// Mark an interaction as used for a one-use action; `false` if it already was
     async fn claim_interaction_use(&self, id: &str) -> Result<bool>;
+
+    /// Forget the values of a submitted form (a secret such as a code must
+    /// not stay stored once it was read)
+    async fn clear_interaction_modal_fields(&self, id: &str) -> Result<()>;
+
+    /// Forget the stored form values of Zrzur Desk forms (`custom_id` starting
+    /// with `zd:`) whose interaction expires at or before `expires_before`
+    /// (the caller turns "older than 2 minutes" into that time). Other forms
+    /// are untouched. Returns how many interactions were cleared.
+    async fn clear_stale_desk_modal_fields(&self, expires_before: Timestamp) -> Result<u64>;
 
     /// Record a follow-up (a private message, or the id of a channel message);
     /// `false` once the interaction has `MAX_FOLLOWUPS` of them

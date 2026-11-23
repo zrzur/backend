@@ -137,6 +137,24 @@ auto_derived!(
         pub revoked_at: Option<i64>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub user_agent: Option<String>,
+        /// Where it was opened: the console (default, also for old rows) or
+        /// the Zrzur Desk bot
+        #[serde(default)]
+        pub kind: StaffSessionKind,
+        /// The desk bot a `Desk` session belongs to
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub bot_id: Option<String>,
+    }
+
+    /// What opened a staff session. A desk session is never accepted by the
+    /// console guard, and a console session never by a desk route.
+    #[derive(Default)]
+    pub enum StaffSessionKind {
+        #[default]
+        #[serde(rename = "console")]
+        Console,
+        #[serde(rename = "desk")]
+        Desk,
     }
 
     /// Result of an audited operation
