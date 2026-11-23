@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Weak network: browsers keep the API's preflight answer (2026-11-23)
+
+* The API's answer to a CORS preflight now carries `Access-Control-Max-Age: 86400` (Chrome keeps it up to 2 h, Firefox 24 h). Every call from the app carries the session header, so the browser asked again before nearly every call to the same address: one more round trip each. Measured behind a 600 ms line: sending in the same channel every 8 s went from 1.33 s to 0.69 s from the second message on. The origin check is unchanged; a site that may not call still gets no CORS answer (`revolt-config` `PREFLIGHT_MAX_AGE_SECS`, `delta` CORS options).
+
 ## 26.3.0-beta.2 (2026-11-21)
 
 ### The owner's /badge command (2026-11-21)
