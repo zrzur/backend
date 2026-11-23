@@ -43,6 +43,17 @@ pub trait AbstractPlatformStaff: Sync + Send {
     async fn revoke_staff_session(&self, id: &str, at: i64) -> Result<()>;
     /// Revoke every open staff session of a user; returns how many
     async fn revoke_staff_sessions_for_user(&self, user_id: &str, at: i64) -> Result<usize>;
+    /// The newest desk session of a user for one bot: kind `Desk`, not
+    /// revoked, `now < expires_at`
+    async fn fetch_desk_session(
+        &self,
+        user_id: &str,
+        bot_id: &str,
+        now: i64,
+    ) -> Result<Option<StaffSession>>;
+    /// Revoke the open desk sessions of a user (console sessions stay);
+    /// returns how many
+    async fn revoke_desk_sessions_for_user(&self, user_id: &str, at: i64) -> Result<usize>;
     /// Open (not revoked, not expired) staff sessions of a user
     async fn fetch_staff_sessions_for_user(
         &self,

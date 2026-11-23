@@ -387,6 +387,8 @@ async fn open_session(
         step_up_until: None,
         revoked_at: None,
         user_agent: client.user_agent,
+        kind: Default::default(),
+        bot_id: None,
     };
     db.insert_staff_session(&staff).await?;
     let mut record = base;

@@ -141,6 +141,8 @@ impl TestHarness {
                     step_up_until: None,
                     revoked_at: None,
                     user_agent: None,
+                    kind: Default::default(),
+                    bot_id: None,
                 })
                 .await
                 .expect("staff session");

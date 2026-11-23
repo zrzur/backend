@@ -111,3 +111,90 @@ pub struct PlatformStaffStore {
     pub sessions: std::collections::HashMap<String, StaffSession>,
     pub audit: Vec<PlatformAuditEntry>,
 }
+
+#[cfg(test)]
+mod desk_session_tests {
+    use super::*;
+    use crate::DatabaseInfo;
+
+    fn session(id: &str, user: &str, kind: StaffSessionKind, bot: Option<&str>) -> StaffSession {
+        StaffSession {
+            id: id.into(),
+            token_hash: format!("hash-{id}"),
+            user_id: user.into(),
+            session_id: "s".into(),
+            created_at: 100,
+            last_seen_at: 100,
+            expires_at: 1_000,
+            step_up_until: None,
+            revoked_at: None,
+            user_agent: None,
+            kind,
+            bot_id: bot.map(Into::into),
+        }
+    }
+
+    #[test]
+    fn old_document_without_kind_reads_as_console() {
+        let old = serde_json::json!({
+            "_id": "a", "token_hash": "h", "user_id": "u", "session_id": "s",
+            "created_at": 1, "last_seen_at": 1, "expires_at": 2
+        });
+        let parsed: StaffSession = serde_json::from_value(old).unwrap();
+        assert_eq!(parsed.kind, StaffSessionKind::Console);
+        assert_eq!(parsed.bot_id, None);
+        let out = serde_json::to_value(&parsed).unwrap();
+        assert_eq!(out["kind"], "console");
+        assert!(out.get("bot_id").is_none());
+        assert_eq!(serde_json::to_value(StaffSessionKind::Desk).unwrap(), "desk");
+    }
+
+    #[tokio::test]
+    async fn fetch_desk_session_filters() {
+        let db = DatabaseInfo::Reference.connect().await.unwrap();
+        db.insert_staff_session(&session("console", "u", StaffSessionKind::Console, None))
+            .await
+            .unwrap();
+        let mut revoked = session("revoked", "u", StaffSessionKind::Desk, Some("bot"));
+        revoked.revoked_at = Some(150);
+        db.insert_staff_session(&revoked).await.unwrap();
+        let mut expired = session("expired", "u", StaffSessionKind::Desk, Some("bot"));
+        expired.expires_at = 500;
+        db.insert_staff_session(&expired).await.unwrap();
+        db.insert_staff_session(&session("other", "u", StaffSessionKind::Desk, Some("bot2")))
+            .await
+            .unwrap();
+        assert!(db.fetch_desk_session("u", "bot", 600).await.unwrap().is_none());
+
+        let mut older = session("older", "u", StaffSessionKind::Desk, Some("bot"));
+        older.created_at = 200;
+        db.insert_staff_session(&older).await.unwrap();
+        let mut newer = session("newer", "u", StaffSessionKind::Desk, Some("bot"));
+        newer.created_at = 300;
+        db.insert_staff_session(&newer).await.unwrap();
+        let found = db.fetch_desk_session("u", "bot", 600).await.unwrap().unwrap();
+        assert_eq!(found.id, "newer");
+        assert!(db.fetch_desk_session("someone", "bot", 600).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn revoking_desk_sessions_leaves_console_sessions() {
+        let db = DatabaseInfo::Reference.connect().await.unwrap();
+        db.insert_staff_session(&session("console", "u", StaffSessionKind::Console, None))
+            .await
+            .unwrap();
+        db.insert_staff_session(&session("desk", "u", StaffSessionKind::Desk, Some("bot")))
+            .await
+            .unwrap();
+        db.insert_staff_session(&session("desk2", "v", StaffSessionKind::Desk, Some("bot")))
+            .await
+            .unwrap();
+        assert_eq!(db.revoke_desk_sessions_for_user("u", 700).await.unwrap(), 1);
+        assert_eq!(db.revoke_desk_sessions_for_user("u", 800).await.unwrap(), 0);
+        assert!(db.fetch_desk_session("u", "bot", 600).await.unwrap().is_none());
+        assert!(db.fetch_desk_session("v", "bot", 600).await.unwrap().is_some());
+        let open = db.fetch_staff_sessions_for_user("u", 600).await.unwrap();
+        assert_eq!(open.len(), 1);
+        assert_eq!(open[0].id, "console");
+    }
+}
