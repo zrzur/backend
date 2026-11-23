@@ -19,3 +19,5 @@ pub mod team_applications_retention;
 pub mod team_volunteers;
 pub mod voice_episodes;
 pub mod vanity_links;
+
+pub mod desk_modal_cleanup;

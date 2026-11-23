@@ -8,7 +8,8 @@ use std::collections::BTreeSet;
 use revolt_config::config;
 use revolt_database::{
     record_platform_audit, staff_now, staff_token_hash, AuditOutcome, AuditRecord, Database,
-    Session, StaffGrant, StaffPermission, StaffSession, User, STAFF_SESSION_IDLE_MS,
+    Session, StaffGrant, StaffPermission, StaffSession, StaffSessionKind, User,
+    STAFF_SESSION_IDLE_MS,
 };
 use revolt_result::{create_error, Error, Result};
 use rocket::{
@@ -20,7 +21,7 @@ use rocket::{
 pub const STAFF_HEADER: &str = "x-staff-session";
 
 /// Only write `last_seen_at` once a minute
-const TOUCH_EVERY_MS: i64 = 60 * 1000;
+pub(crate) const TOUCH_EVERY_MS: i64 = 60 * 1000;
 
 /// Requests from a browser must come from a configured admin origin.
 /// Requests without an `Origin` header (curl, server-side) still need
@@ -79,7 +80,10 @@ impl<'r> FromRequest<'r> for StaffContext {
             return unauthorized();
         };
         let now = staff_now();
-        let valid = staff.revoked_at.is_none()
+        // a desk session is never accepted here (and has no ordinary
+        // session to match anyway)
+        let valid = staff.kind == StaffSessionKind::Console
+            && staff.revoked_at.is_none()
             && now < staff.expires_at
             && now - staff.last_seen_at < STAFF_SESSION_IDLE_MS
             && staff.user_id == user.id
@@ -126,8 +130,24 @@ impl StaffContext {
     }
 
     /// Refuse (and record the attempt) unless the staff member holds
-    /// `permission`
+    /// `permission`. Permissions on the step-up list
+    /// (`StaffPermission::needs_step_up`) also need a fresh TOTP; a missing
+    /// one is recorded as `staff.step_up.missing` and answered `NotElevated`.
     pub async fn require(&self, db: &Database, permission: StaffPermission) -> Result<()> {
+        self.require_protective(db, permission).await?;
+        if permission.needs_step_up() && !self.stepped_up() {
+            let mut record = self.record("staff.step_up.missing", Some(permission));
+            record.summary = Some(self.path.clone());
+            record_platform_audit(db, record, AuditOutcome::Denied).await?;
+            return Err(create_error!(NotElevated));
+        }
+        Ok(())
+    }
+
+    /// The permission check alone, without a step-up, for "stop the harm
+    /// now" actions. Only `revoke_member_sessions` uses it, and only on
+    /// targets that are not Owners.
+    pub async fn require_protective(&self, db: &Database, permission: StaffPermission) -> Result<()> {
         if self.has(permission) {
             return Ok(());
         }
@@ -139,13 +159,24 @@ impl StaffContext {
         }))
     }
 
-    /// `require`, plus a fresh TOTP (step-up) within the last few minutes
+    /// `require`, plus a fresh TOTP (step-up) within the last few minutes,
+    /// also for a permission that is not on the step-up list. (For a listed
+    /// permission `require` already checked and recorded it.)
     pub async fn require_step_up(&self, db: &Database, permission: StaffPermission) -> Result<()> {
         self.require(db, permission).await?;
-        if self.session.step_up_until.is_some_and(|until| self.now < until) {
-            Ok(())
-        } else {
-            Err(create_error!(NotElevated))
+        if self.stepped_up() {
+            return Ok(());
         }
+        // Only reachable for a permission that is not on the step-up list
+        // (`require` already recorded the listed ones), so one refusal is
+        // recorded exactly once.
+        let mut record = self.record("staff.step_up.missing", Some(permission));
+        record.summary = Some(self.path.clone());
+        record_platform_audit(db, record, AuditOutcome::Denied).await?;
+        Err(create_error!(NotElevated))
+    }
+
+    fn stepped_up(&self) -> bool {
+        self.session.step_up_until.is_some_and(|until| self.now < until)
     }
 }

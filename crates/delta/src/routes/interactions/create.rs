@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use revolt_database::{
     events::client::EventV1, util::permissions::DatabasePermissionQuery, Bot, Channel, Database,
-    Interaction, InteractionSource, Member, Server, User, AMQP,
+    Interaction, InteractionSource, Member, Server, Session, User, AMQP,
 };
 use revolt_models::v0::{
     self, find_component, interaction_limits, ApplicationCommandType, CommandOptionType,
@@ -301,10 +301,14 @@ async fn command(
     }
     // the badge bot's `/badge` keeps what the person chose for a later route:
     // there the version the person saw is required, not only checked when sent
-    let keeps = !autocomplete && crate::routes::badges::command::keeps_options(&scope.bot.id, &command.name).await;
+    let keeps_badge = !autocomplete && crate::routes::badges::command::keeps_options(&scope.bot.id, &command.name).await;
+    // the staff desk bot's `/desk` keeps its sub-command for `/staff/desk`,
+    // which reads only the sub-command's name (no version needed there)
+    let keeps = keeps_badge
+        || (!autocomplete && crate::routes::staff::desk_keeps_options(&scope.bot.id, &command.name).await);
     let version_differs = match data.command_version.as_ref() {
         Some(version) => version != &command.version,
-        None => keeps,
+        None => keeps_badge,
     };
     if version_differs {
         return Err(invalid("this command changed, reload and try again"));
@@ -380,7 +384,8 @@ async fn command(
     interaction.command_name = Some(command.name.clone());
     interaction.autocomplete_type = context.focused_type;
     // kept only for `/badge` of the configured badge bot, whose route acts
-    // on what the person chose (`/badges/command`); no other bot's options
+    // on what the person chose (`/badges/command`), and `/desk` of the
+    // configured staff desk bot (`/staff/desk`); no other bot's options
     // are stored, and an autocomplete's half-typed text never is
     if keeps {
         interaction.command_options = options.clone();
@@ -872,6 +877,17 @@ async fn modal_submit(
         }
         None => {}
     }
+    // the staff desk's forms carry a TOTP code: it stays on the stored
+    // interaction for `/staff/desk` (which then forgets it) and never
+    // reaches the bot
+    let fields = if crate::routes::staff::desk_hides_field_from_bot(&scope.bot.id, &modal.custom_id).await {
+        fields
+            .into_iter()
+            .filter(|field| field.custom_id != crate::routes::staff::DESK_CODE_FIELD)
+            .collect()
+    } else {
+        fields
+    };
     let resolved = context.resolved;
     payload.modal = Some(InteractionModalData {
         custom_id: modal.custom_id,
@@ -992,6 +1008,7 @@ pub async fn create_interaction(
     db: &State<Database>,
     amqp: &State<AMQP>,
     user: User,
+    session: Option<Session>,
     data: Json<DataCreateInteraction>,
 ) -> Result<Json<InteractionAccepted>> {
     let data = data.into_inner();
@@ -1015,6 +1032,9 @@ pub async fn create_interaction(
         InteractionType::Start => start(db, &user, data).await?,
         InteractionType::Autocomplete => return Err(create_error!(InvalidOperation)),
     };
+    // the sign-in the person used, never shown to the bot
+    let mut interaction = interaction;
+    interaction.session_id = session.map(|session| session.id);
     dispatch(db, amqp, interaction, payload).await.map(Json)
 }
 
