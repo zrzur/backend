@@ -229,9 +229,9 @@ impl AbstractChannels for MongoDb {
 
     async fn set_bot_started(&self, channel: &str, user: &str, started: bool) -> Result<()> {
         let update = if started {
-            doc! { "$addToSet": { "started_by": user } }
+            doc! { "$addToSet": { "started_by": user }, "$pull": { "stopped_by": user } }
         } else {
-            doc! { "$pull": { "started_by": user } }
+            doc! { "$pull": { "started_by": user }, "$addToSet": { "stopped_by": user } }
         };
         self.col::<Document>(COL)
             .update_one(doc! { "_id": channel, "channel_type": "DirectMessage" }, update)

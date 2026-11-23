@@ -58,7 +58,8 @@ pub trait AbstractChannels: Sync + Send {
     async fn add_user_to_group(&self, channel_id: &str, user_id: &str) -> Result<()>;
 
     /// Note that a person pressed Start in their direct message with a bot
-    /// (`started`), or stopped the bot (`!started`). Safe to repeat.
+    /// (`started`), or stopped the bot (`!started`): each undoes the other.
+    /// Safe to repeat.
     async fn set_bot_started(&self, channel_id: &str, user_id: &str, started: bool) -> Result<()>;
 
     /// Insert channel role permissions

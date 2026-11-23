@@ -321,6 +321,7 @@ impl From<Channel> for crate::Channel {
                 recipients,
                 last_message_id,
                 started_by: vec![],
+                stopped_by: vec![],
             },
             Channel::Group {
                 id,

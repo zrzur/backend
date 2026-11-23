@@ -345,6 +345,31 @@ async fn after_a_stop_old_messages_no_longer_count() {
 }
 
 #[rocket::async_test]
+async fn a_conversation_from_before_the_switch_keeps_working() {
+    let s = setup(true).await;
+    let channel = s.channel().await;
+    // the person wrote before bots in DMs were switched on: no Start was noted
+    let message = revolt_database::Message {
+        id: ulid::Ulid::new().to_string(),
+        channel: channel.clone(),
+        author: s.person.id.clone(),
+        content: Some("from last week".to_string()),
+        ..Default::default()
+    };
+    s.harness.db.insert_message(&message).await.unwrap();
+    // the bot may still answer, as it could before the switch
+    assert_eq!(s.send(&channel, s.as_bot(), "still here").await, Status::Ok);
+
+    // a stop still ends it: old messages count no more after an unblock
+    s.block(true).await;
+    s.block(false).await;
+    assert_eq!(s.send(&channel, s.as_bot(), "back").await, Status::Forbidden);
+    let (status, _) = s.start(&channel, "legacy", None).await;
+    assert_eq!(status, Status::Ok);
+    assert_eq!(s.send(&channel, s.as_bot(), "back").await, Status::Ok);
+}
+
+#[rocket::async_test]
 async fn the_bot_hears_of_the_conversation_only_when_started() {
     let s = setup(true).await;
     let mut bot_events = PubSubTestHelper::new(&format!("{}!", s.bot.id)).await;

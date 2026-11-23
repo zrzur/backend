@@ -165,15 +165,28 @@ impl PermissionQuery for DatabasePermissionQuery<'_> {
     }
 
     async fn has_user_written_in_channel(&mut self) -> bool {
-        // A bot and the person in their conversation (bots in DMs on): only
-        // the person's Start or a message since they last stopped the bot
-        // counts, never what they wrote before the stop
+        // A bot and the person in their conversation (bots in DMs on): the
+        // person's Start or a message since they last stopped the bot counts,
+        // never what they wrote before the stop. A conversation from before
+        // bots in DMs has neither mark: what they wrote there counts, as it
+        // always did (below).
         if self.perspective.bot.is_some() {
-            if let (Some(user), Some(Channel::DirectMessage { started_by, .. })) =
-                (&self.user, self.channel.as_deref())
+            if let (
+                Some(user),
+                Some(Channel::DirectMessage {
+                    started_by,
+                    stopped_by,
+                    ..
+                }),
+            ) = (&self.user, self.channel.as_deref())
             {
                 if user.bot.is_none() && crate::util::bot_dms::enabled().await {
-                    return started_by.contains(&user.id);
+                    if started_by.contains(&user.id) {
+                        return true;
+                    }
+                    if stopped_by.contains(&user.id) {
+                        return false;
+                    }
                 }
             }
         }

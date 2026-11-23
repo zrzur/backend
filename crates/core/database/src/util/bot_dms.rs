@@ -2,10 +2,12 @@
 //!
 //! A bot may write to a person in their conversation only once the person
 //! started it: pressed Start, or wrote to it. That consent is the person's
-//! entry in the channel's `started_by`, and blocking the bot takes it away, so
-//! after an unblock only a new Start or a new message counts (messages from
-//! before the stop do not). Until then the bot does not even learn about the
-//! conversation: it gets `ChannelCreate` when the person starts it.
+//! entry in the channel's `started_by`. Blocking the bot moves them to
+//! `stopped_by`, so after an unblock only a new Start or a new message counts
+//! (messages from before the stop do not). A conversation from before the
+//! feature, with neither entry, keeps the old rule: what they wrote counts.
+//! Until a start the bot does not even learn about a new conversation: it
+//! gets `ChannelCreate` when the person starts it.
 
 use revolt_result::Result;
 

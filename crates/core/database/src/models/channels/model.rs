@@ -45,6 +45,12 @@ auto_derived!(
             /// then on the bot may write to them, as if they had written first
             #[serde(default, skip_serializing_if = "Vec::is_empty")]
             started_by: Vec<String>,
+            /// People who stopped (blocked) the bot of this conversation
+            /// since they last started it: what they wrote before no longer
+            /// counts as consent. Without an entry in either list (a
+            /// conversation from before bots in DMs), their messages do.
+            #[serde(default, skip_serializing_if = "Vec::is_empty")]
+            stopped_by: Vec<String>,
         },
         /// Group channel between 1 or more participants
         Group {
@@ -542,6 +548,7 @@ impl Channel {
                     recipients: vec![user_a.id.clone(), user_b.id.clone()],
                     last_message_id: None,
                     started_by: vec![],
+                    stopped_by: vec![],
                 }
             };
 
