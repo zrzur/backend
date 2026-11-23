@@ -1,5 +1,46 @@
 # Changelog
 
+## 26.3.0-beta.4 (2026-11-23)
+
+### Voice messages play on older iPhones (2026-11-22)
+
+- autumn keeps an AAC copy in MP4 of every `voice-message-<n>.<ext>` attachment: Safari plays Ogg only from 18.4 and WebM Opus only from 17.4. The copy is made right after the upload, and on the first `GET /attachments/{id}/{name}?format=m4a` for older uploads. An original that is AAC already is served as it is; any other `format` value is a 404. `/original?format=m4a` redirects with the question kept. The copy is a file hash of its own, `<hash>.m4a`, in the same bucket (no schema change); crond deletes it with the original, and the CDN purge of a voice message includes its `?format=m4a` links. ffmpeg (already in the autumn image) runs sandboxed as for WebM designs, two at once, 60 s at most.
+- Ogg Opus is served as `audio/ogg; codecs=opus` instead of `audio/opus` (the RTP type), for stored files too.
+- Limits on `?format=m4a` (anyone with the link can ask): nothing is done for a stored file over 8 MB or of a type that is not `audio/*`, `video/mp4` or `video/webm` (Chrome's WebM recordings are stored as `video/webm`); a failed file is remembered (unreadable or over the time limit: 1 h; a full queue or a missing ffmpeg: 1 min); one attempt per file at a time, run as a task of its own so a request that goes away never leaves it half done; two conversions at once; a rate-limit bucket `aac_copy` of 60 requests per 10 s per address. Only the decoded `format` value counts (`%66ormat=m4a` is `format=m4a`, a repeated `format=m4a` is one); any other parameter (a tracker on a shared link) is ignored. ffprobe (only for MP4 originals) and ffmpeg run under the same rules: empty environment, local files, the audio formats and decoders named, `-max_alloc`, a time limit, and `-fs 4000000` on the copy.
+- 503 with `Retry-After: 60` and `no-store` while a copy can't be made now (queue full, ffmpeg missing, storage unreachable); 404 only for a file that can't have one (unreadable, over the time limit, too big, not a sound, not a voice message).
+- A copy record's `processed_hash` is its own id `<hash>.m4a`, which no upload can match. A copy record without a key, or whose bytes are missing or don't decrypt, is forgotten and made again; forgetting removes the record only while it still points at the same path (`delete_attachment_hash_at`, new database operation) and deletes bytes only when the record really went. An unreachable storage never forgets anything.
+- A copy attempt and the wait for it run in a task of their own, so no request can cancel them; the original is read only after a conversion turn is taken; if the original is deleted while its copy is made, the new copy goes too. Only an S3 `NoSuchKey` counts as a missing copy; any other 404 is a storage problem (503).
+- crond deletes only bytes stored under a hash's own id, and for a voice message deletes every object under `<hash>.m4a.` (the copy in use and any left by a lost race), logging the prefix for a sweep when that fails. revolt-files: `fetch_from_s3_checked` (missing, undecryptable or unreachable) and `delete_prefix_from_s3`.
+- Each copy is stored under a path of its own and recorded once, path and key together, so two servers racing never leave a record that can't be read; a stored copy that can't be read is made again once. An AAC original is recorded as its own copy (pointing at the same bytes), so it is never probed again.
+- crond deletes the copy before the original and logs a failure instead of stopping.
+- API contract (accepted 2026-11-22): `?format=m4a` is a new optional query on autumn's `GET /{tag}/{file_id}/{file_name}`, in its OpenAPI description and on the developer page "Uploading Files". No route, event or SDK type changes.
+- One-off for the server after deploy, not run here: the internal launch script `voice-aac-backfill-2026-11-22.sh` asks autumn once for each voice message without a copy.
+
+### A mention you read no longer comes back (2026-11-22, user report)
+
+- Mentions are written by a debounced task seconds after the message (`tasks/ack.rs`, 5 s after the channel's last message, up to 30 s). A read that landed in between was undone: the task pushed the mention after the read, and after a reload the badge was back. Measured on the dev stack: read at 2 s, mention present again at 8 s with the read mark already past it.
+- The mention write now takes only messages after the reader's read mark, in the same database write that reads the mark (an update pipeline on `channel_unreads`), so a read that lands while the task waits always wins. The same holds for @everyone mentions (`add_mention_to_many_unreads`). The task still never writes the read mark itself.
+- @everyone badges: pushd passed the channel id as the mention, not the message id. With the read-mark check above, every @everyone badge was dropped for anyone who had read the channel before; it now passes the message (`events::rabbit::mass_mention_ids`).
+- When nothing new is added, MongoDB keeps the mentions as they were (absent stays absent) instead of writing an empty list, the same shape as the reference database.
+- Acking a channel no longer risks an integer underflow when counting the mentions it cleared (`saturating_sub`).
+- The in-memory test database now behaves like MongoDB here: an ack removes only the mentions up to the acked message, and mentions are added instead of replacing the earlier ones.
+
+### A new avatar reaches everyone who shares a server (2026-11-22, bug report #10)
+
+- A user's change went only to their own topic, which only they, their friends and people in a DM or group with them follow. Everyone else who shares a server with them kept the old avatar and name until they reloaded the app. A change of the avatar (set or removed), the display name (set or removed) or the username now also goes, as a `UserUpdate` carrying the user's whole current look (`avatar`, `display_name`, `username`, `discriminator`, and `clear` of `Avatar`/`DisplayName` when there is none), to every server the user is in, as presence already does; one event id for all of them, so a session in several shared servers takes it once. Status, pronouns, profile and the rest stay on the user's own topic.
+- At most 5 of these server fan-outs per user per hour (new `RatelimitEventType::AppearanceFanOut`). Past that, the change reaches the user's own topic at once, and one trailing fan-out per user is sent when the window allows it, with the user read again then (so it carries the newest look, and an older task never sends an older look after a newer one). Looking at the limit and counting are one step per process. The fan-out runs after the request has answered (`PATCH /users/@me` does not wait for it); failed lookups are logged.
+- A bot rename (`PATCH /bots/{id}` with `name`) changes the username and the display name and announces them to the bot's servers once.
+- **Gateway, bots:** another user's avatar and name changes that arrive through a server reach a bot only with the Server Members intent (presence through a server still follows the Presence intent). Changes through the user's own topic (a friend, a DM partner) are unchanged. Developer docs: `docs/developers/events/establishing.md`, `protocol.md` (Subscribe, UserUpdate).
+- A route test pins that saving the profile (`PATCH /users/@me`, bucket `user_edit`, 2 per 10 s) is counted apart from the `/users` reads (20 per 10 s): the reads an app makes when it opens never use up a save. The split already existed; no limit changed.
+- Reference database (tests): a member who leaves while timed out is kept apart as a pending deletion, as MongoDB keeps them with `pending_deletion_at`, instead of the old `panic!`; member queries skip them and a rejoin restores the record.
+
+### Staff can delete servers and bots (2026-11-21)
+
+- `POST /staff/servers/{id}/actions` takes `"action": "delete"`, `POST /staff/bots/{id}/delete` deletes a bot, and `POST /staff/users/{id}/delete-owned` deletes every server and bot of an account that staff already banned (`UserFlags::Banned`; an account its owner disabled or one waiting for its deletion is refused). All three need the Owner staff role (checked first, so anyone else gets one refusal and a Denied record on every attempt), `platform.servers.restrict` and a fresh step-up (the gate of a server transfer), and a reason. Official servers and bots are refused (`403 NotPrivileged`), and `delete-owned` lists them under `skipped`. A server or bot that is already gone answers `404 NotFound` every time. Deletion runs the owner's own code: members, channels, roles, invites, emojis and events go with the server and `ServerDelete` goes out; a bot leaves its servers and groups, its commands go and its token is refused. Every deletion writes one platform audit record (`staff.server.delete`, `staff.bot.delete`, `staff.user.delete_owned`), refusals included; a single deletion sends the owner an official message. Outside the public OpenAPI document.
+- `zrzur-staff delete-owned <user-id> [--dry-run] <reason...>` does the same from the server host, for when the admin console is not at hand: it prints the account (`username#discriminator`), every server (id, name, members, custom link) and bot it would delete and what stays as official, then acts only after the exact `username#discriminator` is typed on stdin (no way to skip the question; any option other than `--dry-run` is refused; `--dry-run` prints the plan only). An account that is not banned is refused at once with exit 1, before anything is connected (the refusal is recorded, except in a dry run). RabbitMQ is connected before the question (15 s limit). Only the servers and bots that were shown are deleted: if the plan changed in the meantime, nothing is deleted. A failing item, a panic included, is listed and the rest go ahead; the summary is always printed, and the exit code is 1 if anything failed. It runs the same shared code as the route (`revolt_database::staff_deletion`), with the same audit records under the actor `system:cli`, and prints the deleted ids, counts, kept and failed items. The API's 60-second cache of a public bot's command list is not cleared from the command line; it runs out by itself.
+- A bot counts as official, and is never deleted, when it has the Official flag or its account carries the official-bot mark of `zrzur-staff official-bot`; the admin console's bot list shows both as official. The reason is checked (3 to 500 characters) in the shared code too.
+- Deleting a server frees its custom link (`zrzur.cc/<name>`) by its code, not only through the invites of its landing channel, so another server can claim the name at once (also with the in-memory test database). Only when that invite belongs to the server being deleted: a stale `vanity_invite` never removes another server's link.
+
 ## 26.3.0-beta.3 (2026-11-23)
 
 ### Gateway: a relationship change no longer turns a session into the other person (security, 2026-11-22)
@@ -18,53 +59,6 @@
 - Interactions: a staff account's override never reaches a bot either; `user_permissions` is what the person holds through the server.
 - The consent page's `bot.install` server list carries the same fields.
 - **Changed:** in an interaction's `user_permissions`, the server-wide bits (Manage Server, Manage Roles, Kick, Ban, Timeout, Assign Roles, nicknames and avatars, Audit Log, Join Requests, Administrator, Manage Soundboard, Manage Events) are what the person holds on the server. A channel or category override no longer adds or removes them, so a bot that checks Manage Server there can't be fooled by a channel. Channel bits still follow the channel. New `SERVER_ONLY_PERMISSIONS` in `revolt-permissions`.
-
-## Unreleased
-
-### Voice messages play on older iPhones (2026-11-22)
-
-- autumn keeps an AAC copy in MP4 of every `voice-message-<n>.<ext>` attachment: Safari plays Ogg only from 18.4 and WebM Opus only from 17.4. The copy is made right after the upload, and on the first `GET /attachments/{id}/{name}?format=m4a` for older uploads. An original that is AAC already is served as it is; any other `format` value is a 404. `/original?format=m4a` redirects with the question kept. The copy is a file hash of its own, `<hash>.m4a`, in the same bucket (no schema change); crond deletes it with the original, and the CDN purge of a voice message includes its `?format=m4a` links. ffmpeg (already in the autumn image) runs sandboxed as for WebM designs, two at once, 60 s at most.
-- Ogg Opus is served as `audio/ogg; codecs=opus` instead of `audio/opus` (the RTP type), for stored files too.
-- Limits on `?format=m4a` (anyone with the link can ask): nothing is done for a stored file over 8 MB or of a type that is not `audio/*`, `video/mp4` or `video/webm` (Chrome's WebM recordings are stored as `video/webm`); a failed file is remembered (unreadable or over the time limit: 1 h; a full queue or a missing ffmpeg: 1 min); one attempt per file at a time, run as a task of its own so a request that goes away never leaves it half done; two conversions at once; a rate-limit bucket `aac_copy` of 60 requests per 10 s per address. Only the decoded `format` value counts (`%66ormat=m4a` is `format=m4a`, a repeated `format=m4a` is one); any other parameter (a tracker on a shared link) is ignored. ffprobe (only for MP4 originals) and ffmpeg run under the same rules: empty environment, local files, the audio formats and decoders named, `-max_alloc`, a time limit, and `-fs 4000000` on the copy.
-- 503 with `Retry-After: 60` and `no-store` while a copy can't be made now (queue full, ffmpeg missing, storage unreachable); 404 only for a file that can't have one (unreadable, over the time limit, too big, not a sound, not a voice message).
-- A copy record's `processed_hash` is its own id `<hash>.m4a`, which no upload can match. A copy record without a key, or whose bytes are missing or don't decrypt, is forgotten and made again; forgetting removes the record only while it still points at the same path (`delete_attachment_hash_at`, new database operation) and deletes bytes only when the record really went. An unreachable storage never forgets anything.
-- A copy attempt and the wait for it run in a task of their own, so no request can cancel them; the original is read only after a conversion turn is taken; if the original is deleted while its copy is made, the new copy goes too. Only an S3 `NoSuchKey` counts as a missing copy; any other 404 is a storage problem (503).
-- crond deletes only bytes stored under a hash's own id, and for a voice message deletes every object under `<hash>.m4a.` (the copy in use and any left by a lost race), logging the prefix for a sweep when that fails. revolt-files: `fetch_from_s3_checked` (missing, undecryptable or unreachable) and `delete_prefix_from_s3`.
-- Each copy is stored under a path of its own and recorded once, path and key together, so two servers racing never leave a record that can't be read; a stored copy that can't be read is made again once. An AAC original is recorded as its own copy (pointing at the same bytes), so it is never probed again.
-- crond deletes the copy before the original and logs a failure instead of stopping.
-- API contract (accepted 2026-11-22): `?format=m4a` is a new optional query on autumn's `GET /{tag}/{file_id}/{file_name}`, in its OpenAPI description and on the developer page "Uploading Files". No route, event or SDK type changes.
-- One-off for the server after deploy, not run here: the internal launch script `voice-aac-backfill-2026-11-22.sh` asks autumn once for each voice message without a copy.
-
-## Unreleased
-
-### A mention you read no longer comes back (2026-11-22, user report)
-
-- Mentions are written by a debounced task seconds after the message (`tasks/ack.rs`, 5 s after the channel's last message, up to 30 s). A read that landed in between was undone: the task pushed the mention after the read, and after a reload the badge was back. Measured on the dev stack: read at 2 s, mention present again at 8 s with the read mark already past it.
-- The mention write now takes only messages after the reader's read mark, in the same database write that reads the mark (an update pipeline on `channel_unreads`), so a read that lands while the task waits always wins. The same holds for @everyone mentions (`add_mention_to_many_unreads`). The task still never writes the read mark itself.
-- @everyone badges: pushd passed the channel id as the mention, not the message id. With the read-mark check above, every @everyone badge was dropped for anyone who had read the channel before; it now passes the message (`events::rabbit::mass_mention_ids`).
-- When nothing new is added, MongoDB keeps the mentions as they were (absent stays absent) instead of writing an empty list, the same shape as the reference database.
-- Acking a channel no longer risks an integer underflow when counting the mentions it cleared (`saturating_sub`).
-- The in-memory test database now behaves like MongoDB here: an ack removes only the mentions up to the acked message, and mentions are added instead of replacing the earlier ones.
-
-## Unreleased
-
-### A new avatar reaches everyone who shares a server (2026-11-22, bug report #10)
-
-- A user's change went only to their own topic, which only they, their friends and people in a DM or group with them follow. Everyone else who shares a server with them kept the old avatar and name until they reloaded the app. A change of the avatar (set or removed), the display name (set or removed) or the username now also goes, as a `UserUpdate` carrying the user's whole current look (`avatar`, `display_name`, `username`, `discriminator`, and `clear` of `Avatar`/`DisplayName` when there is none), to every server the user is in, as presence already does; one event id for all of them, so a session in several shared servers takes it once. Status, pronouns, profile and the rest stay on the user's own topic.
-- At most 5 of these server fan-outs per user per hour (new `RatelimitEventType::AppearanceFanOut`). Past that, the change reaches the user's own topic at once, and one trailing fan-out per user is sent when the window allows it, with the user read again then (so it carries the newest look, and an older task never sends an older look after a newer one). Looking at the limit and counting are one step per process. The fan-out runs after the request has answered (`PATCH /users/@me` does not wait for it); failed lookups are logged.
-- A bot rename (`PATCH /bots/{id}` with `name`) changes the username and the display name and announces them to the bot's servers once.
-- **Gateway, bots:** another user's avatar and name changes that arrive through a server reach a bot only with the Server Members intent (presence through a server still follows the Presence intent). Changes through the user's own topic (a friend, a DM partner) are unchanged. Developer docs: `docs/developers/events/establishing.md`, `protocol.md` (Subscribe, UserUpdate).
-- A route test pins that saving the profile (`PATCH /users/@me`, bucket `user_edit`, 2 per 10 s) is counted apart from the `/users` reads (20 per 10 s): the reads an app makes when it opens never use up a save. The split already existed; no limit changed.
-- Reference database (tests): a member who leaves while timed out is kept apart as a pending deletion, as MongoDB keeps them with `pending_deletion_at`, instead of the old `panic!`; member queries skip them and a rejoin restores the record.
-
-## Unreleased
-
-### Staff can delete servers and bots (2026-11-21)
-
-- `POST /staff/servers/{id}/actions` takes `"action": "delete"`, `POST /staff/bots/{id}/delete` deletes a bot, and `POST /staff/users/{id}/delete-owned` deletes every server and bot of an account that staff already banned (`UserFlags::Banned`; an account its owner disabled or one waiting for its deletion is refused). All three need the Owner staff role (checked first, so anyone else gets one refusal and a Denied record on every attempt), `platform.servers.restrict` and a fresh step-up (the gate of a server transfer), and a reason. Official servers and bots are refused (`403 NotPrivileged`), and `delete-owned` lists them under `skipped`. A server or bot that is already gone answers `404 NotFound` every time. Deletion runs the owner's own code: members, channels, roles, invites, emojis and events go with the server and `ServerDelete` goes out; a bot leaves its servers and groups, its commands go and its token is refused. Every deletion writes one platform audit record (`staff.server.delete`, `staff.bot.delete`, `staff.user.delete_owned`), refusals included; a single deletion sends the owner an official message. Outside the public OpenAPI document.
-- `zrzur-staff delete-owned <user-id> [--dry-run] <reason...>` does the same from the server host, for when the admin console is not at hand: it prints the account (`username#discriminator`), every server (id, name, members, custom link) and bot it would delete and what stays as official, then acts only after the exact `username#discriminator` is typed on stdin (no way to skip the question; any option other than `--dry-run` is refused; `--dry-run` prints the plan only). An account that is not banned is refused at once with exit 1, before anything is connected (the refusal is recorded, except in a dry run). RabbitMQ is connected before the question (15 s limit). Only the servers and bots that were shown are deleted: if the plan changed in the meantime, nothing is deleted. A failing item, a panic included, is listed and the rest go ahead; the summary is always printed, and the exit code is 1 if anything failed. It runs the same shared code as the route (`revolt_database::staff_deletion`), with the same audit records under the actor `system:cli`, and prints the deleted ids, counts, kept and failed items. The API's 60-second cache of a public bot's command list is not cleared from the command line; it runs out by itself.
-- A bot counts as official, and is never deleted, when it has the Official flag or its account carries the official-bot mark of `zrzur-staff official-bot`; the admin console's bot list shows both as official. The reason is checked (3 to 500 characters) in the shared code too.
-- Deleting a server frees its custom link (`zrzur.cc/<name>`) by its code, not only through the invites of its landing channel, so another server can claim the name at once (also with the in-memory test database). Only when that invite belongs to the server being deleted: a stale `vanity_invite` never removes another server's link.
 
 ## 26.3.0-beta.2 (2026-11-21)
 
@@ -457,20 +451,17 @@ Zrzur's first release, built on Stoat 0.15.5 (below).
 
 ## [0.15.5](https://github.com/stoatchat/stoatchat/compare/v0.15.4...v0.15.5) (2026-09-11)
 
-
 ### Bug Fixes
 
 * support mp4 audio mime ([#987](https://github.com/stoatchat/stoatchat/issues/987)) ([6f68a2a](https://github.com/stoatchat/stoatchat/commit/6f68a2a0c845838734847bd43da424a655afd201))
 
 ## [0.15.4](https://github.com/stoatchat/stoatchat/compare/v0.15.3...v0.15.4) (2026-09-01)
 
-
 ### Bug Fixes
 
 * don't write quotes to db on last_message_id ([#968](https://github.com/stoatchat/stoatchat/issues/968)) ([eb64f2f](https://github.com/stoatchat/stoatchat/commit/eb64f2f8ff46e193ff7fa854c12b60e86934ef39))
 
 ## [0.15.3](https://github.com/stoatchat/stoatchat/compare/v0.15.2...v0.15.3) (2026-08-26)
-
 
 ### Bug Fixes
 
@@ -481,11 +472,9 @@ Zrzur's first release, built on Stoat 0.15.5 (below).
 
 ## [0.15.2](https://github.com/stoatchat/stoatchat/compare/v0.15.1...v0.15.2) (2026-08-24)
 
-
 ### Features
 
 * implement discover endpoints ([#940](https://github.com/stoatchat/stoatchat/issues/940)) ([7930616](https://github.com/stoatchat/stoatchat/commit/793061685ddd1648dc492dab61a5544ee287c450))
-
 
 ### Bug Fixes
 
@@ -507,11 +496,9 @@ Zrzur's first release, built on Stoat 0.15.5 (below).
 
 ## [0.15.1](https://github.com/stoatchat/stoatchat/compare/v0.15.0...v0.15.1) (2026-08-07)
 
-
 ### Features
 
 * moderation API for pulling reported images. ([#880](https://github.com/stoatchat/stoatchat/issues/880)) ([fe331f0](https://github.com/stoatchat/stoatchat/commit/fe331f0dcb1704e0bb99a42f89bd8bfe263069d2))
-
 
 ### Bug Fixes
 
@@ -520,12 +507,10 @@ Zrzur's first release, built on Stoat 0.15.5 (below).
 
 ## [0.15.0](https://github.com/stoatchat/stoatchat/compare/v0.14.3...v0.15.0) (2026-08-05)
 
-
 ### Features
 
 * add an approximate member count to servers ([#884](https://github.com/stoatchat/stoatchat/issues/884)) ([ccfb5f1](https://github.com/stoatchat/stoatchat/commit/ccfb5f1a62f1be9177ac9c1c09fd18ea8e9c7f18))
 * add call event ([#873](https://github.com/stoatchat/stoatchat/issues/873)) ([457c770](https://github.com/stoatchat/stoatchat/commit/457c7709c75060cd8519cc45df3badcfc1b629ea))
-
 
 ### Bug Fixes
 
@@ -533,13 +518,11 @@ Zrzur's first release, built on Stoat 0.15.5 (below).
 
 ## [0.14.3](https://github.com/stoatchat/stoatchat/compare/v0.14.2...v0.14.3) (2026-07-22)
 
-
 ### Bug Fixes
 
 * increase cache size to hopefully deduplicate events ([#865](https://github.com/stoatchat/stoatchat/issues/865)) ([44c35bf](https://github.com/stoatchat/stoatchat/commit/44c35bfb519143f1726f7eba9636a87dbef04800))
 
 ## [0.14.2](https://github.com/stoatchat/stoatchat/compare/v0.14.1...v0.14.2) (2026-07-18)
-
 
 ### Bug Fixes
 
@@ -547,20 +530,17 @@ Zrzur's first release, built on Stoat 0.15.5 (below).
 
 ## [0.14.1](https://github.com/stoatchat/stoatchat/compare/v0.14.0...v0.14.1) (2026-07-18)
 
-
 ### Bug Fixes
 
 * presence key was incorrect after other related update ([#861](https://github.com/stoatchat/stoatchat/issues/861)) ([81648db](https://github.com/stoatchat/stoatchat/commit/81648dbf9511b32a6e023d556061bb8b74fe41ed))
 
 ## [0.14.0](https://github.com/stoatchat/stoatchat/compare/v0.13.7...v0.14.0) (2026-07-15)
 
-
 ### Features
 
 * add pronouns to user and server members field ([#811](https://github.com/stoatchat/stoatchat/issues/811)) ([ffab236](https://github.com/stoatchat/stoatchat/commit/ffab2369ab5c9b88e007dcd74b91bb48e1988d26))
 * Audit Logs ([#466](https://github.com/stoatchat/stoatchat/issues/466)) ([502203d](https://github.com/stoatchat/stoatchat/commit/502203d37c63e486c32e33078e0021bf6390fe97))
 * replace tenor with gifbox ([#844](https://github.com/stoatchat/stoatchat/issues/844)) ([59f6e01](https://github.com/stoatchat/stoatchat/commit/59f6e012f827ab08a8e326354bfe6c9026e2cb2d))
-
 
 ### Bug Fixes
 
@@ -577,7 +557,6 @@ Zrzur's first release, built on Stoat 0.15.5 (below).
 
 ## [0.13.7](https://github.com/stoatchat/stoatchat/compare/v0.13.6...v0.13.7) (2026-05-21)
 
-
 ### Bug Fixes
 
 * sanitize emoji input to handle variation selectors ([#774](https://github.com/stoatchat/stoatchat/issues/774)) ([2d308e0](https://github.com/stoatchat/stoatchat/commit/2d308e03d58c19f27b5b4d65dc2a15ef20b56190))
@@ -585,12 +564,10 @@ Zrzur's first release, built on Stoat 0.15.5 (below).
 
 ## [0.13.6](https://github.com/stoatchat/stoatchat/compare/v0.13.5...v0.13.6) (2026-05-18)
 
-
 ### Features
 
 * Update FCM payload for android notifications ([#766](https://github.com/stoatchat/stoatchat/issues/766)) ([acbc087](https://github.com/stoatchat/stoatchat/commit/acbc087982e9aeb05cabc5ab4c9b1291f67490ad))
 * user slowmode events ([#760](https://github.com/stoatchat/stoatchat/issues/760)) ([af0d8aa](https://github.com/stoatchat/stoatchat/commit/af0d8aad14dc68d88159d0e1c714077d362e21e4))
-
 
 ### Bug Fixes
 
@@ -599,13 +576,11 @@ Zrzur's first release, built on Stoat 0.15.5 (below).
 * Use proper headers to determine IP when not behind cloudflare ([#764](https://github.com/stoatchat/stoatchat/issues/764)) ([494c8b7](https://github.com/stoatchat/stoatchat/commit/494c8b7cabaae2a51039a7a5b559d5e2e5279554))
 * voice ingress crashing due to new Result in AMQP::new_auto() ([#765](https://github.com/stoatchat/stoatchat/issues/765)) ([2871632](https://github.com/stoatchat/stoatchat/commit/2871632382395cb20cbe0047c542d3ac31ff3f03))
 
-
 ### Miscellaneous Chores
 
 * switch to lapin ([#767](https://github.com/stoatchat/stoatchat/issues/767)) ([5b19853](https://github.com/stoatchat/stoatchat/commit/5b1985381ae829a92c80a19e91a414cd9dc4de93))
 
 ## [0.13.5](https://github.com/stoatchat/stoatchat/compare/v0.13.4...v0.13.5) (2026-05-17)
-
 
 ### Bug Fixes
 
@@ -613,13 +588,11 @@ Zrzur's first release, built on Stoat 0.15.5 (below).
 
 ## [0.13.4](https://github.com/stoatchat/stoatchat/compare/v0.13.3...v0.13.4) (2026-05-16)
 
-
 ### Bug Fixes
 
 * add TLS feature to livekit-api crate ([#753](https://github.com/stoatchat/stoatchat/issues/753)) ([6cfee1f](https://github.com/stoatchat/stoatchat/commit/6cfee1f601c1e084df7c8f1e7a5e8a560d1dd514))
 
 ## [0.13.3](https://github.com/stoatchat/stoatchat/compare/v0.13.2...v0.13.3) (2026-05-15)
-
 
 ### Bug Fixes
 
@@ -628,20 +601,17 @@ Zrzur's first release, built on Stoat 0.15.5 (below).
 
 ## [0.13.2](https://github.com/stoatchat/stoatchat/compare/v0.13.1...v0.13.2) (2026-05-11)
 
-
 ### Bug Fixes
 
 * update default exchange to `revolt.default` ([#746](https://github.com/stoatchat/stoatchat/issues/746)) ([fcb8091](https://github.com/stoatchat/stoatchat/commit/fcb8091cd7a00d7f26c798daa33aae4b923b2a8b))
 
 ## [0.13.1](https://github.com/stoatchat/stoatchat/compare/v0.13.0...v0.13.1) (2026-05-10)
 
-
 ### Bug Fixes
 
 * amqprs startup bug ([#744](https://github.com/stoatchat/stoatchat/issues/744)) ([1100eaf](https://github.com/stoatchat/stoatchat/commit/1100eaf46f849f2509ae01ac497556ca33bde778))
 
 ## [0.13.0](https://github.com/stoatchat/stoatchat/compare/v0.12.1...v0.13.0) (2026-05-08)
-
 
 ### Features
 
@@ -653,7 +623,6 @@ Zrzur's first release, built on Stoat 0.15.5 (below).
 * automatically sanitise usernames on create/update ([#689](https://github.com/stoatchat/stoatchat/issues/689)) ([e937697](https://github.com/stoatchat/stoatchat/commit/e93769786c7669485a659ee471630740d3cea702))
 * blacklist private ip ranges and add january domain blocklist ([#731](https://github.com/stoatchat/stoatchat/issues/731)) ([6b41db9](https://github.com/stoatchat/stoatchat/commit/6b41db984bb491b2e58324309cc70d8c14e0b814))
 * Rewrite acks ([#741](https://github.com/stoatchat/stoatchat/issues/741)) ([ab5bd47](https://github.com/stoatchat/stoatchat/commit/ab5bd47a39ee889de0b5ae6e7b560620853daead))
-
 
 ### Bug Fixes
 
@@ -669,7 +638,6 @@ Zrzur's first release, built on Stoat 0.15.5 (below).
 
 ## [0.12.1](https://github.com/stoatchat/stoatchat/compare/v0.12.0...v0.12.1) (2026-04-10)
 
-
 ### Bug Fixes
 
 * add migration to update existing files to be animated ([#705](https://github.com/stoatchat/stoatchat/issues/705)) ([f2c056a](https://github.com/stoatchat/stoatchat/commit/f2c056a1515be493b195f3f5db5886c2ddf36700))
@@ -678,7 +646,6 @@ Zrzur's first release, built on Stoat 0.15.5 (below).
 * test failure due to wrong assertion ([#707](https://github.com/stoatchat/stoatchat/issues/707)) ([f81e329](https://github.com/stoatchat/stoatchat/commit/f81e3291bdd57af9ceedb2987b111acc7051d69c))
 
 ## [0.12.0](https://github.com/stoatchat/stoatchat/compare/v0.11.5...v0.12.0) (2026-03-28)
-
 
 ### Features
 
@@ -693,7 +660,6 @@ Zrzur's first release, built on Stoat 0.15.5 (below).
 * parse message push notification content and replace internal formatting ([#693](https://github.com/stoatchat/stoatchat/issues/693)) ([d1e72ce](https://github.com/stoatchat/stoatchat/commit/d1e72cee42c54e16f4e49af569897528b10a28ca))
 * Transfer ownership ([#396](https://github.com/stoatchat/stoatchat/issues/396)) ([735d644](https://github.com/stoatchat/stoatchat/commit/735d644e043793cb86e74aab5b88bb4b8bc17ba2))
 * update livekit ([#698](https://github.com/stoatchat/stoatchat/issues/698)) ([f181edc](https://github.com/stoatchat/stoatchat/commit/f181edc8f2ff3ce4b6d48938dfc73931ecfa2279))
-
 
 ### Bug Fixes
 
@@ -716,13 +682,11 @@ Zrzur's first release, built on Stoat 0.15.5 (below).
 
 ## [0.11.5](https://github.com/stoatchat/stoatchat/compare/v0.11.4...v0.11.5) (2026-02-17)
 
-
 ### Reverts
 
 * disable user update events ([#593](https://github.com/stoatchat/stoatchat/issues/593)) ([1c98ead](https://github.com/stoatchat/stoatchat/commit/1c98ead69579b4700be0b51c9020bb8402336cc6))
 
 ## [0.11.4](https://github.com/stoatchat/stoatchat/compare/v0.11.3...v0.11.4) (2026-02-16)
-
 
 ### Bug Fixes
 
@@ -730,13 +694,11 @@ Zrzur's first release, built on Stoat 0.15.5 (below).
 
 ## [0.11.3](https://github.com/stoatchat/stoatchat/compare/v0.11.2...v0.11.3) (2026-02-13)
 
-
 ### Bug Fixes
 
 * cut presence traffic too while we engineer a new events architecture ([#561](https://github.com/stoatchat/stoatchat/issues/561)) ([1f8ea96](https://github.com/stoatchat/stoatchat/commit/1f8ea963ad742f693f405e6438f1c343c81e6579))
 
 ## [0.11.2](https://github.com/stoatchat/stoatchat/compare/v0.11.1...v0.11.2) (2026-02-13)
-
 
 ### Bug Fixes
 
@@ -744,13 +706,11 @@ Zrzur's first release, built on Stoat 0.15.5 (below).
 
 ## [0.11.1](https://github.com/stoatchat/stoatchat/compare/v0.11.0...v0.11.1) (2026-02-13)
 
-
 ### Bug Fixes
 
 * bots in multiple voice channel logic ([#544](https://github.com/stoatchat/stoatchat/issues/544)) ([94cb916](https://github.com/stoatchat/stoatchat/commit/94cb916231b9b8befb2e94065917ff40815bec52))
 
 ## [0.11.0](https://github.com/stoatchat/stoatchat/compare/v0.10.3...v0.11.0) (2026-02-10)
-
 
 ### Features
 
@@ -758,13 +718,11 @@ Zrzur's first release, built on Stoat 0.15.5 (below).
 
 ## [0.10.3](https://github.com/stoatchat/stoatchat/compare/v0.10.2...v0.10.3) (2026-02-07)
 
-
 ### Bug Fixes
 
 * update `Revolt` -&gt; `Stoat` in email titles/desc. ([#508](https://github.com/stoatchat/stoatchat/issues/508)) ([84483ce](https://github.com/stoatchat/stoatchat/commit/84483cee7af3e5dfa16f7fe13e334c4d9f5abd60))
 
 ## [0.10.2](https://github.com/stoatchat/stoatchat/compare/v0.10.1...v0.10.2) (2026-01-25)
-
 
 ### Bug Fixes
 
@@ -772,26 +730,22 @@ Zrzur's first release, built on Stoat 0.15.5 (below).
 
 ## [0.10.1](https://github.com/stoatchat/stoatchat/compare/v0.10.0...v0.10.1) (2026-01-25)
 
-
 ### Bug Fixes
 
 * use Rust 1.92.0 for Docker build ([#503](https://github.com/stoatchat/stoatchat/issues/503)) ([98da8a2](https://github.com/stoatchat/stoatchat/commit/98da8a28a0aa2fee4e8eee1d86bd7c49e3187477))
 
 ## [0.10.0](https://github.com/stoatchat/stoatchat/compare/v0.9.4...v0.10.0) (2026-01-25)
 
-
 ### Features
 
 * allow kicking members from voice channels ([#495](https://github.com/stoatchat/stoatchat/issues/495)) ([0dc5442](https://github.com/stoatchat/stoatchat/commit/0dc544249825a49c793309edee5ec1838458a6da))
 * repository architecture for files crate w. added tests ([#498](https://github.com/stoatchat/stoatchat/issues/498)) ([01ded20](https://github.com/stoatchat/stoatchat/commit/01ded209c62208fc906d6aab9b08c04e860e10ef))
-
 
 ### Bug Fixes
 
 * expose ratelimit headers via cors ([#496](https://github.com/stoatchat/stoatchat/issues/496)) ([a1a2125](https://github.com/stoatchat/stoatchat/commit/a1a21252d0ad58937e41f16e5fb86f96bebd2a51))
 
 ## [0.9.4](https://github.com/stoatchat/stoatchat/compare/v0.9.3...v0.9.4) (2026-01-10)
-
 
 ### Bug Fixes
 
@@ -800,13 +754,11 @@ Zrzur's first release, built on Stoat 0.15.5 (below).
 
 ## [0.9.3](https://github.com/stoatchat/stoatchat/compare/v0.9.2...v0.9.3) (2026-01-10)
 
-
 ### Bug Fixes
 
 * pipeline fixes ([#487](https://github.com/stoatchat/stoatchat/issues/487)) ([aeeafeb](https://github.com/stoatchat/stoatchat/commit/aeeafebefc36a43a656cf797c9251ca50292733c))
 
 ## [0.9.2](https://github.com/stoatchat/stoatchat/compare/v0.9.1...v0.9.2) (2026-01-10)
-
 
 ### Bug Fixes
 
@@ -814,13 +766,11 @@ Zrzur's first release, built on Stoat 0.15.5 (below).
 
 ## [0.9.1](https://github.com/stoatchat/stoatchat/compare/v0.9.0...v0.9.1) (2026-01-10)
 
-
 ### Bug Fixes
 
 * **ci:** pipeline fixes (marked as fix to force release) ([#483](https://github.com/stoatchat/stoatchat/issues/483)) ([303e52b](https://github.com/stoatchat/stoatchat/commit/303e52b476585eea81c33837f1b01506ce387684))
 
 ## [0.9.0](https://github.com/stoatchat/stoatchat/compare/v0.8.8...v0.9.0) (2026-01-10)
-
 
 ### Features
 
@@ -834,7 +784,6 @@ Zrzur's first release, built on Stoat 0.15.5 (below).
 * require auth for search ([b5cd5e3](https://github.com/stoatchat/stoatchat/commit/b5cd5e30ef7d5e56e8964fb7c543965fa6bf5a4a))
 * trending and categories routes ([5885e06](https://github.com/stoatchat/stoatchat/commit/5885e067a627b8fff1c8ce2bf9e852ff8cf3f07a))
 * voice chats v2 ([#414](https://github.com/stoatchat/stoatchat/issues/414)) ([d567155](https://github.com/stoatchat/stoatchat/commit/d567155f124e4da74115b1a8f810062f7c6559d9))
-
 
 ### Bug Fixes
 
