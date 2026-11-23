@@ -202,8 +202,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "c6709a208490ba72a5aa7000997d4ab1c69c56e0cec9695431ef68cae2da0f1b",
-      "bytes": 138768,
+      "sha256": "cb83b5ecf92389c1350abc7b14fdd9af1656b8d539dd89dc3fcd8099c6fa80eb",
+      "bytes": 136391,
       "category": "public-documentation"
     },
     {
@@ -1396,8 +1396,8 @@
     },
     {
       "path": "crates/core/database/src/events/rabbit.rs",
-      "sha256": "f05697580799be3aac07fe955302786dc5df58d470bde36ce616d2a95ca10b73",
-      "bytes": 2409,
+      "sha256": "23c74bf77b8a3a9f30507349f50bc65e6d0bc773120dc3d577ec15e592402bc1",
+      "bytes": 2734,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -1846,8 +1846,8 @@
     },
     {
       "path": "crates/core/database/src/models/channel_unreads/model.rs",
-      "sha256": "0451e627d30046390ee052a7b628c4a9d04787447a01d4e431f2bb335f260ae9",
-      "bytes": 757,
+      "sha256": "e2ef46992722fea8611011e51102f2868fbe8da7b2cb2dad38ad5f358d12975c",
+      "bytes": 9425,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -1858,14 +1858,14 @@
     },
     {
       "path": "crates/core/database/src/models/channel_unreads/ops/mongodb.rs",
-      "sha256": "3467fea4a86f38370c3c2d3c796cfad3019212bcdc97330f601fd1d2ca77eeb6",
-      "bytes": 5140,
+      "sha256": "c788eee3d0b50a82871f0713607dd7cce9bdf0dd6a88c4d50651515aa437bb1f",
+      "bytes": 6186,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/database/src/models/channel_unreads/ops/reference.rs",
-      "sha256": "c2011b3d21f3edd09c60e6119f1629aa7021ac86247e28ebbe627be4d4f286d6",
-      "bytes": 4260,
+      "sha256": "3525e26fd1b313aec5e154cd79b818758205b1fcd13cc0abc55a00943ad9797f",
+      "bytes": 4630,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -2050,20 +2050,20 @@
     },
     {
       "path": "crates/core/database/src/models/file_hashes/ops.rs",
-      "sha256": "95cf2ec07ba32898fbafe64cf258cf7a971ee4f3120fb36ee50e72d609542088",
-      "bytes": 3167,
+      "sha256": "42979c448f1cea0fb8b9b10e2f658d9ed30fdec69501990236bc09fe193f9e97",
+      "bytes": 1173,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/database/src/models/file_hashes/ops/mongodb.rs",
-      "sha256": "621e409ec27e663e1e8a7848988204370a36a96dd46519194a10e6a0bdf8a0b6",
-      "bytes": 3556,
+      "sha256": "408a119ea514618207c045ddc28cdb2d7e44e35c4ac66bcf71d4af7b473f8336",
+      "bytes": 3148,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/database/src/models/file_hashes/ops/reference.rs",
-      "sha256": "2444b4d022320b6e7bab70975e4209fefeab53569b2e8a040b34965041960907",
-      "bytes": 3151,
+      "sha256": "7f036b42c735f717364d99c79f693d6b17fdd778723426d96f50064d1cab605f",
+      "bytes": 2737,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -3136,8 +3136,8 @@
     },
     {
       "path": "crates/core/database/src/tasks/ack.rs",
-      "sha256": "02b560d3f7a79ada11af2a2a375fbe26c5dff0de4a435dbd4cfd48aa733cfde7",
-      "bytes": 11257,
+      "sha256": "75fbe63744f8cf71aecc299bf02c5eb6663f0e0ab5e0d3dd13be596087c05afd",
+      "bytes": 11271,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -3214,8 +3214,8 @@
     },
     {
       "path": "crates/core/database/src/util/cdn_purge.rs",
-      "sha256": "a40fe5ec031e7a929106ca0d4243f6ee448d9b77c267ae5e294b17e39fdd3e65",
-      "bytes": 11734,
+      "sha256": "15c508cc3048e55dc1f02cdc65d0ba5e1bab3b4f5adbd895a2822b2f3b38cbdd",
+      "bytes": 10879,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -3574,14 +3574,14 @@
     },
     {
       "path": "crates/core/files/src/implementation/s3_impl.rs",
-      "sha256": "f428c9fa3c3163a5b85225eb9824f925ef1b1b85d636a48c1e129e50755ab5d0",
-      "bytes": 11712,
+      "sha256": "d856982f9e009cc9d2ed294ee1dca84a0ed2cd71ea1e15400a94653fdb66d42c",
+      "bytes": 3317,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/files/src/lib.rs",
-      "sha256": "0a43f7f64909500f5110fe82d703068f352eeeb46bc83ff42aac221daa87d94f",
-      "bytes": 9083,
+      "sha256": "a663cd6ec4b92067f0027aae734109b0f5ab01a0caf49309dec9560fe3c347fd",
+      "bytes": 7484,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4192,8 +4192,8 @@
     },
     {
       "path": "crates/daemons/crond/src/tasks/file_deletion.rs",
-      "sha256": "f84c15d4ee828154f663a9b6f3356e8c162522c576db836d4f047c0e3f63035a",
-      "bytes": 7814,
+      "sha256": "768cbe7647239e6237f88de99e30853f616b8f1ff636a208d97f7d924ab5bc8f",
+      "bytes": 2025,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4318,8 +4318,8 @@
     },
     {
       "path": "crates/daemons/pushd/src/consumers/inbound/mass_mention.rs",
-      "sha256": "7638f3401fb9495a2f3bd75847ead19ee19578f34a0ae51a8b09b70f7dcb5a5a",
-      "bytes": 9299,
+      "sha256": "4c0eea0d2bf4e0dae92b74ec8ce10922d7588e459f0a8597d48de39b2f3e1ab1",
+      "bytes": 9360,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4888,8 +4888,8 @@
     },
     {
       "path": "crates/delta/src/routes/channels/channel_ack.rs",
-      "sha256": "6ddaa2f5dca6be0b69059164825455a6a3db0142caf1bdeba7a2f1a88257a4c6",
-      "bytes": 2641,
+      "sha256": "5833f1e1e34fecaf8dd1ccbd91f016e36f6218a7e11e3fdc36dfc87a9cc1b24e",
+      "bytes": 5345,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6898,8 +6898,8 @@
     },
     {
       "path": "crates/services/autumn/src/api.rs",
-      "sha256": "c16a2dcab3786cb818b4b40dd010323e9f90cef8271430c39a2b57ff4efaa6d6",
-      "bytes": 50358,
+      "sha256": "2387f013b3babc2012f57316437dd0d0a188353dedf757a1aa50d62297fd3682",
+      "bytes": 45818,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6940,8 +6940,8 @@
     },
     {
       "path": "crates/services/autumn/src/main.rs",
-      "sha256": "568669d6dd8e97fd426d9d20da72391d277d6a539a0dc6546f56874924b41c3f",
-      "bytes": 4400,
+      "sha256": "fe00264f0ef2171bce8f16af29a1c7c16ed9773d3b1d53eec714509013faf441",
+      "bytes": 4373,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6964,8 +6964,8 @@
     },
     {
       "path": "crates/services/autumn/src/ratelimits.rs",
-      "sha256": "d01774fe3e5a92be3ff75e592c02c49ab29a1fd7d01ba5dae0e66ef26cf93c0f",
-      "bytes": 4019,
+      "sha256": "c4a0aef06dae42d8ac73cd20843ad3e0edd9576a05c34ecb8a7fb3e2b6169613",
+      "bytes": 2371,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6984,18 +6984,6 @@
       "path": "crates/services/autumn/src/utils.rs",
       "sha256": "017364e591ecaaec66ee55f4e91960336c8d55a7df287384ee93b78676fb5549",
       "bytes": 1043,
-      "category": "product-source-or-build-manifest"
-    },
-    {
-      "path": "crates/services/autumn/src/voice.rs",
-      "sha256": "b1d68010bc2ae191c8f4153b6350e6ecb6176fe45778ebecd131bd42a560ed5d",
-      "bytes": 22796,
-      "category": "product-source-or-build-manifest"
-    },
-    {
-      "path": "crates/services/autumn/src/voice_copy.rs",
-      "sha256": "23cc1f4f0c70b6bb64573f9f57540b75f454ca9eff79018bfd06c864bed14fb2",
-      "bytes": 23339,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -7210,8 +7198,8 @@
     },
     {
       "path": "docs/docs/developers/api/uploading-files.md",
-      "sha256": "bd3e754b61f8993d61c48d4cbee7bd5cb2f36071c01950b1a6f592a4478bad70",
-      "bytes": 3377,
+      "sha256": "f58167ef94e9932a97bb84bb39f38dc7dc96da99116ecb4815f03eeb3992ba4d",
+      "bytes": 1874,
       "category": "public-documentation"
     },
     {
