@@ -352,6 +352,8 @@ async fn press_outside_places_denied() {
         active: true,
         recipients: vec![staff.user.id.clone(), s.bot.id.clone()],
         last_message_id: None,
+        started_by: vec![],
+        stopped_by: vec![],
     };
     s.harness.db.insert_channel(&dm).await.unwrap();
     let code = code(0);
@@ -394,6 +396,8 @@ async fn dm_accepted_only_with_allow_dms() {
         active: true,
         recipients: vec![staff.user.id.clone(), s.bot.id.clone()],
         last_message_id: None,
+        started_by: vec![],
+        stopped_by: vec![],
     };
     s.harness.db.insert_channel(&dm).await.unwrap();
     let code = code(0);
@@ -410,6 +414,8 @@ async fn dm_accepted_only_with_allow_dms() {
         active: true,
         recipients: vec![staff.user.id.clone(), other.id.clone()],
         last_message_id: None,
+        started_by: vec![],
+        stopped_by: vec![],
     };
     s.harness.db.insert_channel(&theirs).await.unwrap();
     let pressed = s
