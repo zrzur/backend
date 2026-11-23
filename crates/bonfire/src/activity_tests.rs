@@ -478,3 +478,53 @@ async fn a_blocked_viewer_gets_no_activity_events() {
         panic!("a blocked person saw {seen}");
     }
 }
+
+/// Found by the e2e run of 2026-11-23: someone in many servers whose
+/// desktop app sends its activity right after Ready lost the connection.
+/// The update comes back once per server they are in, while the session is
+/// still following its topics; the subscriber's queue (32 by default)
+/// overflowed and the session ended without a word. With the test Redis on
+/// this machine the race is too short to show (this passed before the fix
+/// too); the stream's e2e probe against the dev Redis showed it every time.
+/// It stays as the scenario's guard.
+#[tokio::test]
+async fn someone_in_many_servers_keeps_the_connection_when_sending_at_once() {
+    use revolt_database::{Member, Server};
+    let db = database().await;
+    let (session, me) = adult(db).await;
+    let (_, owner) = adult(db).await;
+    for n in 0..120 {
+        let (server, _) = Server::create(
+            db,
+            v0::DataCreateServer {
+                name: format!("Many {n}"),
+                ..Default::default()
+            },
+            &owner,
+            true,
+        )
+        .await
+        .unwrap();
+        Member::create(db, &server, &me, None).await.unwrap();
+    }
+
+    let mut socket = connect(db).await;
+    send(&mut socket, json!({ "type": "Authenticate", "token": session.token })).await;
+    loop {
+        let event = next_event(&mut socket, PATIENCE).await.expect("Ready");
+        if event["type"] == "Ready" {
+            break;
+        }
+    }
+    // at once, as the desktop app does after every connect
+    send(&mut socket, set("Star Kebab")).await;
+    let own = activities_of(&mut socket, &me.id, PATIENCE).await.expect("the update comes back");
+    assert_eq!(own[0]["name"], "Star Kebab");
+    still_open(&mut socket).await;
+    // and the next change still arrives on the same socket
+    tokio::time::sleep(StdDuration::from_millis(500)).await;
+    send(&mut socket, json!({ "type": "SetActivity", "source": "Rpc", "activity": null })).await;
+    let cleared = activities_of(&mut socket, &me.id, PATIENCE).await.expect("cleared");
+    assert_eq!(cleared, json!([]));
+    still_open(&mut socket).await;
+}
