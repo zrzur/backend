@@ -113,11 +113,21 @@ impl PermissionQuery for DatabasePermissionQuery<'_> {
         if let Some(value) = self.cached_mutual_connection {
             value
         } else if let Some(user) = &self.user {
-            let value = self
-                .perspective
-                .has_mutual_connection(self.database, &user.id)
-                .await
-                .unwrap_or_default();
+            // between a person and a bot (bots in DMs on), their own
+            // conversation is no tie: a bot is reached by being public and
+            // writes after Start, and a suspended one is out of reach
+            let one_bot = self.perspective.bot.is_some() != user.bot.is_some();
+            let value = if one_bot && crate::util::bot_dms::enabled().await {
+                self.perspective
+                    .shares_server_or_group(self.database, &user.id)
+                    .await
+                    .unwrap_or_default()
+            } else {
+                self.perspective
+                    .has_mutual_connection(self.database, &user.id)
+                    .await
+                    .unwrap_or_default()
+            };
 
             self.cached_mutual_connection = Some(value);
             value
@@ -155,12 +165,16 @@ impl PermissionQuery for DatabasePermissionQuery<'_> {
     }
 
     async fn has_user_written_in_channel(&mut self) -> bool {
-        // pressing Start in a conversation with a bot counts as writing first
-        if let (Some(user), Some(Channel::DirectMessage { started_by, .. })) =
-            (&self.user, self.channel.as_deref())
-        {
-            if started_by.contains(&user.id) {
-                return true;
+        // A bot and the person in their conversation (bots in DMs on): only
+        // the person's Start or a message since they last stopped the bot
+        // counts, never what they wrote before the stop
+        if self.perspective.bot.is_some() {
+            if let (Some(user), Some(Channel::DirectMessage { started_by, .. })) =
+                (&self.user, self.channel.as_deref())
+            {
+                if user.bot.is_none() && crate::util::bot_dms::enabled().await {
+                    return started_by.contains(&user.id);
+                }
             }
         }
         if let (Some(user), Some(channel)) = (&self.user, &self.channel) {

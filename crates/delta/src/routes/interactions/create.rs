@@ -906,7 +906,7 @@ async fn start(
         scope.channel.id().to_string(),
         data.nonce,
     );
-    db.set_bot_started(scope.channel.id(), &user.id, true).await?;
+    revolt_database::util::bot_dms::note_started(db, &scope.channel, user).await?;
 
     let mut payload = payload(db, user, &scope, &interaction, token, data.locale).await;
     payload.start = Some(InteractionStartData {

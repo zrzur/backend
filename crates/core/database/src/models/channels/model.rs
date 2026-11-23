@@ -548,8 +548,18 @@ impl Channel {
             db.insert_channel(&channel).await?;
 
             if let Channel::DirectMessage { .. } = &channel {
+                // a person opening a conversation with a bot: the bot hears
+                // of it only when they start it (util::bot_dms)
+                let quiet_bot = user_a.bot.is_none()
+                    && user_b.bot.is_some()
+                    && crate::util::bot_dms::enabled().await;
+                let told = if quiet_bot {
+                    vec![user_a.id.clone()]
+                } else {
+                    vec![user_a.id.clone(), user_b.id.clone()]
+                };
                 EventV1::ChannelCreate(channel.clone().into())
-                    .p_broadcast(vec![user_a.id.clone(), user_b.id.clone()])
+                    .p_broadcast(told)
                     .await;
             };
 

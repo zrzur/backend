@@ -317,3 +317,163 @@ async fn a_blocked_bot_cannot_write_or_be_started() {
     assert_eq!(status, Status::Ok);
     assert_eq!(s.send(&channel, s.as_bot(), "back").await, Status::Ok);
 }
+
+#[rocket::async_test]
+async fn after_a_stop_old_messages_no_longer_count() {
+    let s = setup(true).await;
+    let channel = s.channel().await;
+    // the person wrote: the bot may answer
+    assert_eq!(s.send(&channel, s.person(), "hi").await, Status::Ok);
+    assert_eq!(s.send(&channel, s.as_bot(), "hello").await, Status::Ok);
+
+    // stop (block) and unblock: what they wrote before the stop counts no more
+    s.block(true).await;
+    s.block(false).await;
+    assert_eq!(s.send(&channel, s.as_bot(), "back again").await, Status::Forbidden);
+
+    // a new Start lets it write again
+    let (status, _) = s.start(&channel, "again", None).await;
+    assert_eq!(status, Status::Ok);
+    assert_eq!(s.send(&channel, s.as_bot(), "back again").await, Status::Ok);
+
+    // and so does a new message after another stop
+    s.block(true).await;
+    s.block(false).await;
+    assert_eq!(s.send(&channel, s.as_bot(), "one more").await, Status::Forbidden);
+    assert_eq!(s.send(&channel, s.person(), "hello bot").await, Status::Ok);
+    assert_eq!(s.send(&channel, s.as_bot(), "one more").await, Status::Ok);
+}
+
+#[rocket::async_test]
+async fn the_bot_hears_of_the_conversation_only_when_started() {
+    let s = setup(true).await;
+    let mut bot_events = PubSubTestHelper::new(&format!("{}!", s.bot.id)).await;
+    let channel = s.channel().await;
+    // opening it tells the bot nothing
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(700),
+            bot_events.wait_for_event(|event| matches!(event, EventV1::ChannelCreate(_)))
+        )
+        .await
+        .is_err(),
+        "the bot heard of an unstarted conversation"
+    );
+    // Start does
+    let (status, _) = s.start(&channel, "hear", None).await;
+    assert_eq!(status, Status::Ok);
+    match bot_events
+        .wait_for_event(|event| matches!(event, EventV1::ChannelCreate(_)))
+        .await
+    {
+        EventV1::ChannelCreate(v0::Channel::DirectMessage { id, .. }) => assert_eq!(id, channel),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[rocket::async_test]
+async fn a_first_message_also_tells_the_bot() {
+    let s = setup(true).await;
+    let mut bot_events = PubSubTestHelper::new(&format!("{}!", s.bot.id)).await;
+    let channel = s.channel().await;
+    assert_eq!(s.send(&channel, s.person(), "hi bot").await, Status::Ok);
+    match bot_events
+        .wait_for_event(|event| matches!(event, EventV1::ChannelCreate(_)))
+        .await
+    {
+        EventV1::ChannelCreate(v0::Channel::DirectMessage { id, .. }) => assert_eq!(id, channel),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[rocket::async_test]
+async fn a_suspended_public_bot_is_out_of_reach() {
+    let s = setup(true).await;
+    // a conversation from before the suspension
+    let channel = s.channel().await;
+    let mut bot = s.bot.clone();
+    bot.update(
+        &s.harness.db,
+        PartialBot {
+            flags: Some(revolt_database::BOT_FLAG_SUSPENDED),
+            ..Default::default()
+        },
+        vec![],
+    )
+    .await
+    .unwrap();
+    let (status, body) = s.start(&channel, "suspended", None).await;
+    assert_ne!(status, Status::Ok, "{body}");
+    assert_eq!(s.send(&channel, s.person(), "hello?").await, Status::Forbidden);
+
+    // and a person who never wrote to it can't open one
+    let (_, session, _) = s.harness.new_user().await;
+    let response = s
+        .harness
+        .client
+        .get(format!("/users/{}/dm", s.bot.id))
+        .header(Header::new("x-session-token", session.token))
+        .dispatch()
+        .await;
+    assert_ne!(response.status(), Status::Ok);
+}
+
+#[rocket::async_test]
+async fn a_public_bot_of_a_banned_owner_is_out_of_reach() {
+    let s = setup(true).await;
+    let owner = s.bot.owner.clone();
+    s.harness
+        .db
+        .update_user(
+            &owner,
+            &revolt_database::PartialUser {
+                flags: Some(revolt_models::v0::UserFlags::Banned as i32),
+                ..Default::default()
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
+    let (status, body) = s.open_dm().await;
+    assert_ne!(status, Status::Ok);
+    assert_eq!(body["type"], "DirectMessagesRestricted", "{body}");
+}
+
+#[rocket::async_test]
+async fn the_data_export_lists_the_bots_a_person_started() {
+    let s = setup(true).await;
+    let channel = s.channel().await;
+    let (status, _) = s.start(&channel, "export", None).await;
+    assert_eq!(status, Status::Ok);
+    let account = s.harness.db.fetch_account(&s.person.id).await.unwrap();
+    let zip = revolt_database::build_export_zip(&s.harness.db, &account, &s.person)
+        .await
+        .unwrap();
+    let text = String::from_utf8_lossy(&zip);
+    assert!(text.contains("bots_started.json"));
+    let listed = text.split("bots_started.json").nth(1).unwrap_or_default();
+    assert!(listed.contains(&s.bot.id) && listed.contains(&channel), "{text}");
+}
+
+
+#[rocket::async_test]
+async fn their_conversation_is_no_tie_for_a_bot_with_open_privacy() {
+    let s = setup(true).await;
+    // the person takes messages from everyone
+    let response = s
+        .harness
+        .client
+        .patch("/users/@me/privacy")
+        .header(s.person())
+        .header(ContentType::JSON)
+        .body(json!({ "direct_messages": "Everyone" }).to_string())
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Ok);
+    let channel = s.channel().await;
+    // having the conversation open is not Start: the bot may not write
+    assert_eq!(s.send(&channel, s.as_bot(), "hi!").await, Status::Forbidden);
+    let (status, _) = s.start(&channel, "open", None).await;
+    assert_eq!(status, Status::Ok);
+    assert_eq!(s.send(&channel, s.as_bot(), "hi!").await, Status::Ok);
+}
