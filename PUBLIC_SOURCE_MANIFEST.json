@@ -58,7 +58,7 @@
     },
     {
       "path": ".github/workflows/source-check.yml",
-      "sha256": "90b22f780e2ae16b47d75bc43947ac9b6dc37ea2b741216ee93db35b8c73d2f2",
+      "sha256": "d2fd29e853507c72f9e0bf6096d0bd5fc5c9f580291c05790682bef938622747",
       "bytes": 959,
       "category": "reviewed-build-and-ci"
     },
@@ -202,8 +202,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "390a03b9faea81ebce7c3c43fd7e5ebfe0397edb48b8d8191f16b221b7607f48",
-      "bytes": 148948,
+      "sha256": "73a63a595827455140d976fd503f4c6f54e9a6077a68e24629852b9fa341d095",
+      "bytes": 149545,
       "category": "public-documentation"
     },
     {
@@ -274,7 +274,7 @@
     },
     {
       "path": "RELEASE.json",
-      "sha256": "ef388499e3a5b73b77cf7cb4d6e7eb0929968627f8d773bda1d8224a73b02d8b",
+      "sha256": "04401068e4f7bb5167c22a67b7aa3e805ea14a87208b5c7ec58c665d7ffb31ae",
       "bytes": 299,
       "category": "product-source-or-build-manifest"
     },
@@ -298,13 +298,13 @@
     },
     {
       "path": "ZRZUR_RELEASE.md",
-      "sha256": "cd525b86935f03c630943a6340bfac0083c3fdd4c2c48d0b25921728c6303697",
+      "sha256": "8b3cf53840370c4a3239c448b62c51247de04cbd1517c71b9274183e6a71fab5",
       "bytes": 1618,
       "category": "public-documentation"
     },
     {
       "path": "ZRZUR_VERSION",
-      "sha256": "c5bf54174e6ac586f861d6bf4dbe5d11bbfb22db7d5dc291f26c8bede887f41b",
+      "sha256": "e7f06d855ca9d52a2968be3ff7a8543f6905d0300cff2d11ff80413216f05522",
       "bytes": 351,
       "category": "product-source-or-build-manifest"
     },
@@ -6922,8 +6922,8 @@
     },
     {
       "path": "crates/services/autumn/src/api.rs",
-      "sha256": "c16a2dcab3786cb818b4b40dd010323e9f90cef8271430c39a2b57ff4efaa6d6",
-      "bytes": 50358,
+      "sha256": "c540447f80e5de0236918c82876b346315ef9c1f51d73a6ae8b18f0bf4d308a0",
+      "bytes": 50633,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -7018,8 +7018,8 @@
     },
     {
       "path": "crates/services/autumn/src/voice_copy.rs",
-      "sha256": "23cc1f4f0c70b6bb64573f9f57540b75f454ca9eff79018bfd06c864bed14fb2",
-      "bytes": 23339,
+      "sha256": "5edf15adcd4c00ea056f2b6fc56954bdf2e1217a720f5c5116f4411ec677ab5b",
+      "bytes": 24484,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -7444,7 +7444,7 @@
     },
     {
       "path": "scripts/check-version-selftest.sh",
-      "sha256": "6cbed5e4c25683d5d0b5545816aa1ff154cd889ecbde0865e807566a88dd0dc8",
+      "sha256": "0020186bedb4809cd6d4fc4f86d0692ea8dee6261c0440ca6890e96206a4084a",
       "bytes": 1327,
       "category": "reviewed-build-and-ci"
     },

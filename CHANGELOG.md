@@ -1,5 +1,11 @@
 # Changelog
 
+## 26.3.0-beta.5 (2026-11-23)
+
+### Voice messages recorded after 26.3.0-beta.4 play again
+
+- The AAC copy made right after an upload was given the file record from before the upload, without the nonce the bytes were stored with. It read the stored bytes still encrypted, and autumn's shared five-minute cache then served those to everyone who opened the message, so new voice messages showed "Try again" (and no copy was made). The copy now gets the nonce of the upload, and a record without one is read again from the database instead of being read undecrypted. Stored files were never changed.
+
 ## 26.3.0-beta.4 (2026-11-23)
 
 ### Voice messages play on older iPhones (2026-11-22)

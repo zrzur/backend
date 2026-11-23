@@ -763,7 +763,11 @@ async fn store_upload(
     // A voice message: its AAC copy is made now, so an iPhone that can't
     // play the recording doesn't wait for it on the first tap
     if matches!(tag, Tag::attachments) && is_voice_name(&filename) {
-        let (db, hash) = (db.clone(), file_hash.clone());
+        let (db, mut hash) = (db.clone(), file_hash.clone());
+        // `file_hash` was made before the upload: without the nonce the bytes
+        // were stored with, the copy would read them still encrypted (and the
+        // shared cache would then serve those to everyone opening the message)
+        hash.iv = nonce.clone();
         tokio::spawn(async move {
             if let Err(refusal) = voice_copies(&db).copy(&hash).await {
                 tracing::warn!("no AAC copy of voice message {}: {refusal:?}", hash.id);

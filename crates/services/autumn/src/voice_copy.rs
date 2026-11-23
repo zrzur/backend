@@ -166,6 +166,23 @@ impl<S: Store, C: Convert> Copies<S, C> {
     }
 
     async fn make_inner(&self, hash: &FileHash) -> Result<FileHash, VoiceRefusal> {
+        // A record made before its upload has no nonce yet: take the stored
+        // one. Bytes read without it are still encrypted, and the store's
+        // cache would hand them to everyone who opens the message.
+        let stored;
+        let hash = if hash.iv.is_empty() {
+            stored = self
+                .db
+                .fetch_attachment_hash(&hash.id)
+                .await
+                .map_err(|_| VoiceRefusal::Unavailable)?;
+            if stored.iv.is_empty() {
+                return Err(VoiceRefusal::Unavailable);
+            }
+            &stored
+        } else {
+            hash
+        };
         let id = voice_rendition_id(&hash.id);
         // a turn first: no original is read while every turn is taken
         let _turn = self.convert.turn().await?;
@@ -440,6 +457,17 @@ mod tests {
         // ours was written, then deleted
         assert_eq!(copies.store.writes.load(Ordering::SeqCst), 1);
         assert_eq!(copies.store.paths(), vec!["h1".to_owned()]);
+    }
+
+    #[tokio::test]
+    async fn a_record_from_before_its_upload_reads_with_the_stored_nonce() {
+        // store_upload hands over the record it made before the upload, whose
+        // nonce is still empty: the original must not be read without one
+        let (copies, mut hash) = setup(Fake::copying()).await;
+        hash.iv = String::new();
+        let copy = copies.copy(&hash).await.unwrap();
+        assert_eq!(copy.id, "h1.m4a");
+        assert_eq!(copies.convert.calls.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
