@@ -4,7 +4,7 @@
 
 ### Gateway: a session no longer ends when many copies of one update arrive (2026-11-23)
 
-- A session's Redis subscriber holds up to 512 events (fred's default was 32) and follows all its topics with one command. An update about someone is published once per server they are in; someone in many servers (221 in the test) whose app sent something right after `Ready` lost the connection every time, without a word. A full queue that still ends a session is now logged.
+- A session's Redis subscriber holds up to 512 events (fred's default was 32) and follows all its topics with one command. An update about someone is published once per server they are in; someone in many servers (221 in the test) whose app sent something right after `Ready` lost the connection every time, without a word. A full queue that still ends a session is now logged, and the client is told to connect again at once (close 1013, "try again") for a fresh Ready. Topics added or removed later go in one command each way, never an empty one.
 
 ## 26.3.0-beta.2 (2026-11-21)
 
