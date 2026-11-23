@@ -781,14 +781,17 @@ async fn overview_is_the_consoles_stats() {
     }
     assert!(desk["open_reports"].is_u64(), "{desk}");
 
-    // a grant with no permission: refused as the presser, on the desk session
-    let nobody = s.person(vec![]).await;
-    set_grant(&s.harness, &nobody.user.id, vec![], false).await;
+    // every staff role holds DashboardRead, and a grant without roles is no
+    // grant at all: someone whose roles are taken away while signed in is
+    // refused at the next press, as the presser, on their desk session, and
+    // that desk session ends
+    let nobody = s.person(vec![StaffRole::Analyst]).await;
     s.sign_in(&nobody, -1).await;
+    let session = s.desk_sessions(&nobody).await.remove(0);
+    set_grant(&s.harness, &nobody.user.id, vec![], false).await;
     let pressed = s.press(&nobody, Kind::Command("stats")).await;
     let (status, body) = s.hand("overview", &pressed).await;
     assert_eq!(status, Status::Forbidden, "{body}");
-    let session = s.desk_sessions(&nobody).await.remove(0);
     let denied: Vec<_> = s
         .record_sessions(&nobody)
         .await
@@ -796,7 +799,9 @@ async fn overview_is_the_consoles_stats() {
         .filter(|r| r.1 == "Denied")
         .collect();
     assert_eq!(denied.len(), 1, "{denied:?}");
+    assert_eq!(denied[0].0, "staff.desk.no_grant", "{denied:?}");
     assert_eq!(denied[0].2.as_deref(), Some(session.id.as_str()));
+    assert!(s.desk_sessions(&nobody).await.is_empty(), "the desk session must end");
 
     // area off: 404, the press is not even used up
     let mut off = settings(&s.bot, vec![s.place.id().to_string()], false);
