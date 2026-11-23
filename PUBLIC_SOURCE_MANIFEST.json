@@ -406,8 +406,8 @@
     },
     {
       "path": "crates/bonfire/src/websocket.rs",
-      "sha256": "c5ab154e573658f03bc6bacd59c6754122c31d75af6e94313edb899f710abbcd",
-      "bytes": 88500,
+      "sha256": "01f5478ef4e4f896939c7bedfb431e7a29c2b558262bc2f13192944df45f3fe0",
+      "bytes": 88415,
       "category": "product-source-or-build-manifest"
     },
     {

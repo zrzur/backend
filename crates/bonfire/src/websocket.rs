@@ -287,7 +287,7 @@ async fn client_with_limits(
                     kill_worker,
                     auth_session_id,
                 } => {
-                    info!("User {addr:?} resumed session {session_id}");
+                    info!("A session was resumed");
                     db.update_session_last_seen(&auth_session_id, Timestamp::now_utc())
                         .await
                         .ok();
@@ -547,11 +547,11 @@ async fn resume_session(
     };
 
     let Some(handle) = resume::find(session_id) else {
-        info!("resume of {session_id} refused: no such session waiting here");
+        info!("resume refused: no such session waiting here");
         return Resumption::Refused;
     };
     if handle.user_id != user.id || handle.auth_session_id != auth_session_id {
-        info!("resume of {session_id} refused: another login");
+        info!("resume refused: another login");
         return Resumption::Refused;
     }
 
@@ -564,7 +564,7 @@ async fn resume_session(
                 return Resumption::Ended;
             }
             Ok(intents) if intents != handle.intents => {
-                info!("resume of {session_id} refused: the intents changed");
+                info!("resume refused: the intents changed");
                 return Resumption::Refused;
             }
             Ok(_) => {}
@@ -581,7 +581,7 @@ async fn resume_session(
         reply: reply_s,
     };
     if handle.control.send(Control::Attach(attach)).await.is_err() {
-        info!("resume of {session_id} refused: the session just ended");
+        info!("resume refused: the session just ended");
         return Resumption::Refused;
     }
 
