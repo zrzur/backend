@@ -10,7 +10,8 @@ use revolt_database::{
         permissions::DatabasePermissionQuery,
     },
     voice::{get_channel_voice_state, UserVoiceChannel},
-    Channel, Database, Member, MemberCompositeKey, Presence, RelationshipStatus, Role,
+    Channel, Database, Member, MemberCompositeKey, Presence, Relationship, RelationshipStatus,
+    Role, User,
 };
 use revolt_models::v0::{self, GatewayIntents};
 use revolt_permissions::{calculate_channel_permissions, ChannelPermission};
@@ -18,6 +19,28 @@ use revolt_presence::filter_online;
 use revolt_result::Result;
 
 use super::state::{Cache, State};
+
+/// Put a relationship from a UserRelationship event into the session's own
+/// cached user: replaced, added, or removed when it is None.
+fn set_cached_relationship(me: &mut User, other: &str, status: &v0::RelationshipStatus) {
+    let status = match status {
+        v0::RelationshipStatus::None => None,
+        v0::RelationshipStatus::User => return,
+        v0::RelationshipStatus::Friend => Some(RelationshipStatus::Friend),
+        v0::RelationshipStatus::Outgoing => Some(RelationshipStatus::Outgoing),
+        v0::RelationshipStatus::Incoming => Some(RelationshipStatus::Incoming),
+        v0::RelationshipStatus::Blocked => Some(RelationshipStatus::Blocked),
+        v0::RelationshipStatus::BlockedOther => Some(RelationshipStatus::BlockedOther),
+    };
+    let relations = me.relations.get_or_insert_with(Vec::new);
+    relations.retain(|relation| relation.id != other);
+    if let Some(status) = status {
+        relations.push(Relationship {
+            id: other.to_string(),
+            status,
+        });
+    }
+}
 
 /// Cache Manager
 impl Cache {
@@ -1094,12 +1117,20 @@ impl State {
                 *event_id = None;
             }
             EventV1::UserRelationship { id, user, .. } => {
-                self.cache.users.insert(id.clone(), user.clone().into());
+                // Sent privately to `id`, this session's user; `user` is the
+                // other person. Our own cached user is never replaced: every
+                // permission, presence and relationship check reads it.
+                if id == &self.cache.user_id && user.id != self.cache.user_id {
+                    if let Some(me) = self.cache.users.get_mut(&self.cache.user_id) {
+                        set_cached_relationship(me, &user.id, &user.relationship);
+                    }
+                    self.cache.users.insert(user.id.clone(), user.clone().into());
 
-                if self.cache.can_subscribe_to_user(id) {
-                    self.insert_subscription(id.clone()).await;
-                } else {
-                    self.remove_subscription(id).await;
+                    if self.cache.can_subscribe_to_user(&user.id) {
+                        self.insert_subscription(user.id.clone()).await;
+                    } else {
+                        self.remove_subscription(&user.id).await;
+                    }
                 }
             }
 

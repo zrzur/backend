@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Gateway: a relationship change no longer turns a session into the other person (security, 2026-11-22)
+
+- A `UserRelationship` event (friend request, accept, block, unblock) replaced the receiving session's own cached user with the other person. Until the next connection that session then checked permissions, presence and relationships as the other person: after a friend request to a server owner, the next server recalculation (a role or server permission change) sent the owner's private channels to the requester and subscribed them to their messages; an invisible user's online and offline changes could be broadcast; the session could drop its own topic; message authors lost their Blocked mark. The event now stores the other person under their own id, updates the one relationship in the session's own user (removed when it is None), follows or stops following that person's topic, and never replaces the session's own user. The same line is in upstream Stoat (checked at 483c1779, 0.16.2).
+
 ## 26.3.0-beta.2 (2026-11-21)
 
 ### The owner's /badge command (2026-11-21)
