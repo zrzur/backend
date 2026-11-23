@@ -319,6 +319,9 @@ mod tests {
     async fn minio_classifies_and_pages() {
         let Some(storage) = minio() else { return };
         let bucket = "revolt-uploads";
+        // A fresh MinIO (CI) has no buckets; the compose one already has it,
+        // so "already owned" is fine to ignore here
+        let _ = storage.create_bucket(bucket).await;
         let prefix = format!("selftest-{}.m4a.", std::process::id());
         let iv = storage
             .encrypt_and_upload_file(bucket, &format!("{prefix}0"), b"copy")

@@ -3580,8 +3580,8 @@
     },
     {
       "path": "crates/core/files/src/implementation/s3_impl.rs",
-      "sha256": "f428c9fa3c3163a5b85225eb9824f925ef1b1b85d636a48c1e129e50755ab5d0",
-      "bytes": 11712,
+      "sha256": "5f6564de05f9ff209fdd1f9c098cb6e4e1021e8a388454f56796420294d10b1f",
+      "bytes": 11896,
       "category": "product-source-or-build-manifest"
     },
     {
