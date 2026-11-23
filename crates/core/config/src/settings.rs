@@ -1534,6 +1534,8 @@ impl Default for FeaturesRichPresence {
             steam_daily_calls: rich_presence_steam_budget(),
             broadcast_max_members: rich_presence_broadcast_max(),
         }
+    }
+}
 
 /// Zrzur Desk: the staff bot. The bot decides nothing; the server checks
 /// every press against the presser's own staff grant.
