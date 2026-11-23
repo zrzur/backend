@@ -526,9 +526,11 @@ async fn resume_session(
     };
 
     let Some(handle) = resume::find(session_id) else {
+        info!("resume of {session_id} refused: no such session waiting here");
         return Resumption::Refused;
     };
     if handle.user_id != user.id || handle.auth_session_id != auth_session_id {
+        info!("resume of {session_id} refused: another login");
         return Resumption::Refused;
     }
 
@@ -540,7 +542,10 @@ async fn resume_session(
                 refuse_intents(write, config, refusal).await;
                 return Resumption::Ended;
             }
-            Ok(intents) if intents != handle.intents => return Resumption::Refused,
+            Ok(intents) if intents != handle.intents => {
+                info!("resume of {session_id} refused: the intents changed");
+                return Resumption::Refused;
+            }
             Ok(_) => {}
         }
     }
@@ -555,6 +560,7 @@ async fn resume_session(
         reply: reply_s,
     };
     if handle.control.send(Control::Attach(attach)).await.is_err() {
+        info!("resume of {session_id} refused: the session just ended");
         return Resumption::Refused;
     }
 
@@ -694,6 +700,13 @@ impl Delivery {
             reply,
         } = attach;
         if !self.resumable || !self.buffer.covers(seq, Instant::now()) {
+            // why, for the log: what the client has against what is kept
+            info!(
+                "{addr:?}: resume from seq {seq} refused: resumable {}, last seq {}, kept from {}",
+                self.resumable,
+                self.buffer.last_seq(),
+                self.buffer.forgotten() + 1
+            );
             let _ = reply.send(None);
             return;
         }
