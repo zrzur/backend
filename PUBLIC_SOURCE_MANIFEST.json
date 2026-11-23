@@ -6232,8 +6232,8 @@
     },
     {
       "path": "crates/delta/src/routes/staff/desk/tests.rs",
-      "sha256": "23da0f94ca2741db47ac88840cb387d591e1755a5f1655e2ca14e7eba8c5e684",
-      "bytes": 43677,
+      "sha256": "d510c9aa793518890244d94bb1a327614349c948ffb97b25228ae72311832bcd",
+      "bytes": 43845,
       "category": "product-source-or-build-manifest"
     },
     {
