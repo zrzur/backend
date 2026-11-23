@@ -60,6 +60,7 @@ impl IntoResponse for Error {
             ErrorType::VanityTaken => StatusCode::CONFLICT,
             ErrorType::VanityReserved => StatusCode::BAD_REQUEST,
             ErrorType::VanityPaused => StatusCode::GONE,
+            ErrorType::VanityNotEligible { .. } => StatusCode::FORBIDDEN,
 
             ErrorType::TooManyServers { .. } => StatusCode::BAD_REQUEST,
             ErrorType::TooManyEmbeds { .. } => StatusCode::BAD_REQUEST,

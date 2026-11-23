@@ -1,5 +1,5 @@
 use crate::{
-    AppendMessage, FieldsMessage, Message, MessageFilter, MessageQuery, MessageTimePeriod,
+    AppendMessage, FieldsMessage, Message, MessageActivity, MessageFilter, MessageQuery, MessageTimePeriod,
     Metadata, PartialMessage, ReferenceDb,
 };
 use revolt_models::v0::{MessageHas, MessageSort};
@@ -76,6 +76,31 @@ fn matches_filter(filter: &MessageFilter, message: &Message) -> bool {
 
 #[async_trait]
 impl AbstractMessages for ReferenceDb {
+    async fn count_message_activity(&self, channels: &[String], since_id: &str) -> Result<MessageActivity> {
+        let mut per_author: HashMap<String, usize> = HashMap::new();
+        {
+            let messages = self.messages.lock().await;
+            for (id, message) in messages.iter() {
+                if channels.contains(&message.channel)
+                    && id.as_str() >= since_id
+                    && message.system.is_none()
+                    && message.webhook.is_none()
+                {
+                    *per_author.entry(message.author.clone()).or_default() += 1;
+                }
+            }
+        }
+        let users = self.users.lock().await;
+        let mut activity = MessageActivity::default();
+        for (author, count) in per_author {
+            if users.get(&author).is_some_and(|user| user.bot.is_none()) {
+                activity.messages += count;
+                activity.authors += 1;
+            }
+        }
+        Ok(activity)
+    }
+
     /// Insert a new message into the database
     async fn insert_message(&self, message: &Message) -> Result<()> {
         let mut messages = self.messages.lock().await;

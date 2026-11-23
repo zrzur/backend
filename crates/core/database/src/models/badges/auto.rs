@@ -87,7 +87,7 @@ pub async fn sync_verified_server_owner(db: &Database, user_id: &str) -> Result<
         .fetch_owned_servers(user_id)
         .await?
         .iter()
-        .any(|server| matches!(server.flags, Some(SERVER_OFFICIAL | SERVER_VERIFIED)));
+        .any(|server| server.flags.unwrap_or_default() & (SERVER_OFFICIAL | SERVER_VERIFIED) != 0);
     follow(db, user_id, "verified_server_owner", earned, "server").await
 }
 

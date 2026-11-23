@@ -1372,6 +1372,9 @@ pub struct Features {
     /// The owner's `/badge` command (off unless both ids are set)
     #[serde(default)]
     pub badge_command: FeaturesBadgeCommand,
+    /// Who may hold a custom invite link (zrzur.cc/<name>)
+    #[serde(default)]
+    pub vanity: FeaturesVanity,
 
     /// Voice rooms step down on a weak connection (lighter voice, video
     /// lowered, then video paused with audio kept) and show a sign. The
@@ -1563,6 +1566,63 @@ fn saved_reminders_max_days_ahead() -> u32 {
 }
 fn saved_reminders_keep_delivered_days() -> u32 {
     30
+}
+
+/// Who may hold a custom invite link (zrzur.cc/<name>), owner rule of
+/// 2026-11-21: official and partner servers always; any other server once it
+/// has `min_members` members and is active (`active_messages` messages from
+/// `active_authors` different members in the last `active_days` days, bots,
+/// webhooks and system messages not counted). With billing on, the Wings
+/// level that unlocks the link is a second way in.
+#[derive(Deserialize, Debug, Clone)]
+pub struct FeaturesVanity {
+    #[serde(default = "vanity_min_members")]
+    pub min_members: usize,
+    #[serde(default = "vanity_active_messages")]
+    pub active_messages: usize,
+    #[serde(default = "vanity_active_authors")]
+    pub active_authors: usize,
+    #[serde(default = "vanity_active_days")]
+    pub active_days: u32,
+    /// Days a link keeps working after its server stops meeting the rule
+    /// (the owner gets a notice); then the name is released
+    #[serde(default = "vanity_notice_days")]
+    pub notice_days: u32,
+    /// Hours an activity count is reused before it is counted again
+    #[serde(default = "vanity_activity_cache_hours")]
+    pub activity_cache_hours: u32,
+}
+
+fn vanity_min_members() -> usize {
+    500
+}
+fn vanity_active_messages() -> usize {
+    100
+}
+fn vanity_active_authors() -> usize {
+    20
+}
+fn vanity_active_days() -> u32 {
+    30
+}
+fn vanity_notice_days() -> u32 {
+    30
+}
+fn vanity_activity_cache_hours() -> u32 {
+    6
+}
+
+impl Default for FeaturesVanity {
+    fn default() -> Self {
+        Self {
+            min_members: vanity_min_members(),
+            active_messages: vanity_active_messages(),
+            active_authors: vanity_active_authors(),
+            active_days: vanity_active_days(),
+            notice_days: vanity_notice_days(),
+            activity_cache_hours: vanity_activity_cache_hours(),
+        }
+    }
 }
 
 impl Default for FeaturesSavedReminders {
