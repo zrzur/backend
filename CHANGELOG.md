@@ -89,6 +89,15 @@
 - Going invisible or coming back sends the list again (empty to others while invisible).
 - `GET /` gains `features.rich_presence` and `features.rich_presence_steam`.
 
+## Unreleased
+
+### Dependency security (2026-11-22)
+
+- The gateway (bonfire) moves to `async-tungstenite` 0.23, so `tungstenite` 0.20.1: the 0.17 line let one client slow the server down with a crafted handshake (GHSA-9mcr-873m-xcxp). The protocol, limits and messages are unchanged.
+- Mail moves to `lettre` 0.11.22 (was 0.10.4; GHSA-4pj9-g833-qx53, which only hit the Boring TLS backend; Zrzur uses native TLS, which checks the host name). This also drops `idna` 0.3.
+- Logging moves to `pretty_env_logger` 0.5, which drops `atty` (no fixed version exists; GHSA-g98v-hv3f-hcfr).
+- The API's build script no longer uses `vergen`: nothing read its variables, and it pulled in `git2` 0.16 and `libgit2` 1.5 (GHSA-22q8-ghmq-63vf, GHSA-j39j-6gw9-jw6h). The build script still watches the checked-out commit for `ZRZUR_GIT_COMMIT`.
+
 ## 26.3.0-beta.2 (2026-11-21)
 
 ### The owner's /badge command (2026-11-21)
