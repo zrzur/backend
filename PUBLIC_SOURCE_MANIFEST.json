@@ -5338,8 +5338,8 @@
     },
     {
       "path": "crates/delta/src/routes/interactions/create.rs",
-      "sha256": "e2ea7821088edd6b737b003908bb658f7f08c74e1fcabee5953a9e34dbb0d02b",
-      "bytes": 37413,
+      "sha256": "a8a4d4887b172a8f6ce530338ff8c33a3fc2c6e2cba2a9da8dc4a6679f796942",
+      "bytes": 37780,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6141,6 +6141,30 @@
       "category": "product-source-or-build-manifest"
     },
     {
+      "path": "crates/delta/src/routes/staff/desk/actor.rs",
+      "sha256": "b7c7e261ab8c28daa5369271079d3017e962d107d4332cc3948904540aff8110",
+      "bytes": 9236,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/delta/src/routes/staff/desk/mod.rs",
+      "sha256": "74e4d295c76b018a610c39dbbd3e07546ac0e6e33b420bce247282b14ffa69c3",
+      "bytes": 3754,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/delta/src/routes/staff/desk/session.rs",
+      "sha256": "fb2cbe1524d7e90e5d8c183b0efa8fbac8db600741075091e1dec275b94d281c",
+      "bytes": 7203,
+      "category": "product-source-or-build-manifest"
+    },
+    {
+      "path": "crates/delta/src/routes/staff/desk/tests.rs",
+      "sha256": "34e4d953f12171e33f87ef65ce6ab919fcb5e8321c4a862b4a9c077cfe50d2f9",
+      "bytes": 26181,
+      "category": "product-source-or-build-manifest"
+    },
+    {
       "path": "crates/delta/src/routes/staff/discover.rs",
       "sha256": "6b096cbe48cfce060c9c4664935ad682e8a3bb0e0644c6611d86e88a933ab045",
       "bytes": 3291,
@@ -6148,8 +6172,8 @@
     },
     {
       "path": "crates/delta/src/routes/staff/guard.rs",
-      "sha256": "ce923a39f010aa07b952f3c4e6acc10bcfd71e2a833b822ed4b52a22f373a9fd",
-      "bytes": 6317,
+      "sha256": "f37015ee798ab198fd8273cd5c50967878ec6bd53ca688ed0f3088e3ca722cc6",
+      "bytes": 6511,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6160,8 +6184,8 @@
     },
     {
       "path": "crates/delta/src/routes/staff/mod.rs",
-      "sha256": "4ddec9b17a9e24c1a3e03ede8805ca8a44d50c499e696f89770599256d63d46f",
-      "bytes": 24207,
+      "sha256": "99d24a0f488d6cec491e6ce04e63cbe7b0152426c6f7bb74195c02397565c239",
+      "bytes": 25340,
       "category": "product-source-or-build-manifest"
     },
     {
