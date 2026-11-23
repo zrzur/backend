@@ -106,12 +106,24 @@ pub async fn open(
         db.revoke_staff_session(&staff.id, now).await?;
         return Err(error);
     }
-    // one desk session per person: every other one ends, also one opened by
-    // a sign-in running at the same moment
-    for other in db.fetch_staff_sessions_for_user(&press.user.id, now).await? {
-        if other.kind == StaffSessionKind::Desk && other.id != staff.id {
-            db.revoke_staff_session(&other.id, now).await?;
+    // one desk session per person: the earlier ones end. Only sessions
+    // created before this one, so two sign-ins at the same moment cannot
+    // end each other. The new session is already recorded and valid: a
+    // failure here is logged, not returned.
+    match db.fetch_staff_sessions_for_user(&press.user.id, now).await {
+        Ok(sessions) => {
+            for other in sessions {
+                if other.kind == StaffSessionKind::Desk
+                    && other.id != staff.id
+                    && (other.created_at, other.id.as_str()) < (staff.created_at, staff.id.as_str())
+                {
+                    if let Err(error) = db.revoke_staff_session(&other.id, now).await {
+                        log::error!("desk sign-in: could not end earlier session {}: {error:?}", other.id);
+                    }
+                }
+            }
         }
+        Err(error) => log::error!("desk sign-in: could not list earlier sessions: {error:?}"),
     }
     Ok(Json(DeskOpened {
         expires_at: staff.expires_at,

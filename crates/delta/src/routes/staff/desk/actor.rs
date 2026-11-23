@@ -178,6 +178,11 @@ pub(super) async fn press(
     if !interaction.token_matches(&data.token) || interaction.application_id != settings.bot {
         return Err(create_error!(UnknownInteraction));
     }
+    // a form's code is read from the copy in hand; the stored one is gone
+    // now, whatever refusal comes next (wrong kind, expired, used, ...)
+    if interaction.kind == InteractionType::ModalSubmit {
+        db.clear_interaction_modal_fields(&interaction.id).await?;
+    }
     if interaction.is_expired() {
         return Err(create_error!(InteractionExpired));
     }
@@ -190,11 +195,6 @@ pub(super) async fn press(
     // 4. one press, one action (and one refusal in the log)
     if !db.claim_interaction_use(&interaction.id).await? {
         return Err(create_error!(InteractionExpired));
-    }
-    // a form's code is read from the copy in hand; the stored one is gone
-    // now, whatever comes next
-    if matches!(expect, Expect::Modal(_)) {
-        db.clear_interaction_modal_fields(&interaction.id).await?;
     }
 
     let presser = interaction.user_id.clone();

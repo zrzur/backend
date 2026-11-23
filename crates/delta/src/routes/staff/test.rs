@@ -2794,8 +2794,9 @@ async fn revoke_member_sessions_owner_target_needs_owner() {
 
     // a non-Owner can't end an Owner's sessions
     let path = format!("/staff/members/{}/revoke-sessions", second.user.id);
-    let (status, _) = send(&harness, &senior, &senior_token, Post, &path, body.clone()).await;
-    assert_eq!(status, Status::Forbidden);
+    let (status, answer) = send(&harness, &senior, &senior_token, Post, &path, body.clone()).await;
+    assert_eq!(status, Status::Forbidden, "{answer}");
+    assert_eq!(answer["type"], "MissingPlatformPermission");
     assert_eq!(get(&harness, &second, &s_token, "/staff/me").await.0, Status::Ok);
 
     // an Owner target needs a step-up, even from an Owner

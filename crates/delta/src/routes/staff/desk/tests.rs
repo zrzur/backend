@@ -623,6 +623,38 @@ async fn settings_off_not_found() {
     assert_eq!(error_type(&body), "NotFound");
 }
 
+/// A sign-in never ends a desk session that is newer than itself (two
+/// sign-ins at the same moment must not cancel each other), only older ones
+#[rocket::async_test]
+async fn sign_in_keeps_newer_desk_session() {
+    let s = stage().await;
+    let staff = s.person(vec![StaffRole::Support]).await;
+    let now = staff_now();
+    let make = |created_at: i64| StaffSession {
+        id: ulid::Ulid::new().to_string(),
+        token_hash: staff_token_hash(&new_staff_token()),
+        user_id: staff.user.id.clone(),
+        session_id: staff.session.id.clone(),
+        created_at,
+        last_seen_at: now,
+        expires_at: now + STAFF_SESSION_MAX_MS,
+        step_up_until: None,
+        revoked_at: None,
+        user_agent: None,
+        kind: StaffSessionKind::Desk,
+        bot_id: Some(s.bot.id.clone()),
+    };
+    let older = make(now - 60_000);
+    let newer = make(now + 60_000);
+    s.harness.db.insert_staff_session(&older).await.unwrap();
+    s.harness.db.insert_staff_session(&newer).await.unwrap();
+    s.sign_in(&staff, 0).await;
+    let ids: Vec<String> = s.desk_sessions(&staff).await.into_iter().map(|x| x.id).collect();
+    assert!(!ids.contains(&older.id), "{ids:?}");
+    assert!(ids.contains(&newer.id), "{ids:?}");
+    assert_eq!(ids.len(), 2, "{ids:?}");
+}
+
 /// A second sign-in ends the first desk session
 #[rocket::async_test]
 async fn second_sign_in_revokes_first() {
@@ -1014,6 +1046,22 @@ async fn code_never_reaches_the_bot() {
     let open = s.desk_sessions(&staff).await;
     assert_eq!(open.len(), 1);
     assert_eq!(open[0].session_id, staff.session.id);
+}
+
+/// A form refused for its kind (the sign-in form handed to step-up) loses
+/// its stored code too
+#[rocket::async_test]
+async fn refused_form_code_is_not_kept() {
+    let s = stage().await;
+    let staff = s.person(vec![StaffRole::Support]).await;
+    s.sign_in(&staff, -1).await;
+    let typed = code(0);
+    let pressed = s.press(&staff, Kind::Modal(LOGIN_MODAL, &typed)).await;
+    let stored = s.harness.db.fetch_interaction(&pressed.0).await.unwrap();
+    assert_eq!(stored.modal_fields.len(), 1);
+    assert_eq!(s.hand("step-up", &pressed).await.0, Status::BadRequest);
+    let stored = s.harness.db.fetch_interaction(&pressed.0).await.unwrap();
+    assert!(stored.modal_fields.is_empty());
 }
 
 /// A wrong code is forgotten too
