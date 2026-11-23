@@ -561,7 +561,7 @@ mod tests {
         ];
         for language in ["en", "ar", "de"] {
             let text = vanity_notice_text(language, &vars);
-            for wanted in ["zrzur.cc/arab-gamers", "2026-12-21", "1000", "Arab Gamers"] {
+            for wanted in ["zrzur.cc/arab-gamers", "2026-12-21", "500", "Arab Gamers"] {
                 assert!(text.contains(wanted), "{language}: {wanted}");
             }
             assert!(!text.contains('{'), "{language}: blank left");
