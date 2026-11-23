@@ -14,6 +14,7 @@
 //! [`StaffContext`]: super::StaffContext
 
 mod actor;
+mod overview;
 mod session;
 #[cfg(test)]
 mod tests;
@@ -36,7 +37,7 @@ pub const CODE_FIELD: &str = "code";
 
 /// The routes, mounted under `/staff` (so at `/staff/desk/...`)
 pub fn routes() -> Vec<Route> {
-    routes![session::open, session::close, session::step_up, session::me]
+    routes![session::open, session::close, session::step_up, session::me, overview::overview]
 }
 
 #[cfg(test)]

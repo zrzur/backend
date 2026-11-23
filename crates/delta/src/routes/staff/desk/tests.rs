@@ -709,6 +709,72 @@ async fn me_lists_only_role_permissions() {
     assert!(summaries.iter().all(|summary| summary.starts_with("desk")), "{summaries:?}");
 }
 
+/// `stats_core` serves both: the desk overview gives the console's numbers
+/// for the same person; without DashboardRead it is Denied as the presser,
+/// on the desk session; an area that is off does not exist
+#[rocket::async_test]
+async fn overview_is_the_consoles_stats() {
+    let s = stage().await;
+    let staff = s.person(vec![StaffRole::Owner]).await;
+    s.sign_in(&staff, -1).await;
+
+    let pressed = s.press(&staff, Kind::Command("stats")).await;
+    let (status, desk) = s.hand("overview", &pressed).await;
+    assert_eq!(status, Status::Ok, "{desk}");
+
+    let (status, body) = s.console_open(&staff, 0).await;
+    assert_eq!(status, Status::Ok, "{body}");
+    let token = body["token"].as_str().unwrap().to_string();
+    let response = s
+        .harness
+        .client
+        .get("/staff/stats")
+        .header(Header::new("x-session-token", staff.session.token.clone()))
+        .header(Header::new("x-staff-session", token))
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Ok);
+    let console: Value = response.into_json().await.unwrap();
+
+    let keys = |v: &Value| {
+        let mut k: Vec<String> = v.as_object().unwrap().keys().cloned().collect();
+        k.sort();
+        k
+    };
+    assert_eq!(keys(&desk), keys(&console));
+    // other tests run beside this one: the totals can only have grown
+    for field in ["users", "servers"] {
+        assert!(desk[field]["total"].as_u64().unwrap() >= 1, "{desk}");
+        assert!(console[field]["total"].as_u64().unwrap() >= desk[field]["total"].as_u64().unwrap());
+    }
+    assert!(desk["open_reports"].is_u64(), "{desk}");
+
+    // a grant with no permission: refused as the presser, on the desk session
+    let nobody = s.person(vec![]).await;
+    set_grant(&s.harness, &nobody.user.id, vec![], false).await;
+    s.sign_in(&nobody, -1).await;
+    let pressed = s.press(&nobody, Kind::Command("stats")).await;
+    let (status, body) = s.hand("overview", &pressed).await;
+    assert_eq!(status, Status::Forbidden, "{body}");
+    let session = s.desk_sessions(&nobody).await.remove(0);
+    let denied: Vec<_> = s
+        .record_sessions(&nobody)
+        .await
+        .into_iter()
+        .filter(|r| r.1 == "Denied")
+        .collect();
+    assert_eq!(denied.len(), 1, "{denied:?}");
+    assert_eq!(denied[0].2.as_deref(), Some(session.id.as_str()));
+
+    // area off: 404, the press is not even used up
+    let mut off = settings(&s.bot, vec![s.place.id().to_string()], false);
+    off.areas = vec![];
+    test_settings::register(off);
+    let pressed = s.press(&staff, Kind::Command("stats")).await;
+    let (status, _) = s.hand("overview", &pressed).await;
+    assert_eq!(status, Status::NotFound);
+}
+
 /// The members list shows each open session's kind and bot, never a hash
 #[rocket::async_test]
 async fn members_list_shows_session_kinds() {

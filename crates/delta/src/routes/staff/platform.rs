@@ -120,6 +120,12 @@ async fn window(db: &Database, what: StaffCounted, now: i64) -> Result<CountWind
 /// # Platform statistics
 #[get("/stats")]
 pub async fn stats(db: &State<Database>, staff: StaffContext) -> Result<Json<PlatformStats>> {
+    stats_core(db, &staff).await.map(Json)
+}
+
+/// The overview numbers, with the permission check, for any caller that
+/// holds a [`StaffContext`]: the console route and the desk's overview
+pub(crate) async fn stats_core(db: &Database, staff: &StaffContext) -> Result<PlatformStats> {
     staff.require(db, StaffPermission::DashboardRead).await?;
     let now = staff_now();
     let channels_by_type: Vec<KindCount> = db
@@ -128,7 +134,7 @@ pub async fn stats(db: &State<Database>, staff: StaffContext) -> Result<Json<Pla
         .into_iter()
         .map(|(kind, count)| KindCount { kind, count })
         .collect();
-    Ok(Json(PlatformStats {
+    Ok(PlatformStats {
         generated_at: now,
         users: window(db, StaffCounted::Users, now).await?,
         online_users: online_users().await,
@@ -142,7 +148,7 @@ pub async fn stats(db: &State<Database>, staff: StaffContext) -> Result<Json<Pla
         } else {
             None
         },
-    }))
+    })
 }
 
 #[derive(Serialize)]
