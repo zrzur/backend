@@ -1364,6 +1364,11 @@ pub struct Features {
     pub team_applications: Box<FeaturesTeamApplications>,
     #[serde(default)]
     pub saved_reminders: FeaturesSavedReminders,
+    /// Rich presence: what someone is doing right now ("Playing ..."),
+    /// set by the desktop app, local apps over its RPC, and Steam. Boxed
+    /// for the same reason as `team_applications`.
+    #[serde(default)]
+    pub rich_presence: Box<FeaturesRichPresence>,
     /// The owner's `/badge` command (off unless both ids are set)
     #[serde(default)]
     pub badge_command: FeaturesBadgeCommand,
@@ -1446,6 +1451,71 @@ pub struct FeaturesBadgeCommand {
 impl FeaturesBadgeCommand {
     pub fn enabled(&self) -> bool {
         !self.owner.trim().is_empty() && !self.bot.trim().is_empty()
+    }
+}
+
+/// Rich presence (`SetActivity` on the gateway, `activities` on users).
+/// Activities live only in Redis while the person is online.
+#[derive(Deserialize, Debug, Clone)]
+pub struct FeaturesRichPresence {
+    /// The whole feature. Off, `SetActivity` is refused with
+    /// `FeatureDisabled`, users carry no activities and Steam is not read.
+    /// Unset means off.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Activity changes one person may make in `window_seconds`
+    #[serde(default = "rich_presence_updates")]
+    pub updates_per_window: i64,
+    #[serde(default = "rich_presence_window")]
+    pub window_seconds: u64,
+    /// Read "now playing" from linked Steam accounts of people who are
+    /// online and chose to share it. Needs the Steam connection's key.
+    #[serde(default)]
+    pub steam_enabled: bool,
+    /// Seconds between two rounds of Steam reads, at the least
+    #[serde(default = "rich_presence_steam_interval")]
+    pub steam_interval_seconds: u64,
+    /// Steam Web API calls a day this feature may make (each call reads up
+    /// to 100 accounts). Steam allows 100,000 a day for one key, shared with
+    /// the Steam connection, so stay well below. Rounds stretch to keep
+    /// within it; when it is used up, Steam is not read until the next day.
+    #[serde(default = "rich_presence_steam_budget")]
+    pub steam_daily_calls: i64,
+    /// A change is sent at once only to servers with at most this many
+    /// members; in larger ones people see it when they open the profile or
+    /// the member list (friends and direct messages are told as usual)
+    #[serde(default = "rich_presence_broadcast_max")]
+    pub broadcast_max_members: usize,
+}
+
+fn rich_presence_broadcast_max() -> usize {
+    1000
+}
+
+fn rich_presence_updates() -> i64 {
+    5
+}
+fn rich_presence_window() -> u64 {
+    20
+}
+fn rich_presence_steam_interval() -> u64 {
+    60
+}
+fn rich_presence_steam_budget() -> i64 {
+    20_000
+}
+
+impl Default for FeaturesRichPresence {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            updates_per_window: rich_presence_updates(),
+            window_seconds: rich_presence_window(),
+            steam_enabled: false,
+            steam_interval_seconds: rich_presence_steam_interval(),
+            steam_daily_calls: rich_presence_steam_budget(),
+            broadcast_max_members: rich_presence_broadcast_max(),
+        }
     }
 }
 

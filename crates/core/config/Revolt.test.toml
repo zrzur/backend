@@ -23,6 +23,10 @@ plugins_enabled = true
 [features.community]
 effects_enabled = true
 
+[features.rich_presence]
+enabled = true
+steam_enabled = true
+
 # Steam on: the tests answer for Steam in-process (delta util/steam.rs).
 # Not a real key.
 [api.connections.steam]

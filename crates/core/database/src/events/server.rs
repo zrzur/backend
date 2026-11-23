@@ -29,4 +29,15 @@ pub enum ClientMessage {
     EndTyping { channel: String },
     Subscribe { server_id: String },
     Ping { data: Ping, responded: Option<()> },
+    /// Set what you are doing right now, or clear it with `activity: null`.
+    /// People only, from their own session; `source` is `Rpc` (an app over
+    /// the desktop's local RPC) or `Desktop` (a program the desktop saw
+    /// running). Refused with an `Error` event: `FeatureDisabled`,
+    /// `IsBot`, `RateLimited`, `FailedValidation` or `ProfileTextFiltered`.
+    /// Ignored while the person does not share their activity.
+    SetActivity {
+        source: revolt_models::v0::ActivitySource,
+        #[serde(default)]
+        activity: Option<revolt_models::v0::DataActivity>,
+    },
 }

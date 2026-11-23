@@ -1,4 +1,5 @@
 pub mod acker;
+pub mod activity;
 pub mod automod;
 pub mod age;
 pub mod arabic_fold;

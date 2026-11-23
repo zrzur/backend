@@ -344,8 +344,27 @@ pub async fn edit(
         partial.profile = Some(new_profile);
     }
 
+    let invisible = |user: &User| {
+        matches!(
+            user.status,
+            Some(revolt_database::UserStatus {
+                presence: Some(revolt_database::Presence::Invisible),
+                ..
+            })
+        )
+    };
+    let was_invisible = invisible(&user);
     user.update(db, partial, remove.into_iter().map(Into::into).collect())
     .await?;
+
+    // going invisible hides what you are doing from others, coming back
+    // shows it again (rich presence; nothing when there is none)
+    if was_invisible != invisible(&user)
+        && revolt_database::util::activity::enabled().await
+        && !revolt_database::util::activity::list(&user.id).await.is_empty()
+    {
+        revolt_database::util::activity::publish(db, &user).await;
+    }
 
     Ok(Json(user.into_self(false).await))
 }

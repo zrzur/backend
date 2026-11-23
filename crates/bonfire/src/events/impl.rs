@@ -224,6 +224,7 @@ impl Cache {
         if user.id != self.user_id && !self.has_intent(GatewayIntents::PRESENCE) {
             user.online = false;
             user.status = None;
+            user.activities.clear();
         }
     }
 
@@ -461,6 +462,19 @@ impl State {
         };
 
         // Copy data into local state cache.
+        self.cache.blocked_by = user
+            .relations
+            .iter()
+            .flatten()
+            .filter(|relation| {
+                matches!(
+                    relation.status,
+                    revolt_database::RelationshipStatus::BlockedOther
+                        | revolt_database::RelationshipStatus::Blocked
+                )
+            })
+            .map(|relation| relation.id.clone())
+            .collect();
         self.cache.users = users.iter().cloned().map(|x| (x.id.clone(), x)).collect();
         self.cache
             .users
@@ -488,6 +502,9 @@ impl State {
             known
         }))
         .await;
+
+        // what the people shown online are doing right now
+        revolt_database::util::activity::fill(&mut users, Some(&user)).await;
 
         // Make sure we see our own user correctly.
         users.push(user.into_self(true).await);
@@ -734,6 +751,9 @@ impl State {
                 id: self.cache.user_id.clone(),
                 data: v0::PartialUser {
                     online: Some(target),
+                    // offline: nothing they were doing stays on show
+                    activities: (!target && config.features.rich_presence.enabled)
+                        .then(Vec::new),
                     ..Default::default()
                 },
                 clear: vec![],
@@ -815,7 +835,17 @@ impl State {
         // are not in (see revolt_database::util::status_emoji)
         // (this connection's servers are the viewer's side; only the
         // owner's membership is looked up, cached)
-        if let EventV1::UserUpdate { id, data, .. } = event {
+        if let EventV1::UserUpdate { id, data, clear, .. } = event {
+            // what someone is doing is hidden from people they blocked, as
+            // their being online is
+            if data.activities.is_some() && id != &self.cache.user_id {
+                if self.cache.blocked_by.contains(id) {
+                    data.activities = None;
+                    if *data == v0::PartialUser::default() && clear.is_empty() {
+                        return false;
+                    }
+                }
+            }
             if id != &self.cache.user_id {
                 let servers = &self.cache.servers;
                 status_emoji::hide_for_member_of(
@@ -1124,6 +1154,14 @@ impl State {
                     if let Some(me) = self.cache.users.get_mut(&self.cache.user_id) {
                         set_cached_relationship(me, &user.id, &user.relationship);
                     }
+                    if matches!(
+                        user.relationship,
+                        v0::RelationshipStatus::BlockedOther | v0::RelationshipStatus::Blocked
+                    ) {
+                        self.cache.blocked_by.insert(user.id.clone());
+                    } else {
+                        self.cache.blocked_by.remove(&user.id);
+                    }
                     self.cache.users.insert(user.id.clone(), user.clone().into());
 
                     if self.cache.can_subscribe_to_user(&user.id) {
@@ -1316,6 +1354,7 @@ impl State {
                 if id != me && !cache.has_intent(GatewayIntents::PRESENCE) {
                     data.online = None;
                     data.status = None;
+                    data.activities = None;
                     clear.retain(|field| {
                         !matches!(field, v0::FieldsUser::StatusText | v0::FieldsUser::StatusPresence)
                     });

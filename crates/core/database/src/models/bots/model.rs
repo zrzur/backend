@@ -576,6 +576,7 @@ pub async fn hide_presence(db: &Database, reader: &User, users: &mut [revolt_mod
     for user in users.iter_mut().filter(|user| user.id != reader.id) {
         user.online = false;
         user.status = None;
+        user.activities.clear();
     }
 }
 

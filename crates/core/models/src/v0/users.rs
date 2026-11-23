@@ -4,7 +4,7 @@ use iso8601_timestamp::Timestamp;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
-use super::{File, ProfileConnection, ProfileGames};
+use super::{File, ProfileConnection, ProfileGames, UserActivity};
 
 #[cfg(feature = "validator")]
 use validator::Validate;
@@ -102,6 +102,14 @@ auto_derived_partial!(
         pub relationship: RelationshipStatus,
         /// Whether this user is currently online
         pub online: bool,
+        /// What they are doing right now, the main activity first. Only
+        /// while they are online and visible, share their activity and the
+        /// server has the feature on; never stored.
+        #[cfg_attr(
+            feature = "serde",
+            serde(skip_serializing_if = "Vec::is_empty", default)
+        )]
+        pub activities: Vec<UserActivity>,
     },
     "PartialUser"
 );
@@ -469,6 +477,23 @@ auto_derived!(
         /// Who can add this user to group chats
         #[cfg_attr(feature = "serde", serde(default))]
         pub group_invites: GroupInvitePrivacy,
+        /// Others may see what this user is doing right now. Unset means
+        /// off (for everyone, until the person turns it on). Answers always
+        /// carry the value in force.
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub share_activity: Option<bool>,
+        /// Only friends see this user's activity: they are under 18, have
+        /// not given their age, or their age could not be read. Set by the
+        /// server in answers; ignored when sent.
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "crate::if_false", default))]
+        pub activity_friends_only: bool,
+        /// The one-time activity intro card was answered (either button)
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "crate::if_false", default))]
+        pub activity_intro_seen: bool,
+        /// The linked Steam account's "now playing" counts as an activity
+        /// (only while `share_activity` is on). Off unless chosen.
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "crate::if_false", default))]
+        pub share_steam_activity: bool,
     }
 
     /// Change privacy settings; fields left out stay the same
@@ -480,6 +505,15 @@ auto_derived!(
         /// Who can add this user to group chats
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
         pub group_invites: Option<GroupInvitePrivacy>,
+        /// Share what you are doing right now
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub share_activity: Option<bool>,
+        /// Share your Steam "now playing"
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub share_steam_activity: Option<bool>,
+        /// The activity intro card was answered
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub activity_intro_seen: Option<bool>,
     }
 
     /// User flag reponse

@@ -235,6 +235,7 @@ pub async fn disable(
                 public_reason: public_reason.clone(),
                 internal_note: data.internal_note.clone(),
                 duration_days: None,
+                activity_value: None,
                 reporter_note: None,
                 version: case.version,
             },

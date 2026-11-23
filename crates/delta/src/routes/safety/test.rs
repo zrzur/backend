@@ -1539,3 +1539,114 @@ async fn the_public_form_takes_an_effect_and_flashing_is_urgent() {
     assert_eq!(case.target_owner_id.as_deref(), Some(creator.id.as_str()));
     assert_eq!(case.priority, revolt_models::v0::SafetyPriority::Urgent);
 }
+
+/// Rich presence (legal RP-07): a profile report keeps a copy of the
+/// activity the reporter saw; staff can take it off, block its app id or a
+/// picture everywhere, each with a statement of reasons, and reverse a block.
+#[rocket::async_test]
+async fn a_reported_activity_is_kept_and_staff_can_clear_and_block_it() {
+    use revolt_database::{util::activity, AccountAge};
+    use revolt_models::v0::{ActivitySource, ActivityType, DataActivity, UserActivity};
+
+    let harness = TestHarness::new().await;
+    let s = scene(&harness).await;
+    // an adult who shares (a stated age, so not friends only)
+    let mut account = harness.db.fetch_account(&s.author.id).await.unwrap();
+    let now = iso8601_timestamp::Timestamp::now_utc();
+    account.age = Some(AccountAge::declare((now.year() - 31, u8::from(now.month()))));
+    account.save(&harness.db).await.unwrap();
+    harness
+        .client
+        .patch("/users/@me/privacy")
+        .header(Header::new("x-session-token", s.author_session.token.clone()))
+        .header(ContentType::JSON)
+        .body(serde_json::json!({ "share_activity": true }).to_string())
+        .dispatch()
+        .await;
+    revolt_presence::create_session(&s.author.id, 0).await;
+    let shown = UserActivity {
+        source: ActivitySource::Rpc,
+        kind: ActivityType::Playing,
+        name: "Bad Game".into(),
+        details: Some("offensive details".into()),
+        state: None,
+        started_at: None,
+        ends_at: None,
+        application_id: Some("bad-app".into()),
+        large_image: Some("https://proxy.example/proxy?url=https%3A%2F%2Fimg.example%2Fbad.png".into()),
+        large_text: None,
+        small_image: None,
+        small_text: None,
+        buttons: vec![],
+    };
+    assert!(activity::store(&s.author.id, ActivitySource::Rpc, Some(shown.clone()), Some("s")).await);
+
+    let (status, body) = post(&harness, &s.reporter_session, "/safety/report",
+        serde_json::json!({ "content": { "type": "User", "id": s.author.id, "report_reason": "InappropriateProfile" } })).await;
+    assert_eq!(status, Status::NoContent, "{body}");
+    let case = harness.db.fetch_safety_cases_by_reporter(&s.reporter.id, 10).await.unwrap().remove(0);
+    let evidence = harness.db.fetch_safety_evidence(&case.id).await.unwrap();
+    let copy = evidence
+        .iter()
+        .find_map(|item| item.metadata.get("activity"))
+        .expect("the report keeps a copy of the activity");
+    for part in ["Bad Game", "offensive details", "app: bad-app", "bad.png"] {
+        assert!(copy.contains(part), "{part} in {copy}");
+    }
+
+    // the activity is gone before review, the copy stays
+    activity::forget_all(&s.author.id).await;
+    assert!(activity::list(&s.author.id).await.is_empty());
+
+    let (_, act_session, _) = {
+        let (a, session, actor) = harness.new_user().await;
+        role(&harness, &actor, vec![PlatformPermission::SafetyReview, PlatformPermission::SafetyAction]).await;
+        (a, session, actor)
+    };
+    activity::store(&s.author.id, ActivitySource::Rpc, Some(shown.clone()), Some("s")).await;
+    let case = harness.db.fetch_safety_case(&case.id).await.unwrap();
+    let (status, body) = post(&harness, &act_session, &format!("/safety/admin/reports/{}/actions", case.id),
+        serde_json::json!({ "kind": "BlockActivityApp", "public_reason": "Offensive activity",
+            "activity_value": "bad-app", "version": case.version, "statement": statement() })).await;
+    assert_eq!(status, Status::Ok, "{body}");
+    let action: SafetyAction = serde_json::from_str(&body).unwrap();
+    assert!(activity::list(&s.author.id).await.is_empty(), "the activity is taken off at once");
+
+    // the app id is stopped everywhere
+    let blocked = activity::check(
+        DataActivity { name: "Bad Game".into(), application_id: Some("bad-app".into()), ..Default::default() },
+        ActivitySource::Rpc,
+        iso8601_timestamp::Timestamp::now_utc(),
+        &activity::Hosts { autumn: String::new(), january: "https://proxy.example".into() },
+    )
+    .unwrap();
+    assert!(activity::check_blocks(&harness.db, &blocked).await.is_err());
+
+    // the person was told, with the statement of reasons, in their standing
+    let (_, body) = get(&harness, &s.author_session, "/safety/standing").await;
+    assert!(body.contains("Offensive activity"), "{body}");
+
+    // reversed: the block is lifted
+    let (status, body) = post(&harness, &act_session, &format!("/safety/admin/actions/{}/revoke", action.id),
+        serde_json::json!({ "reason": "Wrong app" })).await;
+    assert_eq!(status, Status::Ok, "{body}");
+    assert!(activity::check_blocks(&harness.db, &blocked).await.is_ok());
+
+    // a picture block, by the address as the app sent it
+    let case = harness.db.fetch_safety_case(&case.id).await.unwrap();
+    let (status, body) = post(&harness, &act_session, &format!("/safety/admin/reports/{}/actions", case.id),
+        serde_json::json!({ "kind": "BlockActivityPicture", "public_reason": "Offensive picture",
+            "activity_value": "https://img.example/bad.png", "version": case.version, "statement": statement() })).await;
+    assert_eq!(status, Status::Ok, "{body}");
+    let picture = UserActivity { application_id: None, ..shown.clone() };
+    assert!(activity::check_blocks(&harness.db, &picture).await.is_err(), "the proxied address matches");
+
+    // clearing alone needs no value
+    activity::store(&s.author.id, ActivitySource::Rpc, Some(UserActivity { large_image: None, ..picture }), Some("s")).await;
+    let case = harness.db.fetch_safety_case(&case.id).await.unwrap();
+    let (status, body) = post(&harness, &act_session, &format!("/safety/admin/reports/{}/actions", case.id),
+        serde_json::json!({ "kind": "ClearActivity", "public_reason": "Offensive activity",
+            "version": case.version, "statement": statement() })).await;
+    assert_eq!(status, Status::Ok, "{body}");
+    assert!(activity::list(&s.author.id).await.is_empty());
+}

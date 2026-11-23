@@ -408,6 +408,18 @@ pub async fn resolve(
                     );
                 }
             }
+            // what the profile showed the reporter as the person's activity
+            // (rich presence is never stored, so the report keeps its own
+            // copy; legal RP-07)
+            if revolt_database::util::activity::enabled().await {
+                let shown = user.clone().into(db, reporter).await.activities;
+                if !shown.is_empty() {
+                    snap.metadata.insert(
+                        "activity".into(),
+                        truncate(&revolt_database::util::activity::evidence_text(&shown), 2000),
+                    );
+                }
+            }
             resolved.evidence.push(snap);
             // a message the user sent, as context (only if the reporter can read it)
             if let Some(message_id) = &input.message_id {

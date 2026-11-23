@@ -31,6 +31,10 @@
     "title": "Wir haben eines deiner Designs entfernt",
     "body": "{statement}"
   },
+  "action.activity": {
+    "title": "Wir haben entfernt, was dein Profil als deine Aktivität zeigte",
+    "body": "{statement}"
+  },
   "action.revoked": {
     "title": "Wir haben eine Entscheidung zurückgenommen",
     "body": "Wir haben es erneut geprüft und zurückgenommen.\n{note}"
@@ -502,6 +506,10 @@
   "reporter.what.remove_message": {
     "title": "",
     "body": "die Nachricht entfernt"
+  },
+  "reporter.what.activity": {
+    "title": "",
+    "body": "die Aktivität vom Profil entfernt"
   },
   "reporter.what.suspend": {
     "title": "",

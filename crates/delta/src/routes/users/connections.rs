@@ -444,5 +444,17 @@ pub async fn steam_refresh(
 pub async fn steam_disconnect(db: &State<Database>, user: User) -> Result<EmptyResponse> {
     no_bots(&user)?;
     db.delete_linked_account(&user.id, SERVICE).await?;
+    // nothing read from Steam stays on show (legal L-33): the Steam
+    // activity goes at once, and with no link the reader skips them
+    if revolt_database::util::activity::store(
+        &user.id,
+        revolt_models::v0::ActivitySource::Steam,
+        None,
+        None,
+    )
+    .await
+    {
+        revolt_database::util::activity::publish(db, &user).await;
+    }
     Ok(EmptyResponse)
 }
