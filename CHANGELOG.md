@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 26.3.0-beta.3 (2026-11-23)
 
 ### Gateway: a relationship change no longer turns a session into the other person (security, 2026-11-22)
 
