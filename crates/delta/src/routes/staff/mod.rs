@@ -267,7 +267,10 @@ const CODE_FAILURE_WINDOW_MS: i64 = 15 * 60 * 1000;
 /// Whether this account sent too many wrong staff codes lately. The
 /// request limit counts per address only, so someone holding a stolen
 /// session could spread guesses over many addresses; this counts per
-/// account, from the denied records already in the audit log.
+/// account, from the denied records already in the audit log. Only the
+/// sign-in records (`staff.session.*`, console and desk alike) are read, so
+/// other records (refused requests, missing step-ups) can never push wrong
+/// codes out of the window.
 async fn too_many_code_failures(db: &Database, user_id: &str) -> Result<bool> {
     let since = staff_now() - CODE_FAILURE_WINDOW_MS;
     let recent = db
@@ -275,7 +278,7 @@ async fn too_many_code_failures(db: &Database, user_id: &str) -> Result<bool> {
             before_seq: None,
             actor_id: Some(user_id.to_string()),
             target_id: None,
-            action_prefix: None,
+            action_prefix: Some("staff.session.".to_string()),
             limit: 50,
         })
         .await?;

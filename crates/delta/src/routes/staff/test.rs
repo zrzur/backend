@@ -2591,6 +2591,39 @@ async fn wrong_staff_codes_lock_the_account() {
     let _ = sign_in(&harness, &other, 0).await;
 }
 
+/// Other records after the wrong codes never push them out of view
+#[rocket::async_test]
+async fn step_up_missing_records_do_not_hide_wrong_codes() {
+    let harness = TestHarness::new().await;
+    let m = member(&harness, vec![StaffRole::SeniorSupport]).await;
+    let record = |action: &str| revolt_database::AuditRecord {
+        actor_id: m.user.id.clone(),
+        action: action.to_string(),
+        ..Default::default()
+    };
+    for _ in 0..5 {
+        revolt_database::record_platform_audit(
+            &harness.db,
+            record("staff.session.step_up"),
+            revolt_database::AuditOutcome::Denied,
+        )
+        .await
+        .unwrap();
+    }
+    for _ in 0..60 {
+        revolt_database::record_platform_audit(
+            &harness.db,
+            record("staff.step_up.missing"),
+            revolt_database::AuditOutcome::Denied,
+        )
+        .await
+        .unwrap();
+    }
+    let (status, body) = open(&harness, &m.session, &code(0)).await;
+    assert_ne!(status, Status::Ok, "{body}");
+    assert_eq!(body["type"], "LockedOut", "{body}");
+}
+
 /// Four recent failures still let the right code through
 #[rocket::async_test]
 async fn a_few_wrong_staff_codes_do_not_lock() {
