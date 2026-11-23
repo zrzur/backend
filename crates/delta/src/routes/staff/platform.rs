@@ -17,6 +17,7 @@ use rocket::{serde::json::Json, State};
 use serde::Serialize;
 use ulid::Ulid;
 
+use super::audited::audited;
 use super::{reason, DataReason, StaffContext};
 
 static STARTED_AT: OnceLock<i64> = OnceLock::new();
@@ -371,10 +372,13 @@ pub async fn revoke_user_sessions(
     let count = db.fetch_sessions(&user.id).await.map(|s| s.len()).unwrap_or(0);
     // fail closed: the record comes first
     record.summary = Some(format!("{count} sessions"));
-    record_platform_audit(db, record, AuditOutcome::Success).await?;
-    let account = db.fetch_account(&user.id).await?;
-    account.delete_all_sessions(db, None).await?;
-    db.revoke_staff_sessions_for_user(&user.id, staff.now).await?;
+    audited(db, record, async {
+        let account = db.fetch_account(&user.id).await?;
+        account.delete_all_sessions(db, None).await?;
+        db.revoke_staff_sessions_for_user(&user.id, staff.now).await?;
+        Ok(())
+    })
+    .await?;
     crate::util::official::sessions_ended(db, &user.id, &reason).await;
     Ok(Json(count))
 }

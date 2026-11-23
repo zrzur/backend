@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 use validator::Validate;
 
+use super::audited::audited;
 use super::{reason, StaffContext};
 use crate::routes::users::change_requests::{as_edit, status_of, view};
 
@@ -165,8 +166,7 @@ pub async fn create(
     record.target_id = Some(subject.id.clone());
     record.reason = Some(why);
     record.summary = Some(summary(&request.changes));
-    record_platform_audit(db, record, AuditOutcome::Success).await?;
-    db.insert_account_change_request(&request).await?;
+    audited(db, record, db.insert_account_change_request(&request)).await?;
     crate::util::official::change_request(db, &subject.id).await;
     Ok(Json(staff_view(&request, staff.now)))
 }
@@ -203,13 +203,10 @@ pub async fn cancel(db: &State<Database>, staff: StaffContext, id: &str) -> Resu
     record.target_kind = Some("user".to_string());
     record.target_id = Some(request.user_id.clone());
     record.summary = Some(request.id.clone());
-    record_platform_audit(db, record, AuditOutcome::Success).await?;
     request.status = AccountChangeStatus::Cancelled;
     request.decided_at = Some(staff.now);
-    if !db
-        .decide_account_change_request(&request, AccountChangeStatus::Pending)
-        .await?
-    {
+    let decided = audited(db, record, db.decide_account_change_request(&request, AccountChangeStatus::Pending)).await?;
+    if !decided {
         return Err(create_error!(InvalidOperation));
     }
     Ok(Json(staff_view(&request, staff.now)))
@@ -323,8 +320,7 @@ pub async fn security(
     record.reason = Some(why.clone());
     // the new address is personal data: the log says what kind of change only
     record.summary = Some(data.kind.clone());
-    record_platform_audit(db, record.clone(), AuditOutcome::Success).await?;
-    db.insert_account_change_request(&request).await?;
+    audited(db, record.clone(), db.insert_account_change_request(&request)).await?;
 
     let template = email_templates().await.account_change;
     let sent = send_email(

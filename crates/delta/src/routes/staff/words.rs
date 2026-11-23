@@ -4,7 +4,7 @@
 //! - `platform.reports.resolve`: add or remove entries; each change needs a
 //!   reason and goes to the platform audit log
 
-use revolt_database::{record_platform_audit, AuditOutcome, Database, StaffPermission};
+use revolt_database::{Database, StaffPermission};
 use revolt_models::v0::{DataPlatformWord, PlatformWord};
 use revolt_result::{create_error, Result};
 use rocket::{serde::json::Json, State};
@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 use validator::Validate;
 
+use super::audited::audited;
 use super::{reason, DataReason, StaffContext};
 
 /// # The word list
@@ -77,8 +78,7 @@ pub async fn add(
     record.target_id = Some(word.id.clone());
     record.reason = Some(reason(&data.reason)?);
     record.summary = Some(word.pattern.clone());
-    record_platform_audit(db, record, AuditOutcome::Success).await?;
-    db.insert_platform_word(&word).await?;
+    audited(db, record, db.insert_platform_word(&word)).await?;
     Ok(Json(word))
 }
 
@@ -95,8 +95,7 @@ pub async fn remove(
     record.target_kind = Some("platform_word".to_string());
     record.target_id = Some(id.to_string());
     record.reason = Some(reason(&data.reason)?);
-    record_platform_audit(db, record, AuditOutcome::Success).await?;
-    db.delete_platform_word(id).await?;
+    audited(db, record, db.delete_platform_word(id)).await?;
     Ok(rocket_empty::EmptyResponse)
 }
 

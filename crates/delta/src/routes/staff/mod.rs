@@ -27,6 +27,7 @@ mod servers;
 mod support;
 mod team;
 mod words;
+mod audited;
 #[cfg(test)]
 mod test;
 

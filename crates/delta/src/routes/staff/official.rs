@@ -6,7 +6,7 @@
 //! writes the mark: no public route, not the raw edit of a user.
 
 use revolt_database::{
-    is_seeded_official, passes_for_official, record_platform_audit, AuditOutcome, Database,
+    is_seeded_official, passes_for_official, record_platform_audit, AuditOutcome, AuditRecord, Database,
     NameRecord, NameScan, OfficialMarkRequest, OfficialMarkStatus, PartialUser, StaffPermission,
     User, OFFICIAL_MARK_REQUEST_TTL_MS,
 };
@@ -15,7 +15,42 @@ use rocket::{serde::json::Json, State};
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
+use super::audited::audited;
 use super::{reason, StaffContext};
+
+/// Move a request out of Pending, with the audit record written first.
+///
+/// The record comes before the status changes. `follow_up` is the change the
+/// decision stands for; if it fails, the request is put back to Pending so
+/// it can be decided again.
+async fn decide_audited<T>(
+    db: &Database,
+    record: AuditRecord,
+    decided: OfficialMarkRequest,
+    follow_up: impl std::future::Future<Output = Result<T>>,
+) -> Result<T> {
+    let mut open = decided.clone();
+    open.status = OfficialMarkStatus::Pending;
+    open.decided_by = None;
+    open.decided_at = None;
+    audited(db, record, async {
+        if !db
+            .decide_official_mark_request(&decided, OfficialMarkStatus::Pending)
+            .await?
+        {
+            return Err(create_error!(InvalidOperation));
+        }
+        match follow_up.await {
+            Ok(value) => Ok(value),
+            Err(error) => {
+                // best effort: the Failed record shows what happened
+                let _ = db.decide_official_mark_request(&open, decided.status).await;
+                Err(error)
+            }
+        }
+    })
+    .await
+}
 
 /// Names read per request of the list of names that break the rule
 const NAME_PAGE: i64 = 1000;
@@ -162,8 +197,7 @@ pub async fn propose(
     record.target_id = Some(subject.id.clone());
     record.reason = Some(why);
     record.summary = Some(format!("{} {}", if data.grant { "give" } else { "remove" }, request.id));
-    record_platform_audit(db, record, AuditOutcome::Success).await?;
-    db.insert_official_mark_request(&request).await?;
+    audited(db, record, db.insert_official_mark_request(&request)).await?;
     Ok(Json(view(db, &request, staff.now).await))
 }
 
@@ -202,23 +236,21 @@ pub async fn confirm(
     request.status = OfficialMarkStatus::Confirmed;
     request.decided_by = Some(staff.user.id.clone());
     request.decided_at = Some(staff.now);
-    if !db
-        .decide_official_mark_request(&request, OfficialMarkStatus::Pending)
-        .await?
-    {
-        return Err(create_error!(InvalidOperation));
-    }
-    record_platform_audit(db, record, AuditOutcome::Success).await?;
-    subject
-        .update(
+    let official = request.grant;
+    decide_audited(
+        db,
+        record,
+        request.clone(),
+        subject.update(
             db,
             PartialUser {
-                official: Some(request.grant),
+                official: Some(official),
                 ..Default::default()
             },
             vec![],
-        )
-        .await?;
+        ),
+    )
+    .await?;
     Ok(Json(view(db, &request, staff.now).await))
 }
 
@@ -245,19 +277,13 @@ pub async fn refuse(
     request.status = if own { OfficialMarkStatus::Withdrawn } else { OfficialMarkStatus::Refused };
     request.decided_by = Some(staff.user.id.clone());
     request.decided_at = Some(staff.now);
-    if !db
-        .decide_official_mark_request(&request, OfficialMarkStatus::Pending)
-        .await?
-    {
-        return Err(create_error!(InvalidOperation));
-    }
     let action = if own { "staff.official.withdraw" } else { "staff.official.refuse" };
     let mut record = staff.record(action, Some(StaffPermission::OfficialManage));
     record.target_kind = Some("user".to_string());
     record.target_id = Some(request.user_id.clone());
     record.reason = Some(why);
     record.summary = Some(request.id.clone());
-    record_platform_audit(db, record, AuditOutcome::Success).await?;
+    decide_audited(db, record, request.clone(), async { Ok(()) }).await?;
     Ok(Json(view(db, &request, staff.now).await))
 }
 
@@ -296,4 +322,81 @@ pub async fn name_conflicts(
             .collect(),
         next_offset: (read > 0).then_some(offset + NAME_PAGE as u64),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::util::test::TestHarness;
+    use revolt_database::PlatformAuditQuery;
+
+    fn request(id: &str) -> OfficialMarkRequest {
+        OfficialMarkRequest {
+            id: id.to_string(),
+            user_id: "subject".to_string(),
+            grant: true,
+            requested_by: "proposer".to_string(),
+            reason: "test".to_string(),
+            status: OfficialMarkStatus::Pending,
+            created_at: 0,
+            expires_at: i64::MAX,
+            decided_by: None,
+            decided_at: None,
+        }
+    }
+
+    fn record() -> AuditRecord {
+        AuditRecord {
+            actor_id: "confirmer".to_string(),
+            action: "staff.official.confirm".to_string(),
+            permission: None,
+            target_kind: None,
+            target_id: None,
+            reason: None,
+            staff_session_id: None,
+            summary: None,
+        }
+    }
+
+    async fn status(harness: &TestHarness, id: &str) -> OfficialMarkStatus {
+        harness.db.fetch_official_mark_request(id).await.unwrap().status
+    }
+
+    /// The record is written before the status changes, and a change that
+    /// fails afterwards puts the request back to Pending (open again).
+    #[rocket::async_test]
+    async fn official_confirm_audit_failure_leaves_request_open() {
+        let harness = TestHarness::new().await;
+        let open = request("req-failing");
+        harness.db.insert_official_mark_request(&open).await.unwrap();
+        let mut decided = open.clone();
+        decided.status = OfficialMarkStatus::Confirmed;
+        decided.decided_by = Some("confirmer".to_string());
+        decided.decided_at = Some(1);
+
+        let result: Result<()> = decide_audited(&harness.db, record(), decided.clone(), async {
+            Err(create_error!(NotFound))
+        })
+        .await;
+        assert!(result.is_err());
+        assert!(matches!(status(&harness, "req-failing").await, OfficialMarkStatus::Pending));
+
+        let entries = harness
+            .db
+            .fetch_platform_audit(PlatformAuditQuery { limit: 100, ..Default::default() })
+            .await
+            .unwrap();
+        let outcomes: Vec<String> = entries
+            .iter()
+            .filter(|e| e.action == "staff.official.confirm")
+            .map(|e| format!("{:?}", e.outcome))
+            .collect();
+        assert_eq!(outcomes.len(), 2);
+        assert!(outcomes.contains(&"Success".to_string()) && outcomes.contains(&"Failed".to_string()));
+
+        // when the change works, the request stays decided
+        let ok: Result<()> = decide_audited(&harness.db, record(), decided, async { Ok(()) }).await;
+        assert!(ok.is_ok());
+        assert!(matches!(status(&harness, "req-failing").await, OfficialMarkStatus::Confirmed));
+    }
 }
