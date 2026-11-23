@@ -3028,8 +3028,8 @@
     },
     {
       "path": "crates/core/database/src/models/users/model.rs",
-      "sha256": "85fce1b5b322bfb5e50395860d2a095860012dff29f90c0ec2dac5f29d29328b",
-      "bytes": 78267,
+      "sha256": "6ccdc74f8218e56e10262359a021a83f3a0c2c01861c5c2b3d9f509d4588bf3f",
+      "bytes": 78202,
       "category": "product-source-or-build-manifest"
     },
     {

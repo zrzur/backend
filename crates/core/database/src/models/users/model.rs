@@ -1150,7 +1150,7 @@ impl User {
             Ok(true) => return Some(false),
             Ok(false) => {}
             Err(error) => {
-                log::error!("appearance fan-out of {user_id}: rate limit lookup failed: {error:?}");
+                log::error!("appearance fan-out: rate limit lookup failed: {error:?}");
                 return None;
             }
         }
@@ -1161,7 +1161,7 @@ impl User {
         )
         .await
         {
-            log::error!("appearance fan-out of {user_id}: could not count it: {error:?}");
+            log::error!("appearance fan-out: could not count it: {error:?}");
         }
         Some(true)
     }
@@ -1178,7 +1178,7 @@ impl User {
         {
             return;
         }
-        log::debug!("appearance of {user_id}: over the limit, sent when the window opens");
+        log::debug!("appearance: over the limit, sent when the window opens");
         let db = db.clone();
         let id = user_id.to_string();
         tokio::spawn(async move {
@@ -1211,14 +1211,14 @@ impl User {
         let user = match db.fetch_user(user_id).await {
             Ok(user) => user,
             Err(error) => {
-                log::error!("appearance fan-out of {user_id}: user lookup failed: {error:?}");
+                log::error!("appearance fan-out: user lookup failed: {error:?}");
                 return false;
             }
         };
         let members = match db.fetch_all_memberships(user_id).await {
             Ok(members) => members,
             Err(error) => {
-                log::error!("appearance fan-out of {user_id}: membership lookup failed: {error:?}");
+                log::error!("appearance fan-out: membership lookup failed: {error:?}");
                 return false;
             }
         };
