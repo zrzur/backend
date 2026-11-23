@@ -8,7 +8,8 @@ use super::{CommandApplication, File};
 pub mod oauth_scopes {
     /// Read the user's id, name and avatar
     pub const IDENTIFY: &str = "identify";
-    /// List the servers the user is in (id, name, icon)
+    /// List the servers the user is in (id, name, icon), and per server
+    /// whether they own it, can manage it and what they hold there
     pub const SERVERS_READ: &str = "servers.read";
     /// Let the app's commands be used in the server it is installed in
     pub const APPLICATIONS_COMMANDS: &str = "applications.commands";
@@ -53,13 +54,26 @@ auto_derived!(
         pub client_secret: String,
     }
 
-    /// A server the user can install the app into
+    /// A server the user is a member of. Being in the list does not mean the
+    /// user may manage it: check `owner` or `can_manage`, or ask for
+    /// `?manageable=true`.
     pub struct OAuthServer {
         #[cfg_attr(feature = "serde", serde(rename = "_id"))]
         pub id: String,
         pub name: String,
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
         pub icon: Option<File>,
+        /// Whether the user owns the server
+        #[cfg_attr(feature = "serde", serde(default))]
+        pub owner: bool,
+        /// Whether the user holds Manage Server there (the owner always does)
+        #[cfg_attr(feature = "serde", serde(default))]
+        pub can_manage: bool,
+        /// The user's server-wide permissions as a decimal string (exact for
+        /// every bit). Zrzur's bit layout, not Discord's: Manage Server is
+        /// `1 << 1`, Administrator `1 << 46`. Channel overrides are not included.
+        #[cfg_attr(feature = "serde", serde(default))]
+        pub permissions: String,
     }
 
     /// What the consent page shows
@@ -73,7 +87,7 @@ auto_derived!(
         /// Bot permissions requested with `bot.install`
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
         pub permissions: Option<i64>,
-        /// Servers the user manages, for `bot.install`
+        /// Servers the user manages and the bot is not in, for `bot.install`
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Vec::is_empty", default))]
         pub servers: Vec<OAuthServer>,
     }

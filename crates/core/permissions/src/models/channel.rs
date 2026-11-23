@@ -162,6 +162,28 @@ pub static THREAD_PERMISSIONS: Lazy<u64> = Lazy::new(|| {
         + ChannelPermission::CreateForumPosts
 });
 
+/// Permissions that only mean something for the whole server. A channel
+/// override can't give or take them; where a channel's permissions are shown
+/// to someone else (a bot's interactions), they come from the server.
+pub static SERVER_ONLY_PERMISSIONS: Lazy<u64> = Lazy::new(|| {
+    ChannelPermission::ManageServer
+        + ChannelPermission::ManageRole
+        + ChannelPermission::ManageCustomisation
+        + ChannelPermission::KickMembers
+        + ChannelPermission::BanMembers
+        + ChannelPermission::TimeoutMembers
+        + ChannelPermission::AssignRoles
+        + ChannelPermission::ChangeNickname
+        + ChannelPermission::ManageNicknames
+        + ChannelPermission::ChangeAvatar
+        + ChannelPermission::RemoveAvatars
+        + ChannelPermission::ViewAuditLogs
+        + ChannelPermission::ManageJoinRequests
+        + ChannelPermission::Administrator
+        + ChannelPermission::ManageSoundboard
+        + ChannelPermission::ManageEvents
+});
+
 pub static ALLOW_IN_TIMEOUT: Lazy<u64> =
     Lazy::new(|| ChannelPermission::ViewChannel + ChannelPermission::ReadMessageHistory);
 
