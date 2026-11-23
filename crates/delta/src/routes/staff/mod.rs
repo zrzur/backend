@@ -666,7 +666,8 @@ async fn disable_member(
 /// # End a staff member's sessions
 ///
 /// For a lost device or a suspected compromise. Protective, so no step-up;
-/// works on anyone, including yourself.
+/// works on anyone, including yourself. An Owner's sessions are ended only
+/// by an Owner, with a step-up.
 #[post("/members/<id>/revoke-sessions", data = "<data>")]
 async fn revoke_member_sessions(
     db: &State<Database>,
@@ -674,11 +675,24 @@ async fn revoke_member_sessions(
     id: &str,
     data: Json<DataReason>,
 ) -> Result<Json<usize>> {
-    staff.require(db, StaffPermission::StaffManage).await?;
+    staff.require_protective(db, StaffPermission::StaffManage).await?;
     let mut record = staff.record("staff.sessions.revoke", Some(StaffPermission::StaffManage));
     record.target_kind = Some("user".to_string());
     record.target_id = Some(id.to_string());
     record.reason = Some(reason(&data.reason)?);
+    let target_is_owner = db
+        .fetch_staff_grant(id)
+        .await?
+        .is_some_and(|g| g.is_owner(staff.now));
+    if target_is_owner {
+        if !staff.grant.is_owner(staff.now) {
+            record.summary = Some("owner target".to_string());
+            record_platform_audit(db, record, AuditOutcome::Denied).await?;
+            return Err(create_error!(NotPrivileged));
+        }
+        // not "stop the harm now" on an Owner: the full check
+        staff.require(db, StaffPermission::StaffManage).await?;
+    }
     record_platform_audit(db, record, AuditOutcome::Success).await?;
     Ok(Json(db.revoke_staff_sessions_for_user(id, staff.now).await?))
 }

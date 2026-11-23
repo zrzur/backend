@@ -126,8 +126,24 @@ impl StaffContext {
     }
 
     /// Refuse (and record the attempt) unless the staff member holds
-    /// `permission`
+    /// `permission`. Permissions on the step-up list
+    /// (`StaffPermission::needs_step_up`) also need a fresh TOTP; a missing
+    /// one is recorded as `staff.step_up.missing` and answered `NotElevated`.
     pub async fn require(&self, db: &Database, permission: StaffPermission) -> Result<()> {
+        self.require_protective(db, permission).await?;
+        if permission.needs_step_up() && !self.stepped_up() {
+            let mut record = self.record("staff.step_up.missing", Some(permission));
+            record.summary = Some(self.path.clone());
+            record_platform_audit(db, record, AuditOutcome::Denied).await?;
+            return Err(create_error!(NotElevated));
+        }
+        Ok(())
+    }
+
+    /// The permission check alone, without a step-up, for "stop the harm
+    /// now" actions. Only `revoke_member_sessions` uses it, and only on
+    /// targets that are not Owners.
+    pub async fn require_protective(&self, db: &Database, permission: StaffPermission) -> Result<()> {
         if self.has(permission) {
             return Ok(());
         }
@@ -139,13 +155,19 @@ impl StaffContext {
         }))
     }
 
-    /// `require`, plus a fresh TOTP (step-up) within the last few minutes
+    /// `require`, plus a fresh TOTP (step-up) within the last few minutes,
+    /// also for a permission that is not on the step-up list. (For a listed
+    /// permission `require` already checked and recorded it.)
     pub async fn require_step_up(&self, db: &Database, permission: StaffPermission) -> Result<()> {
         self.require(db, permission).await?;
-        if self.session.step_up_until.is_some_and(|until| self.now < until) {
+        if self.stepped_up() {
             Ok(())
         } else {
             Err(create_error!(NotElevated))
         }
+    }
+
+    fn stepped_up(&self) -> bool {
+        self.session.step_up_until.is_some_and(|until| self.now < until)
     }
 }
