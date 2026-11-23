@@ -15,7 +15,7 @@ use rocket::{serde::json::Json, State};
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
-use super::audited::audited;
+use super::audited::{audited, audited_noting};
 use super::{reason, StaffContext};
 
 /// Move a request out of Pending, with the audit record written first.
@@ -33,19 +33,24 @@ async fn decide_audited<T>(
     open.status = OfficialMarkStatus::Pending;
     open.decided_by = None;
     open.decided_at = None;
-    audited(db, record, async {
+    audited_noting(db, record, async {
         if !db
             .decide_official_mark_request(&decided, OfficialMarkStatus::Pending)
-            .await?
+            .await
+            .map_err(|error| (error, None))?
         {
-            return Err(create_error!(InvalidOperation));
+            return Err((create_error!(InvalidOperation), None));
         }
         match follow_up.await {
             Ok(value) => Ok(value),
             Err(error) => {
-                // best effort: the Failed record shows what happened
-                let _ = db.decide_official_mark_request(&open, decided.status).await;
-                Err(error)
+                let back = db.decide_official_mark_request(&open, decided.status).await;
+                if matches!(back, Ok(true)) {
+                    Err((error, None))
+                } else {
+                    log::error!("official mark request {} could not be put back", decided.id);
+                    Err((error, Some("revert failed")))
+                }
             }
         }
     })

@@ -205,10 +205,17 @@ pub async fn cancel(db: &State<Database>, staff: StaffContext, id: &str) -> Resu
     record.summary = Some(request.id.clone());
     request.status = AccountChangeStatus::Cancelled;
     request.decided_at = Some(staff.now);
-    let decided = audited(db, record, db.decide_account_change_request(&request, AccountChangeStatus::Pending)).await?;
-    if !decided {
-        return Err(create_error!(InvalidOperation));
-    }
+    audited(db, record, async {
+        // someone else decided first: not a success
+        if !db
+            .decide_account_change_request(&request, AccountChangeStatus::Pending)
+            .await?
+        {
+            return Err(create_error!(InvalidOperation));
+        }
+        Ok(())
+    })
+    .await?;
     Ok(Json(staff_view(&request, staff.now)))
 }
 

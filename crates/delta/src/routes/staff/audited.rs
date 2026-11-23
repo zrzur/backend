@@ -19,12 +19,26 @@ pub(crate) async fn audited<T, F: Future<Output = Result<T>>>(
     record: AuditRecord,
     change: F,
 ) -> Result<T> {
+    audited_noting(db, record, async { change.await.map_err(|error| (error, None)) }).await
+}
+
+/// Like [`audited`], but the change may add a short note (a fixed text, no
+/// secrets) that goes after the error type in the Failed record, e.g.
+/// "revert failed".
+pub(crate) async fn audited_noting<T, F>(db: &Database, record: AuditRecord, change: F) -> Result<T>
+where
+    F: Future<Output = std::result::Result<T, (revolt_result::Error, Option<&'static str>)>>,
+{
     record_platform_audit(db, record.clone(), AuditOutcome::Success).await?;
     match change.await {
         Ok(value) => Ok(value),
-        Err(error) => {
+        Err((error, note)) => {
             let mut failed = record;
-            failed.summary = Some(failed_summary(&error));
+            let mut summary = failed_summary(&error);
+            if let Some(note) = note {
+                summary = format!("{summary}; {note}");
+            }
+            failed.summary = Some(summary.chars().take(FAILED_SUMMARY_MAX).collect());
             // best effort: the first record already shows the attempt
             let _ = record_platform_audit(db, failed, AuditOutcome::Failed).await;
             Err(error)
@@ -33,8 +47,10 @@ pub(crate) async fn audited<T, F: Future<Output = Result<T>>>(
 }
 
 fn failed_summary(error: &revolt_result::Error) -> String {
-    format!("{:?}", error.error_type)
-        .chars()
+    // the variant name only: the payload may hold user text
+    let text = format!("{:?}", error.error_type);
+    text.chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
         .take(FAILED_SUMMARY_MAX)
         .collect()
 }
@@ -102,7 +118,7 @@ mod tests {
     fn failed_summary_is_the_error_type_and_short() {
         let summary = failed_summary(&create_error!(NotFound));
         assert_eq!(summary, "NotFound");
-        let long = create_error!(FailedValidation { error: "x".repeat(500) });
-        assert_eq!(failed_summary(&long).chars().count(), 200);
+        let long = create_error!(FailedValidation { error: "secret text".repeat(50) });
+        assert_eq!(failed_summary(&long), "FailedValidation");
     }
 }

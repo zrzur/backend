@@ -22,7 +22,7 @@ use revolt_result::{create_error, Result};
 use rocket::{serde::json::Json, State};
 use serde::{Deserialize, Serialize};
 
-use super::audited::audited;
+use super::audited::{audited, audited_noting};
 use super::{reason, StaffContext};
 use crate::routes::{
     bots::verification::{status_name, VERIFIED},
@@ -388,19 +388,24 @@ pub async fn decide_verification(
     reverted.decided_at = None;
     reverted.decided_by = None;
     reverted.decision_note = None;
-    audited(db, record, async {
+    audited_noting(db, record, async {
         // two reviewers at once: only the first decision counts
         if !db
             .decide_bot_verification(&request, BotVerificationStatus::Pending)
-            .await?
+            .await
+            .map_err(|error| (error, None))?
         {
-            return Err(create_error!(InvalidOperation));
+            return Err((create_error!(InvalidOperation), None));
         }
         if approve {
             if let Err(error) = set_verified(db, &bot.id, true, intents).await {
                 // put the request back so it can be decided again
-                let _ = db.decide_bot_verification(&reverted, request.status).await;
-                return Err(error);
+                let back = db.decide_bot_verification(&reverted, request.status).await;
+                if matches!(back, Ok(true)) {
+                    return Err((error, None));
+                }
+                log::error!("bot verification {} could not be put back", request.id);
+                return Err((error, Some("revert failed")));
             }
         }
         Ok(())
