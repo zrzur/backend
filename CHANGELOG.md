@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Bots in direct messages (2026-11-22, owner's request)
+
+- `features.bot_dms_enabled` (off by default; `GET /` says `features.bot_dms`). On, anyone may open a direct message with a **public** bot (not suspended or disabled) and write to it without a shared server. Bots that start a conversation keep the old rule: the person's privacy setting and a server or group in common.
+- New interaction type `Start`: `POST /interactions` with `type: "Start"`, `application_id` and an optional `payload` (1-64 of `A-Z a-z 0-9 _ -`, the `?start=` of a bot link), only in the caller's DM with that bot. The bot gets `InteractionCreate` with `start: { payload }` and answers it like any interaction; its answer carries `interaction.type = "Start"`. Off: `FeatureDisabled { feature: "bot_dms" }`.
+- Pressing Start lets the bot write to the person from then on, as if they had written first (`started_by` on the DM channel, stored only; no migration). Blocking the bot clears it, so after an unblock it waits for Start again.
+- A bot the person blocked gets no interaction from them in their DM (`Blocked`), components included; before, a button on its old message still reached it.
+
 ## 26.3.0-beta.2 (2026-11-21)
 
 ### The owner's /badge command (2026-11-21)

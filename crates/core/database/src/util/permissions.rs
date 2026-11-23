@@ -96,6 +96,18 @@ impl PermissionQuery for DatabasePermissionQuery<'_> {
         }
     }
 
+    /// Whether the currently selected user is a public bot anyone may write to
+    async fn user_is_public_bot(&mut self) -> bool {
+        let Some(user) = &self.user else { return false };
+        if user.bot.is_none() || !revolt_config::config().await.features.bot_dms_enabled {
+            return false;
+        }
+        match self.database.fetch_bot(&user.id).await {
+            Ok(bot) => bot.public && crate::bot_may_receive(self.database, &bot).await,
+            Err(_) => false,
+        }
+    }
+
     /// Do we have a mutual connection with the currently selected user?
     async fn have_mutual_connection(&mut self) -> bool {
         if let Some(value) = self.cached_mutual_connection {
@@ -143,6 +155,14 @@ impl PermissionQuery for DatabasePermissionQuery<'_> {
     }
 
     async fn has_user_written_in_channel(&mut self) -> bool {
+        // pressing Start in a conversation with a bot counts as writing first
+        if let (Some(user), Some(Channel::DirectMessage { started_by, .. })) =
+            (&self.user, self.channel.as_deref())
+        {
+            if started_by.contains(&user.id) {
+                return true;
+            }
+        }
         if let (Some(user), Some(channel)) = (&self.user, &self.channel) {
             self.database
                 .fetch_messages(MessageQuery {

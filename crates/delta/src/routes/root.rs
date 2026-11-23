@@ -88,6 +88,9 @@ pub struct RevoltFeatures {
     /// Whether an invite link can make an account that enters the server at
     /// once (`POST /auth/account/join`)
     pub join_by_link: bool,
+    /// Whether anyone may write to a public bot and press Start in its
+    /// direct message (`Start` interactions, bot links with `?start=`)
+    pub bot_dms: bool,
     /// Whether a server can be built from a Discord server template
     pub server_import: bool,
     /// Whether such a template can be read by its link (else its text is pasted)
@@ -268,6 +271,7 @@ pub async fn root() -> Result<Json<RevoltConfig>> {
             server_events: config.features.server_events_enabled,
             join_by_link: config.features.join_by_link_enabled
                 && !config.api.smtp.host.is_empty(),
+            bot_dms: config.features.bot_dms_enabled,
             server_import: config.features.server_import.enabled,
             server_import_link: config.features.server_import.enabled
                 && config.features.server_import.link_fetch,

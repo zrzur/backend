@@ -531,6 +531,7 @@ async fn conversations_the_person_is_not_in_are_out_of_reach() {
         active: true,
         recipients: vec![s.owner.id.clone(), stranger.id.clone()],
         last_message_id: None,
+        started_by: vec![],
     };
     s.harness.db.insert_channel(&dm).await.unwrap();
     let in_dm = stored(&s, dm.id(), &s.owner.id, "between us").await;

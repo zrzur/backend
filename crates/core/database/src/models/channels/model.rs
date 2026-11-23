@@ -41,6 +41,10 @@ auto_derived!(
             /// Id of the last message sent in this channel
             #[serde(skip_serializing_if = "Option::is_none")]
             last_message_id: Option<String>,
+            /// People who pressed Start in their conversation with a bot: from
+            /// then on the bot may write to them, as if they had written first
+            #[serde(default, skip_serializing_if = "Vec::is_empty")]
+            started_by: Vec<String>,
         },
         /// Group channel between 1 or more participants
         Group {
@@ -537,6 +541,7 @@ impl Channel {
                     active: true, // show by default
                     recipients: vec![user_a.id.clone(), user_b.id.clone()],
                     last_message_id: None,
+                    started_by: vec![],
                 }
             };
 

@@ -62,6 +62,10 @@ impl PermissionQuery for Member {
     async fn user_is_bot(&mut self) -> bool {
         false
     }
+
+    async fn user_is_public_bot(&mut self) -> bool {
+        false
+    }
     async fn have_mutual_connection(&mut self) -> bool {
         false
     }

@@ -14,6 +14,8 @@ mod command_permission_tests;
 #[cfg(test)]
 mod component_tests;
 #[cfg(test)]
+mod dm_start_tests;
+#[cfg(test)]
 mod endpoint_tests;
 #[cfg(test)]
 mod followup_tests;

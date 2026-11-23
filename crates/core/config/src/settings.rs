@@ -1331,6 +1331,11 @@ pub struct Features {
     /// Unset means off.
     #[serde(default)]
     pub join_by_link_enabled: bool,
+    /// Bots in direct messages: anyone may write to a public bot without a
+    /// shared server, and a person can press Start (with the payload of a
+    /// bot link). Unset means off.
+    #[serde(default)]
+    pub bot_dms_enabled: bool,
     /// Hours an account made by `POST /auth/account/join` has to confirm its
     /// e-mail before crond removes it. Unset means 72.
     #[serde(default = "default_join_confirm_hours")]

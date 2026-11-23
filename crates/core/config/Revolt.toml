@@ -365,6 +365,12 @@ server_events_enabled = false
 # as before. Needs SMTP (the confirmation mail sets the password).
 join_by_link_enabled = false
 join_confirm_hours = 72
+# Bots in direct messages. On: anyone may open a conversation with a public
+# bot without a shared server, and press Start there (POST /interactions with
+# type Start, carrying the payload of a bot link /b/{id}?start=...). A bot
+# writes to a person only after they wrote or pressed Start; blocking stops
+# it. Off, Start answers FeatureDisabled and only shared-server rules apply.
+bot_dms_enabled = false
 # Voice on a weak connection: each person's app steps down (lighter voice,
 # video lowered, then video paused with audio kept) and shows a sign. Off,
 # calls behave as before. Numbers in [features.voice_weak_network].
