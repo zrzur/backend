@@ -22,6 +22,8 @@ auto_derived!(
         DiscriminatorChange,
         /// A bot was made (bots are unlimited, making them is paced)
         BotCreation,
+        /// A user's avatar or names were sent to every server they are in
+        AppearanceFanOut,
     }
 );
 

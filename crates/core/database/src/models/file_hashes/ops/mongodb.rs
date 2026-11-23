@@ -96,4 +96,13 @@ impl AbstractAttachmentHashes for MongoDb {
     async fn delete_attachment_hash(&self, id: &str) -> Result<()> {
         query!(self, delete_one_by_id, COL, id).map(|_| ())
     }
+
+    /// Delete the attachment hash with this id only while it points at this path.
+    async fn delete_attachment_hash_at(&self, id: &str, path: &str) -> Result<bool> {
+        self.col::<FileHash>(COL)
+            .delete_one(doc! { "_id": id, "path": path })
+            .await
+            .map(|result| result.deleted_count == 1)
+            .map_err(|_| create_database_error!("delete_one", COL))
+    }
 }

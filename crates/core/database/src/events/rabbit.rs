@@ -17,6 +17,13 @@ pub struct MassMessageSentPayload {
     pub server_id: String,
 }
 
+/// The unread mentions a mass mention (@everyone) adds for each member: the
+/// message itself. (It used to be the channel id, which is older than any
+/// read mark, so the read-mark check dropped every @everyone badge.)
+pub fn mass_mention_ids(push: &PushNotification) -> Vec<String> {
+    vec![push.message.id.clone()]
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct FRAcceptedPayload {
     pub accepted_user: User,

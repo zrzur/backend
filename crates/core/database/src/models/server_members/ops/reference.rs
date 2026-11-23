@@ -24,6 +24,13 @@ impl AbstractServerMembers for ReferenceDb {
     /// Insert a new server member into the database
     async fn insert_or_merge_member(&self, member: &Member) -> Result<Option<Member>> {
         let mut server_members = self.server_members.lock().await;
+        // a member who left while timed out comes back with the kept record
+        // (its timeout) and the new join time, as on MongoDB
+        if let Some(mut kept) = self.pending_member_deletions.lock().await.remove(&member.id) {
+            kept.joined_at = member.joined_at;
+            server_members.insert(kept.id.clone(), kept.clone());
+            return Ok(Some(kept));
+        }
         if server_members.contains_key(&member.id) {
             Err(create_database_error!("insert", "member"))
         } else {
@@ -208,7 +215,14 @@ impl AbstractServerMembers for ReferenceDb {
         let member = server_members.get_mut(id);
         if let Some(member) = member {
             if member.in_timeout() {
-                panic!("Soft deletion is not implemented.")
+                // MongoDB marks the record `pending_deletion_at` and drops the
+                // server-specific parts; every member query skips it
+                let mut kept = server_members.remove(id).expect("member just found");
+                kept.avatar = None;
+                kept.nickname = None;
+                kept.roles = vec![];
+                self.pending_member_deletions.lock().await.insert(id.clone(), kept);
+                Ok(())
             } else if server_members.remove(id).is_some() {
                 Ok(())
             } else {
@@ -222,7 +236,8 @@ impl AbstractServerMembers for ReferenceDb {
     /// Delete a server member by their id
     async fn force_delete_member(&self, id: &MemberCompositeKey) -> Result<()> {
         let mut server_members = self.server_members.lock().await;
-        if server_members.remove(id).is_some() {
+        let pending = self.pending_member_deletions.lock().await.remove(id).is_some();
+        if server_members.remove(id).is_some() || pending {
             Ok(())
         } else {
             Err(create_error!(NotFound))
@@ -238,6 +253,10 @@ impl AbstractServerMembers for ReferenceDb {
         let mut server_members = self.server_members.lock().await;
 
         server_members.retain(|_, v| v.id.user != user_id);
+        self.pending_member_deletions
+            .lock()
+            .await
+            .retain(|_, v| v.id.user != user_id);
 
         Ok(())
     }

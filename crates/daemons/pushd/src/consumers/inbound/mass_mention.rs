@@ -132,7 +132,8 @@ impl Consumer for MassMessageConsumer {
                         .await?;
 
                     let mut exhausted = false;
-                    let ack_chnl = vec![push.channel.id().to_string()];
+                    // the mention is the message, not the channel
+                    let mention_ids = mass_mention_ids(&push);
                     loop {
                         let mut chunk: Vec<Member> = vec![];
                         for _ in 0..config.pushd.mass_mention_chunk_size {
@@ -155,7 +156,7 @@ impl Consumer for MassMessageConsumer {
 
                         if let Err(err) = self
                             .db
-                            .add_mention_to_many_unreads(push.channel.id(), &userids, &ack_chnl)
+                            .add_mention_to_many_unreads(push.channel.id(), &userids, &mention_ids)
                             .await
                         {
                             revolt_config::capture_error(&err);

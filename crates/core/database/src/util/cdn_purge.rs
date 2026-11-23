@@ -49,12 +49,18 @@ fn encode_name(name: &str) -> String {
 /// named file and its small preview
 pub fn file_urls(base: &str, tag: &str, id: &str, filename: &str) -> Vec<String> {
     let root = format!("{}/{tag}/{id}", base.trim_end_matches('/'));
-    vec![
+    let mut urls = vec![
         root.clone(),
         format!("{root}/original"),
         format!("{root}/{}", encode_name(filename)),
         format!("{root}?size=small"),
-    ]
+    ];
+    // a voice message also has its AAC copy (autumn, `?format=m4a`)
+    if tag == "attachments" && filename.to_ascii_lowercase().starts_with("voice-message-") {
+        urls.push(format!("{root}/original?format=m4a"));
+        urls.push(format!("{root}/{}?format=m4a", encode_name(filename)));
+    }
+    urls
 }
 
 /// Links of several files, one list
@@ -231,6 +237,18 @@ mod tests {
             file_urls("https://cdn.zrzur.com", "attachments", "x", "صورة.png")[2],
             "https://cdn.zrzur.com/attachments/x/%D8%B5%D9%88%D8%B1%D8%A9.png"
         );
+    }
+
+    #[test]
+    fn a_voice_message_also_purges_its_aac_copy() {
+        let urls = file_urls("https://cdn.zrzur.com", "attachments", "v", "voice-message-1.ogg");
+        assert_eq!(urls.len(), 6);
+        assert_eq!(urls[4], "https://cdn.zrzur.com/attachments/v/original?format=m4a");
+        assert_eq!(
+            urls[5],
+            "https://cdn.zrzur.com/attachments/v/voice-message-1.ogg?format=m4a"
+        );
+        assert_eq!(file_urls("https://cdn.zrzur.com", "avatars", "v", "voice-message-1.ogg").len(), 4);
     }
 
     #[tokio::test]

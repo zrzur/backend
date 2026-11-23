@@ -5,11 +5,15 @@
 //!   verified mark, mark a server 18+ or take that away
 //! - Owner only, + a fresh step-up: hand a server to another member (for an
 //!   owner who lost their account; the support team checks who asks)
+//! - Owner only, + a fresh step-up: delete a server (never an official one;
+//!   see `deletion.rs`)
 //!
 //! Every change needs a reason and is written to the platform audit log
 //! first. Members see the change at once.
 
-use revolt_database::{record_platform_audit, AuditOutcome, Database, PartialServer, StaffPermission};
+use revolt_database::{
+    record_platform_audit, voice::VoiceClient, AuditOutcome, Database, PartialServer, StaffPermission,
+};
 use revolt_result::{create_error, Result};
 use rocket::{serde::json::Json, State};
 use serde::{Deserialize, Serialize};
@@ -22,7 +26,7 @@ const FLAG_VERIFIED: i32 = 2;
 
 #[derive(Deserialize)]
 pub struct DataServerAction {
-    /// verify, unverify, mark_nsfw, unmark_nsfw or transfer
+    /// verify, unverify, mark_nsfw, unmark_nsfw, transfer or delete
     pub action: String,
     pub reason: String,
     /// transfer: the member who becomes the owner
@@ -36,17 +40,23 @@ pub struct ServerActionResult {
     pub owner: String,
     pub flags: Option<i32>,
     pub nsfw: bool,
+    /// `delete`: the server is gone
+    pub deleted: bool,
 }
 
 /// # Act on a server
 #[post("/servers/<id>/actions", data = "<data>")]
 pub async fn act(
     db: &State<Database>,
+    voice_client: &State<VoiceClient>,
     staff: StaffContext,
     id: &str,
     data: Json<DataServerAction>,
 ) -> Result<Json<ServerActionResult>> {
     let data = data.into_inner();
+    if data.action == "delete" {
+        return delete(db, voice_client, &staff, id, &data.reason).await.map(Json);
+    }
     let transfer = data.action == "transfer";
     staff.require_step_up(db, StaffPermission::ServersRestrict).await?;
     if transfer && !staff.grant.is_owner(staff.now) {
@@ -136,5 +146,31 @@ pub async fn act(
         owner: server.owner,
         flags: server.flags,
         nsfw: server.nsfw,
+        deleted: false,
     }))
+}
+
+/// `delete`: owner role and step-up, a reason, never an official server.
+/// A server that is already gone answers `NotFound` every time.
+async fn delete(
+    db: &Database,
+    voice_client: &VoiceClient,
+    staff: &StaffContext,
+    id: &str,
+    why: &str,
+) -> Result<ServerActionResult> {
+    super::deletion::require_delete_gate(db, staff, "staff.server.delete", "server", id).await?;
+    let why = reason(why)?;
+    let server = db.fetch_server(id).await?;
+    let result = ServerActionResult {
+        id: server.id.clone(),
+        owner: server.owner.clone(),
+        flags: server.flags,
+        nsfw: server.nsfw,
+        deleted: true,
+    };
+    let (owner, name) = (server.owner.clone(), server.name.clone());
+    super::deletion::delete_server(db, voice_client, staff, server, &why).await?;
+    crate::util::official::server(db, &owner, "server.deleted", &name, &why).await;
+    Ok(result)
 }

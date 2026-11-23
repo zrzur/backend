@@ -1910,7 +1910,7 @@ async fn server_actions_follow_staff_roles() {
     step_up(&harness, &owner, &token).await;
     let (status, _) = send(&harness, &owner, &token, Post, &path, json!({ "action": "transfer", "to": ts.user.id, "reason": "Owner lost access" })).await;
     assert_eq!(status, Status::NotFound);
-    let (status, _) = send(&harness, &owner, &token, Post, &path, json!({ "action": "delete", "reason": "nope" })).await;
+    let (status, _) = send(&harness, &owner, &token, Post, &path, json!({ "action": "explode", "reason": "Not an action" })).await;
     assert_eq!(status, Status::BadRequest);
     assert!(audit_actions(&harness).await.iter().any(|(a, o)| a == "staff.server.action" && o == "Success"));
 }
@@ -2610,3 +2610,6 @@ async fn a_few_wrong_staff_codes_do_not_lock() {
 
 #[path = "test_team.rs"]
 mod team_page;
+
+#[path = "test_delete.rs"]
+mod delete_tests;

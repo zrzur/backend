@@ -80,4 +80,15 @@ impl AbstractAttachmentHashes for ReferenceDb {
             Err(create_error!(NotFound))
         }
     }
+
+    /// Delete the attachment hash with this id only while it points at this path.
+    async fn delete_attachment_hash_at(&self, id: &str, path: &str) -> Result<bool> {
+        let mut file_hashes = self.file_hashes.lock().await;
+        if file_hashes.get(id).is_some_and(|hash| hash.path == path) {
+            file_hashes.remove(id);
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
 }

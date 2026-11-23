@@ -1,6 +1,6 @@
 use revolt_database::{
     util::reference::Reference,
-    voice::{remove_user_from_voice_channels, VoiceClient},
+    voice::VoiceClient,
     Database, User, ValidatedTicket,
 };
 use revolt_result::{create_error, Result};
@@ -34,14 +34,21 @@ pub async fn delete_bot(
         return Err(create_error!(InvalidCredentials));
     }
 
-    let deleted = bot.delete(db).await;
-    // also after a partial failure: the list must not outlive the bot
-    crate::util::public_commands::forget(&bot.id);
-    deleted?;
-
-    remove_user_from_voice_channels(voice_client, &bot.id).await?;
+    remove_bot(db, voice_client, &bot).await?;
 
     Ok(EmptyResponse)
+}
+
+/// Delete a bot the way its owner does: it leaves its servers and groups,
+/// its commands and installs go, its token stops working and its sessions
+/// end. Also used by platform staff (`/staff/bots/<id>/delete`).
+pub(crate) async fn remove_bot(
+    db: &Database,
+    voice_client: &VoiceClient,
+    bot: &revolt_database::Bot,
+) -> Result<()> {
+    // the list must not outlive the bot, also after a partial failure
+    revolt_database::staff_deletion::remove_bot(db, voice_client, bot, crate::util::public_commands::forget).await
 }
 
 #[cfg(test)]

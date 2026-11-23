@@ -5,7 +5,7 @@ use std::{
 
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, Path, Query, State},
+    extract::{DefaultBodyLimit, Path, Query, RawQuery, State},
     http::{HeaderMap, Method, header},
     middleware::map_response,
     response::{IntoResponse, Redirect, Response},
@@ -41,6 +41,11 @@ use crate::{
     exif::strip_metadata, metadata::generate_metadata, mime_type::determine_mime_type,
     preview::PREVIEWS,
     small::{PreviewQuery, preview_key, render_small},
+    voice::{
+        Made, REFUSED, VoiceRefusal, WantedFormat, is_voice_name, served_content_type,
+        wanted_format,
+    },
+    voice_copy::{Convert, Copies, Store},
 };
 
 /// Which websites may read answers in a browser (S-02)
@@ -755,6 +760,17 @@ async fn store_upload(
     let time_to_upload = Instant::now() - upload_start;
     tracing::info!("Took {time_to_upload:?} to upload {new_file_size} bytes to S3.");
 
+    // A voice message: its AAC copy is made now, so an iPhone that can't
+    // play the recording doesn't wait for it on the first tap
+    if matches!(tag, Tag::attachments) && is_voice_name(&filename) {
+        let (db, hash) = (db.clone(), file_hash.clone());
+        tokio::spawn(async move {
+            if let Err(refusal) = voice_copies(&db).copy(&hash).await {
+                tracing::warn!("no AAC copy of voice message {}: {refusal:?}", hash.id);
+            }
+        });
+    }
+
     // Finally, create the file and return its ID
     let tag: &'static str = tag.into();
     db.insert_attachment(&file_hash.into_file(
@@ -963,15 +979,23 @@ async fn fetch_preview(
     params(
         ("tag" = Tag, Path, description = "Tag to fetch from (e.g. attachments, icons, ...)"),
         ("file_id" = String, Path, description = "File identifier"),
-        ("file_name" = String, Path, description = "File name")
+        ("file_name" = String, Path, description = "File name"),
+        ("format" = Option<String>, Query, description = "`m4a`: the AAC copy of a voice message (`voice-message-<n>.<ext>` attachments only), for browsers that can't play the recording")
     ),
 )]
 async fn fetch_file(
     State(db): State<Database>,
     viewer: Option<User>,
     Path((tag, file_id, file_name)): Path<(Tag, String, String)>,
+    RawQuery(query): RawQuery,
     headers: HeaderMap,
 ) -> Result<Response> {
+    // only the decoded `format` counts; trackers on a shared link are ignored
+    let aac_copy = match wanted_format(query.as_deref()) {
+        WantedFormat::Original => false,
+        WantedFormat::M4a => true,
+        WantedFormat::Other => return Err(create_error!(NotFound)),
+    };
     let tag: &'static str = tag.clone().into();
     let file = db.fetch_attachment(tag, &file_id).await?;
 
@@ -993,9 +1017,12 @@ async fn fetch_file(
     if file_name != file.filename {
         if file_name == "original" {
             let safe_filename = encode_component(&file.filename);
+            // the AAC copy keeps its question across the redirect
+            let ask = if aac_copy { "?format=m4a" } else { "" };
 
             return Ok(
-                Redirect::permanent(&format!("/{tag}/{file_id}/{}", safe_filename)).into_response(),
+                Redirect::permanent(&format!("/{tag}/{file_id}/{safe_filename}{ask}"))
+                    .into_response(),
             );
         }
 
@@ -1003,9 +1030,114 @@ async fn fetch_file(
     }
 
     let hash = file.as_hash(&db).await?;
-    let data = retrieve_file_by_hash(&hash).await?;
     let cache_control = file_cache_control(tag, private, config().await.files.purge.configured());
+
+    if aac_copy {
+        // only voice messages have one
+        if tag != "attachments" || !is_voice_name(&file.filename) {
+            return Err(create_error!(NotFound));
+        }
+        return Ok(match voice_copies(&db).served(&hash).await {
+            Ok((copy, data)) => {
+                original_file_response(data, copy.content_type, cache_control, &headers)
+            }
+            Err(refusal) if refusal.try_later() => try_later_response(),
+            Err(_) => return Err(create_error!(NotFound)),
+        });
+    }
+
+    let data = retrieve_file_by_hash(&hash).await?;
     Ok(original_file_response(data, hash.content_type, cache_control, &headers))
+}
+
+lazy_static! {
+    /// AAC copies being made, or just made, per original hash: one attempt
+    /// per file at a time; the others wait for it and share its answer
+    static ref MAKING: moka::future::Cache<String, FileHash> = moka::future::Cache::builder()
+        .max_capacity(10_000)
+        .time_to_live(Duration::from_secs(5 * 60))
+        .build();
+}
+
+/// The copies with this server's storage (S3) and converter (ffmpeg)
+fn voice_copies(db: &Database) -> Copies<S3Store, Ffmpeg> {
+    Copies {
+        db: db.clone(),
+        store: std::sync::Arc::new(S3Store),
+        convert: std::sync::Arc::new(Ffmpeg),
+        making: MAKING.clone(),
+        refused: REFUSED.clone(),
+    }
+}
+
+/// S3, with the short-lived memory cache in front of reads (keyed by path:
+/// an original's path is its hash id, each copy's path is its own)
+struct S3Store;
+
+impl Store for S3Store {
+    async fn read(
+        &self,
+        bucket: &str,
+        path: &str,
+        iv: &str,
+    ) -> std::result::Result<Vec<u8>, revolt_files::FetchFailure> {
+        if let Some(Ok(data)) = S3_CACHE.get(path).await {
+            return Ok(data);
+        }
+        let data = revolt_files::fetch_from_s3_checked(bucket, path, iv).await?;
+        S3_CACHE.insert(path.to_owned(), Ok(data.clone())).await;
+        Ok(data)
+    }
+
+    async fn write(
+        &self,
+        bucket: &str,
+        path: &str,
+        data: &[u8],
+    ) -> std::result::Result<String, String> {
+        upload_to_s3(bucket, path, data)
+            .await
+            .map_err(|error| format!("{error:?}"))
+    }
+
+    async fn delete(&self, bucket: &str, path: &str) -> std::result::Result<(), String> {
+        S3_CACHE.invalidate(path).await;
+        revolt_files::delete_from_s3(bucket, path)
+            .await
+            .map_err(|error| format!("{error:?}"))
+    }
+}
+
+/// ffprobe and ffmpeg, as voice.rs runs them
+struct Ffmpeg;
+
+impl Convert for Ffmpeg {
+    type Turn = crate::voice::Turn;
+
+    async fn turn(&self) -> std::result::Result<Self::Turn, VoiceRefusal> {
+        crate::voice::take_turn().await
+    }
+
+    async fn make(
+        &self,
+        bytes: &[u8],
+        content_type: &str,
+    ) -> std::result::Result<Made, VoiceRefusal> {
+        crate::voice::make_in_turn(bytes, content_type).await
+    }
+}
+
+/// 503 for a copy that can't be made now: asked again in a minute, never stored
+fn try_later_response() -> Response {
+    use axum::http::StatusCode;
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [
+            (header::RETRY_AFTER, "60"),
+            (header::CACHE_CONTROL, PRIVATE_CACHE_CONTROL),
+        ],
+    )
+        .into_response()
 }
 
 /// Let browser media engines seek without repeatedly requesting the whole file.
@@ -1041,7 +1173,7 @@ fn original_file_response(
     let mut response = (
         status,
         [
-            (header::CONTENT_TYPE, content_type),
+            (header::CONTENT_TYPE, served_content_type(&content_type)),
             (header::CONTENT_DISPOSITION, "attachment".to_owned()),
             (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_owned()),
             // files never run as a page, even if a browser is asked to show one
