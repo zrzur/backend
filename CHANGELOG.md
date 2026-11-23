@@ -6,6 +6,10 @@
 
 - A `UserRelationship` event (friend request, accept, block, unblock) replaced the receiving session's own cached user with the other person. Until the next connection that session then checked permissions, presence and relationships as the other person: after a friend request to a server owner, the next server recalculation (a role or server permission change) sent the owner's private channels to the requester and subscribed them to their messages; an invisible user's online and offline changes could be broadcast; the session could drop its own topic; message authors lost their Blocked mark. The event now stores the other person under their own id, updates the one relationship in the session's own user (removed when it is None), follows or stops following that person's topic, and never replaces the session's own user. The same line is in upstream Stoat (checked at 483c1779, 0.16.2).
 
+### Gateway: a session no longer ends when many copies of one update arrive (2026-11-23)
+
+- A session's Redis subscriber holds up to 512 events (fred's default was 32) and follows all its topics with one command. An update about someone is published once per server they are in; someone in many servers (221 in the test) whose app sent something right after `Ready` lost the connection every time, without a word. A full queue that still ends a session is now logged, and the client is told to connect again at once (close 1013, "try again") for a fresh Ready. Topics added or removed later go in one command each way, never an empty one.
+
 ## 26.3.0-beta.2 (2026-11-21)
 
 ### The owner's /badge command (2026-11-21)
