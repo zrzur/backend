@@ -688,8 +688,17 @@ impl State {
         }
     }
 
-    /// Push presence change to the user and all associated server topics
-    pub async fn broadcast_presence_change(&self, target: bool) {
+    /// Push presence change to the user and all associated server topics.
+    ///
+    /// `while_listening`: the session already follows those topics (a drop or
+    /// a resume), so about one event per server comes straight back to it.
+    /// Its listener has to keep reading them meanwhile, so they are published
+    /// from a task of its own. Published inline, they overflowed the session's
+    /// subscriber buffer (32 messages) for anyone in more than about 30
+    /// servers, and the session ended at every drop: no resume could find it.
+    /// At the start and the end of a session nothing is followed yet or any
+    /// more, and they are published inline, as before.
+    pub async fn broadcast_presence_change(&self, target: bool, while_listening: bool) {
         let config = revolt_config::config().await;
         if config.disable_events_dont_use {
             return;
@@ -718,17 +727,16 @@ impl State {
                 .chain(std::iter::once(self.cache.user_id.clone()))
                 .collect();
 
-            // Published from a task of its own: this session follows the same
-            // topics, so about one event per server comes straight back to
-            // it, and its listener has to keep reading them meanwhile.
-            // Published inline, they overflowed the session's subscriber
-            // buffer (32 messages) for anyone in more than about 30 servers:
-            // the session ended at every drop, so no resume could find it.
-            tokio::spawn(async move {
+            let publish = async move {
                 for topic in topics {
                     event.clone().p(topic).await;
                 }
-            });
+            };
+            if while_listening {
+                tokio::spawn(publish);
+            } else {
+                publish.await;
+            }
         }
     }
 

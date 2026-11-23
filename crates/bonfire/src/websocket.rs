@@ -634,22 +634,24 @@ async fn send_in_time(
 }
 
 impl Delivery {
-    /// Online: a presence session, and the first one tells the others
-    async fn come_online(&mut self, state: &State) {
+    /// Online: a presence session, and the first one tells the others.
+    /// `listening`: the session already follows its topics (a resume).
+    async fn come_online(&mut self, state: &State, listening: bool) {
         if self.presence.is_none() {
             let (first, presence) = create_session(&self.user_id, 0).await;
             self.presence = Some(presence);
             if first {
-                state.broadcast_presence_change(true).await;
+                state.broadcast_presence_change(true, listening).await;
             }
         }
     }
 
-    /// Offline: the presence session goes, and the last one tells the others
-    async fn go_offline(&mut self, state: &State) {
+    /// Offline: the presence session goes, and the last one tells the others.
+    /// `listening`: the session still follows its topics (a drop).
+    async fn go_offline(&mut self, state: &State, listening: bool) {
         if let Some(presence) = self.presence.take() {
             if delete_session(&self.user_id, presence).await {
-                state.broadcast_presence_change(false).await;
+                state.broadcast_presence_change(false, listening).await;
             }
         }
     }
@@ -666,7 +668,7 @@ impl Delivery {
         let now = Instant::now();
         self.detached_at = Some(now);
         self.seq_at_detach = self.buffer.last_seq();
-        self.go_offline(state).await;
+        self.go_offline(state, true).await;
         if let Some(id) = &self.gateway_session_id {
             for control in resume::detached(id, &self.limits, now) {
                 let _ = control.try_send(Control::SessionOver);
@@ -768,7 +770,7 @@ impl Delivery {
             if let Some(id) = &self.gateway_session_id {
                 resume::attached(id);
             }
-            self.come_online(state).await;
+            self.come_online(state, true).await;
         } else {
             self.detach(state).await;
         }
@@ -803,7 +805,7 @@ async fn listener(
     };
 
     // Create presence session; the first one tells the others we are online
-    delivery.come_online(state).await;
+    delivery.come_online(state, false).await;
 
     listen(db, state, addr, topic_signal_r, control_r, &mut delivery).await;
 
@@ -813,7 +815,7 @@ async fn listener(
         outlet.kill_worker.send(()).await.ok();
     }
     // the last session going tells the others we are offline
-    delivery.go_offline(state).await;
+    delivery.go_offline(state, false).await;
 }
 
 async fn listen(
@@ -972,12 +974,13 @@ async fn listen(
             },
             message = t1 => {
                 // Handle incoming events.
+                if let Err(error) = &message {
+                    // lagged (and by how much) or closed
+                    info!("{addr:?}: the session ends: its event stream failed: {error:?}");
+                }
                 let message = match report_internal_error!(message) {
                     Ok(message) => message,
-                    Err(_) => {
-                        info!("{addr:?}: the session ends: its event stream failed");
-                        break 'out;
-                    }
+                    Err(_) => break 'out,
                 };
 
                 let event = match *REDIS_PAYLOAD_TYPE {
