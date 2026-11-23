@@ -32,7 +32,7 @@ async fn installable_servers(db: &Database, user: &User, bot_id: &str) -> Result
         if db.fetch_member(&server.id, bot_id).await.is_ok() {
             continue;
         }
-        let server = oauth_server(db, user, server).await;
+        let server = oauth_server(db, user, &membership, server).await;
         if server.can_manage {
             servers.push(server);
         }

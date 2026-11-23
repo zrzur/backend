@@ -65,6 +65,11 @@ async fn scope(
         _ => return Err(invalid("interactions are only available in server channels")),
     };
 
+    // A staff account's override is for Zrzur's own tools: a bot sees what
+    // the person holds through the server, like anyone else
+    let mut user = user.clone();
+    user.privileged = false;
+    let user = &user;
     let mut query = DatabasePermissionQuery::new(db, user).channel(&channel);
     let user_permissions = calculate_channel_permissions(&mut query).await;
     user_permissions.throw_if_lacking_channel_permission(ChannelPermission::ViewChannel)?;
@@ -969,4 +974,31 @@ pub async fn request_autocomplete(
 
     let (interaction, payload) = command(db, &user, data).await?;
     dispatch(db, amqp, interaction, payload).await.map(Json)
+}
+
+#[cfg(test)]
+mod privilege_tests {
+    use revolt_permissions::ChannelPermission;
+
+    use super::scope;
+    use crate::routes::interactions::tests::setup;
+
+    /// A staff account in effect still shows a bot only what it holds on the
+    /// server: never Manage Server or anything else from the staff override
+    #[rocket::async_test]
+    async fn staff_override_never_reaches_a_bot() {
+        let s = setup().await;
+        let mut staff = s.user.clone();
+        staff.privileged = true;
+        let plain = scope(&s.harness.db, &s.user, s.channel.id(), &s.bot.id, true, false)
+            .await
+            .unwrap();
+        let seen = scope(&s.harness.db, &staff, s.channel.id(), &s.bot.id, true, false)
+            .await
+            .unwrap();
+        let held = u64::from(seen.user_permissions);
+        assert_eq!(held, u64::from(plain.user_permissions));
+        assert_eq!(held & ChannelPermission::ManageServer as u64, 0, "{held:#x}");
+        assert_eq!(held & ChannelPermission::Administrator as u64, 0, "{held:#x}");
+    }
 }

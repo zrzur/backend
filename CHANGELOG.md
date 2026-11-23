@@ -6,6 +6,8 @@
 
 - `GET /oauth2/@me/servers` lists every server the user is a member of, and nothing said whether they may manage it; its type was described as "A server the user can install the app into". Bot dashboards that took the list as "servers you manage" let plain members change a bot's settings for the whole server. Each entry now has `owner`, `can_manage` (owner or Manage Server) and `permissions` (server-wide, a decimal string; channel overrides never count). `?manageable=true` lists only the servers the user can manage. Additive: old fields are unchanged.
 - A staff account's override never reaches a third-party site: through OAuth2 it holds what its roles give.
+- `manageable` takes only `true` or `false`; anything else (`1`, `yes`) is `400 FailedValidation`. The list uses the memberships it already read: no extra lookup per server.
+- Interactions: a staff account's override never reaches a bot either; `user_permissions` is what the person holds through the server.
 - The consent page's `bot.install` server list carries the same fields.
 - **Changed:** in an interaction's `user_permissions`, the server-wide bits (Manage Server, Manage Roles, Kick, Ban, Timeout, Assign Roles, nicknames and avatars, Audit Log, Join Requests, Administrator, Manage Soundboard, Manage Events) are what the person holds on the server. A channel or category override no longer adds or removes them, so a bot that checks Manage Server there can't be fooled by a channel. Channel bits still follow the channel. New `SERVER_ONLY_PERMISSIONS` in `revolt-permissions`.
 

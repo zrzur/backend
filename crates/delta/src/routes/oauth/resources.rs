@@ -6,7 +6,7 @@ use revolt_result::{create_error, Result};
 use rocket::{serde::json::Json, State};
 use rocket_empty::EmptyResponse;
 
-use super::{bearer::Bearer, oauth_server};
+use super::{bearer::Bearer, invalid, oauth_server};
 
 /// # Current User (OAuth2)
 ///
@@ -38,17 +38,23 @@ pub async fn me(db: &State<Database>, bearer: Bearer) -> Result<Json<OAuthUser>>
 pub async fn my_servers(
     db: &State<Database>,
     bearer: Bearer,
-    manageable: Option<bool>,
+    manageable: Option<&str>,
 ) -> Result<Json<Vec<OAuthServer>>> {
     bearer.require(oauth_scopes::SERVERS_READ)?;
+    // only `true` or `false`: a dashboard that sends `1` must hear it was
+    // not understood, not get every server back
+    let only_manageable = match manageable {
+        None | Some("false") => false,
+        Some("true") => true,
+        Some(_) => return Err(invalid("manageable must be true or false")),
+    };
     let mut user = db.fetch_user(&bearer.0.user_id).await?;
     // a staff override belongs to Zrzur's own tools, never to a third-party site
     user.privileged = false;
-    let only_manageable = manageable.unwrap_or(false);
     let mut servers = vec![];
     for membership in db.fetch_all_memberships(&user.id).await? {
         if let Ok(server) = db.fetch_server(&membership.id.server).await {
-            let server = oauth_server(db, &user, server).await;
+            let server = oauth_server(db, &user, &membership, server).await;
             if !only_manageable || server.can_manage {
                 servers.push(server);
             }

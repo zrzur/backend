@@ -807,3 +807,24 @@ async fn server_list_ignores_staff_privilege() {
     let (_, list) = s.bearer_json("/oauth2/@me/servers?manageable=true", &access).await;
     assert!(list.as_array().unwrap().is_empty(), "{list}");
 }
+
+/// `manageable` is `true` or `false`; anything else is refused, so a dashboard
+/// that sends `1` is told so instead of getting every server back
+#[rocket::async_test]
+async fn manageable_takes_only_true_or_false() {
+    let s = setup().await;
+    let access = s.servers_token(&s.owner_session).await;
+    for value in ["1", "yes", "TRUE", ""] {
+        let (status, body) = s
+            .bearer_json(&format!("/oauth2/@me/servers?manageable={value}"), &access)
+            .await;
+        assert_eq!(status, Status::BadRequest, "{value}: {body}");
+        assert_eq!(body["type"], "FailedValidation", "{value}: {body}");
+    }
+    for value in ["true", "false"] {
+        let (status, body) = s
+            .bearer_json(&format!("/oauth2/@me/servers?manageable={value}"), &access)
+            .await;
+        assert_eq!(status, Status::Ok, "{value}: {body}");
+    }
+}
