@@ -94,7 +94,11 @@ pub async fn privileged_in_effect(db: &Database, user_id: &str, session_id: &str
         .await
         .map(|sessions| {
             sessions.iter().any(|staff| {
-                staff.session_id == session_id
+                // only the console's own session: a Zrzur Desk session also
+                // names the ordinary session it was opened from, and must
+                // never lift that everyday app session to `privileged`
+                staff.kind == StaffSessionKind::Console
+                    && staff.session_id == session_id
                     && staff.user_id == user_id
                     && staff.revoked_at.is_none()
                     && now < staff.expires_at
@@ -132,6 +136,42 @@ mod desk_session_tests {
             kind,
             bot_id: bot.map(Into::into),
         }
+    }
+
+    /// An Owner signed in on Zrzur Desk from their everyday app session: that
+    /// app session must not count as `privileged`; a console session from it
+    /// still does
+    #[tokio::test]
+    async fn desk_session_never_makes_privileged() {
+        let db = DatabaseInfo::Reference.connect().await.unwrap();
+        let now = staff_now();
+        let owner = StaffGrant {
+            id: "owner".into(),
+            roles: vec![StaffRole::Owner],
+            disabled: false,
+            expires_at: None,
+            last_totp_step: 0,
+            version: 1,
+            updated_at: now,
+            updated_by: "test".into(),
+        };
+        assert!(db.save_staff_grant(&owner, None).await.unwrap());
+        let live = |id: &str, kind: StaffSessionKind, bot: Option<&str>| StaffSession {
+            session_id: "app".into(),
+            created_at: now,
+            last_seen_at: now,
+            expires_at: now + STAFF_SESSION_MAX_MS,
+            ..session(id, "owner", kind, bot)
+        };
+        db.insert_staff_session(&live("desk", StaffSessionKind::Desk, Some("bot")))
+            .await
+            .unwrap();
+        assert!(!privileged_in_effect(&db, "owner", "app").await);
+
+        db.insert_staff_session(&live("console", StaffSessionKind::Console, None))
+            .await
+            .unwrap();
+        assert!(privileged_in_effect(&db, "owner", "app").await);
     }
 
     #[test]
