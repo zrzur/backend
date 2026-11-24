@@ -15,6 +15,14 @@
 //! 5. sensitive changes ([`needs_second_person`]) wait for a different
 //!    staff member ([`approve_badge_request`]).
 //!
+//! The system's own grants (Creator from published designs, Community
+//! Builder and Big Community from the member count) come through here too,
+//! as [`BadgePath::System`] with the record they rest on: only badges that
+//! follow a record, never one a person gives, and never one staff took
+//! away ([`BadgeDenial::StaffRevoked`]). Earned achievements
+//! ([`PERMANENT_ACHIEVEMENTS`]) stay for good; staff may take one away for
+//! fraud, with a second person.
+//!
 //! Every refusal is written to the platform audit log as Denied with a
 //! reason code; every change is written before it is made (Success) and
 //! again as Failed if it then fails. Records hold ids, badge ids, codes and
@@ -28,7 +36,7 @@ use crate::{
     badge_definition, badge_eligibility, epoch_ms, grant_badge, held_badges, record_platform_audit,
     revoke_badge, AuditOutcome, AuditRecord, BadgeChangeRequest, BadgeDefinition, BadgeGrant,
     BadgeGrantRule, BadgeRequestStatus, BadgeSource, Database, PlatformAuditQuery, StaffAppointment,
-    StaffGrant, StaffPermission, User, BADGE_REQUEST_TTL_MS,
+    StaffGrant, StaffPermission, User, BADGE_REQUEST_TTL_MS, BADGE_SYSTEM_ACTOR,
 };
 
 /// Where a badge change comes from
@@ -44,6 +52,8 @@ pub enum BadgePath {
     Desk,
     /// `zrzur-staff badge` on the server host
     Cli,
+    /// The system, from its own records (no person asks)
+    System,
 }
 
 impl BadgePath {
@@ -54,6 +64,7 @@ impl BadgePath {
             BadgePath::BadgeCommand => "badge_command",
             BadgePath::Desk => "desk",
             BadgePath::Cli => "cli",
+            BadgePath::System => "system",
         }
     }
 
@@ -65,6 +76,7 @@ impl BadgePath {
             BadgePath::BadgeCommand => "badge.command",
             BadgePath::Desk => "staff.desk.badge",
             BadgePath::Cli => "staff.cli.badge",
+            BadgePath::System => "badge.system",
         }
     }
 }
@@ -86,6 +98,18 @@ pub struct BadgeActor {
 }
 
 impl BadgeActor {
+    /// The system acting on its own records: no staff rights at all
+    pub fn system() -> BadgeActor {
+        BadgeActor {
+            id: BADGE_SYSTEM_ACTOR.to_string(),
+            path: BadgePath::System,
+            staff: false,
+            owner: false,
+            step_up: false,
+            session_id: None,
+        }
+    }
+
     /// The rights `user_id`'s staff grant gives right now, without a
     /// step-up. No grant, a disabled or an expired one: no rights. The
     /// `privileged` database flag gives none.
@@ -135,6 +159,9 @@ pub struct BadgeMutation {
     pub reason: String,
     /// Grants only: the badge goes away then
     pub expires_at: Option<i64>,
+    /// System grants only: the record the grant rests on (`server:<id>`,
+    /// `designs`)
+    pub source_ref: Option<String>,
 }
 
 /// Why a badge change was refused. The code goes to the audit log.
@@ -170,6 +197,10 @@ pub enum BadgeDenial {
     NotPending,
     /// The reason is not 3 to 500 characters (its text is never logged)
     BadReason,
+    /// The system never gives back a badge a person took away
+    StaffRevoked,
+    /// The system never takes away an earned achievement
+    Permanent,
 }
 
 impl BadgeDenial {
@@ -193,6 +224,8 @@ impl BadgeDenial {
             BadgeDenial::SameApprover => "same_person",
             BadgeDenial::NotPending => "not_pending",
             BadgeDenial::BadReason => "bad_reason",
+            BadgeDenial::StaffRevoked => "staff_revoked",
+            BadgeDenial::Permanent => "permanent",
         }
     }
 
@@ -208,7 +241,9 @@ impl BadgeDenial {
             | BadgeDenial::Appointment
             | BadgeDenial::Retired
             | BadgeDenial::FollowsRecord
-            | BadgeDenial::NotPending => create_error!(InvalidOperation),
+            | BadgeDenial::NotPending
+            | BadgeDenial::StaffRevoked
+            | BadgeDenial::Permanent => create_error!(InvalidOperation),
             BadgeDenial::Bot => create_error!(IsBot),
             BadgeDenial::SelfChange | BadgeDenial::OwnerOnly | BadgeDenial::SameApprover => {
                 create_error!(NotPrivileged)
@@ -236,17 +271,63 @@ pub enum BadgeDecision {
     NeedsSecondPerson,
 }
 
+/// Achievements the system gives from a record and never takes back:
+/// Creator (first published design), Community Builder and Big Community
+/// (genuine human members). Staff may take one away for fraud or
+/// infringement, with a second person; the system then never gives it
+/// back.
+pub const PERMANENT_ACHIEVEMENTS: [&str; 3] = ["creator", "community_builder", "big_community"];
+
+/// Whether a badge is an earned achievement that stays
+pub fn is_permanent_achievement(definition: &BadgeDefinition) -> bool {
+    definition.rule == BadgeGrantRule::Automatic && PERMANENT_ACHIEVEMENTS.contains(&definition.id)
+}
+
 /// Sensitive changes that need two people: giving Partner or Elite Bug
-/// Hunter, and taking away any `Privileged` or `Historical` badge. (Founder, Staff and
-/// Platform Moderator never get here: they are refused before.)
+/// Hunter, and taking away any `Privileged` or `Historical` badge or an
+/// earned achievement. (Founder, Staff and Platform Moderator never get
+/// here: they are refused before.)
 pub fn needs_second_person(definition: &BadgeDefinition, change: BadgeChange) -> bool {
     match change {
         BadgeChange::Grant => matches!(definition.id, "partner" | "elite_bug_hunter"),
-        BadgeChange::Revoke => matches!(
-            definition.rule,
-            BadgeGrantRule::Privileged | BadgeGrantRule::Historical
-        ),
+        BadgeChange::Revoke => {
+            matches!(
+                definition.rule,
+                BadgeGrantRule::Privileged | BadgeGrantRule::Historical
+            ) || is_permanent_achievement(definition)
+        }
     }
+}
+
+/// The system's own changes: only badges that follow a record, to a person
+/// (not a bot, not deleted); an earned achievement is never taken back.
+fn system_rule_check(
+    definition: &BadgeDefinition,
+    subject: &User,
+    change: BadgeChange,
+) -> std::result::Result<BadgeDecision, BadgeDenial> {
+    match definition.rule {
+        BadgeGrantRule::Automatic => {}
+        BadgeGrantRule::Locked => return Err(BadgeDenial::Locked),
+        BadgeGrantRule::Appointment => return Err(BadgeDenial::Appointment),
+        BadgeGrantRule::Historical => return Err(BadgeDenial::Retired),
+        BadgeGrantRule::Dynamic | BadgeGrantRule::Staff | BadgeGrantRule::Privileged => {
+            return Err(BadgeDenial::NoPermission)
+        }
+    }
+    if change == BadgeChange::Grant && definition.retired {
+        return Err(BadgeDenial::Retired);
+    }
+    if change == BadgeChange::Revoke && is_permanent_achievement(definition) {
+        return Err(BadgeDenial::Permanent);
+    }
+    if subject.bot.is_some() {
+        return Err(BadgeDenial::Bot);
+    }
+    if subject.flags.unwrap_or_default() & UserFlags::Deleted as i32 != 0 {
+        return Err(BadgeDenial::DeletedAccount);
+    }
+    Ok(BadgeDecision::Allowed)
 }
 
 /// The rules that need no database (1 to 3 above, and whether a second
@@ -260,9 +341,15 @@ pub fn badge_rule_check(
     if actor.path == BadgePath::AdminRoute {
         return Err(BadgeDenial::RouteRetired);
     }
+    if actor.path == BadgePath::System {
+        return system_rule_check(definition, subject, change);
+    }
+    // an earned achievement may be taken away for fraud (staff, two people)
+    let fraud_revoke = change == BadgeChange::Revoke && is_permanent_achievement(definition);
     match definition.rule {
         BadgeGrantRule::Locked => return Err(BadgeDenial::Locked),
         BadgeGrantRule::Appointment => return Err(BadgeDenial::Appointment),
+        BadgeGrantRule::Automatic if fraud_revoke => {}
         BadgeGrantRule::Dynamic | BadgeGrantRule::Automatic => return Err(BadgeDenial::FollowsRecord),
         BadgeGrantRule::Historical if change == BadgeChange::Grant => return Err(BadgeDenial::Retired),
         BadgeGrantRule::Staff | BadgeGrantRule::Privileged | BadgeGrantRule::Historical => {}
@@ -280,7 +367,9 @@ pub fn badge_rule_check(
         return Err(BadgeDenial::SelfChange);
     }
     match definition.rule {
-        BadgeGrantRule::Staff if !actor.staff => return Err(BadgeDenial::NoPermission),
+        BadgeGrantRule::Staff | BadgeGrantRule::Automatic if !actor.staff => {
+            return Err(BadgeDenial::NoPermission)
+        }
         BadgeGrantRule::Privileged | BadgeGrantRule::Historical if !actor.owner => {
             return Err(BadgeDenial::OwnerOnly)
         }
@@ -328,6 +417,9 @@ pub async fn authorize_badge_mutation(
         Err(denial) => return Ok(Err(denial)),
     };
     if request.change == BadgeChange::Grant {
+        if actor.path == BadgePath::System && revoked_by_a_person(db, &subject.id, definition.id).await? {
+            return Ok(Err(BadgeDenial::StaffRevoked));
+        }
         if let Some(reason) = badge_eligibility(db, &subject.id, definition.id).await? {
             return Ok(Err(BadgeDenial::Ineligible(reason)));
         }
@@ -336,6 +428,20 @@ pub async fn authorize_badge_mutation(
         definition,
         subject,
         decision,
+    }))
+}
+
+/// Whether the user's record of this badge was ended by a person (staff
+/// took it away): the system never gives it back then
+pub async fn revoked_by_a_person(db: &Database, user_id: &str, badge: &str) -> Result<bool> {
+    let now = now_ms();
+    Ok(db.fetch_badge_grants(user_id).await?.iter().any(|grant| {
+        grant.badge == badge
+            && !grant.held(now)
+            && grant
+                .revoked_by
+                .as_deref()
+                .is_some_and(|by| by != BADGE_SYSTEM_ACTOR)
     }))
 }
 
@@ -372,7 +478,8 @@ fn base_record(actor: &BadgeActor, action: String, user_id: &str, reason: Option
     AuditRecord {
         actor_id: actor.id.clone(),
         action,
-        permission: Some(StaffPermission::BadgesManage),
+        // the system acts on its records, not on a staff right
+        permission: (actor.path != BadgePath::System).then_some(StaffPermission::BadgesManage),
         target_kind: Some("user".to_string()),
         // only a real id: never text a caller typed in its place
         target_id: Ulid::from_string(user_id).ok().map(|_| user_id.to_string()),
@@ -469,8 +576,8 @@ async fn mutate_badge_inner(
                     db,
                     &subject,
                     definition.id,
-                    BadgeSource::Admin,
-                    None,
+                    if actor.path == BadgePath::System { BadgeSource::System } else { BadgeSource::Admin },
+                    if actor.path == BadgePath::System { request.source_ref.clone() } else { None },
                     &actor.id,
                     Some(reason),
                     request.expires_at,
@@ -559,6 +666,7 @@ pub async fn approve_loaded_badge_request(db: &Database, approver: &BadgeActor, 
         change: if request.grant { BadgeChange::Grant } else { BadgeChange::Revoke },
         reason: request.reason.clone(),
         expires_at: request.grant_expires_at,
+        source_ref: None,
     };
     // the approver's rights before the request is marked: someone without
     // them never holds it as Approved, not even for a moment, so a real

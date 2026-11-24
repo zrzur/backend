@@ -1,5 +1,5 @@
-//! Badges the system gives from its own records (the size of a server
-//! someone owns, a verified server or bot), and the ones computed from the
+//! Badges the system gives from its own records (a verified server or bot;
+//! the size of a server is counted by crond, see `community.rs`), and the ones computed from the
 //! account's age (Early Adopter, One Year … Ten Years). Each rule is safe to
 //! run again: a badge already held is left alone.
 
@@ -9,13 +9,8 @@ use ulid::Ulid;
 
 use crate::{
     grant_badge, held_badges, record_platform_audit, revoke_badge, AuditOutcome, AuditRecord,
-    BadgeSource, Database, PartialUser, Server, User, BADGE_SYSTEM_ACTOR,
+    BadgeSource, Database, PartialUser, User, BADGE_SYSTEM_ACTOR,
 };
-
-/// Members a server needs for each badge. Earned once: a server that shrinks
-/// later keeps it.
-pub const COMMUNITY_BUILDER_MEMBERS: usize = 100;
-pub const BIG_COMMUNITY_MEMBERS: usize = 1000;
 
 /// Grants read in one go
 const BATCH: usize = 500;
@@ -41,31 +36,6 @@ async fn grant_once(db: &Database, user_id: &str, badge: &str, source_ref: &str)
         Err(error) if !matches!(error.error_type, ErrorType::NoEffect) => Err(error),
         _ => Ok(()),
     }
-}
-
-/// Badges a server of this size earns for its owner
-pub fn size_badges(members: usize) -> &'static [&'static str] {
-    if members >= BIG_COMMUNITY_MEMBERS {
-        &["community_builder", "big_community"]
-    } else if members >= COMMUNITY_BUILDER_MEMBERS {
-        &["community_builder"]
-    } else {
-        &[]
-    }
-}
-
-/// Give the owner what a server of `members` earns. Called on every join, so
-/// small servers stop at once.
-pub async fn sync_server_size_badges(db: &Database, server: &Server, members: usize) -> Result<()> {
-    let earned = size_badges(members);
-    if earned.is_empty() {
-        return Ok(());
-    }
-    let held = held_badges(db, &server.owner).await?;
-    for badge in earned.iter().filter(|badge| !held.contains(**badge)) {
-        grant_once(db, &server.owner, badge, &format!("server:{}", server.id)).await?;
-    }
-    Ok(())
 }
 
 async fn follow(db: &Database, user_id: &str, badge: &str, earned: bool, source_ref: &str) -> Result<()> {
@@ -262,14 +232,6 @@ pub async fn retire_stored_time_badges(db: &Database) -> Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn server_size_thresholds() {
-        assert!(size_badges(99).is_empty());
-        assert_eq!(size_badges(100), ["community_builder"]);
-        assert_eq!(size_badges(999), ["community_builder"]);
-        assert_eq!(size_badges(1000), ["community_builder", "big_community"]);
-    }
 
     /// UTC milliseconds of a date and hour (the inverse of civil_from_days)
     fn at(year: i64, month: u32, day: u32, hour: i64) -> i64 {

@@ -67,6 +67,8 @@ const PENDING_ACTIVITY_BLOCKS_INDEX: i32 = -1;
 const PENDING_OFFICIAL_BOT_FLAGS: i32 = -1;
 // Stream badge-phase0: the coordinator gives the number at merge; -1 never runs
 const PENDING_BADGE_GATE_INDEXES: i32 = -1;
+// Stream badge-phase3: the coordinator gives the number at merge; -1 never runs
+const PENDING_COMMUNITY_BADGE_INDEXES: i32 = -1;
 
 /// The earliest day a session from before expiry can expire. At least 30
 /// days out, also with expiry switched off (0), for the day it is switched on.
@@ -2683,6 +2685,11 @@ pub async fn run_migrations(db: &MongoDb, revision: i32) -> i32 {
         create_badge_gate_indexes(&db.db()).await;
     }
 
+    if revision <= PENDING_COMMUNITY_BADGE_INDEXES {
+        info!("Running migration [revision {PENDING_COMMUNITY_BADGE_INDEXES} / 24-11-2026]: Index for the community badge counts");
+        create_community_badge_indexes(&db.db()).await;
+    }
+
     // Reminder to update LATEST_REVISION when adding new migrations.
     LATEST_REVISION.max(revision)
 }
@@ -2766,6 +2773,20 @@ pub async fn create_badge_gate_indexes(db: &mongodb::Database) {
     })
     .await
     .expect("Failed to create the badge request index");
+}
+
+/// Community badge counts (crond, one per server) are listed by status,
+/// latest count first, for staff to look at held servers. Only an index, no
+/// data moves. Safe to run twice: creating an index that exists is a no-op.
+pub async fn create_community_badge_indexes(db: &mongodb::Database) {
+    db.run_command(doc! {
+        "createIndexes": "community_badge_checks",
+        "indexes": [
+            { "key": { "status": 1_i32, "checked_at": -1_i32 }, "name": "status_checked" }
+        ]
+    })
+    .await
+    .expect("Failed to create the community badge index");
 }
 
 /// Activity blocks (Trust & Safety) are looked up by value on every
@@ -3951,6 +3972,28 @@ mod statement_migration_tests {
                 .unwrap();
             assert!(names.contains(&name.to_string()), "{collection}: {names:?}");
         }
+    }
+
+    /// MongoDB only: the community badge index can be made twice
+    #[tokio::test]
+    async fn community_badge_indexes_run_twice_on_mongodb() {
+        let db = crate::DatabaseInfo::Test("community_badge_indexes".to_string())
+            .connect()
+            .await
+            .expect("Database connection failed.");
+        let crate::Database::MongoDb(mongo) = &db else {
+            return;
+        };
+        for _ in 0..2 {
+            super::create_community_badge_indexes(&mongo.db()).await;
+        }
+        let names = mongo
+            .db()
+            .collection::<Document>("community_badge_checks")
+            .list_index_names()
+            .await
+            .unwrap();
+        assert!(names.contains(&"status_checked".to_string()), "{names:?}");
     }
 
     /// MongoDB only: the activity block indexes can be made twice

@@ -2,7 +2,7 @@ use revolt_result::Result;
 
 use crate::{
     BadgeChangeRequest, BadgeGrant, BadgeLogEntry, BadgeRequestStatus, BetaFeature, BetaMember,
-    BetaStatus, BugReport, BugStatus, StaffAppointment,
+    BetaStatus, BugReport, BugStatus, CommunityBadgeCheck, CommunityCheckStatus, StaffAppointment,
 };
 
 #[cfg(feature = "mongodb")]
@@ -122,4 +122,17 @@ pub trait AbstractBadges: Sync + Send {
         request: &BadgeChangeRequest,
         expected: BadgeRequestStatus,
     ) -> Result<bool>;
+
+    /// The community badge check of one server
+    async fn fetch_community_check(&self, server_id: &str) -> Result<Option<CommunityBadgeCheck>>;
+
+    /// Create or replace a community badge check
+    async fn save_community_check(&self, check: &CommunityBadgeCheck) -> Result<()>;
+
+    /// Community badge checks, optionally in one status, latest count first
+    async fn fetch_community_checks(
+        &self,
+        status: Option<CommunityCheckStatus>,
+        limit: usize,
+    ) -> Result<Vec<CommunityBadgeCheck>>;
 }

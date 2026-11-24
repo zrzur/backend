@@ -172,12 +172,8 @@ impl Member {
         // before the count below is read: it counts the new member
         Server::forget_cached_member_count(&server.id).await;
         crate::ServerInsightDay::count(db, &server.id, crate::InsightCounter::Join(source)).await;
-
-        // a failure here never stops someone joining
-        let members = server.get_approximate_member_count(db).await;
-        if let Err(error) = crate::sync_server_size_badges(db, server, members).await {
-            log::error!("server size badges for {}: {error:?}", server.id);
-        }
+        // Community Builder and Big Community are counted by crond
+        // (genuine human members), never on a join
 
         let should_fetch = channels.is_none();
         let mut channels = channels.unwrap_or_default();

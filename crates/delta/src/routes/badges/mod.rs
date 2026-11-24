@@ -16,11 +16,11 @@ mod test;
 use iso8601_timestamp::Timestamp;
 use revolt_database::{
     badge_definition, badge_eligibility, badge_rule_check, beta_features_for, bug_hunter_stats,
-    creator_eligibility, epoch_ms, mutate_badge, platform_permissions, set_badge_hidden,
+    creator_eligibility, creator_program_since, days_since, epoch_ms, mutate_badge, platform_permissions, set_badge_hidden,
     sync_creator_badge, sync_user_badges, BadgeActor, BadgeChange, BadgeDenial, BadgeGrant,
     BadgeGrantRule, BadgeMutation, BadgeOutcome, BadgePath, BadgeSource, BetaMember, Database,
     PlatformPermission, StaffPermission, User, BADGE_CATALOGUE, ELITE_MIN_VERIFIED,
-    SUPER_CREATOR_MIN_DESIGNS,
+    SUPER_CREATOR_MIN_DAYS, SUPER_CREATOR_MIN_DESIGNS,
 };
 use revolt_models::v0;
 use revolt_result::{create_error, Result};
@@ -182,6 +182,8 @@ pub async fn mine(db: &State<Database>, user: User) -> Result<Json<v0::MyBadges>
             published,
             eligible,
             super_creator_designs: SUPER_CREATOR_MIN_DESIGNS,
+            super_creator_days: SUPER_CREATOR_MIN_DAYS,
+            program_days: creator_program_since(db, &user.id).await?.map(|since| days_since(since, now_ms())),
         },
         bugs: v0::BugProgress {
             verified,
@@ -383,6 +385,13 @@ pub(crate) async fn user_record(db: &Database, actor: &BadgeActor, id: &str) -> 
     sync_user_badges(db, &subject.id).await?;
     let now = now_ms();
     let grants = db.fetch_badge_grants(&subject.id).await?;
+    let revocable = grants
+        .iter()
+        .filter(|g| g.held(now))
+        .filter_map(|g| badge_definition(&g.badge))
+        .filter(|d| badge_rule_check(&actor, d, &subject, BadgeChange::Revoke).is_ok())
+        .map(|d| d.id.to_string())
+        .collect();
     let mut eligibility = vec![];
     for definition in BADGE_CATALOGUE.iter().filter(|b| !b.retired) {
         let reason = match badge_rule_check(&actor, definition, &subject, BadgeChange::Grant) {
@@ -417,6 +426,7 @@ pub(crate) async fn user_record(db: &Database, actor: &BadgeActor, id: &str) -> 
             })
             .collect(),
         eligibility,
+        revocable,
     })
 }
 
@@ -473,6 +483,7 @@ async fn retired_change(
         change,
         reason,
         expires_at: None,
+        source_ref: None,
     };
     match mutate_badge(db, &admin_route_actor(actor), request).await? {
         BadgeOutcome::Applied(grant) => Ok(Json(admin_grant_view(grant, now_ms()))),

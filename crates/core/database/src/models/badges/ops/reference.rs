@@ -4,7 +4,8 @@ use revolt_result::Result;
 
 use crate::{
     BadgeChangeRequest, BadgeGrant, BadgeLogEntry, BadgeRequestStatus, BetaFeature, BetaMember,
-    BetaStatus, BugKind, BugReport, ReferenceDb, StaffAppointment,
+    BetaStatus, BugKind, BugReport, CommunityBadgeCheck, CommunityCheckStatus, ReferenceDb,
+    StaffAppointment,
 };
 
 use super::{AbstractBadges, BugReportQuery};
@@ -19,6 +20,7 @@ pub struct BadgeStore {
     pub bugs: HashMap<String, BugReport>,
     pub appointments: HashMap<String, StaffAppointment>,
     pub requests: HashMap<String, BadgeChangeRequest>,
+    pub community: HashMap<String, CommunityBadgeCheck>,
 }
 
 #[async_trait]
@@ -340,5 +342,37 @@ impl AbstractBadges for ReferenceDb {
             }
             _ => Ok(false),
         }
+    }
+
+    async fn fetch_community_check(&self, server_id: &str) -> Result<Option<CommunityBadgeCheck>> {
+        Ok(self.badge_store.lock().await.community.get(server_id).cloned())
+    }
+
+    async fn save_community_check(&self, check: &CommunityBadgeCheck) -> Result<()> {
+        self.badge_store
+            .lock()
+            .await
+            .community
+            .insert(check.id.clone(), check.clone());
+        Ok(())
+    }
+
+    async fn fetch_community_checks(
+        &self,
+        status: Option<CommunityCheckStatus>,
+        limit: usize,
+    ) -> Result<Vec<CommunityBadgeCheck>> {
+        let mut list: Vec<_> = self
+            .badge_store
+            .lock()
+            .await
+            .community
+            .values()
+            .filter(|check| status.is_none_or(|status| check.status == status))
+            .cloned()
+            .collect();
+        list.sort_by(|a, b| b.checked_at.cmp(&a.checked_at));
+        list.truncate(limit);
+        Ok(list)
     }
 }

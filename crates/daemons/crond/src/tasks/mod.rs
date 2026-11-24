@@ -20,4 +20,5 @@ pub mod team_volunteers;
 pub mod voice_episodes;
 pub mod vanity_links;
 
+pub mod community_badges;
 pub mod desk_modal_cleanup;

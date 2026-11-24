@@ -47,7 +47,16 @@ auto_derived!(
         pub can_submit: bool,
         pub published: usize,
         pub eligible: bool,
+        /// Approved, published designs Super Creator needs (a minimum: the
+        /// team chooses)
         pub super_creator_designs: usize,
+        /// Days in the creator program Super Creator needs
+        #[cfg_attr(feature = "serde", serde(default))]
+        pub super_creator_days: u32,
+        /// Full days since you joined the creator program (none without a
+        /// record)
+        #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+        pub program_days: Option<u32>,
     }
 
     /// Progress towards the bug badges
@@ -161,6 +170,10 @@ auto_derived!(
         pub grants: Vec<AdminBadgeGrant>,
         pub log: Vec<BadgeLogEntry>,
         pub eligibility: Vec<BadgeEligibility>,
+        /// Held badges you may take away (some are not hand-given, such as
+        /// an earned Creator taken away for fraud with a second person)
+        #[cfg_attr(feature = "serde", serde(default))]
+        pub revocable: Vec<String>,
     }
 
     /// Search users or list holders of a badge (staff)

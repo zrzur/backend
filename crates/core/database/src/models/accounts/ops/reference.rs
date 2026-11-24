@@ -16,6 +16,22 @@ impl AbstractAccounts for ReferenceDb {
             .ok_or_else(|| create_error!(UnknownUser))
     }
 
+    async fn fetch_verified_account_ids(&self, ids: &[String]) -> Result<std::collections::HashSet<String>> {
+        let accounts = self.accounts.lock().await;
+        Ok(ids
+            .iter()
+            .filter(|id| {
+                accounts.get(id.as_str()).is_some_and(|account| {
+                    matches!(
+                        account.verification,
+                        EmailVerification::Verified | EmailVerification::Moving { .. }
+                    )
+                })
+            })
+            .cloned()
+            .collect())
+    }
+
     /// Find account by normalised email
     async fn fetch_account_by_normalised_email(
         &self,

@@ -3,7 +3,8 @@ use revolt_result::Result;
 
 use crate::{
     BadgeChangeRequest, BadgeGrant, BadgeLogEntry, BadgeRequestStatus, BetaFeature, BetaMember,
-    BetaStatus, BugKind, BugReport, MongoDb, StaffAppointment,
+    BetaStatus, BugKind, BugReport, CommunityBadgeCheck, CommunityCheckStatus, MongoDb,
+    StaffAppointment,
 };
 
 use super::{AbstractBadges, BugReportQuery};
@@ -15,6 +16,7 @@ static MEMBERS: &str = "beta_members";
 static BUGS: &str = "bug_reports";
 static APPOINTMENTS: &str = "staff_appointments";
 static REQUESTS: &str = "badge_change_requests";
+static COMMUNITY: &str = "community_badge_checks";
 
 fn to_bson<T: serde::Serialize>(value: &T) -> bson::Bson {
     bson::to_bson(value).expect("failed to serialize")
@@ -314,5 +316,42 @@ impl AbstractBadges for MongoDb {
             .await
             .map(|result| result.matched_count == 1)
             .map_err(|_| create_database_error!("replace_one", REQUESTS))
+    }
+
+    async fn fetch_community_check(&self, server_id: &str) -> Result<Option<CommunityBadgeCheck>> {
+        self.col::<CommunityBadgeCheck>(COMMUNITY)
+            .find_one(doc! { "_id": server_id })
+            .await
+            .map_err(|_| create_database_error!("find_one", COMMUNITY))
+    }
+
+    async fn save_community_check(&self, check: &CommunityBadgeCheck) -> Result<()> {
+        self.col::<CommunityBadgeCheck>(COMMUNITY)
+            .replace_one(doc! { "_id": &check.id }, check)
+            .with_options(ReplaceOptions::builder().upsert(true).build())
+            .await
+            .map(|_| ())
+            .map_err(|_| create_database_error!("replace_one", COMMUNITY))
+    }
+
+    async fn fetch_community_checks(
+        &self,
+        status: Option<CommunityCheckStatus>,
+        limit: usize,
+    ) -> Result<Vec<CommunityBadgeCheck>> {
+        let filter = match status {
+            Some(status) => doc! { "status": to_bson(&status) },
+            None => doc! {},
+        };
+        self.find_with_options(
+            COMMUNITY,
+            filter,
+            FindOptions::builder()
+                .sort(doc! { "checked_at": -1 })
+                .limit(limit as i64)
+                .build(),
+        )
+        .await
+        .map_err(|_| create_database_error!("find", COMMUNITY))
     }
 }

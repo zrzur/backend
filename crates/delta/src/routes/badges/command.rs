@@ -369,6 +369,7 @@ async fn act(db: &Database, caller: &User, data: DataBadgeCommand, give: bool) -
         change,
         reason: reason.clone(),
         expires_at: None,
+        source_ref: None,
     };
 
     // nobody changes their own badges, the owner neither: refused (and

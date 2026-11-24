@@ -267,6 +267,53 @@ auto_derived!(
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub decided_at: Option<i64>,
     }
+
+    /// Where a server's community badges stand
+    #[derive(Copy)]
+    pub enum CommunityCheckStatus {
+        /// Counted; nothing unusual
+        Clear,
+        /// The counted members joined, or their accounts were made, in a
+        /// burst: nothing is given until staff look at it
+        Held,
+        /// Staff looked at a held server and let the badges through
+        Released,
+        /// Staff found the members manipulated: this server gives no
+        /// community badge until they release it
+        Refused,
+    }
+
+    /// The crond count behind Community Builder and Big Community for one
+    /// server (`community_badge_checks`, id = server id). Counts and times
+    /// only: never member ids, messages or addresses.
+    pub struct CommunityBadgeCheck {
+        #[serde(rename = "_id")]
+        pub id: String,
+        /// Owner at the last count
+        pub owner_id: String,
+        /// Members of any kind at the last count
+        pub members: u32,
+        /// Genuine human members at the last count
+        pub counted: u32,
+        /// Most counted members who joined within one hour
+        pub join_burst: u32,
+        /// Most counted accounts made within one hour
+        pub signup_burst: u32,
+        pub status: CommunityCheckStatus,
+        /// Who this server gave Community Builder to (each server gives it
+        /// once, to the owner when it first reached the count)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub builder_to: Option<String>,
+        /// Who this server gave Big Community to
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub big_to: Option<String>,
+        /// Milliseconds since the epoch
+        pub checked_at: i64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub decided_by: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub decided_at: Option<i64>,
+    }
 );
 
 /// A badge change request not approved within 7 days is void

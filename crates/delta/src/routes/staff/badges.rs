@@ -17,8 +17,9 @@
 //! Every change and every refusal is written to the platform audit log.
 
 use revolt_database::{
-    approve_badge_request, badge_request_open, mutate_badge, refuse_badge_request, BadgeActor,
-    BadgeChange, BadgeChangeRequest, BadgeMutation, BadgeOutcome, BadgePath, Database, StaffPermission,
+    approve_badge_request, badge_request_open, decide_community_check, mutate_badge, refuse_badge_request,
+    BadgeActor, BadgeChange, BadgeChangeRequest, BadgeMutation, BadgeOutcome, BadgePath,
+    CommunityBadgeCheck, CommunityCheckStatus, CommunityThresholds, Database, StaffPermission,
 };
 use revolt_models::v0::{AdminBadgeGrant, AdminUserBadges, BadgeInfo};
 use revolt_result::Result;
@@ -135,6 +136,7 @@ async fn change(
             change,
             reason: data.reason,
             expires_at: if change == BadgeChange::Grant { data.expires_at } else { None },
+            source_ref: None,
         },
     )
     .await?;
@@ -219,4 +221,131 @@ pub async fn refuse(db: &State<Database>, staff: StaffContext, id: &str) -> Resu
     staff.require(db, StaffPermission::UsersRead).await?;
     let decided = refuse_badge_request(db, &actor(&staff), id).await?;
     Ok(Json(request_view(&decided, now_ms())))
+}
+
+/// A server's community badge count, as the console shows it: counts and
+/// times only, never member ids
+#[derive(Serialize, Debug)]
+pub struct CommunityCheckView {
+    pub server_id: String,
+    pub server_name: Option<String>,
+    pub owner_id: String,
+    pub members: u32,
+    pub counted: u32,
+    pub join_burst: u32,
+    pub signup_burst: u32,
+    /// Clear, Held, Released or Refused
+    pub status: String,
+    pub builder_to: Option<String>,
+    pub big_to: Option<String>,
+    pub checked_at: i64,
+    pub decided_by: Option<String>,
+    pub decided_at: Option<i64>,
+}
+
+fn community_view(check: CommunityBadgeCheck, server_name: Option<String>) -> CommunityCheckView {
+    CommunityCheckView {
+        server_id: check.id,
+        server_name,
+        owner_id: check.owner_id,
+        members: check.members,
+        counted: check.counted,
+        join_burst: check.join_burst,
+        signup_burst: check.signup_burst,
+        status: format!("{:?}", check.status),
+        builder_to: check.builder_to,
+        big_to: check.big_to,
+        checked_at: check.checked_at,
+        decided_by: check.decided_by,
+        decided_at: check.decided_at,
+    }
+}
+
+/// # Community badge counts
+///
+/// Servers counted for Community Builder and Big Community; `status=Held`
+/// lists the ones waiting for a staff look.
+#[get("/badges/community?<status>")]
+pub async fn community_checks(
+    db: &State<Database>,
+    staff: StaffContext,
+    status: Option<&str>,
+) -> Result<Json<Vec<CommunityCheckView>>> {
+    staff.require(db, StaffPermission::UsersRead).await?;
+    let status = match status {
+        None => None,
+        Some("Held") => Some(CommunityCheckStatus::Held),
+        Some("Clear") => Some(CommunityCheckStatus::Clear),
+        Some("Released") => Some(CommunityCheckStatus::Released),
+        Some("Refused") => Some(CommunityCheckStatus::Refused),
+        Some(_) => return Err(revolt_result::create_error!(InvalidOperation)),
+    };
+    let checks = db.fetch_community_checks(status, 200).await?;
+    let ids: Vec<String> = checks.iter().map(|c| c.id.clone()).collect();
+    let servers = db.fetch_servers(&ids).await?;
+    Ok(Json(
+        checks
+            .into_iter()
+            .map(|check| {
+                let name = servers.iter().find(|s| s.id == check.id).map(|s| s.name.clone());
+                community_view(check, name)
+            })
+            .collect(),
+    ))
+}
+
+#[derive(Deserialize)]
+pub struct DataCommunityDecision {
+    pub reason: String,
+}
+
+async fn decide_community(
+    db: &Database,
+    staff: &StaffContext,
+    server: &str,
+    release: bool,
+    reason: &str,
+) -> Result<Json<CommunityCheckView>> {
+    let check = decide_community_check(
+        db,
+        &actor(staff),
+        server,
+        release,
+        reason,
+        CommunityThresholds::default(),
+        now_ms(),
+    )
+    .await?;
+    let name = db.fetch_server(server).await.ok().map(|s| s.name);
+    Ok(Json(community_view(check, name)))
+}
+
+/// # Release a held server
+///
+/// The counted members joined in a burst; a staff member looked and lets
+/// the badges through (given at once while the count still earns them).
+#[post("/badges/community/<server>/release", data = "<data>")]
+pub async fn community_release(
+    db: &State<Database>,
+    staff: StaffContext,
+    server: &str,
+    data: Json<DataCommunityDecision>,
+) -> Result<Json<CommunityCheckView>> {
+    staff.require(db, StaffPermission::UsersRead).await?;
+    decide_community(db, &staff, server, true, &data.reason).await
+}
+
+/// # Refuse a server's community badges
+///
+/// The members look manipulated: the server gives no community badge until
+/// a staff member releases it.
+#[post("/badges/community/<server>/refuse", data = "<data>")]
+pub async fn community_refuse(
+    db: &State<Database>,
+    staff: StaffContext,
+    server: &str,
+    data: Json<DataCommunityDecision>,
+) -> Result<Json<CommunityCheckView>> {
+    staff.require(db, StaffPermission::UsersRead).await?;
+    decide_community(db, &staff, server, false, &data.reason).await
 }

@@ -373,6 +373,7 @@ async fn badge_command(db: &Database, mut rest: Vec<String>) {
             change,
             reason,
             expires_at: None,
+            source_ref: None,
         },
     )
     .await
