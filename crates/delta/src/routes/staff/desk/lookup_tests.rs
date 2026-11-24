@@ -386,7 +386,7 @@ async fn desk_lookups_match_the_console() {
         &owner,
         &token,
         &format!("/staff/users/{}/badges/grant", someone.id),
-        json!({ "badge": "partner", "reason": "Official partner" }),
+        json!({ "badge": "community_helper", "reason": "Helps in the community" }),
     )
     .await;
     let design: revolt_database::CommunityItem = serde_json::from_value(json!({
@@ -425,6 +425,8 @@ async fn desk_lookups_match_the_console() {
     assert_eq!(response.status(), Status::Ok);
     let (_, bot_owner_session, bot_owner) = s.harness.new_user().await;
     let (verified_bot, _) = s.harness.new_bot(&bot_owner).await;
+    // the Verified Bot Developer numbers ask for one legitimate server
+    s.harness.legitimate_server_for(&verified_bot.id).await;
     as_user(
         &s,
         &bot_owner_session.token,

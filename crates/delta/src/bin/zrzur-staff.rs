@@ -19,28 +19,120 @@
 //!       `--dry-run` prints the plan only. There is no way to skip the
 //!       question.
 //!
-//! The official bot mark changes only here.
+//!   zrzur-staff badge grant|revoke <user-id> <badge> --as <staff-user-id> <reason...>
+//!       the same gate as the admin console (`mutate_badge`), with the
+//!       rights of the `--as` staff member, after their TOTP code; sensitive
+//!       changes wait for a second staff member in the console
+//!   zrzur-staff appoint <user-id> staff|platform_moderator --as <owner-id>
+//!       --second <staff-id> [--training-acknowledged] <reason...>
+//!       the only way to give the Staff or Platform Moderator badge; two
+//!       people, both TOTP codes
+//!   zrzur-staff end-appointment <user-id> staff|platform_moderator --as <owner-id>
+//!       --second <staff-id> <reason...>     (takes the badge away)
+//!   zrzur-staff appointments    (read only: records, and holders without one)
+//!
+//! The official bot mark changes only here. Founder changes nowhere: it
+//! follows `[api.users] founder_id` in Revolt.toml.
 //!
 //! This is the only way to create or remove an Owner. There is no HTTP
 //! path, no default account and no password. The target account must have
 //! TOTP switched on. Every change is written to the platform audit log.
 
 use revolt_database::{
-    create_system_bot, is_system_bot_name, record_platform_audit, set_official_bot, staff_now,
-    verify_audit_chain, AuditOutcome, AuditRecord, Database, DatabaseInfo, StaffGrant, StaffRole,
-    Totp, STAFF_ACTOR_CLI, STAFF_BREAK_GLASS_MS,
+    appoint_staff, appointment_gaps, create_system_bot, end_staff_appointment, end_staff_badge_with_grant, is_system_bot_name,
+    mutate_badge, record_platform_audit, set_official_bot, staff_now, verify_audit_chain,
+    verify_staff_totp, AuditOutcome, AuditRecord, BadgeActor, BadgeChange, BadgeMutation,
+    BadgeOutcome, BadgePath, Database, DatabaseInfo, StaffGrant, StaffRole, Totp, STAFF_ACTOR_CLI,
+    STAFF_BREAK_GLASS_MS,
 };
 
 fn usage() -> ! {
     eprintln!(
-        "usage: zrzur-staff list | grant-owner <user-id> <reason> | break-glass <user-id> <reason> | revoke <user-id> <reason> | verify-audit | system-bot <owner-user-id> <name> <reason> | official-bot <bot-id> <reason> | official-bot-off <bot-id> <reason> | delete-owned <user-id> [--dry-run] <reason>"
+        "usage: zrzur-staff list | grant-owner <user-id> <reason> | break-glass <user-id> <reason> | revoke <user-id> <reason> | verify-audit | system-bot <owner-user-id> <name> <reason> | official-bot <bot-id> <reason> | official-bot-off <bot-id> <reason> | delete-owned <user-id> [--dry-run] <reason> | badge grant|revoke <user-id> <badge> --as <staff-id> <reason> | appoint <user-id> staff|platform_moderator --as <owner-id> --second <staff-id> [--training-acknowledged] <reason> | end-appointment <user-id> staff|platform_moderator --as <owner-id> --second <staff-id> <reason> | appointments"
     );
     std::process::exit(2)
 }
 
 fn fail(message: impl std::fmt::Display) -> ! {
+    terminal::restore();
     eprintln!("error: {message}");
     std::process::exit(1)
+}
+
+/// A TOTP code is typed without being shown: terminal echo is switched off
+/// with `stty` (no extra crate) while it is read, and put back right after,
+/// on every error and on Ctrl+C.
+mod terminal {
+    use std::io::IsTerminal;
+    use std::process::{Command, Stdio};
+    use std::sync::{Mutex, Once};
+
+    /// `stty -g` from before echo was switched off
+    static SAVED: Mutex<Option<String>> = Mutex::new(None);
+    static CTRL_C: Once = Once::new();
+
+    fn stty(args: &[&str]) -> Option<String> {
+        let output = Command::new("stty")
+            .args(args)
+            .stdin(Stdio::inherit())
+            .stderr(Stdio::null())
+            .output()
+            .ok()?;
+        output
+            .status
+            .success()
+            .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+
+    /// Put the terminal back as it was (no-op when nothing was changed)
+    pub fn restore() {
+        let saved = SAVED.lock().map(|mut saved| saved.take()).unwrap_or(None);
+        if let Some(saved) = saved {
+            let _ = stty(&[&saved]);
+        }
+    }
+
+    /// Switch echo off. `Err` when stdin is a terminal and echo could not be
+    /// switched off: then the code is not asked for at all.
+    fn hide() -> Result<(), &'static str> {
+        if !std::io::stdin().is_terminal() {
+            return Ok(());
+        }
+        CTRL_C.call_once(|| {
+            rocket::tokio::spawn(async {
+                if rocket::tokio::signal::ctrl_c().await.is_ok() {
+                    restore();
+                    eprintln!();
+                    std::process::exit(130);
+                }
+            });
+        });
+        let saved = stty(&["-g"]).filter(|s| !s.is_empty()).ok_or("could not read the terminal settings")?;
+        if let Ok(mut slot) = SAVED.lock() {
+            *slot = Some(saved);
+        }
+        stty(&["-echo"]).map(|_| ()).ok_or_else(|| {
+            restore();
+            "could not hide what is typed"
+        })
+    }
+
+    /// One line from stdin, typed without echo
+    pub async fn read_hidden(prompt: &str) -> Result<String, &'static str> {
+        eprint!("{prompt}");
+        hide()?;
+        let read = rocket::tokio::task::spawn_blocking(|| {
+            let mut line = String::new();
+            std::io::stdin().read_line(&mut line).map(|_| line)
+        })
+        .await;
+        restore();
+        eprintln!();
+        match read {
+            Ok(Ok(line)) => Ok(line),
+            _ => Err("could not read the code"),
+        }
+    }
 }
 
 /// Write the record before the change: fail closed, like `set_roles`
@@ -94,7 +186,7 @@ async fn set_roles(
         .as_ref()
         .map(|g| g.roles.iter().map(|r| r.name()).collect::<Vec<_>>().join(","))
         .unwrap_or_else(|| "none".into());
-    let grant = StaffGrant {
+    let mut grant = StaffGrant {
         id: user_id.to_string(),
         roles: roles.clone(),
         disabled: false,
@@ -103,7 +195,11 @@ async fn set_roles(
         version: current.as_ref().map(|g| g.version + 1).unwrap_or(1),
         updated_at: staff_now(),
         updated_by: STAFF_ACTOR_CLI.to_string(),
+        active_since: None,
+        activated_by: None,
     };
+    grant.carry_activation(current.as_ref(), staff_now(), STAFF_ACTOR_CLI);
+    let end_reason = reason.clone();
     // fail closed: the record comes first
     let after = roles.iter().map(|r| r.name()).collect::<Vec<_>>().join(",");
     record_platform_audit(
@@ -138,6 +234,14 @@ async fn set_roles(
         .revoke_staff_sessions_for_user(user_id, staff_now())
         .await
         .unwrap_or(0);
+    // no access left: the Staff badge goes too (the appointment end)
+    if roles.is_empty() {
+        match end_staff_badge_with_grant(db, STAFF_ACTOR_CLI, user_id, &end_reason).await {
+            Ok(true) => println!("{user_id}: Staff badge and appointment ended with the grant"),
+            Ok(false) => {}
+            Err(e) => fail(format!("grant removed, but the Staff badge could not be ended: {e:?}; run: zrzur-staff end-appointment")),
+        }
+    }
     println!(
         "{user_id} ({}): roles {}; {ended} staff session(s) ended",
         user.username,
@@ -175,6 +279,141 @@ async fn delete_owned(db: &Database, user_id: &str, rest: &[String]) {
     )
     .await;
     std::process::exit(code)
+}
+
+/// Take `--name value` out of `args`
+fn take_flag(args: &mut Vec<String>, name: &str) -> Option<String> {
+    let at = args.iter().position(|a| a == name)?;
+    if at + 1 >= args.len() {
+        usage();
+    }
+    let value = args.remove(at + 1);
+    args.remove(at);
+    Some(value)
+}
+
+/// Take a `--switch` out of `args`
+fn take_switch(args: &mut Vec<String>, name: &str) -> bool {
+    match args.iter().position(|a| a == name) {
+        Some(at) => {
+            args.remove(at);
+            true
+        }
+        None => false,
+    }
+}
+
+/// The TOTP code of staff member `user_id`, typed on the terminal: checked
+/// against their account and used once (the replay guard of the console).
+/// A wrong code is written to the audit log and stops the command. The code
+/// itself is never written anywhere.
+async fn confirm_totp(db: &Database, user_id: &str, action: &str) {
+    let grant = db
+        .fetch_staff_grant(user_id)
+        .await
+        .unwrap_or_else(|e| fail(format!("{e:?}")))
+        .filter(|g| g.is_active(staff_now()))
+        .unwrap_or_else(|| fail(format!("{user_id} has no active staff grant")));
+    let account = db
+        .fetch_account(user_id)
+        .await
+        .unwrap_or_else(|_| fail("no account for this user"));
+    let Totp::Enabled { secret } = account.mfa.totp_token else {
+        fail(format!("{user_id} has no TOTP switched on"));
+    };
+    let code = terminal::read_hidden(&format!("TOTP code of {user_id} (not shown): "))
+        .await
+        .unwrap_or_else(|e| fail(e));
+    let now_secs = (staff_now() / 1000).max(0) as u64;
+    let claimed = match verify_staff_totp(&secret, &code, now_secs, grant.last_totp_step) {
+        Some(step) => db.claim_staff_totp_step(user_id, step).await.unwrap_or(false),
+        None => false,
+    };
+    if !claimed {
+        let _ = record_platform_audit(
+            db,
+            AuditRecord {
+                actor_id: user_id.to_string(),
+                action: format!("{action}.totp"),
+                summary: Some("wrong or reused TOTP code on the command line".into()),
+                ..Default::default()
+            },
+            AuditOutcome::Denied,
+        )
+        .await;
+        fail("wrong or reused TOTP code; nothing changed");
+    }
+}
+
+/// `badge grant|revoke`: through the one gate, with the operator's rights
+async fn badge_command(db: &Database, mut rest: Vec<String>) {
+    let operator = take_flag(&mut rest, "--as").unwrap_or_else(|| fail("say who acts: --as <staff-user-id>"));
+    if rest.len() < 3 {
+        usage();
+    }
+    let change = match rest[0].as_str() {
+        "grant" => BadgeChange::Grant,
+        "revoke" => BadgeChange::Revoke,
+        _ => usage(),
+    };
+    let (user, badge) = (rest[1].clone(), rest[2].clone());
+    let reason = rest[3..].join(" ");
+    confirm_totp(db, &operator, "staff.cli.badge").await;
+    let mut actor = BadgeActor::from_staff_grant(db, &operator, BadgePath::Cli, staff_now())
+        .await
+        .unwrap_or_else(|e| fail(format!("{e:?}")));
+    // the TOTP code just typed is the step-up
+    actor.step_up = true;
+    let outcome = mutate_badge(
+        db,
+        &actor,
+        BadgeMutation {
+            user_id: user.clone(),
+            badge: badge.clone(),
+            change,
+            reason,
+            expires_at: None,
+            source_ref: None,
+        },
+    )
+    .await
+    .unwrap_or_else(|e| fail(format!("refused or failed (see the audit log): {:?}", e.error_type)));
+    match outcome {
+        BadgeOutcome::Applied(_) => {
+            let done = if change == BadgeChange::Grant { "given" } else { "taken away" };
+            println!("{user}: {badge} {done}")
+        }
+        BadgeOutcome::Pending(request) => println!(
+            "{user}: {badge} waits for a second staff member (request {}); approve it in the admin console",
+            request.id
+        ),
+    }
+}
+
+/// `appoint` / `end-appointment`: two people, both TOTP codes
+async fn appointment_command(db: &Database, end: bool, mut rest: Vec<String>) {
+    let first = take_flag(&mut rest, "--as").unwrap_or_else(|| fail("say who acts: --as <owner-user-id>"));
+    let second = take_flag(&mut rest, "--second")
+        .unwrap_or_else(|| fail("a second person is needed: --second <staff-user-id>"));
+    let training = take_switch(&mut rest, "--training-acknowledged");
+    if rest.len() < 2 {
+        usage();
+    }
+    let (user, role) = (rest[0].clone(), rest[1].clone());
+    let reason = rest[2..].join(" ");
+    if first == second {
+        fail("the second person must be someone else");
+    }
+    confirm_totp(db, &first, "staff.cli.appointment").await;
+    confirm_totp(db, &second, "staff.cli.appointment").await;
+    let done = if end {
+        end_staff_appointment(db, &first, &second, &user, &role, &reason).await.map(|_| ())
+    } else {
+        appoint_staff(db, &first, &second, &user, &role, &reason, training).await.map(|_| ())
+    };
+    done.unwrap_or_else(|e| fail(format!("refused or failed (see the audit log): {:?}", e.error_type)));
+    let what = if end { "appointment ended, badge taken away" } else { "appointed, badge given" };
+    println!("{user}: {role} {what}");
 }
 
 #[rocket::main]
@@ -259,6 +498,36 @@ async fn main() {
             println!("{} ({}): official bot {mark}", user.id, user.username);
         }
         ("delete-owned", Some(user)) => delete_owned(&db, user, &args[2..]).await,
+        ("badge", Some(_)) => badge_command(&db, args[1..].to_vec()).await,
+        ("appoint", Some(_)) => appointment_command(&db, false, args[1..].to_vec()).await,
+        ("end-appointment", Some(_)) => appointment_command(&db, true, args[1..].to_vec()).await,
+        ("appointments", _) => {
+            let appointments = db
+                .fetch_staff_appointments()
+                .await
+                .unwrap_or_else(|e| fail(format!("{e:?}")));
+            for appointment in appointments {
+                println!(
+                    "{}  {}  appointed_at={}  by={}  ended_at={}",
+                    appointment.user_id,
+                    appointment.role,
+                    appointment.appointed_at,
+                    appointment.appointed_by.join(","),
+                    appointment
+                        .ended_at
+                        .map(|e| e.to_string())
+                        .unwrap_or_else(|| "-".into())
+                );
+            }
+            let gaps = appointment_gaps(&db).await.unwrap_or_else(|e| fail(format!("{e:?}")));
+            println!(
+                "holders without an appointment (they keep the badge until the owner confirms or ends it): {}",
+                gaps.len()
+            );
+            for (badge, user) in gaps {
+                println!("  {user}  {badge}");
+            }
+        }
         ("verify-audit", _) => {
             let mut from = 1;
             let mut before = None;

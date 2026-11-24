@@ -20,6 +20,7 @@ database_derived!(
     pub struct ReferenceDb {
         pub audit_logs: Arc<Mutex<HashMap<String, AuditLogEntry>>>,
         pub badge_store: Arc<Mutex<crate::BadgeStore>>,
+        pub badge_programs: Arc<Mutex<crate::ProgramStore>>,
         pub plugin_store: Arc<Mutex<crate::PluginStore>>,
         pub bots: Arc<Mutex<HashMap<String, Bot>>>,
         pub channels: Arc<Mutex<HashMap<String, Channel>>>,

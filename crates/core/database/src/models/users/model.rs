@@ -1486,22 +1486,38 @@ impl User {
         Ok(())
     }
 
-    /// Gets the user's badges along with calculating any dynamic badges
+    /// Gets the user's badges along with calculating any dynamic badges.
+    /// Everyone sees the same set, the account itself too.
     pub async fn get_badges(&self) -> u32 {
         let config = config().await;
-        let mut badges = self.badges.unwrap_or_default() as u32 & !(UserBadges::Plus as u32);
+        let mut badges = self.badges.unwrap_or_default() as u32
+            & !(UserBadges::Plus as u32 | crate::ACCOUNT_AGE_BADGES);
 
         if self.has_plus().await && !self.plus.as_ref().is_some_and(|plus| plus.hide_badge) {
             badges |= UserBadges::Plus as u32;
         }
 
-        if let Some(cutoff) = config.api.users.early_adopter_cutoff {
-            if Ulid::from_string(&self.id).unwrap().timestamp_ms() < cutoff {
-                return badges | UserBadges::EarlyAdopter as u32;
-            };
-        };
+        // Founder follows `[api.users] founder_id` alone once it is set
+        badges = crate::founder_bit(badges, config.api.users.founder(), &self.id);
+
+        // Early Adopter and the time badges come from the account's age, and
+        // only while "Member since" shows on the profile
+        if !self.hides_member_since() {
+            badges |= crate::account_age_badges(
+                self,
+                config.api.users.early_adopter_cutoff,
+                crate::epoch_ms(Timestamp::now_utc()),
+            );
+        }
 
         badges
+    }
+
+    /// Whether the person turned off the "Member since" profile section
+    pub fn hides_member_since(&self) -> bool {
+        self.profile
+            .as_ref()
+            .is_some_and(|profile| profile.hidden_sections.iter().any(|s| s == "member_since"))
     }
 
     /// Removes all relationships which include the user

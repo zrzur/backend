@@ -13,7 +13,7 @@
 use futures::future::BoxFuture;
 use revolt_database::{
     AuditOutcome, BadgeGrantRule, BotVerificationStatus, Database, DiscoverRequestType, PluginRisk,
-    StaffPermission, User, badge_definition, is_seeded_official, record_platform_audit,
+    StaffPermission, User, is_seeded_official, record_platform_audit,
 };
 use revolt_models::v0::{
     CommandOptionType, DataDiscoverDecision, DataPlatformWord, GatewayIntents,
@@ -215,6 +215,11 @@ mod w {
         "Gibt {user} das Abzeichen {badge}; die Person wird informiert.",
     );
     pub const BADGE_UNTIL: Text = t("Until {time}.", "حتى {time}.", "Bis {time}.");
+    pub const SECOND_PERSON: Text = t(
+        "This change waits for a second staff member to approve it.",
+        "ينتظر هذا التغيير موافقة عضو آخر في الإدارة.",
+        "Diese Änderung wartet auf die Zustimmung eines zweiten Teammitglieds.",
+    );
     pub const BADGE_REMOVE: Text = t(
         "Takes the badge {badge} away from {user}; they are told.",
         "يسحب شارة {badge} من {user}؛ ويُبلَّغ بذلك.",
@@ -346,7 +351,7 @@ const STATUS_DONE: &[Show] = &[
     show("/status", w::STATUS),
     show("/name", w::NAME),
 ];
-const BADGE_DONE: &[Show] = &[show("/badge", w::BADGE), show("/held", w::STATUS)];
+const BADGE_DONE: &[Show] = &[show("/badge", w::BADGE), show("/status", w::STATUS)];
 const OFFICIAL_DONE: &[Show] = &[
     show("/id", w::ID),
     show("/username", w::USER),
@@ -892,26 +897,56 @@ fn badge_name(id: &str, lang: Lang) -> String {
         .unwrap_or_else(|| id.to_string())
 }
 
-/// The console's rule for the Staff badge and old official badges: an
-/// Owner only, with a fresh code; refused with the console's Denied record
-async fn privileged(
+/// Beta's single badge gate, asked at card time as the confirmation will
+/// ask it (Zrzur Desk's path, with the fresh code the card asks for):
+/// refused here with a Denied record in the gate's own form; gives whether
+/// the change needs the Owner (Privileged or Historical rule) and whether
+/// it waits for a second staff member
+async fn badge_gate(
     db: &Database,
     staff: &StaffContext,
-    action: &str,
     user: &str,
     badge: &str,
-) -> Result<bool> {
-    let definition = badge_definition(badge).ok_or_else(|| create_error!(NotFound))?;
-    let privileged = definition.rule == BadgeGrantRule::Privileged;
-    if privileged && !staff.grant.is_owner(staff.now) {
-        let mut record = staff.record(action, Some(StaffPermission::BadgesManage));
-        record.target_kind = Some("user".to_string());
-        record.target_id = Some(user.to_string());
-        record.summary = Some(format!("{badge} (owner only)"));
-        record_platform_audit(db, record, AuditOutcome::Denied).await?;
-        return Err(create_error!(NotPrivileged));
+    give: bool,
+) -> Result<(bool, bool)> {
+    use revolt_database::{BadgeChange, BadgeDecision, BadgeMutation, BadgePath};
+    let change = if give {
+        BadgeChange::Grant
+    } else {
+        BadgeChange::Revoke
+    };
+    let mut actor = super::super::badges::actor_on(staff, BadgePath::Desk);
+    // the confirmation needs a fresh code: the card checks the rest
+    actor.step_up = true;
+    let mutation = BadgeMutation {
+        user_id: user.to_string(),
+        badge: badge.to_string(),
+        change,
+        reason: String::new(),
+        expires_at: None,
+        source_ref: None,
+    };
+    match revolt_database::authorize_badge_mutation(db, &actor, &mutation).await? {
+        Ok(authorized) => Ok((
+            matches!(
+                authorized.definition.rule,
+                BadgeGrantRule::Privileged | BadgeGrantRule::Historical
+            ),
+            authorized.decision == BadgeDecision::NeedsSecondPerson,
+        )),
+        Err(denial) => {
+            let word = if give { "grant" } else { "revoke" };
+            let mut record = staff.record(
+                &format!("staff.desk.badge.{word}"),
+                Some(StaffPermission::BadgesManage),
+            );
+            record.target_kind = Some("user".to_string());
+            record.target_id = Some(user.to_string());
+            record.summary = Some(format!("{badge} denied:{} via desk", denial.code()));
+            record_platform_audit(db, record, AuditOutcome::Denied).await?;
+            Err(denial.error())
+        }
     }
-    Ok(privileged)
 }
 
 async fn badge_card(
@@ -927,12 +962,7 @@ async fn badge_card(
     if user == staff.user.id {
         return Err(create_error!(NotPrivileged));
     }
-    let action = if give {
-        "staff.badge.grant"
-    } else {
-        "staff.badge.revoke"
-    };
-    let privileged = privileged(db, staff, action, &user, &badge).await?;
+    let (privileged, second_person) = badge_gate(db, staff, &user, &badge, give).await?;
     let who = person(db, &user).await;
     let (title, text) = if give {
         (w::T_BADGE_GIVE, w::BADGE_GIVE)
@@ -948,6 +978,9 @@ async fn badge_card(
             let until = staff.now + days * 24 * 60 * 60 * 1000;
             lines.push(w::BADGE_UNTIL.fill(lang, &[("time", &super::registry::when(until))]));
         }
+    }
+    if second_person {
+        lines.push(w::SECOND_PERSON.get(lang).to_string());
     }
     lines.push(w::REASON.fill(lang, &[("reason", &required(input, "reason")?)]));
     let mut prepared = prepared("user", &user, title, lang, lines);

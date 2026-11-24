@@ -277,6 +277,35 @@ impl AbstractServerMembers for MongoDb {
             .map_err(|_| create_database_error!("count_documents", COL))
     }
 
+    async fn fetch_server_member_totals(&self, min: usize) -> Result<Vec<(String, usize)>> {
+        let mut cursor = self
+            .col::<Document>(COL)
+            .aggregate(vec![
+                doc! { "$match": { "pending_deletion_at": { "$exists": false } } },
+                doc! { "$group": { "_id": "$_id.server", "members": { "$sum": 1_i64 } } },
+                doc! { "$match": { "members": { "$gte": min as i64 } } },
+                doc! { "$sort": { "_id": 1_i32 } },
+            ])
+            .await
+            .map_err(|_| create_database_error!("aggregate", COL))?;
+        let mut totals = vec![];
+        while let Some(row) = cursor.next().await {
+            let row = row.map_err(|_| create_database_error!("aggregate", COL))?;
+            let (Ok(server), Some(members)) = (
+                row.get_str("_id"),
+                row.get("members").and_then(|value| match value {
+                    bson::Bson::Int64(n) => Some(*n),
+                    bson::Bson::Int32(n) => Some(*n as i64),
+                    _ => None,
+                }),
+            ) else {
+                continue;
+            };
+            totals.push((server.to_string(), members.max(0) as usize));
+        }
+        Ok(totals)
+    }
+
     /// Fetch server count of a user
     async fn fetch_server_count(&self, user_id: &str) -> Result<usize> {
         self.col::<Member>(COL)

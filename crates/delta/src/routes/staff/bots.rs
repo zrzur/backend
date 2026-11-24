@@ -105,8 +105,8 @@ async fn rows(db: &Database, bots: Vec<revolt_database::Bot>) -> Result<Vec<BotR
         .map(|bot| {
             let flags = bot.flags.unwrap_or_default();
             let user = find(&bot.id);
-            // the flag, or the official-bot mark of `zrzur-staff official-bot`
-            let official = revolt_database::staff_deletion::is_official_bot(&bot, user);
+            // the Official flag, set by `zrzur-staff official-bot`
+            let official = revolt_database::staff_deletion::is_official_bot(&bot);
             BotRow {
                 username: user.map(|u| u.username.clone()),
                 discriminator: user.map(|u| u.discriminator.clone()),
@@ -361,7 +361,7 @@ pub(super) async fn verifications_core(
 
 /// Sets or clears the verified flag and the mark on the bot's profile;
 /// `intents` are added to the approved privileged intents
-async fn set_verified(db: &Database, bot_id: &str, verified: bool, intents: i64) -> Result<()> {
+pub(crate) async fn set_verified(db: &Database, bot_id: &str, verified: bool, intents: i64) -> Result<()> {
     let mut bot = db.fetch_bot(bot_id).await?;
     let flags = bot.flags.unwrap_or_default();
     let flags = if verified {
@@ -449,6 +449,29 @@ pub(super) async fn decide_verification_core(
     // nobody verifies their own bot
     if bot.owner == staff.user.id {
         return Err(create_error!(NotPrivileged));
+    }
+    // the Verified Bot Developer numbers still hold (legitimate servers, age,
+    // an adult owner with a confirmed e-mail): this route is no way around them
+    if data.approve {
+        let owner = db.fetch_user(&bot.owner).await?;
+        let programs = revolt_config::config().await.api.badge_programs;
+        let checklist = revolt_database::program_eligibility(
+            db,
+            &programs,
+            revolt_database::BadgeProgram::VerifiedBot,
+            &owner,
+            &bot.id,
+            false,
+            false,
+            staff.now,
+        )
+        .await?;
+        let missing = checklist.missing();
+        if !missing.is_empty() {
+            return Err(create_error!(FailedValidation {
+                error: format!("not_eligible:{}", missing.join(","))
+            }));
+        }
     }
     let mut record = staff.record(
         "staff.bot.verification",
@@ -569,11 +592,9 @@ pub(super) async fn unverify_core(
         Ok(())
     })
     .await?;
-    let name = db
-        .fetch_user(&bot.id)
-        .await
-        .map(|u| u.username)
-        .unwrap_or_default();
+    // an approved Verified Bot application ends with the mark
+    revolt_database::bot_programs_ended(db, &bot.id, &bot.owner, "mark_removed").await;
+    let name = db.fetch_user(&bot.id).await.map(|u| u.username).unwrap_or_default();
     crate::util::official::bot(db, &bot.owner, "bot.unverified", &name, Some(&why)).await;
     Ok(())
 }

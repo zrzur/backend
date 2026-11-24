@@ -4,7 +4,7 @@ use iso8601_timestamp::{Duration, Timestamp};
 use revolt_database::FieldsUser;
 use revolt_database::{
     util::reference::Reference, CommunityItemKind, CommunityItemStatus, Database, Emoji,
-    EmojiParent, File, PartialUser, User,
+    EmojiParent, File, PartialUser, Session, StaffPermission, User,
 };
 use ulid::Ulid;
 use revolt_models::v0;
@@ -65,6 +65,27 @@ fn check_status_expiry(at: Timestamp) -> Result<()> {
     Ok(())
 }
 
+/// Another person's profile, flags or badge bits: only a staff Owner whose
+/// `privileged` flag is in effect, holding `platform.users.suspend`, with a
+/// fresh step-up on the console session of this sign-in. The flag alone is
+/// not enough (security review F11).
+async fn staff_edit(db: &Database, user: &User, session: Option<&Session>) -> Result<()> {
+    if !user.privileged {
+        return Err(create_error!(NotPrivileged));
+    }
+    let fresh = match session {
+        Some(session) => {
+            revolt_database::privileged_step_up_in_effect(db, &user.id, &session.id, StaffPermission::UsersSuspend).await
+        }
+        None => false,
+    };
+    if fresh {
+        Ok(())
+    } else {
+        Err(create_error!(NotElevated))
+    }
+}
+
 /// # Edit User
 ///
 /// Edit currently authenticated user.
@@ -73,6 +94,7 @@ fn check_status_expiry(at: Timestamp) -> Result<()> {
 pub async fn edit(
     db: &State<Database>,
     mut user: User,
+    session: Option<Session>,
     target: Reference<'_>,
     data: Json<v0::DataEditUser>,
 ) -> Result<Json<v0::User>> {
@@ -85,8 +107,8 @@ pub async fn edit(
     }
 
     // Filter out invalid edit fields
-    if !user.privileged && (data.badges.is_some() || data.flags.is_some()) {
-        return Err(create_error!(NotPrivileged));
+    if data.badges.is_some() || data.flags.is_some() {
+        staff_edit(db, &user, session.as_ref()).await?;
     }
 
     // The platform word list reads what others see of a profile
@@ -110,15 +132,16 @@ pub async fn edit(
             .map(|bot| bot.owner == user.id)
             .unwrap_or_default();
 
-        if !is_bot_owner && !user.privileged {
-            return Err(create_error!(NotPrivileged));
+        if !is_bot_owner {
+            staff_edit(db, &user, session.as_ref()).await?;
         }
 
         user = target_user;
     }
 
-    // Badges are granted and revoked through /badges/admin (audited, no
-    // self-grant); the raw bitfield can't change them
+    // Badges are given and taken only through the one badge gate (admin
+    // console, `/badge`, `zrzur-staff badge`; audited, no self-grant): the
+    // raw bitfield can't change them
     if let Some(badges) = data.badges {
         let managed = revolt_database::managed_badge_bits();
         if badges as u32 & managed != user.badges.unwrap_or_default() as u32 & managed {
@@ -355,8 +378,14 @@ pub async fn edit(
         )
     };
     let was_invisible = invisible(&user);
+    let hid_member_since = user.hides_member_since();
     user.update(db, partial, remove.into_iter().map(Into::into).collect())
     .await?;
+
+    // the account-age badges follow "Member since": tell everyone at once
+    if hid_member_since != user.hides_member_since() {
+        revolt_database::publish_badges(&user).await;
+    }
 
     // going invisible hides what you are doing from others, coming back
     // shows it again (rich presence; nothing when there is none)

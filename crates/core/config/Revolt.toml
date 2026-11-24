@@ -172,9 +172,68 @@ limit = 10
 # Days without use after which a session expires. 0 switches expiry off.
 idle_days = 30
 
+[api.badge_programs]
+# Partner, Verified Server and Verified Bot Developer (owner's brief of
+# 2026-11-23). The numbers only let someone apply; a person on the team
+# always decides, and nothing is given automatically from them.
+partner_members = 5000
+partner_age_days = 180
+partner_weekly_active = 500
+partner_weekly_contributors = 200
+partner_retention_percent = 20
+partner_weeks = 8
+partner_retention_min_joins = 50
+partner_review_days = 180
+verified_server_members = 10000
+verified_server_age_days = 180
+bot_servers = 25
+bot_age_days = 30
+bot_server_min_humans = 10
+bot_servers_per_owner = 2
+# crond measures weekly activity (counts only) of servers this large
+metrics_min_members = 5000
+# applications: wait after a refusal, appeal window, and how long data stays
+reapply_days = 90
+appeal_days = 30
+evidence_days = 90
+record_days = 365
+draft_days = 30
+# Content Creator (owner's brief, section 6): followers on ONE platform as a
+# reviewer saw them (never added up), days active, original works in the
+# window (or an equivalent livestream schedule). Zrzur never calls the
+# platform: a reviewer checks the public page and the profile code by hand.
+creator_followers = 100000
+creator_active_days = 90
+creator_works = 5
+creator_window_days = 90
+# a follower figure older than this is looked at again before approving
+creator_figures_fresh_days = 30
+# the code in the channel description or pinned post is accepted this long
+creator_code_days = 90
+
 [api.users]
 # Minimum allowed length of usernames
 min_username_length = 2
+# The account id that shows the Zrzur Founder badge (one account). Leave
+# empty until the owner sets his own id. No API, bot, admin console or
+# command line changes it, and no badge path grants, moves or takes the
+# badge. Changing it is a host-level change with two people: the owner
+# (guard mark) edits /etc/zrzur/Revolt.toml while a second team member
+# watches and confirms; delta writes `config.founder_id` to the platform
+# audit log at the next start ("founder_id changed"), and does not start
+# while the value is set and that record can't be written.
+# Every service (delta, bonfire, pushd, crond, ...) reads this same
+# Revolt.toml and shows the Founder badge from it: the value must be the
+# same for all of them, so change it in the one shared file and restart
+# them all. The founder's Founder badge can't be hidden.
+# founder_id = ""
+# Early Adopter: accounts made strictly before this moment (UTC milliseconds
+# since 1970) get the badge, computed on every read; bots, official/system
+# accounts and people who hide "Member since" never show it. Zrzur's value,
+# set at deploy time in /etc/zrzur/Revolt.toml (not here):
+#   early_adopter_cutoff = 1803859200000   # 2027-03-01T00:00:00Z
+# Publish the date once and never move it after it was announced.
+# early_adopter_cutoff = 1803859200000
 
 [pushd]
 # this changes the names of the queues to not overlap 
@@ -613,6 +672,14 @@ effect_min_frame_ms = 33
 webm_max_bytes = 8_000_000
 webm_timeout_ms = 20_000
 
+[features.badge_applications]
+# Applying for Partner, Verified Server, Verified Bot Developer and Content
+# Creator from the app. Off, the applicant routes answer FeatureDisabled and
+# the app shows no "Check and apply" or "Your applications"; the team still
+# reviews applications already made in the admin console. Turn on only after
+# the legal texts are published (privacy T3, Terms T5/T6) and the DPIA is done.
+enabled = false
+
 [features.server_import]
 # "Copy a server setup": builds a server from the layout in a Discord server
 # template (channels, categories, roles; never messages or members).
@@ -653,10 +720,16 @@ bot = ""
 
 [features.badge_command]
 # `/badge give` and `/badge remove` in one bot (the Apply bot): the owner's
-# account gives and takes platform badges, the privileged ones included.
+# account gives and takes the badges staff may hand out (`Staff`-rule
+# badges), with the rights of the owner's own staff grant
+# (`platform.badges.manage`; no grant, no change). Privileged badges,
+# Founder, Staff and Platform Moderator are never changed here: they need a
+# step-up in the admin console, the founder setting or an appointment.
+# Sensitive changes wait for a second staff member in the console.
 # The bot decides nothing (routes under /badges/command): the server checks
-# that the press is genuine, used once and made by `owner`, and writes every
-# try, refused ones included, to the platform audit log.
+# that the press is genuine, used once and made by `owner`, runs the one
+# badge gate, and writes every try, refused ones included, to the platform
+# audit log.
 # Leave either value empty to keep the routes switched off.
 owner = ""
 bot = ""

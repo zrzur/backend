@@ -307,17 +307,12 @@ async fn entry(db: &Database, request: &DiscoverRequest) -> Option<ReviewEntry> 
                             .as_ref()
                             .and_then(|profile| profile.background.clone()),
                     ),
-                    {
-                        let mut marks = mark(
-                            bot.flags,
-                            v0::BotFlags::Official as i32,
-                            v0::BotFlags::Verified as i32,
-                        );
-                        if bot_user.official_bot && !marks.iter().any(|m| m == "Official") {
-                            marks.insert(0, "Official".to_string());
-                        }
-                        marks
-                    },
+                    // the Official flag is the one source of the official mark
+                    mark(
+                        bot.flags,
+                        v0::BotFlags::Official as i32,
+                        v0::BotFlags::Verified as i32,
+                    ),
                 )
             }
         };

@@ -12,6 +12,10 @@ pub trait AbstractAccounts: Sync + Send {
     /// Find account by id
     async fn fetch_account(&self, id: &str) -> Result<Account>;
 
+    /// Of these account ids, the ones whose e-mail is confirmed (verified,
+    /// or verified and moving to a new address)
+    async fn fetch_verified_account_ids(&self, ids: &[String]) -> Result<std::collections::HashSet<String>>;
+
     /// Find account by normalised email
     async fn fetch_account_by_normalised_email(
         &self,

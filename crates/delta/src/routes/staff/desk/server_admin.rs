@@ -576,8 +576,9 @@ async fn delete_bot_card(
         StaffPermission::ServersRestrict,
     )
     .await?;
-    let (bot, user, name) = bot_name(db, &id).await?;
-    if staff_deletion::is_official_bot(&bot, user.as_ref()) {
+    let (bot, _, name) = bot_name(db, &id).await?;
+    // the bot's Official flag is the one source of the mark
+    if staff_deletion::is_official_bot(&bot) {
         denied(
             db,
             staff,
@@ -1117,7 +1118,6 @@ const FACTS: DeskOption = text(
 
 const MARK_ACTION: DeskOption = DeskOption {
     choices: &[
-        choice("verify", "Verify", "توثيق", "Verifizieren"),
         choice(
             "unverify",
             "Take the verified mark away",

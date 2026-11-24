@@ -1023,6 +1023,8 @@ impl Account {
         // their private saved list and their reminders
         db.delete_saved_messages_of(&self.id).await?;
         db.delete_reminders_of(&self.id).await?;
+        // badge program applications, their evidence and reviews (legal BV-09)
+        crate::erase_applications_of(db, &self.id).await?;
 
         self.email = format!("Deleted User {}", &self.id);
         self.email_normalised = format!("Deleted User {}", &self.id);

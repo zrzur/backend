@@ -27,6 +27,7 @@ mod platform_staff;
 mod bot_verifications;
 mod account_change_requests;
 mod official_mark_requests;
+mod badge_programs;
 mod platform_notices;
 mod support_tickets;
 mod team_applications;
@@ -79,6 +80,7 @@ pub use platform_staff::*;
 pub use bot_verifications::*;
 pub use account_change_requests::*;
 pub use official_mark_requests::*;
+pub use badge_programs::*;
 pub use platform_notices::*;
 pub use support_tickets::*;
 pub use team_applications::*;
@@ -154,6 +156,7 @@ pub trait AbstractDatabase:
     + bot_verifications::AbstractBotVerification
     + account_change_requests::AbstractAccountChangeRequest
     + official_mark_requests::AbstractOfficialMarkRequest
+    + badge_programs::AbstractBadgePrograms
     + platform_notices::AbstractPlatformNotice
     + support_tickets::AbstractSupportTicket
     + team_applications::AbstractTeamApplications

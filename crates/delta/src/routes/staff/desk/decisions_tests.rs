@@ -79,6 +79,8 @@ async fn desk_reviews_run_the_consoles_actions() {
     assert_eq!(response.status(), Status::Ok);
     let (_, bot_owner_session, bot_owner) = s.harness.new_user().await;
     let (bot, _) = s.harness.new_bot(&bot_owner).await;
+    // the Verified Bot Developer numbers ask for one legitimate server
+    s.harness.legitimate_server_for(&bot.id).await;
     let applied = as_user(
         &s,
         &bot_owner_session.token,
@@ -133,10 +135,10 @@ async fn desk_reviews_run_the_consoles_actions() {
             "give",
             json!([
                 user_opt(&someone.id),
-                text("badge", "partner"),
+                text("badge", "community_helper"),
                 text("reason", "Official partner")
             ]),
-            "staff.badge.grant",
+            "staff.desk.badge.grant",
         ),
     ] {
         let c = card(&s, &owner, &command, group, name, options).await;
@@ -208,7 +210,7 @@ async fn desk_reviews_run_the_consoles_actions() {
         "remove",
         json!([
             user_opt(&someone.id),
-            text("badge", "partner"),
+            text("badge", "community_helper"),
             text("reason", "Partnership ended")
         ]),
     )
@@ -275,7 +277,7 @@ async fn desk_reviews_run_the_consoles_actions() {
         "give",
         json!([
             user_opt(&someone.id),
-            text("badge", "staff"),
+            text("badge", "developer"),
             text("reason", "Joined the team")
         ]),
     )
@@ -312,11 +314,11 @@ async fn desk_reviews_run_the_consoles_actions() {
         (&design_card, "staff.design.review"),
         (&remove, "staff.discover.decide"),
         (&revoke, "staff.creator.change"),
-        (&staff_badge, "staff.badge.grant"),
+        (&staff_badge, "staff.desk.badge.grant"),
         (&propose, "staff.official.propose"),
         (&word_card, "platform.words.remove"),
         (&unverify, "staff.bot.unverify"),
-        (&badge_remove, "staff.badge.revoke"),
+        (&badge_remove, "staff.desk.badge.revoke"),
     ] {
         let (status, body) = confirm(&s, &owner, c).await;
         assert_eq!(status, Status::Ok, "{record}: {body}");
@@ -557,6 +559,8 @@ async fn desk_verification_card_checks_like_the_console() {
     let command = register_review(&s).await;
     let (_, bot_owner_session, bot_owner) = s.harness.new_user().await;
     let (bot, _) = s.harness.new_bot(&bot_owner).await;
+    // the Verified Bot Developer numbers ask for one legitimate server
+    s.harness.legitimate_server_for(&bot.id).await;
     let applied = as_user(
         &s,
         &bot_owner_session.token,
@@ -639,7 +643,7 @@ async fn desk_refuses_decisions_about_yourself() {
             "give",
             json!([
                 user_opt(&me),
-                text("badge", "partner"),
+                text("badge", "community_helper"),
                 text("reason", "Partner")
             ]),
         ),
@@ -717,20 +721,19 @@ async fn desk_card_refusals_match_the_console() {
         "give",
         json!([
             user_opt(&someone.id),
-            text("badge", "staff"),
+            text("badge", "developer"),
             text("reason", "Joined the team")
         ]),
     )
     .await;
     assert_eq!(error, "NotPrivileged");
+    // beta's single badge gate, on the desk's path
+    let (action, outcome, summary) = s.records(&senior).await.pop().unwrap();
     assert_eq!(
-        s.records(&senior).await.pop().unwrap(),
-        (
-            "staff.badge.grant".to_string(),
-            "Denied".to_string(),
-            "staff (owner only)".to_string()
-        )
+        (action.as_str(), outcome.as_str()),
+        ("staff.desk.badge.grant", "Denied")
     );
+    assert_eq!(summary, "developer denied:owner_only via desk");
 
     // your own proposal: refused and recorded like the console
     let c = card(

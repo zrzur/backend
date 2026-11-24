@@ -8,6 +8,7 @@
 
 mod audited;
 mod badges;
+mod badge_applications;
 mod beta;
 mod billing;
 mod bots;
@@ -85,6 +86,20 @@ pub fn routes() -> Vec<Route> {
         badges::user_badges,
         badges::grant,
         badges::revoke,
+        badges::requests,
+        badges::approve,
+        badges::refuse,
+        badges::community_checks,
+        badges::community_release,
+        badges::community_refuse,
+        badge_applications::queue,
+        badge_applications::detail,
+        badge_applications::take,
+        badge_applications::decide,
+        badge_applications::decide_appeal,
+        badge_applications::recheck,
+        badge_applications::creator_ownership,
+        badge_applications::creator_figures,
         bots::list,
         bots::detail,
         bots::disable,
@@ -636,6 +651,7 @@ async fn set_member_core(
     let mut record = staff.record("staff.grant.update", Some(StaffPermission::StaffManage));
     record.target_kind = Some("user".to_string());
     record.target_id = Some(target.id.clone());
+    let end_reason = reason.clone();
     record.reason = Some(reason);
     record.summary = Some(format!(
         "roles {} -> {}",
@@ -663,7 +679,7 @@ async fn set_member_core(
     if data.version != expected {
         return Err(create_error!(InvalidOperation));
     }
-    let grant = StaffGrant {
+    let mut grant = StaffGrant {
         id: target.id.clone(),
         roles: new_roles,
         disabled: false,
@@ -672,7 +688,10 @@ async fn set_member_core(
         version: expected.unwrap_or(0) + 1,
         updated_at: staff.now,
         updated_by: staff.user.id.clone(),
+        active_since: None,
+        activated_by: None,
     };
+    grant.carry_activation(current.as_ref(), staff.now, &staff.user.id);
     if !db.save_staff_grant(&grant, expected).await? {
         return Err(create_error!(InvalidOperation));
     }
@@ -693,6 +712,11 @@ async fn set_member_core(
     }
     db.revoke_staff_sessions_for_user(&target.id, staff.now)
         .await?;
+    // no access left: the Staff badge goes too (the appointment end)
+    if grant.roles.is_empty() {
+        revolt_database::end_staff_badge_with_grant(db, &staff.user.id, &target.id, &end_reason)
+            .await?;
+    }
     Ok(std::convert::identity(StaffMember {
         user_id: grant.id.clone(),
         username: Some(target.username),
@@ -740,6 +764,7 @@ async fn disable_member_core(
     let mut record = staff.record("staff.grant.disable", Some(StaffPermission::StaffManage));
     record.target_kind = Some("user".to_string());
     record.target_id = Some(id.to_string());
+    let end_reason = reason.clone();
     record.reason = Some(reason);
     if id == staff.user.id || grant.roles.contains(&StaffRole::Owner) {
         record_platform_audit(db, record, AuditOutcome::Denied).await?;
@@ -755,10 +780,14 @@ async fn disable_member_core(
     grant.version += 1;
     grant.updated_at = staff.now;
     grant.updated_by = staff.user.id.clone();
+    grant.active_since = None;
+    grant.activated_by = None;
     if !db.save_staff_grant(&grant, Some(expected)).await? {
         return Err(create_error!(InvalidOperation));
     }
     db.revoke_staff_sessions_for_user(id, staff.now).await?;
+    // access switched off: the Staff badge goes too (the appointment end)
+    revolt_database::end_staff_badge_with_grant(db, &staff.user.id, id, &end_reason).await?;
     Ok(())
 }
 

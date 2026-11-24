@@ -129,6 +129,62 @@ fn quote(text: &str) -> String {
 
 // ---- one function per kind of event ----
 
+/// A date as `YYYY-MM-DD` (UTC), the same in every language
+pub fn date_text(ms: i64) -> String {
+    let at = iso8601_timestamp::Timestamp::UNIX_EPOCH
+        .checked_add(iso8601_timestamp::Duration::milliseconds(ms))
+        .unwrap_or(iso8601_timestamp::Timestamp::UNIX_EPOCH);
+    format!("{:04}-{:02}-{:02}", at.year(), u8::from(at.month()), at.day())
+}
+
+/// The reason codes of a badge program decision, written out in a language
+/// (one line each)
+pub fn program_reasons(language: &str, reasons: &[String]) -> String {
+    reasons
+        .iter()
+        .map(|code| format!("- {}", text(language, &format!("program.reason.{code}")).body))
+        .collect::<Vec<_>>()
+        .join("
+")
+}
+
+/// A badge program decision, in the person's language, each reason
+/// written out (the statement of reasons of a refusal: legal T6(b)).
+/// `dates` fill `{appeal_until}`, `{reapply_after}`, `{next_review}` or
+/// `{improve_until}`.
+pub async fn program_decision(
+    db: &Database,
+    user_id: &str,
+    key: &str,
+    program: &str,
+    reasons: &[String],
+    note: Option<&str>,
+    dates: &[(&str, i64)],
+) {
+    let language = language_for(db, user_id).await;
+    let mut vars: Vec<(&str, String)> = vec![
+        ("program", text(language, &format!("program.name.{program}")).body),
+        ("reasons", program_reasons(language, reasons)),
+        ("note", note.map(quote).unwrap_or_default()),
+    ];
+    for (name, at) in dates {
+        vars.push((name, date_text(*at)));
+    }
+    deliver(db, sender_of(key), user_id, render(language, key, &vars)).await;
+}
+
+/// A badge program ended because its condition ended (ownership moved,
+/// server or bot deleted or suspended): a plain notice (legal T6(d))
+pub async fn program_ended(db: &Database, user_id: &str, program: &str, reason: &str, note: Option<&str>) {
+    let language = language_for(db, user_id).await;
+    let vars: Vec<(&str, String)> = vec![
+        ("program", text(language, &format!("program.name.{program}")).body),
+        ("reason", text(language, &format!("program.end.{reason}")).body),
+        ("note", note.map(quote).unwrap_or_default()),
+    ];
+    deliver(db, sender_of("program.ended"), user_id, render(language, "program.ended", &vars)).await;
+}
+
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 
 /// The one address people write to about decisions, appeals and reports.
@@ -615,6 +671,30 @@ mod tests {
         found
     }
 
+    /// Every reason a reviewer can give, and every way a program ends, has
+    /// its sentence in every language (the statement is never a bare code)
+    #[test]
+    fn every_program_reason_is_written_out_in_every_language() {
+        use revolt_database::{reason_codes, BadgeProgram};
+        for (language, _) in LANGUAGES {
+            let texts = &TEXTS[language];
+            for program in BadgeProgram::ALL {
+                assert!(texts.contains_key(&format!("program.name.{}", program.name())), "{language}");
+                for code in reason_codes(program) {
+                    let key = format!("program.reason.{code}");
+                    assert!(texts.get(&key).is_some_and(|t| !t.body.is_empty()), "{language} {key}");
+                }
+            }
+            for end in ["ownership_transferred", "server_deleted", "bot_deleted", "bot_suspended", "mark_removed", "recheck", "badge_removed"] {
+                assert!(texts.contains_key(&format!("program.end.{end}")), "{language} {end}");
+            }
+            let refused = program_reasons(language, &["criteria_met".to_string(), "other".to_string()]);
+            assert_eq!(refused.lines().count(), 2, "{refused}");
+            assert!(!refused.contains("program.reason"), "{refused}");
+        }
+        assert_eq!(date_text(1803859200000), "2027-03-01");
+    }
+
     #[test]
     fn every_language_has_every_message() {
         let base = &TEXTS[LANGUAGES[0].0];
@@ -628,6 +708,45 @@ mod tests {
             for (key, t) in base {
                 assert_eq!(placeholders(&texts[key].title), placeholders(&t.title), "{code} {key} title");
                 assert_eq!(placeholders(&texts[key].body), placeholders(&t.body), "{code} {key} body");
+            }
+        }
+    }
+
+    #[test]
+    fn every_badge_has_its_app_name_in_every_language() {
+        // every catalogue badge has a name in each language
+        for badge in revolt_database::BADGE_CATALOGUE {
+            let names = badge_names(badge.id);
+            for (code, _) in LANGUAGES {
+                assert!(names.get(code).is_some_and(|n| !n.is_empty()), "{code} {}", badge.id);
+            }
+        }
+        // the names the apps show (web Lingui catalogs); «صانع محتوى» is kept
+        // for the Content Creator badge, the designer badges say «مصمم»
+        for (badge, ar, en, de) in [
+            ("creator", "مصمم", "Creator", "Designer"),
+            ("super_creator", "مصمم متميز", "Super Creator", "Top-Designer"),
+            ("early_adopter", "من المستخدمين الأوائل", "Early Adopter", "Früher Nutzer"),
+            ("beta_tester", "مختبِر النسخة التجريبية", "Beta Tester", "Beta-Tester"),
+            ("beta_veteran", "مختبِر مخضرم", "Beta Veteran", "Beta-Veteran"),
+            ("elite_bug_hunter", "صائد الأخطاء النخبة", "Elite Bug Hunter", "Elite-Fehlerjäger"),
+            ("founder", "مؤسس زرزور", "Zrzur Founder", "Zrzur-Gründer"),
+            ("content_creator", "صانع محتوى", "Content Creator", "Content Creator"),
+        ] {
+            let names = badge_names(badge);
+            assert_eq!(names["ar"], ar, "{badge}");
+            assert_eq!(names["en"], en, "{badge}");
+            assert_eq!(names["de"], de, "{badge}");
+        }
+        // «صانع محتوى» belongs to Content Creator alone, and no two active
+        // badges share a name in any language
+        for (code, _) in LANGUAGES {
+            for badge in revolt_database::BADGE_CATALOGUE.iter().filter(|b| b.id != "content_creator") {
+                assert_ne!(badge_names(badge.id)[code], "صانع محتوى", "{}", badge.id);
+            }
+            let mut seen = std::collections::HashSet::new();
+            for badge in revolt_database::BADGE_CATALOGUE.iter().filter(|b| !b.retired) {
+                assert!(seen.insert(badge_names(badge.id)[code].clone()), "{code} {} repeats a name", badge.id);
             }
         }
     }

@@ -103,7 +103,7 @@ async fn desk_servers_run_the_consoles_actions() {
         "mark",
         json!([
             text("server", &marked.id),
-            text("action", "verify"),
+            text("action", "mark_nsfw"),
             text("reason", "A known community")
         ]),
     )
@@ -220,15 +220,7 @@ async fn desk_servers_run_the_consoles_actions() {
         recorded(&s, &owner, action).await;
     }
     let db = &s.harness.db;
-    assert_eq!(
-        db.fetch_server(&marked.id)
-            .await
-            .unwrap()
-            .flags
-            .unwrap_or_default()
-            & 2,
-        2
-    );
+    assert!(db.fetch_server(&marked.id).await.unwrap().nsfw);
     assert_eq!(db.fetch_server(&handed.id).await.unwrap().owner, heir.id);
     assert!(db.fetch_server(&doomed.id).await.is_err());
     assert!(db.fetch_bot(&bot.id).await.is_err());

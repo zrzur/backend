@@ -344,13 +344,10 @@ pub async fn edit(
 
     server.update(db, partial.clone(), remove).await?;
 
-    // the verified owner badge moves with the server
+    // a new owner applies again: Partner and Verified Server end, their
+    // marks go, and the verified owner badge follows the server
     if let Some(previous_owner) = previous_owner {
-        for owner in [&previous_owner, &server.owner] {
-            if let Err(error) = revolt_database::sync_verified_server_owner(db, owner).await {
-                log::error!("verified server owner badge for {owner}: {error:?}");
-            }
-        }
+        server.flags = crate::routes::badges::programs::after_server_transfer(db, &server, &previous_owner).await;
     }
 
     AuditLogEntryAction::ServerEdit {

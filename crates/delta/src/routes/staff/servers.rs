@@ -30,6 +30,10 @@ use revolt_database::{
     SERVER_FLAG_VERIFIED as FLAG_VERIFIED,
 };
 
+/// What `verify` and `partner` answer: those marks come from applications
+pub const APPLICATION_ONLY: &str =
+    "Verified Server and Partner are given only by approving an application (Badge applications).";
+
 #[derive(Deserialize)]
 pub struct DataServerAction {
     /// verify, unverify, partner, unpartner, mark_nsfw, unmark_nsfw, transfer or delete
@@ -88,24 +92,22 @@ pub(super) async fn act_core(
     let mut partial = PartialServer::default();
     let flags = server.flags.unwrap_or_default();
     let mut summary = data.action.clone();
+    // Verified Server and Partner come only from an approved application
+    // (Badge applications), with its checks, reasons and two-person rules
+    if matches!(data.action.as_str(), "verify" | "partner") {
+        let mut record = staff.record("staff.server.action", Some(StaffPermission::ServersRestrict));
+        record.target_kind = Some("server".to_string());
+        record.target_id = Some(server.id.clone());
+        record.summary = Some(format!("{} denied:application_only", data.action));
+        record_platform_audit(db, record, AuditOutcome::Denied).await?;
+        return Err(create_error!(FailedValidation { error: APPLICATION_ONLY.to_string() }));
+    }
     match data.action.as_str() {
-        "verify" => {
-            if flags & (FLAG_OFFICIAL | FLAG_VERIFIED) != 0 {
-                return Err(create_error!(InvalidOperation));
-            }
-            partial.flags = Some(flags | FLAG_VERIFIED);
-        }
         "unverify" => {
             if flags & FLAG_VERIFIED == 0 {
                 return Err(create_error!(InvalidOperation));
             }
             partial.flags = Some(flags & !FLAG_VERIFIED);
-        }
-        "partner" => {
-            if flags & FLAG_PARTNER != 0 {
-                return Err(create_error!(InvalidOperation));
-            }
-            partial.flags = Some(flags | FLAG_PARTNER);
         }
         "unpartner" => {
             if flags & FLAG_PARTNER == 0 {
@@ -181,21 +183,38 @@ pub(super) async fn act_core(
     }
 
     // a failure here never undoes the action
-    if matches!(data.action.as_str(), "verify" | "unverify" | "transfer") {
-        for owner in [&previous_owner, &server.owner] {
-            if let Err(error) = revolt_database::sync_verified_server_owner(db, owner).await {
-                log::error!("verified server owner badge for {owner}: {error:?}");
-            }
+    if transfer {
+        server.flags = crate::routes::badges::programs::after_server_transfer(db, &server, &previous_owner).await;
+    } else if matches!(data.action.as_str(), "unverify" | "unpartner") {
+        // the approved application ends with its mark (Partner: the badge too)
+        let program = if data.action == "unverify" {
+            revolt_database::BadgeProgram::VerifiedServer
+        } else {
+            revolt_database::BadgeProgram::Partner
+        };
+        let programs = revolt_config::config().await.api.badge_programs;
+        if let Err(error) = revolt_database::end_programs_for_target(
+            db,
+            &programs,
+            &server.id,
+            Some(program),
+            "mark_removed",
+            crate::routes::badges::now_ms(),
+        )
+        .await
+        {
+            log::error!("programs of server {}: {:?}", server.id, error.error_type);
+        }
+        if let Err(error) = revolt_database::sync_verified_server_owner(db, &server.owner).await {
+            log::error!("verified server owner badge for {}: {error:?}", server.owner);
         }
     }
 
     // the owner (and a new owner) hear about it in their private messages
     let key = match data.action.as_str() {
-        "verify" => "server.verified",
         "unverify" => "server.unverified",
         "mark_nsfw" => "server.nsfw",
         "unmark_nsfw" => "server.not_nsfw",
-        "partner" => "server.partnered",
         "unpartner" => "server.unpartnered",
         _ => "server.transferred_from",
     };
