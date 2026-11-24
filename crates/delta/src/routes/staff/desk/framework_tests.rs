@@ -2,8 +2,8 @@
 //! `/confirm`. The bot hands back presses; the server decides everything.
 
 use revolt_database::{
-    staff_now, DeskPending, Interaction, InteractionSource, InteractionStatus, InteractionTransition,
-    StaffPermission, StaffRole,
+    DeskPending, Interaction, InteractionSource, InteractionStatus, InteractionTransition,
+    StaffPermission, StaffRole, staff_now,
 };
 use revolt_models::v0::{
     ApplicationCommand, CommandOptionType, EphemeralMessage, InteractionDataOption,
@@ -11,14 +11,14 @@ use revolt_models::v0::{
 };
 use revolt_result::create_error;
 use rocket::http::{ContentType, Header, Status};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::super::StaffContext;
-use super::registry::{self, test_entries, texts, DeskInput, Lang};
-use super::run::{execute, CONFIRM_PREFIX};
+use super::registry::{self, DeskInput, Lang, test_entries, texts};
+use super::run::{CONFIRM_PREFIX, execute};
 use super::session::STEP_UP_MODAL;
 use super::test_settings;
-use super::tests::{code, error_type, settings, stage, Kind, Person, Stage};
+use super::tests::{Kind, Person, Stage, code, error_type, settings, stage};
 
 const CONFIRM: &str = texts::CONFIRM.en;
 
@@ -82,7 +82,12 @@ async fn desk_press_in(
     (interaction.id, token)
 }
 
-async fn desk_press(s: &Stage, who: &Person, command: &ApplicationCommand, options: Value) -> (String, String) {
+async fn desk_press(
+    s: &Stage,
+    who: &Person,
+    command: &ApplicationCommand,
+    options: Value,
+) -> (String, String) {
     desk_press_in(s, who, command, options, None).await
 }
 
@@ -106,7 +111,12 @@ fn test_change(name: &str, user: &str, note: &str) -> Value {
 
 /// The press goes to `/staff/desk/<path>` with these extra body fields
 /// (which the server must ignore)
-async fn hand_extra(s: &Stage, path: &str, pressed: &(String, String), extra: Value) -> (Status, Value) {
+async fn hand_extra(
+    s: &Stage,
+    path: &str,
+    pressed: &(String, String),
+    extra: Value,
+) -> (Status, Value) {
     let mut body = json!({ "interaction_id": pressed.0, "token": pressed.1 });
     for (key, value) in extra.as_object().unwrap() {
         body[key] = value.clone();
@@ -141,7 +151,12 @@ fn pending_id(view: &Value) -> String {
         .to_string()
 }
 
-fn card_message(s: &Stage, run: &(String, String), content: &str, buttons: Value) -> EphemeralMessage {
+fn card_message(
+    s: &Stage,
+    run: &(String, String),
+    content: &str,
+    buttons: Value,
+) -> EphemeralMessage {
     serde_json::from_value(json!({
         "_id": ulid::Ulid::new().to_string(),
         "interaction_id": run.0,
@@ -158,21 +173,22 @@ fn card_message(s: &Stage, run: &(String, String), content: &str, buttons: Value
 async fn answer_card(s: &Stage, run: &(String, String), content: &str, buttons: Value) -> String {
     let message = card_message(s, run, content, buttons);
     let id = message.id.clone();
-    assert!(s
-        .harness
-        .db
-        .transition_interaction(
-            &run.0,
-            &[InteractionStatus::Pending],
-            InteractionStatus::Responded,
-            InteractionTransition {
-                ephemeral: Some(true),
-                ephemeral_message: Some(message),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap());
+    assert!(
+        s.harness
+            .db
+            .transition_interaction(
+                &run.0,
+                &[InteractionStatus::Pending],
+                InteractionStatus::Responded,
+                InteractionTransition {
+                    ephemeral: Some(true),
+                    ephemeral_message: Some(message),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap()
+    );
     id
 }
 
@@ -186,7 +202,13 @@ fn confirm_button(id: &str) -> Value {
 
 /// `who` presses `zd:confirm:<id>` on the private message `message_id` of
 /// the interaction `card_of`
-async fn press_confirm(s: &Stage, who: &Person, id: &str, card_of: &str, message_id: &str) -> (String, String) {
+async fn press_confirm(
+    s: &Stage,
+    who: &Person,
+    id: &str,
+    card_of: &str,
+    message_id: &str,
+) -> (String, String) {
     let (mut interaction, token) = Interaction::new(
         InteractionType::Component,
         s.bot.id.clone(),
@@ -216,17 +238,33 @@ async fn step_up(s: &Stage, who: &Person, offset: i64) {
 /// A signed-in Owner proposes `/desk test <name>` about themselves; the
 /// bot shows the card exactly. Gives (the /run press, its view, the card
 /// message id)
-async fn proposed(s: &Stage, who: &Person, command: &ApplicationCommand, name: &str, note: &str) -> ((String, String), Value, String) {
+async fn proposed(
+    s: &Stage,
+    who: &Person,
+    command: &ApplicationCommand,
+    name: &str,
+    note: &str,
+) -> ((String, String), Value, String) {
     let run = desk_press(s, who, command, test_change(name, &who.user.id, note)).await;
     let (status, view) = s.hand("run", &run).await;
     assert_eq!(status, Status::Ok, "{view}");
     let id = pending_id(&view);
-    let style = if view["buttons"][0]["style"] == json!("danger") { "Danger" } else { "Primary" };
+    let style = if view["buttons"][0]["style"] == json!("danger") {
+        "Danger"
+    } else {
+        "Primary"
+    };
     let message = answer_card(s, &run, &rendered(&view), button(&id, style, CONFIRM)).await;
     (run, view, message)
 }
 
-async fn confirm_on(s: &Stage, who: &Person, view: &Value, run: &(String, String), message: &str) -> (Status, Value) {
+async fn confirm_on(
+    s: &Stage,
+    who: &Person,
+    view: &Value,
+    run: &(String, String),
+    message: &str,
+) -> (Status, Value) {
     let pressed = press_confirm(s, who, &pending_id(view), &run.0, message).await;
     s.hand("confirm", &pressed).await
 }
@@ -240,14 +278,26 @@ fn denied_summaries(records: &[(String, String, String)]) -> Vec<String> {
 }
 
 async fn used(s: &Stage, id: &str) -> bool {
-    s.harness.db.fetch_desk_pending(id).await.unwrap().unwrap().used
+    s.harness
+        .db
+        .fetch_desk_pending(id)
+        .await
+        .unwrap()
+        .unwrap()
+        .used
 }
 
 /// The presser's own context, as the desk builds it
 async fn context_of(s: &Stage, who: &Person) -> StaffContext {
     let user = s.harness.db.fetch_user(&who.user.id).await.unwrap();
     let session = s.desk_sessions(who).await.remove(0);
-    let grant = s.harness.db.fetch_staff_grant(&who.user.id).await.unwrap().unwrap();
+    let grant = s
+        .harness
+        .db
+        .fetch_staff_grant(&who.user.id)
+        .await
+        .unwrap()
+        .unwrap();
     StaffContext {
         permissions: grant.effective(staff_now()),
         user,
@@ -277,7 +327,10 @@ async fn desk_commands_only_enabled_areas() {
         .iter()
         .map(|o| o["name"].as_str().unwrap())
         .collect();
-    assert_eq!(names, vec!["me", "login", "logout", "stepup", "stats", "test"]);
+    assert_eq!(
+        names,
+        vec!["me", "login", "logout", "stepup", "stats", "test"]
+    );
     let test = &offered["options"][5];
     assert_eq!(test["type"], json!("SubCommandGroup"));
     assert_eq!(test["options"][0]["name"], json!("change"));
@@ -333,7 +386,10 @@ async fn desk_run_refuses_changed_command() {
     };
     let variants: Vec<(Value, Value)> = vec![
         // the bot shows "stats" as something harmless-looking
-        (change(&|t| t["options"][4]["description"] = json!("Show the weather")), sub("stats")),
+        (
+            change(&|t| t["options"][4]["description"] = json!("Show the weather")),
+            sub("stats"),
+        ),
         // `user` as text: a name typed in, not a user the server resolved
         (
             change(&|t| t["options"][5]["options"][0]["options"][0]["type"] = json!("String")),
@@ -347,14 +403,17 @@ async fn desk_run_refuses_changed_command() {
         // choices the server never offered
         (
             change(&|t| {
-                t["options"][5]["options"][0]["options"][1]["choices"] = json!([{ "name": "Harmless", "value": "n" }])
+                t["options"][5]["options"][0]["options"][1]["choices"] =
+                    json!([{ "name": "Harmless", "value": "n" }])
             }),
             test_change("change", &staff.user.id, "n"),
         ),
         // the options swapped
         (
             change(&|t| {
-                let options = t["options"][5]["options"][0]["options"].as_array_mut().unwrap();
+                let options = t["options"][5]["options"][0]["options"]
+                    .as_array_mut()
+                    .unwrap();
                 options.swap(0, 1);
             }),
             test_change("change", &staff.user.id, "n"),
@@ -365,7 +424,11 @@ async fn desk_run_refuses_changed_command() {
     for (registered, press) in variants {
         if let Some(command) = last_command.take() {
             let command: ApplicationCommand = command;
-            s.harness.db.delete_application_command(&command.id).await.unwrap();
+            s.harness
+                .db
+                .delete_application_command(&command.id)
+                .await
+                .unwrap();
         }
         let command = register(&s, registered).await;
         let pressed = desk_press(&s, &staff, &command, press).await;
@@ -378,17 +441,28 @@ async fn desk_run_refuses_changed_command() {
     let last = records.last().unwrap();
     assert_eq!(
         (last.0.as_str(), last.1.as_str(), last.2.as_str()),
-        ("staff.desk.command", "Denied", "desk: command not as offered")
+        (
+            "staff.desk.command",
+            "Denied",
+            "desk: command not as offered"
+        )
     );
 
     // honest again, but the press was made on the last changed version
     let changed = last_command.unwrap();
-    s.harness.db.delete_application_command(&changed.id).await.unwrap();
+    s.harness
+        .db
+        .delete_application_command(&changed.id)
+        .await
+        .unwrap();
     let honest = register(&s, offered.clone()).await;
     let mut stale = honest.clone();
     stale.version = changed.version.clone();
     let pressed = desk_press(&s, &staff, &stale, sub("stats")).await;
-    assert_eq!(error_type(&s.hand("run", &pressed).await.1), "InvalidOperation");
+    assert_eq!(
+        error_type(&s.hand("run", &pressed).await.1),
+        "InvalidOperation"
+    );
     refused += 1;
 
     // no version stored at all
@@ -405,7 +479,10 @@ async fn desk_run_refuses_changed_command() {
     copy.command_name = Some("desk".to_string());
     copy.command_options = serde_json::from_value(sub("stats")).unwrap();
     s.harness.db.insert_interaction(&copy).await.unwrap();
-    assert_eq!(error_type(&s.hand("run", &(copy.id.clone(), token)).await.1), "InvalidOperation");
+    assert_eq!(
+        error_type(&s.hand("run", &(copy.id.clone(), token)).await.1),
+        "InvalidOperation"
+    );
     refused += 1;
 
     // the honest command works
@@ -431,10 +508,24 @@ async fn desk_run_calls_stats_for_dashboard_read() {
     let (status, view) = s.hand("run", &pressed).await;
     assert_eq!(status, Status::Ok, "{view}");
     assert_eq!(view["title"], json!("Platform overview"));
-    let fields: Vec<&str> = view["fields"].as_array().unwrap().iter().map(|f| f["name"].as_str().unwrap()).collect();
-    assert!(fields.contains(&"Users") && fields.contains(&"Open reports"), "{view}");
+    let fields: Vec<&str> = view["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["name"].as_str().unwrap())
+        .collect();
+    assert!(
+        fields.contains(&"Users") && fields.contains(&"Open reports"),
+        "{view}"
+    );
     assert!(view["buttons"].as_array().unwrap().is_empty());
-    assert!(view["content"].as_str().unwrap().starts_with("**Platform overview**\nUsers: "), "{view}");
+    assert!(
+        view["content"]
+            .as_str()
+            .unwrap()
+            .starts_with("**Platform overview**\nUsers: "),
+        "{view}"
+    );
 
     // in Arabic and German, from the stored locale
     let pressed = desk_press_in(&s, &staff, &command, sub("stats"), Some("ar")).await;
@@ -448,12 +539,26 @@ async fn desk_run_calls_stats_for_dashboard_read() {
     let pressed = desk_press(&s, &staff, &command, sub("me")).await;
     let (status, me) = s.hand("run", &pressed).await;
     assert_eq!(status, Status::Ok, "{me}");
-    let areas = me["fields"].as_array().unwrap().iter().find(|f| f["name"] == json!("Areas")).unwrap();
+    let areas = me["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["name"] == json!("Areas"))
+        .unwrap();
     assert_eq!(areas["value"], json!("overview"));
-    assert!(me["lines"].as_array().unwrap().contains(&json!("/desk stats")), "{me}");
+    assert!(
+        me["lines"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("/desk stats")),
+        "{me}"
+    );
 
     let pressed = desk_press(&s, &staff, &command, sub("logout")).await;
-    assert_eq!(error_type(&s.hand("run", &pressed).await.1), "InvalidOperation");
+    assert_eq!(
+        error_type(&s.hand("run", &pressed).await.1),
+        "InvalidOperation"
+    );
 
     // every role holds DashboardRead: the refusal is shown on the presser's
     // own context with the permission taken away
@@ -469,7 +574,10 @@ async fn desk_run_calls_stats_for_dashboard_read() {
         "{error:?}"
     );
     let last = s.record_sessions(&staff).await.pop().unwrap();
-    assert_eq!((last.0.as_str(), last.1.as_str()), ("staff.access.denied", "Denied"));
+    assert_eq!(
+        (last.0.as_str(), last.1.as_str()),
+        ("staff.access.denied", "Denied")
+    );
     assert_eq!(last.2.as_deref(), Some(session.as_str()));
 
     // a changing command never runs through dispatch
@@ -478,7 +586,10 @@ async fn desk_run_calls_stats_for_dashboard_read() {
     let error = registry::dispatch(&s.harness.db, &full, change, &DeskInput::default())
         .await
         .unwrap_err();
-    assert!(matches!(error.error_type, revolt_result::ErrorType::InvalidOperation));
+    assert!(matches!(
+        error.error_type,
+        revolt_result::ErrorType::InvalidOperation
+    ));
     assert_eq!(test_entries::runs(""), 0);
 }
 
@@ -497,7 +608,10 @@ async fn desk_run_permission_refused_over_http() {
     assert_eq!(error_type(&body), "MissingPlatformPermission");
     let session = s.desk_sessions(&support).await.remove(0);
     let last = s.record_sessions(&support).await.pop().unwrap();
-    assert_eq!((last.0.as_str(), last.1.as_str()), ("staff.access.denied", "Denied"));
+    assert_eq!(
+        (last.0.as_str(), last.1.as_str()),
+        ("staff.access.denied", "Denied")
+    );
     assert_eq!(last.2.as_deref(), Some(session.id.as_str()));
 
     // a Billing person holds BillingRead: the same command answers
@@ -517,7 +631,13 @@ async fn desk_options_only_from_stored_interaction() {
     s.sign_in(&staff, -1).await;
     let command = register_offered(&s).await;
 
-    let run = desk_press(&s, &staff, &command, test_change("change", &staff.user.id, "stored note")).await;
+    let run = desk_press(
+        &s,
+        &staff,
+        &command,
+        test_change("change", &staff.user.id, "stored note"),
+    )
+    .await;
     let (status, view) = hand_extra(
         &s,
         "run",
@@ -535,19 +655,44 @@ async fn desk_options_only_from_stored_interaction() {
     assert_eq!(pending.card_interaction, run.0);
     assert!(!pending.used);
     let note = pending.options.iter().find(|o| o.name == "note").unwrap();
-    assert_eq!(note.value, Some(InteractionOptionValue::String("stored note".to_string())));
-    assert!(view["lines"].as_array().unwrap().iter().any(|l| l.as_str().unwrap().contains("stored note")));
+    assert_eq!(
+        note.value,
+        Some(InteractionOptionValue::String("stored note".to_string()))
+    );
+    assert!(
+        view["lines"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|l| l.as_str().unwrap().contains("stored note"))
+    );
     // nothing was executed, nothing recorded as done
-    assert!(s.records(&staff).await.iter().all(|r| r.0 != "staff.desk.test.change"));
+    assert!(
+        s.records(&staff)
+            .await
+            .iter()
+            .all(|r| r.0 != "staff.desk.test.change")
+    );
     assert_eq!(test_entries::runs(&id), 0);
 
     // confirmed after a fresh step-up: the stored note, whatever the bot adds
     step_up(&s, &staff, 0).await;
     let message = answer_card(&s, &run, &rendered(&view), confirm_button(&id)).await;
     let pressed = press_confirm(&s, &staff, &id, &run.0, &message).await;
-    let (status, done) = hand_extra(&s, "confirm", &pressed, json!({ "note": "forged", "pending_id": "other" })).await;
+    let (status, done) = hand_extra(
+        &s,
+        "confirm",
+        &pressed,
+        json!({ "note": "forged", "pending_id": "other" }),
+    )
+    .await;
     assert_eq!(status, Status::Ok, "{done}");
-    let note = done["fields"].as_array().unwrap().iter().find(|f| f["name"] == json!("Note")).unwrap();
+    let note = done["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["name"] == json!("Note"))
+        .unwrap();
     assert_eq!(note["value"], json!("stored note"));
     assert_eq!(test_entries::runs(&id), 1);
 }
@@ -560,18 +705,39 @@ async fn desk_card_in_the_commands_language() {
     s.sign_in(&staff, -1).await;
     let command = register_offered(&s).await;
 
-    let run = desk_press_in(&s, &staff, &command, test_change("change", &staff.user.id, "*x*"), Some("ar")).await;
+    let run = desk_press_in(
+        &s,
+        &staff,
+        &command,
+        test_change("change", &staff.user.id, "*x*"),
+        Some("ar"),
+    )
+    .await;
     let (status, view) = s.hand("run", &run).await;
     assert_eq!(status, Status::Ok, "{view}");
     assert_eq!(view["title"], json!("تغيير تجريبي"));
     assert_eq!(view["buttons"][0]["label"], json!(texts::CONFIRM.ar));
-    assert!(view["lines"].as_array().unwrap().contains(&json!(texts::WITHIN.ar)));
+    assert!(
+        view["lines"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(texts::WITHIN.ar))
+    );
     // the person's text cannot format the card
-    assert!(view["content"].as_str().unwrap().contains(r"«\*x\*»"), "{view}");
+    assert!(
+        view["content"].as_str().unwrap().contains(r"«\*x\*»"),
+        "{view}"
+    );
 
     step_up(&s, &staff, 0).await;
     let id = pending_id(&view);
-    let message = answer_card(&s, &run, &rendered(&view), button(&id, "Danger", texts::CONFIRM.ar)).await;
+    let message = answer_card(
+        &s,
+        &run,
+        &rendered(&view),
+        button(&id, "Danger", texts::CONFIRM.ar),
+    )
+    .await;
     let (status, done) = confirm_on(&s, &staff, &view, &run, &message).await;
     assert_eq!(status, Status::Ok, "{done}");
     assert_eq!(done["title"], json!("تم التغيير التجريبي"));
@@ -599,10 +765,16 @@ async fn desk_confirm_by_another_person_refused() {
     // an id that does not exist answers the same
     let pressed = press_confirm(&s, &other, "01NOPE", &run.0, &message).await;
     let (unknown_status, unknown) = s.hand("confirm", &pressed).await;
-    assert_eq!((unknown_status, error_type(&unknown)), (status, error_type(&body)));
+    assert_eq!(
+        (unknown_status, error_type(&unknown)),
+        (status, error_type(&body))
+    );
     assert_eq!(
         denied_summaries(&s.records(&other).await),
-        vec!["desk: not the person who asked".to_string(), "desk: no such pending action".to_string()]
+        vec![
+            "desk: not the person who asked".to_string(),
+            "desk: no such pending action".to_string()
+        ]
     );
     assert!(!used(&s, &id).await);
 }
@@ -621,7 +793,10 @@ async fn desk_confirm_from_another_desk_session_refused() {
     let (status, body) = confirm_on(&s, &staff, &view, &run, &message).await;
     assert_eq!(status, Status::Forbidden, "{body}");
     assert_eq!(error_type(&body), "NotPrivileged");
-    assert_eq!(denied_summaries(&s.records(&staff).await), vec!["desk: asked on another desk session".to_string()]);
+    assert_eq!(
+        denied_summaries(&s.records(&staff).await),
+        vec!["desk: asked on another desk session".to_string()]
+    );
     assert!(!used(&s, &pending_id(&view)).await);
 }
 
@@ -632,9 +807,21 @@ async fn desk_confirm_expired_refused() {
     let staff = s.person(vec![StaffRole::Owner]).await;
     s.sign_in(&staff, -1).await;
     let command = register_offered(&s).await;
-    let run = desk_press(&s, &staff, &command, test_change("change", &staff.user.id, "n")).await;
+    let run = desk_press(
+        &s,
+        &staff,
+        &command,
+        test_change("change", &staff.user.id, "n"),
+    )
+    .await;
     let (_, view) = s.hand("run", &run).await;
-    let fresh = s.harness.db.fetch_desk_pending(&pending_id(&view)).await.unwrap().unwrap();
+    let fresh = s
+        .harness
+        .db
+        .fetch_desk_pending(&pending_id(&view))
+        .await
+        .unwrap()
+        .unwrap();
     step_up(&s, &staff, 0).await;
 
     // the same action, made eleven minutes ago
@@ -645,14 +832,23 @@ async fn desk_confirm_expired_refused() {
         ..fresh
     };
     s.harness.db.insert_desk_pending(&old).await.unwrap();
-    let card = s.harness.db.fetch_desk_pending(&old.id).await.unwrap().unwrap();
+    let card = s
+        .harness
+        .db
+        .fetch_desk_pending(&old.id)
+        .await
+        .unwrap()
+        .unwrap();
     let content = super::view::canonical_render(&card.title, &[], &card.lines);
     let message = answer_card(&s, &run, &content, confirm_button(&old.id)).await;
     let pressed = press_confirm(&s, &staff, &old.id, &run.0, &message).await;
     let (status, body) = s.hand("confirm", &pressed).await;
     assert_eq!(status, Status::Gone, "{body}");
     assert_eq!(error_type(&body), "InteractionExpired");
-    assert_eq!(denied_summaries(&s.records(&staff).await), vec!["desk: confirmation expired".to_string()]);
+    assert_eq!(
+        denied_summaries(&s.records(&staff).await),
+        vec!["desk: confirmation expired".to_string()]
+    );
 }
 
 /// A pending action runs once; the second press is refused and recorded.
@@ -670,7 +866,12 @@ async fn desk_confirm_second_press_refused() {
     let (status, done) = confirm_on(&s, &staff, &view, &run, &message).await;
     assert_eq!(status, Status::Ok, "{done}");
     assert_eq!(done["title"], json!("Test change done"));
-    assert!(done["content"].as_str().unwrap().starts_with("**Test change done**"));
+    assert!(
+        done["content"]
+            .as_str()
+            .unwrap()
+            .starts_with("**Test change done**")
+    );
     assert!(used(&s, &id).await);
     let session = s.desk_sessions(&staff).await.remove(0);
     let success: Vec<_> = s
@@ -684,7 +885,10 @@ async fn desk_confirm_second_press_refused() {
 
     let (status, body) = confirm_on(&s, &staff, &view, &run, &message).await;
     assert_eq!(status, Status::Gone, "{body}");
-    assert_eq!(denied_summaries(&s.records(&staff).await), vec!["desk: already confirmed".to_string()]);
+    assert_eq!(
+        denied_summaries(&s.records(&staff).await),
+        vec!["desk: already confirmed".to_string()]
+    );
     assert_eq!(test_entries::runs(&id), 1);
 }
 
@@ -700,8 +904,18 @@ async fn desk_confirm_wrong_card_refused() {
     let command = register_offered(&s).await;
     let mut ids = Vec::new();
 
-    async fn made(s: &Stage, staff: &Person, command: &ApplicationCommand) -> ((String, String), Value, String) {
-        let run = desk_press(s, staff, command, test_change("change", &staff.user.id, "n")).await;
+    async fn made(
+        s: &Stage,
+        staff: &Person,
+        command: &ApplicationCommand,
+    ) -> ((String, String), Value, String) {
+        let run = desk_press(
+            s,
+            staff,
+            command,
+            test_change("change", &staff.user.id, "n"),
+        )
+        .await;
         let (_, view) = s.hand("run", &run).await;
         let id = pending_id(&view);
         (run, view, id)
@@ -710,9 +924,18 @@ async fn desk_confirm_wrong_card_refused() {
 
     // the bot rewrote the consequences
     let (run, _, id) = made(&s, &staff, &command).await;
-    let message = answer_card(&s, &run, "**Test change**\nNothing happens, just press it.", confirm_button(&id)).await;
+    let message = answer_card(
+        &s,
+        &run,
+        "**Test change**\nNothing happens, just press it.",
+        confirm_button(&id),
+    )
+    .await;
     let pressed = press_confirm(&s, &staff, &id, &run.0, &message).await;
-    assert_eq!(error_type(&s.hand("confirm", &pressed).await.1), "InvalidOperation");
+    assert_eq!(
+        error_type(&s.hand("confirm", &pressed).await.1),
+        "InvalidOperation"
+    );
     ids.push(id);
 
     // the exact card, wrapped in the bot's own words
@@ -720,23 +943,34 @@ async fn desk_confirm_wrong_card_refused() {
     let wrapped = format!("Routine check, nothing changes:\n{}", rendered(&view));
     let message = answer_card(&s, &run, &wrapped, confirm_button(&id)).await;
     let pressed = press_confirm(&s, &staff, &id, &run.0, &message).await;
-    assert_eq!(error_type(&s.hand("confirm", &pressed).await.1), "InvalidOperation");
+    assert_eq!(
+        error_type(&s.hand("confirm", &pressed).await.1),
+        "InvalidOperation"
+    );
     ids.push(id);
 
     // the right words, a second button beside Confirm
     let (run, view, id) = made(&s, &staff, &command).await;
     let mut buttons = confirm_button(&id);
-    buttons.as_array_mut().unwrap().push(json!({ "type": "Button", "style": "Primary", "label": "More", "custom_id": "zd:more" }));
+    buttons.as_array_mut().unwrap().push(
+        json!({ "type": "Button", "style": "Primary", "label": "More", "custom_id": "zd:more" }),
+    );
     let message = answer_card(&s, &run, &rendered(&view), buttons).await;
     let pressed = press_confirm(&s, &staff, &id, &run.0, &message).await;
-    assert_eq!(error_type(&s.hand("confirm", &pressed).await.1), "InvalidOperation");
+    assert_eq!(
+        error_type(&s.hand("confirm", &pressed).await.1),
+        "InvalidOperation"
+    );
     ids.push(id);
 
     // irreversible, but the button is not the danger style
     let (run, view, id) = made(&s, &staff, &command).await;
     let message = answer_card(&s, &run, &rendered(&view), button(&id, "Primary", CONFIRM)).await;
     let pressed = press_confirm(&s, &staff, &id, &run.0, &message).await;
-    assert_eq!(error_type(&s.hand("confirm", &pressed).await.1), "InvalidOperation");
+    assert_eq!(
+        error_type(&s.hand("confirm", &pressed).await.1),
+        "InvalidOperation"
+    );
     ids.push(id);
 
     // the right card, but pressed on another command's answer
@@ -744,7 +978,10 @@ async fn desk_confirm_wrong_card_refused() {
     let elsewhere = desk_press(&s, &staff, &command, sub("me")).await;
     let message = answer_card(&s, &elsewhere, &rendered(&view), confirm_button(&id)).await;
     let pressed = press_confirm(&s, &staff, &id, &elsewhere.0, &message).await;
-    assert_eq!(error_type(&s.hand("confirm", &pressed).await.1), "InvalidOperation");
+    assert_eq!(
+        error_type(&s.hand("confirm", &pressed).await.1),
+        "InvalidOperation"
+    );
     ids.push(id);
 
     // the exact card, but as a follow-up of the right interaction
@@ -752,9 +989,18 @@ async fn desk_confirm_wrong_card_refused() {
     answer_card(&s, &run, "One moment", json!([])).await;
     let followup = card_message(&s, &run, &rendered(&view), confirm_button(&id));
     let followup_id = followup.id.clone();
-    assert!(s.harness.db.push_interaction_followup(&run.0, Some(followup), None).await.unwrap());
+    assert!(
+        s.harness
+            .db
+            .push_interaction_followup(&run.0, Some(followup), None)
+            .await
+            .unwrap()
+    );
     let pressed = press_confirm(&s, &staff, &id, &run.0, &followup_id).await;
-    assert_eq!(error_type(&s.hand("confirm", &pressed).await.1), "InvalidOperation");
+    assert_eq!(
+        error_type(&s.hand("confirm", &pressed).await.1),
+        "InvalidOperation"
+    );
     ids.push(id);
 
     // none of them ran, every refusal recorded
@@ -841,7 +1087,10 @@ async fn desk_confirm_area_switched_off_refused() {
     test_settings::register(off);
     let (_, body) = confirm_on(&s, &staff, &view, &run, &message).await;
     assert_eq!(error_type(&body), "InvalidOperation", "{body}");
-    assert_eq!(denied_summaries(&s.records(&staff).await), vec!["desk: action no longer offered".to_string()]);
+    assert_eq!(
+        denied_summaries(&s.records(&staff).await),
+        vec!["desk: action no longer offered".to_string()]
+    );
     assert!(!used(&s, &pending_id(&view)).await);
 }
 
@@ -869,7 +1118,10 @@ async fn desk_confirm_failed_action_recorded() {
     assert_eq!(
         records,
         vec![
-            ("Success".to_string(), "desk: confirmed test.change".to_string()),
+            (
+                "Success".to_string(),
+                "desk: confirmed test.change".to_string()
+            ),
             ("Failed".to_string(), "NotFound".to_string())
         ]
     );
@@ -886,12 +1138,13 @@ async fn desk_confirm_audit_failure_changes_nothing() {
     let (_, view, _) = proposed(&s, &staff, &command, "change", "n").await;
     let id = pending_id(&view);
     let pending = s.harness.db.fetch_desk_pending(&id).await.unwrap().unwrap();
-    assert!(s
-        .harness
-        .db
-        .claim_desk_pending(&id, staff_now())
-        .await
-        .unwrap());
+    assert!(
+        s.harness
+            .db
+            .claim_desk_pending(&id, staff_now())
+            .await
+            .unwrap()
+    );
 
     let staff_context = context_of(&s, &staff).await;
     let entry = registry::find_key("test.change").unwrap();
@@ -904,11 +1157,19 @@ async fn desk_confirm_audit_failure_changes_nothing() {
         origin: String::new(),
     };
     let record = staff_context.record("staff.desk.test.change", None);
-    let result = execute(&s.harness.db, &staff_context, entry, &pending, &input, record, |_, change| async move {
-        // the write fails before the change is started
-        drop(change);
-        Err(create_error!(InternalError))
-    })
+    let result = execute(
+        &s.harness.db,
+        &staff_context,
+        entry,
+        &pending,
+        &input,
+        record,
+        |_, change| async move {
+            // the write fails before the change is started
+            drop(change);
+            Err(create_error!(InternalError))
+        },
+    )
     .await;
     assert!(result.is_err());
     assert_eq!(test_entries::runs(&id), 0);
@@ -927,7 +1188,9 @@ async fn desk_interaction_keeps_options_and_version() {
     let server = s.harness.db.fetch_server(&s.server_id).await.unwrap();
     let bot_user = s.harness.db.fetch_user(&s.bot.id).await.unwrap();
     for member in [&staff.user, &bot_user] {
-        Member::create(&s.harness.db, &server, member, None).await.unwrap();
+        Member::create(&s.harness.db, &server, member, None)
+            .await
+            .unwrap();
     }
     revolt_presence::create_session(&s.bot.id, 0).await;
     let command = register_offered(&s).await;
@@ -964,7 +1227,10 @@ async fn desk_interaction_keeps_options_and_version() {
         .fetch_interaction(accepted["_id"].as_str().unwrap())
         .await
         .unwrap();
-    assert_eq!(stored.command_version.as_deref(), Some(command.version.as_str()));
+    assert_eq!(
+        stored.command_version.as_deref(),
+        Some(command.version.as_str())
+    );
     assert_eq!(stored.locale.as_deref(), Some("ar"));
     let expected: Vec<InteractionDataOption> = vec![InteractionDataOption {
         name: "test".to_string(),

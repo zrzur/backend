@@ -69,7 +69,7 @@ impl DeskPending {
 
 #[cfg(test)]
 mod tests {
-    use lapin::{options::ExchangeDeclareOptions, types::FieldTable, ExchangeKind};
+    use lapin::{ExchangeKind, options::ExchangeDeclareOptions, types::FieldTable};
 
     use super::*;
     #[allow(unused_imports)]
@@ -103,8 +103,14 @@ mod tests {
         database_test!(|db| async move {
             let id = ulid::Ulid::new().to_string();
             let expires_at = DeskPending::expiry_from_now();
-            db.insert_desk_pending(&pending(&id, expires_at)).await.unwrap();
-            assert!(db.insert_desk_pending(&pending(&id, expires_at)).await.is_err());
+            db.insert_desk_pending(&pending(&id, expires_at))
+                .await
+                .unwrap();
+            assert!(
+                db.insert_desk_pending(&pending(&id, expires_at))
+                    .await
+                    .is_err()
+            );
             let stored = db.fetch_desk_pending(&id).await.unwrap().unwrap();
             assert_eq!(stored, pending(&id, expires_at));
             assert!(!stored.is_expired());
@@ -125,7 +131,9 @@ mod tests {
 
             // an expired one is never claimed, whatever its flag
             let old = ulid::Ulid::new().to_string();
-            db.insert_desk_pending(&pending(&old, staff_now() - 60_000)).await.unwrap();
+            db.insert_desk_pending(&pending(&old, staff_now() - 60_000))
+                .await
+                .unwrap();
             assert!(!db.claim_desk_pending(&old, staff_now()).await.unwrap());
         });
     }

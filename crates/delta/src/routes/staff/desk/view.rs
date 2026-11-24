@@ -84,7 +84,9 @@ pub const CONTENT_MAX: usize = 2000;
 
 /// Markdown, maths and mention characters: no value can format, link or
 /// mention
-const MARKDOWN: &[char] = &['\\', '*', '_', '~', '`', '|', '[', ']', '(', ')', '<', '>', '#', '@', '-', '$'];
+const MARKDOWN: &[char] = &[
+    '\\', '*', '_', '~', '`', '|', '[', ']', '(', ')', '<', '>', '#', '@', '-', '$',
+];
 
 /// Characters that are dropped: bidirectional controls (they can reorder
 /// what a reader sees) and zero-width characters (they can hide text)
@@ -130,13 +132,24 @@ fn cut(part: &str, keep: usize) -> String {
 /// first of equals) is cut with `…`, so the same view always gives the same
 /// text and the card can always be posted.
 pub fn canonical_render(title: &str, fields: &[DeskField], lines: &[String]) -> String {
-    let head = format!("**{}**", escape_markdown(&title.chars().take(200).collect::<String>()));
+    let head = format!(
+        "**{}**",
+        escape_markdown(&title.chars().take(200).collect::<String>())
+    );
     let mut parts: Vec<String> = fields
         .iter()
-        .map(|field| format!("{}: {}", escape_markdown(&field.name), escape_markdown(&field.value)))
+        .map(|field| {
+            format!(
+                "{}: {}",
+                escape_markdown(&field.name),
+                escape_markdown(&field.value)
+            )
+        })
         .chain(lines.iter().map(|line| escape_markdown(line)))
         .collect();
-    let total = |parts: &[String]| head.chars().count() + parts.iter().map(|p| p.chars().count() + 1).sum::<usize>();
+    let total = |parts: &[String]| {
+        head.chars().count() + parts.iter().map(|p| p.chars().count() + 1).sum::<usize>()
+    };
     while total(&parts) > CONTENT_MAX {
         let excess = total(&parts) - CONTENT_MAX;
         let Some((index, longest)) = parts
@@ -158,7 +171,10 @@ pub fn canonical_render(title: &str, fields: &[DeskField], lines: &[String]) -> 
         let keep = longest.saturating_sub(excess + 1).max(1);
         parts[index] = cut(&parts[index], keep);
     }
-    std::iter::once(head).chain(parts).collect::<Vec<_>>().join("\n")
+    std::iter::once(head)
+        .chain(parts)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cfg(test)]
@@ -183,7 +199,8 @@ Note \*\*bold\*\* \<\@01ABC\> \[x\]\(https://e.x\) \$x^2\$ next"
     /// Bidirectional controls and zero-width characters never reach the card
     #[test]
     fn desk_render_drops_invisible_characters() {
-        let line = "safe\u{202E}gnp.exe\u{2066}x\u{2069}\u{200B}\u{200C}\u{200D}\u{2060}\u{FEFF}y".to_string();
+        let line = "safe\u{202E}gnp.exe\u{2066}x\u{2069}\u{200B}\u{200C}\u{200D}\u{2060}\u{FEFF}y"
+            .to_string();
         assert_eq!(canonical_render("T", &[], &[line]), "**T**\nsafegnp.exexy");
     }
 
@@ -198,7 +215,11 @@ Note \*\*bold\*\* \<\@01ABC\> \[x\]\(https://e.x\) \$x^2\$ next"
             "Press Confirm within 10 minutes.".to_string(),
         ];
         let text = canonical_render("Test change", &[], &lines);
-        assert!(text.chars().count() <= CONTENT_MAX, "{}", text.chars().count());
+        assert!(
+            text.chars().count() <= CONTENT_MAX,
+            "{}",
+            text.chars().count()
+        );
         assert!(text.ends_with("This cannot be undone.\nPress Confirm within 10 minutes."));
         assert!(text.contains('…'));
         assert!(!text.contains("\\…"));

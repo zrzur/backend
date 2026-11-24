@@ -12,7 +12,8 @@
 use futures::future::BoxFuture;
 use revolt_config::FeaturesStaffDesk;
 use revolt_database::{
-    record_platform_audit, AuditOutcome, Database, Interaction, StaffPermission, STAFF_SESSION_IDLE_MS,
+    AuditOutcome, Database, Interaction, STAFF_SESSION_IDLE_MS, StaffPermission,
+    record_platform_audit,
 };
 use revolt_models::v0::{
     ApplicationCommandOption, ApplicationCommandType, CommandOptionChoice, CommandOptionType,
@@ -21,9 +22,9 @@ use revolt_models::v0::{
 use revolt_result::Result;
 use serde::Serialize;
 
-use super::super::{platform::stats_core, StaffContext};
-use super::view::DeskView;
+use super::super::{StaffContext, platform::stats_core};
 use super::COMMAND;
+use super::view::DeskView;
 
 /// The areas `[features.staff_desk].areas` can switch on
 pub const AREAS: &[&str] = &[
@@ -262,7 +263,8 @@ impl DeskCommand {
 
     /// The presser may see and use it
     pub fn visible_to(&self, staff: &StaffContext) -> bool {
-        self.permission.is_none_or(|permission| staff.has(permission))
+        self.permission
+            .is_none_or(|permission| staff.has(permission))
     }
 }
 
@@ -406,7 +408,11 @@ pub struct DeskCommandTree {
     pub options: Vec<ApplicationCommandOption>,
 }
 
-fn sub_command(name: &str, description: Text, options: Vec<ApplicationCommandOption>) -> ApplicationCommandOption {
+fn sub_command(
+    name: &str,
+    description: Text,
+    options: Vec<ApplicationCommandOption>,
+) -> ApplicationCommandOption {
     ApplicationCommandOption {
         kind: CommandOptionType::SubCommand,
         name: name.to_string(),
@@ -454,7 +460,11 @@ fn parameter(option: &DeskOption) -> ApplicationCommandOption {
 }
 
 fn entry_option(entry: &DeskCommand) -> ApplicationCommandOption {
-    sub_command(entry.name, entry.description, entry.options.iter().map(parameter).collect())
+    sub_command(
+        entry.name,
+        entry.description,
+        entry.options.iter().map(parameter).collect(),
+    )
 }
 
 /// Adds a command to the tree: at the top, or in its group (made at its
@@ -468,7 +478,10 @@ fn place(options: &mut Vec<ApplicationCommandOption>, entry: &DeskCommand) {
         .iter_mut()
         .find(|o| o.kind == CommandOptionType::SubCommandGroup && o.name == group)
     {
-        existing.options.get_or_insert_with(Vec::new).push(entry_option(entry));
+        existing
+            .options
+            .get_or_insert_with(Vec::new)
+            .push(entry_option(entry));
         return;
     }
     let description = groups()
@@ -540,7 +553,11 @@ fn normalised(options: &[ApplicationCommandOption]) -> Vec<ApplicationCommandOpt
 /// could show a relabelled command, take the press, then put the honest one
 /// back), and the same sub-commands, groups, options, kinds, required
 /// flags, choices and descriptions as [`desk_tree`] for the enabled areas.
-pub async fn registered_as_offered(db: &Database, settings: &FeaturesStaffDesk, interaction: &Interaction) -> bool {
+pub async fn registered_as_offered(
+    db: &Database,
+    settings: &FeaturesStaffDesk,
+    interaction: &Interaction,
+) -> bool {
     let Some(id) = interaction.command_id.as_deref() else {
         return false;
     };
@@ -553,22 +570,32 @@ pub async fn registered_as_offered(db: &Database, settings: &FeaturesStaffDesk, 
         && command.kind == ApplicationCommandType::ChatInput
         && command.name == offered.name
         && interaction.command_version.as_deref() == Some(command.version.as_str())
-        && command.name_localizations.as_ref().is_none_or(|l| l.is_empty())
+        && command
+            .name_localizations
+            .as_ref()
+            .is_none_or(|l| l.is_empty())
         && command.default_member_permissions.is_none()
         && !command.nsfw
         && command.description == offered.description
-        && command.description_localizations.filter(|l| !l.is_empty()) == offered.description_localizations
+        && command.description_localizations.filter(|l| !l.is_empty())
+            == offered.description_localizations
         && normalised(&command.options) == normalised(&offered.options)
 }
 
 /// The group, sub-command and its options the person chose, from the
 /// stored interaction: exactly one sub-command, at the top or in one group
-pub fn chosen(interaction: &Interaction) -> Option<(Option<&str>, &str, Vec<InteractionDataOption>)> {
+pub fn chosen(
+    interaction: &Interaction,
+) -> Option<(Option<&str>, &str, Vec<InteractionDataOption>)> {
     let [top] = interaction.command_options.as_slice() else {
         return None;
     };
     match top.kind {
-        CommandOptionType::SubCommand => Some((None, top.name.as_str(), top.options.clone().unwrap_or_default())),
+        CommandOptionType::SubCommand => Some((
+            None,
+            top.name.as_str(),
+            top.options.clone().unwrap_or_default(),
+        )),
         CommandOptionType::SubCommandGroup => match top.options.as_deref() {
             Some([sub]) if sub.kind == CommandOptionType::SubCommand => Some((
                 Some(top.name.as_str()),
@@ -585,7 +612,12 @@ pub fn chosen(interaction: &Interaction) -> Option<(Option<&str>, &str, Vec<Inte
 /// first (the console's check and Denied record), then its handler. A
 /// changing command never runs here, only through a confirmed pending
 /// action.
-pub async fn dispatch(db: &Database, staff: &StaffContext, entry: &DeskCommand, input: &DeskInput) -> Result<DeskView> {
+pub async fn dispatch(
+    db: &Database,
+    staff: &StaffContext,
+    entry: &DeskCommand,
+    input: &DeskInput,
+) -> Result<DeskView> {
     if entry.changes {
         return Err(revolt_result::create_error!(InvalidOperation));
     }
@@ -608,28 +640,96 @@ pub fn when(ms: i64) -> String {
 pub mod texts {
     use super::Text;
 
-    pub const DESK: Text = Text { en: "Zrzur Desk", ar: "مكتب زرزور", de: "Zrzur Desk" };
-    pub const USER: Text = Text { en: "User", ar: "المستخدم", de: "Benutzer" };
-    pub const ROLES: Text = Text { en: "Roles", ar: "الأدوار", de: "Rollen" };
-    pub const PERMISSIONS: Text = Text { en: "Permissions", ar: "الصلاحيات", de: "Berechtigungen" };
-    pub const SESSION_ENDS: Text = Text { en: "Session ends", ar: "تنتهي الجلسة", de: "Sitzung endet" };
-    pub const IDLE: Text = Text { en: "Idle timeout", ar: "مهلة الخمول", de: "Zeitlimit bei Inaktivität" };
-    pub const MINUTES: Text = Text { en: "{n} min", ar: "{n} دقيقة", de: "{n} Min." };
-    pub const STEP_UP: Text = Text { en: "Step-up", ar: "التحقق الإضافي", de: "Zusätzliche Bestätigung" };
-    pub const UNTIL: Text = Text { en: "until {time}", ar: "حتى {time}", de: "bis {time}" };
-    pub const NOT_ACTIVE: Text = Text { en: "not active", ar: "غير مفعّل", de: "nicht aktiv" };
-    pub const ACCESS_ENDS: Text = Text { en: "Access ends", ar: "ينتهي الوصول", de: "Zugang endet" };
-    pub const AREAS: Text = Text { en: "Areas", ar: "المجالات", de: "Bereiche" };
-    pub const NONE: Text = Text { en: "none", ar: "لا شيء", de: "keine" };
+    pub const DESK: Text = Text {
+        en: "Zrzur Desk",
+        ar: "مكتب زرزور",
+        de: "Zrzur Desk",
+    };
+    pub const USER: Text = Text {
+        en: "User",
+        ar: "المستخدم",
+        de: "Benutzer",
+    };
+    pub const ROLES: Text = Text {
+        en: "Roles",
+        ar: "الأدوار",
+        de: "Rollen",
+    };
+    pub const PERMISSIONS: Text = Text {
+        en: "Permissions",
+        ar: "الصلاحيات",
+        de: "Berechtigungen",
+    };
+    pub const SESSION_ENDS: Text = Text {
+        en: "Session ends",
+        ar: "تنتهي الجلسة",
+        de: "Sitzung endet",
+    };
+    pub const IDLE: Text = Text {
+        en: "Idle timeout",
+        ar: "مهلة الخمول",
+        de: "Zeitlimit bei Inaktivität",
+    };
+    pub const MINUTES: Text = Text {
+        en: "{n} min",
+        ar: "{n} دقيقة",
+        de: "{n} Min.",
+    };
+    pub const STEP_UP: Text = Text {
+        en: "Step-up",
+        ar: "التحقق الإضافي",
+        de: "Zusätzliche Bestätigung",
+    };
+    pub const UNTIL: Text = Text {
+        en: "until {time}",
+        ar: "حتى {time}",
+        de: "bis {time}",
+    };
+    pub const NOT_ACTIVE: Text = Text {
+        en: "not active",
+        ar: "غير مفعّل",
+        de: "nicht aktiv",
+    };
+    pub const ACCESS_ENDS: Text = Text {
+        en: "Access ends",
+        ar: "ينتهي الوصول",
+        de: "Zugang endet",
+    };
+    pub const AREAS: Text = Text {
+        en: "Areas",
+        ar: "المجالات",
+        de: "Bereiche",
+    };
+    pub const NONE: Text = Text {
+        en: "none",
+        ar: "لا شيء",
+        de: "keine",
+    };
     pub const OVERVIEW: Text = Text {
         en: "Platform overview",
         ar: "نظرة عامة على المنصة",
         de: "Übersicht der Plattform",
     };
-    pub const USERS: Text = Text { en: "Users", ar: "المستخدمون", de: "Benutzer" };
-    pub const ONLINE: Text = Text { en: "Online now", ar: "المتصلون الآن", de: "Jetzt online" };
-    pub const SERVERS: Text = Text { en: "Servers", ar: "السيرفرات", de: "Server" };
-    pub const CHANNELS: Text = Text { en: "Channels", ar: "القنوات", de: "Kanäle" };
+    pub const USERS: Text = Text {
+        en: "Users",
+        ar: "المستخدمون",
+        de: "Benutzer",
+    };
+    pub const ONLINE: Text = Text {
+        en: "Online now",
+        ar: "المتصلون الآن",
+        de: "Jetzt online",
+    };
+    pub const SERVERS: Text = Text {
+        en: "Servers",
+        ar: "السيرفرات",
+        de: "Server",
+    };
+    pub const CHANNELS: Text = Text {
+        en: "Channels",
+        ar: "القنوات",
+        de: "Kanäle",
+    };
     pub const MESSAGES_HOUR: Text = Text {
         en: "Messages, last hour",
         ar: "الرسائل في الساعة الأخيرة",
@@ -640,15 +740,27 @@ pub mod texts {
         ar: "الرسائل في آخر 24 ساعة",
         de: "Nachrichten, letzte 24 Stunden",
     };
-    pub const OPEN_REPORTS: Text = Text { en: "Open reports", ar: "البلاغات المفتوحة", de: "Offene Meldungen" };
+    pub const OPEN_REPORTS: Text = Text {
+        en: "Open reports",
+        ar: "البلاغات المفتوحة",
+        de: "Offene Meldungen",
+    };
     pub const WINDOW: Text = Text {
         en: "{total} (+{day} in 24 hours, +{week} in 7 days, +{month} in 30 days)",
         ar: "{total} (+{day} خلال 24 ساعة، +{week} خلال 7 أيام، +{month} خلال 30 يومًا)",
         de: "{total} (+{day} in 24 Stunden, +{week} in 7 Tagen, +{month} in 30 Tagen)",
     };
-    pub const AS_OF: Text = Text { en: "As of {time}", ar: "بتاريخ {time}", de: "Stand: {time}" };
+    pub const AS_OF: Text = Text {
+        en: "As of {time}",
+        ar: "بتاريخ {time}",
+        de: "Stand: {time}",
+    };
     /// The confirmation button
-    pub const CONFIRM: Text = Text { en: "Confirm", ar: "تأكيد", de: "Bestätigen" };
+    pub const CONFIRM: Text = Text {
+        en: "Confirm",
+        ar: "تأكيد",
+        de: "Bestätigen",
+    };
     pub const IRREVERSIBLE: Text = Text {
         en: "This cannot be undone. You will be asked for a fresh code.",
         ar: "لا يمكن التراجع عن هذا الإجراء. سيُطلب منك رمز جديد.",
@@ -665,7 +777,11 @@ pub mod texts {
 
 /// `/desk me`: who the presser is on the desk, their session, and the
 /// areas and commands they may use. Their own data only.
-fn me<'a>(db: &'a Database, staff: &'a StaffContext, input: &'a DeskInput) -> BoxFuture<'a, Result<DeskView>> {
+fn me<'a>(
+    db: &'a Database,
+    staff: &'a StaffContext,
+    input: &'a DeskInput,
+) -> BoxFuture<'a, Result<DeskView>> {
     Box::pin(async move {
         let mut record = staff.record("staff.desk.me", None);
         record.summary = Some("desk me".to_string());
@@ -676,11 +792,23 @@ fn me<'a>(db: &'a Database, staff: &'a StaffContext, input: &'a DeskInput) -> Bo
         let roles: Vec<&str> = staff.grant.roles.iter().map(|r| r.name()).collect();
         let minutes = (STAFF_SESSION_IDLE_MS / 60_000).to_string();
         let mut view = DeskView::new(texts::DESK.get(lang))
-            .field(texts::USER.get(lang), format!("{}#{}", staff.user.username, staff.user.discriminator))
+            .field(
+                texts::USER.get(lang),
+                format!("{}#{}", staff.user.username, staff.user.discriminator),
+            )
             .field(texts::ROLES.get(lang), roles.join(", "))
-            .field(texts::PERMISSIONS.get(lang), staff.permissions.len().to_string())
-            .field(texts::SESSION_ENDS.get(lang), when(staff.session.expires_at))
-            .field(texts::IDLE.get(lang), texts::MINUTES.fill(lang, &[("n", &minutes)]))
+            .field(
+                texts::PERMISSIONS.get(lang),
+                staff.permissions.len().to_string(),
+            )
+            .field(
+                texts::SESSION_ENDS.get(lang),
+                when(staff.session.expires_at),
+            )
+            .field(
+                texts::IDLE.get(lang),
+                texts::MINUTES.fill(lang, &[("n", &minutes)]),
+            )
             .field(
                 texts::STEP_UP.get(lang),
                 staff
@@ -702,7 +830,10 @@ fn me<'a>(db: &'a Database, staff: &'a StaffContext, input: &'a DeskInput) -> Bo
             },
         );
         for entry in entries() {
-            let usable = entry.area.is_some_and(|area| areas.iter().any(|a| a == area)) && entry.visible_to(staff);
+            let usable = entry
+                .area
+                .is_some_and(|area| areas.iter().any(|a| a == area))
+                && entry.visible_to(staff);
             if usable {
                 view = view.line(format!("/{COMMAND} {}", entry.key().replace('.', " ")));
             }
@@ -712,7 +843,11 @@ fn me<'a>(db: &'a Database, staff: &'a StaffContext, input: &'a DeskInput) -> Bo
 }
 
 /// `/desk stats`: the console's platform statistics (`stats_core`)
-fn stats<'a>(db: &'a Database, staff: &'a StaffContext, input: &'a DeskInput) -> BoxFuture<'a, Result<DeskView>> {
+fn stats<'a>(
+    db: &'a Database,
+    staff: &'a StaffContext,
+    input: &'a DeskInput,
+) -> BoxFuture<'a, Result<DeskView>> {
     Box::pin(async move {
         let lang = input.lang;
         let stats = stats_core(db, staff).await?;
@@ -731,12 +866,21 @@ fn stats<'a>(db: &'a Database, staff: &'a StaffContext, input: &'a DeskInput) ->
             .field(texts::USERS.get(lang), window(&stats.users))
             .field(
                 texts::ONLINE.get(lang),
-                stats.online_users.map(|n| n.to_string()).unwrap_or_else(|| "-".to_string()),
+                stats
+                    .online_users
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
             )
             .field(texts::SERVERS.get(lang), window(&stats.servers))
             .field(texts::CHANNELS.get(lang), stats.channels_total.to_string())
-            .field(texts::MESSAGES_HOUR.get(lang), stats.messages_last_hour.to_string())
-            .field(texts::MESSAGES_DAY.get(lang), stats.messages_last_24h.to_string());
+            .field(
+                texts::MESSAGES_HOUR.get(lang),
+                stats.messages_last_hour.to_string(),
+            )
+            .field(
+                texts::MESSAGES_DAY.get(lang),
+                stats.messages_last_24h.to_string(),
+            );
         if let Some(open) = stats.open_reports {
             view = view.field(texts::OPEN_REPORTS.get(lang), open.to_string());
         }
@@ -840,28 +984,53 @@ pub(crate) mod test_entries {
         },
     ];
 
-    fn peek<'a>(_: &'a Database, _: &'a StaffContext, input: &'a DeskInput) -> BoxFuture<'a, Result<DeskView>> {
+    fn peek<'a>(
+        _: &'a Database,
+        _: &'a StaffContext,
+        input: &'a DeskInput,
+    ) -> BoxFuture<'a, Result<DeskView>> {
         Box::pin(async move { Ok(DeskView::new(TITLE.get(input.lang))) })
     }
 
     /// How many times a test change ran (each test is its own process)
-    static RUNS: std::sync::Mutex<Option<std::collections::HashMap<String, usize>>> = std::sync::Mutex::new(None);
+    static RUNS: std::sync::Mutex<Option<std::collections::HashMap<String, usize>>> =
+        std::sync::Mutex::new(None);
 
     /// How many times the test change ran for this pending action
     pub fn runs(pending: &str) -> usize {
-        RUNS.lock().unwrap().as_ref().and_then(|all| all.get(pending).copied()).unwrap_or(0)
+        RUNS.lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|all| all.get(pending).copied())
+            .unwrap_or(0)
     }
 
-    const TITLE: Text = Text { en: "Test change", ar: "تغيير تجريبي", de: "Teständerung" };
+    const TITLE: Text = Text {
+        en: "Test change",
+        ar: "تغيير تجريبي",
+        de: "Teständerung",
+    };
     const WRITES: Text = Text {
         en: "Writes the note \"{note}\" about {user}.",
         ar: "يكتب الملاحظة «{note}» عن {user}.",
         de: "Schreibt die Notiz „{note}“ über {user}.",
     };
-    const DONE: Text = Text { en: "Test change done", ar: "تم التغيير التجريبي", de: "Teständerung erledigt" };
-    const NOTE: Text = Text { en: "Note", ar: "الملاحظة", de: "Notiz" };
+    const DONE: Text = Text {
+        en: "Test change done",
+        ar: "تم التغيير التجريبي",
+        de: "Teständerung erledigt",
+    };
+    const NOTE: Text = Text {
+        en: "Note",
+        ar: "الملاحظة",
+        de: "Notiz",
+    };
 
-    fn prepare<'a>(_: &'a Database, _: &'a StaffContext, input: &'a DeskInput) -> BoxFuture<'a, Result<Prepared>> {
+    fn prepare<'a>(
+        _: &'a Database,
+        _: &'a StaffContext,
+        input: &'a DeskInput,
+    ) -> BoxFuture<'a, Result<Prepared>> {
         Box::pin(async move {
             let user = input.user("user").unwrap_or_default();
             let note = input.text("note").unwrap_or_default();
@@ -874,7 +1043,11 @@ pub(crate) mod test_entries {
         })
     }
 
-    fn done<'a>(_: &'a Database, _: &'a StaffContext, input: &'a DeskInput) -> BoxFuture<'a, Result<DeskView>> {
+    fn done<'a>(
+        _: &'a Database,
+        _: &'a StaffContext,
+        input: &'a DeskInput,
+    ) -> BoxFuture<'a, Result<DeskView>> {
         Box::pin(async move {
             let note = input.text("note").unwrap_or_default();
             // a core that fails after the record was written
@@ -882,16 +1055,30 @@ pub(crate) mod test_entries {
                 return Err(revolt_result::create_error!(NotFound));
             }
             let key = input.pending.clone().unwrap_or_default();
-            *RUNS.lock().unwrap().get_or_insert_with(Default::default).entry(key).or_insert(0) += 1;
+            *RUNS
+                .lock()
+                .unwrap()
+                .get_or_insert_with(Default::default)
+                .entry(key)
+                .or_insert(0) += 1;
             Ok(DeskView::new(DONE.get(input.lang))
-                .field(texts::USER.get(input.lang), input.user("user").unwrap_or_default())
+                .field(
+                    texts::USER.get(input.lang),
+                    input.user("user").unwrap_or_default(),
+                )
                 .field(NOTE.get(input.lang), note))
         })
     }
 
-    fn guarded<'a>(db: &'a Database, staff: &'a StaffContext, input: &'a DeskInput) -> BoxFuture<'a, Result<DeskView>> {
+    fn guarded<'a>(
+        db: &'a Database,
+        staff: &'a StaffContext,
+        input: &'a DeskInput,
+    ) -> BoxFuture<'a, Result<DeskView>> {
         Box::pin(async move {
-            staff.require_step_up(db, StaffPermission::DashboardRead).await?;
+            staff
+                .require_step_up(db, StaffPermission::DashboardRead)
+                .await?;
             done(db, staff, input).await
         })
     }
@@ -920,14 +1107,29 @@ mod unit_tests {
         for entry in entries() {
             assert!(!keys.contains(&entry.key()), "duplicate {}", entry.key());
             keys.push(entry.key());
-            assert!(entry.area.is_none_or(|a| AREAS.contains(&a)), "{}", entry.key());
+            assert!(
+                entry.area.is_none_or(|a| AREAS.contains(&a)),
+                "{}",
+                entry.key()
+            );
             assert_eq!(entry.changes, entry.prepare.is_some(), "{}", entry.key());
             assert!(!entry.irreversible || entry.changes, "{}", entry.key());
             // a change always names the permission the console needs for it
-            assert!(!entry.changes || entry.permission.is_some(), "{}", entry.key());
-            assert!(SESSION_SUBS.iter().all(|(name, _)| *name != entry.name || entry.group.is_some()));
+            assert!(
+                !entry.changes || entry.permission.is_some(),
+                "{}",
+                entry.key()
+            );
+            assert!(
+                SESSION_SUBS
+                    .iter()
+                    .all(|(name, _)| *name != entry.name || entry.group.is_some())
+            );
             if let Some(group) = entry.group {
-                assert!(groups().any(|g| g.name == group), "group {group} has no description");
+                assert!(
+                    groups().any(|g| g.name == group),
+                    "group {group} has no description"
+                );
             }
         }
     }
@@ -940,11 +1142,22 @@ mod unit_tests {
         assert_eq!(Lang::from_locale(None), Lang::En);
         assert_eq!(texts::UNTIL.fill(Lang::De, &[("time", "x")]), "bis x");
         // one pass: a value holding a placeholder stays as it is
-        assert_eq!(texts::UNTIL.fill(Lang::En, &[("time", "{time}")]), "until {time}");
-        assert_eq!(texts::WINDOW.fill(Lang::En, &[("total", "{day}"), ("day", "1")])
-            .starts_with("{day} (+1 in 24 hours"), true);
+        assert_eq!(
+            texts::UNTIL.fill(Lang::En, &[("time", "{time}")]),
+            "until {time}"
+        );
+        assert_eq!(
+            texts::WINDOW
+                .fill(Lang::En, &[("total", "{day}"), ("day", "1")])
+                .starts_with("{day} (+1 in 24 hours"),
+            true
+        );
         // an unknown or unclosed placeholder is kept
-        let text = Text { en: "a {x} b {", ar: "", de: "" };
+        let text = Text {
+            en: "a {x} b {",
+            ar: "",
+            de: "",
+        };
         assert_eq!(text.fill(Lang::En, &[]), "a {x} b {");
     }
 

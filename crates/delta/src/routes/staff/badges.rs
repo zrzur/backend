@@ -11,15 +11,18 @@
 //! by hand. Every change is written to the platform audit log first.
 
 use revolt_database::{
-    badge_definition, record_platform_audit, AuditOutcome, BadgeGrantRule, Database, StaffPermission,
+    AuditOutcome, BadgeGrantRule, Database, StaffPermission, badge_definition,
+    record_platform_audit,
 };
-use revolt_models::v0::{AdminBadgeGrant, AdminUserBadges, BadgeInfo, DataGrantBadge, DataRevokeBadge};
-use revolt_result::{create_error, Result};
-use rocket::{serde::json::Json, State};
+use revolt_models::v0::{
+    AdminBadgeGrant, AdminUserBadges, BadgeInfo, DataGrantBadge, DataRevokeBadge,
+};
+use revolt_result::{Result, create_error};
+use rocket::{State, serde::json::Json};
 use serde::Deserialize;
 
 use super::StaffContext;
-use crate::routes::badges::{catalogue, grant_with, revoke_with, user_record, BadgeRights};
+use crate::routes::badges::{BadgeRights, catalogue, grant_with, revoke_with, user_record};
 
 fn rights(staff: &StaffContext) -> BadgeRights {
     BadgeRights {
@@ -30,7 +33,10 @@ fn rights(staff: &StaffContext) -> BadgeRights {
 
 /// # Badge catalogue
 #[get("/badges/catalogue")]
-pub async fn badge_catalogue(db: &State<Database>, staff: StaffContext) -> Result<Json<Vec<BadgeInfo>>> {
+pub async fn badge_catalogue(
+    db: &State<Database>,
+    staff: StaffContext,
+) -> Result<Json<Vec<BadgeInfo>>> {
     staff.require(db, StaffPermission::UsersRead).await?;
     Ok(catalogue().await)
 }
@@ -39,13 +45,21 @@ pub async fn badge_catalogue(db: &State<Database>, staff: StaffContext) -> Resul
 ///
 /// Grants, badge history and which badges you may give them now.
 #[get("/users/<id>/badges")]
-pub async fn user_badges(db: &State<Database>, staff: StaffContext, id: &str) -> Result<Json<AdminUserBadges>> {
+pub async fn user_badges(
+    db: &State<Database>,
+    staff: StaffContext,
+    id: &str,
+) -> Result<Json<AdminUserBadges>> {
     user_badges_core(db, &staff, id).await.map(Json)
 }
 
 /// The console's `user_badges`, for any caller holding a [`StaffContext`]
 /// (the console route and Zrzur Desk): the same checks and records
-pub(super) async fn user_badges_core(db: &Database, staff: &StaffContext, id: &str) -> Result<AdminUserBadges> {
+pub(super) async fn user_badges_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+) -> Result<AdminUserBadges> {
     staff.require(db, StaffPermission::UsersRead).await?;
     user_record(db, &staff.user.id, rights(&staff), id).await
 }
@@ -78,7 +92,9 @@ async fn check(
             record_platform_audit(db, record, AuditOutcome::Denied).await?;
             return Err(create_error!(NotPrivileged));
         }
-        staff.require_step_up(db, StaffPermission::BadgesManage).await?;
+        staff
+            .require_step_up(db, StaffPermission::BadgesManage)
+            .await?;
     }
     let mut record = staff.record(action, Some(StaffPermission::BadgesManage));
     record.target_kind = Some("user".to_string());
@@ -98,7 +114,12 @@ async fn finish<T>(
         Ok(value) => Ok(value),
         Err(error) => {
             let mut failed = record;
-            failed.summary = Some(format!("{:?}", error.error_type).chars().take(200).collect());
+            failed.summary = Some(
+                format!("{:?}", error.error_type)
+                    .chars()
+                    .take(200)
+                    .collect(),
+            );
             let _ = record_platform_audit(db, failed, AuditOutcome::Failed).await;
             Err(error)
         }

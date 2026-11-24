@@ -14,9 +14,9 @@ use std::{
 use revolt_database::{Database, StaffPermission};
 use revolt_result::Result;
 use rocket::{
+    Data, Request, Response, State,
     fairing::{Fairing, Info, Kind},
     serde::json::Json,
-    Data, Request, Response, State,
 };
 use serde::Serialize;
 
@@ -60,7 +60,11 @@ impl Fairing for Metrics {
             return;
         };
         let key = format!("{} {}", request.method(), route.uri.as_str());
-        let elapsed = request.local_cache(|| Started(Instant::now())).0.elapsed().as_millis() as u64;
+        let elapsed = request
+            .local_cache(|| Started(Instant::now()))
+            .0
+            .elapsed()
+            .as_millis() as u64;
         let status = response.status().code;
         if let Ok(mut counters) = COUNTERS.lock() {
             let c = counters.entry(key).or_default();

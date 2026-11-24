@@ -9,13 +9,16 @@
 
 use std::collections::HashMap;
 
-use revolt_database::{record_platform_audit, AuditOutcome, Database, PlatformAuditEntry, PlatformAuditQuery, StaffPermission};
-use revolt_result::{create_error, Result};
-use rocket::{serde::json::Json, State};
+use revolt_database::{
+    AuditOutcome, Database, PlatformAuditEntry, PlatformAuditQuery, StaffPermission,
+    record_platform_audit,
+};
+use revolt_result::{Result, create_error};
+use rocket::{State, serde::json::Json};
 use serde::{Deserialize, Serialize};
 
 use super::audited::audited;
-use super::{reason, StaffContext};
+use super::{StaffContext, reason};
 
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 /// How far back the overview reads
@@ -129,8 +132,15 @@ pub struct DataLock {
 /// For a session that looks stolen. Their roles stay; they have to sign in
 /// to the console again (with their authenticator).
 #[post("/security/members/<id>/lock", data = "<data>")]
-pub async fn lock(db: &State<Database>, staff: StaffContext, id: &str, data: Json<DataLock>) -> Result<Json<usize>> {
-    staff.require_step_up(db, StaffPermission::SecurityRespond).await?;
+pub async fn lock(
+    db: &State<Database>,
+    staff: StaffContext,
+    id: &str,
+    data: Json<DataLock>,
+) -> Result<Json<usize>> {
+    staff
+        .require_step_up(db, StaffPermission::SecurityRespond)
+        .await?;
     let why = reason(&data.reason)?;
     if id == staff.user.id {
         // signing yourself out is the sign-out button
@@ -139,7 +149,10 @@ pub async fn lock(db: &State<Database>, staff: StaffContext, id: &str, data: Jso
     let Some(target) = db.fetch_staff_grant(id).await? else {
         return Err(create_error!(NotFound));
     };
-    let mut record = staff.record("staff.security.lock", Some(StaffPermission::SecurityRespond));
+    let mut record = staff.record(
+        "staff.security.lock",
+        Some(StaffPermission::SecurityRespond),
+    );
     record.target_kind = Some("user".to_string());
     record.target_id = Some(id.to_string());
     record.reason = Some(why);

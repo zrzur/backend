@@ -3,18 +3,18 @@
 //! names apply unchanged; every record's `summary` starts with `desk`.
 
 use revolt_database::{
-    new_staff_token, record_platform_audit, staff_token_hash, AuditOutcome, Database,
-    StaffPermission, StaffRole, StaffSession, StaffSessionKind, User, STAFF_SESSION_IDLE_MS,
-    STAFF_SESSION_MAX_MS, STAFF_STEP_UP_MS,
+    AuditOutcome, Database, STAFF_SESSION_IDLE_MS, STAFF_SESSION_MAX_MS, STAFF_STEP_UP_MS,
+    StaffPermission, StaffRole, StaffSession, StaffSessionKind, User, new_staff_token,
+    record_platform_audit, staff_token_hash,
 };
-use revolt_result::{create_error, Result};
-use rocket::{serde::json::Json, State};
+use revolt_result::{Result, create_error};
+use rocket::{State, serde::json::Json};
 use serde::Serialize;
 use ulid::Ulid;
 
-use super::super::{check_code, StepUp};
-use super::actor::{context, desk_actor, field, press, session_alive, DataDeskInteraction, Expect};
+use super::super::{StepUp, check_code};
 pub use super::CODE_FIELD;
+use super::actor::{DataDeskInteraction, Expect, context, desk_actor, field, press, session_alive};
 
 /// The custom id of the sign-in form
 pub const LOGIN_MODAL: &str = "zd:login";
@@ -122,7 +122,10 @@ pub async fn open(
                     && (other.created_at, other.id.as_str()) < (staff.created_at, staff.id.as_str())
                 {
                     if let Err(error) = db.revoke_staff_session(&other.id, now).await {
-                        log::error!("desk sign-in: could not end earlier session {}: {error:?}", other.id);
+                        log::error!(
+                            "desk sign-in: could not end earlier session {}: {error:?}",
+                            other.id
+                        );
                     }
                 }
             }
@@ -138,9 +141,14 @@ pub async fn open(
 ///
 /// From `/desk logout`. Ends the presser's desk session.
 #[post("/desk/session/close", data = "<data>")]
-pub async fn close(db: &State<Database>, user: User, data: Json<DataDeskInteraction>) -> Result<()> {
+pub async fn close(
+    db: &State<Database>,
+    user: User,
+    data: Json<DataDeskInteraction>,
+) -> Result<()> {
     let (staff, _) = desk_actor(db, &user, &data, Expect::Command("logout"), PATH_CLOSE).await?;
-    db.revoke_staff_session(&staff.session.id, staff.now).await?;
+    db.revoke_staff_session(&staff.session.id, staff.now)
+        .await?;
     let mut record = staff.record("staff.session.close", None);
     record.summary = Some("desk sign-out".to_string());
     record_platform_audit(db, record, AuditOutcome::Success).await?;
@@ -157,7 +165,8 @@ pub async fn step_up(
     user: User,
     data: Json<DataDeskInteraction>,
 ) -> Result<Json<StepUp>> {
-    let (staff, interaction) = desk_actor(db, &user, &data, Expect::Modal(STEP_UP_MODAL), PATH_STEP_UP).await?;
+    let (staff, interaction) =
+        desk_actor(db, &user, &data, Expect::Modal(STEP_UP_MODAL), PATH_STEP_UP).await?;
     if field(&interaction, CODE_FIELD).is_empty() {
         // see `open`: an empty form is not a wrong code and is not recorded
         return Err(create_error!(InvalidCredentials));
@@ -172,8 +181,11 @@ pub async fn step_up(
     let mut record = staff.record("staff.session.step_up", None);
     record.summary = Some("desk step-up".to_string());
     record_platform_audit(db, record, AuditOutcome::Success).await?;
-    db.set_staff_step_up(&staff.session.id, staff.now, until).await?;
-    Ok(Json(StepUp { step_up_until: until }))
+    db.set_staff_step_up(&staff.session.id, staff.now, until)
+        .await?;
+    Ok(Json(StepUp {
+        step_up_until: until,
+    }))
 }
 
 /// # Desk: who am I
@@ -181,7 +193,11 @@ pub async fn step_up(
 /// From `/desk me`. Roles, permissions, session times and the desk areas
 /// this person may use.
 #[post("/desk/me", data = "<data>")]
-pub async fn me(db: &State<Database>, user: User, data: Json<DataDeskInteraction>) -> Result<Json<DeskMe>> {
+pub async fn me(
+    db: &State<Database>,
+    user: User,
+    data: Json<DataDeskInteraction>,
+) -> Result<Json<DeskMe>> {
     let press = press(db, &user, &data, Expect::Command("me"), PATH_ME).await?;
     let enabled = press.settings.areas.clone();
     let (staff, _) = context(db, press).await?;

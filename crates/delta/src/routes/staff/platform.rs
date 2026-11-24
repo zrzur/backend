@@ -6,19 +6,19 @@
 use std::sync::OnceLock;
 use std::time::Instant;
 
-use redis_kiss::{get_connection, AsyncCommands};
+use redis_kiss::{AsyncCommands, get_connection};
 use revolt_database::{
-    record_platform_audit, staff_now, AuditOutcome, Channel, Database, Server, StaffCounted,
-    StaffDbStats, StaffPermission, User,
+    AuditOutcome, Channel, Database, Server, StaffCounted, StaffDbStats, StaffPermission, User,
+    record_platform_audit, staff_now,
 };
 use revolt_models::v0::{SafetyTargetKind, UserFlags};
-use revolt_result::{create_error, Result};
-use rocket::{serde::json::Json, State};
+use revolt_result::{Result, create_error};
+use rocket::{State, serde::json::Json};
 use serde::Serialize;
 use ulid::Ulid;
 
 use super::audited::audited;
-use super::{reason, DataReason, StaffContext};
+use super::{DataReason, StaffContext, reason};
 
 static STARTED_AT: OnceLock<i64> = OnceLock::new();
 
@@ -175,7 +175,7 @@ pub async fn daily(
         _ => {
             return Err(create_error!(FailedValidation {
                 error: "metric must be users, servers or messages".to_string()
-            }))
+            }));
         }
     };
     let days = days.unwrap_or(30).clamp(1, 90) as i64;
@@ -244,13 +244,25 @@ fn limit(limit: Option<usize>) -> usize {
 /// Newest first (`before` is a user id cursor), or a search by id, username
 /// or display name. Emails only with `platform.users.pii.read`.
 #[get("/users?<q>&<before>&<limit>")]
-pub async fn users(db: &State<Database>, staff: StaffContext, q: Option<&str>, before: Option<&str>, limit: Option<usize>) -> Result<Json<Vec<UserRow>>> {
+pub async fn users(
+    db: &State<Database>,
+    staff: StaffContext,
+    q: Option<&str>,
+    before: Option<&str>,
+    limit: Option<usize>,
+) -> Result<Json<Vec<UserRow>>> {
     users_core(db, &staff, q, before, limit).await.map(Json)
 }
 
 /// The console's `users`, for any caller holding a [`StaffContext`]
 /// (the console route and Zrzur Desk): the same checks and records
-pub(super) async fn users_core(db: &Database, staff: &StaffContext, q: Option<&str>, before: Option<&str>, limit: Option<usize>) -> Result<Vec<UserRow>> {
+pub(super) async fn users_core(
+    db: &Database,
+    staff: &StaffContext,
+    q: Option<&str>,
+    before: Option<&str>,
+    limit: Option<usize>,
+) -> Result<Vec<UserRow>> {
     staff.require(db, StaffPermission::UsersRead).await?;
     let limit = self::limit(limit);
     let found = match q.map(str::trim).filter(|q| !q.is_empty()) {
@@ -263,7 +275,10 @@ pub(super) async fn users_core(db: &Database, staff: &StaffContext, q: Option<&s
             db.search_users_by_name(query.trim_start_matches('@'), limit.min(50))
                 .await?
         }
-        None => db.staff_list_users(before.filter(|b| b.len() == 26), limit).await?,
+        None => {
+            db.staff_list_users(before.filter(|b| b.len() == 26), limit)
+                .await?
+        }
     };
     let pii = staff.has(StaffPermission::UsersPiiRead);
     let mut rows = Vec::with_capacity(found.len());
@@ -323,7 +338,8 @@ pub(super) async fn user_core(db: &Database, staff: &StaffContext, id: &str) -> 
     if staff.has(StaffPermission::UsersPiiRead) {
         row.email = account.as_ref().map(|a| a.email.clone());
         if row.email.is_some() {
-            let mut record = staff.record("staff.user.view_pii", Some(StaffPermission::UsersPiiRead));
+            let mut record =
+                staff.record("staff.user.view_pii", Some(StaffPermission::UsersPiiRead));
             record.target_kind = Some("user".to_string());
             record.target_id = Some(user.id.clone());
             record_platform_audit(db, record, AuditOutcome::Success).await?;
@@ -332,7 +348,11 @@ pub(super) async fn user_core(db: &Database, staff: &StaffContext, id: &str) -> 
     Ok(UserDetail {
         online: revolt_presence::is_online(&user.id).await,
         servers: db.fetch_server_count(&user.id).await.unwrap_or(0),
-        sessions: db.fetch_sessions(&user.id).await.map(|s| s.len()).unwrap_or(0),
+        sessions: db
+            .fetch_sessions(&user.id)
+            .await
+            .map(|s| s.len())
+            .unwrap_or(0),
         account: account.map(|a| UserAccountState {
             verified: matches!(a.verification, revolt_database::EmailVerification::Verified),
             disabled: a.disabled,
@@ -368,7 +388,10 @@ pub async fn revoke_user_sessions(
     if user.bot.is_some() {
         return Err(create_error!(IsBot));
     }
-    let mut record = staff.record("staff.user.revoke_sessions", Some(StaffPermission::UsersSessionsRevoke));
+    let mut record = staff.record(
+        "staff.user.revoke_sessions",
+        Some(StaffPermission::UsersSessionsRevoke),
+    );
     record.target_kind = Some("user".to_string());
     record.target_id = Some(user.id.clone());
     record.reason = Some(reason.clone());
@@ -381,13 +404,18 @@ pub async fn revoke_user_sessions(
         record_platform_audit(db, record, AuditOutcome::Denied).await?;
         return Err(create_error!(NotPrivileged));
     }
-    let count = db.fetch_sessions(&user.id).await.map(|s| s.len()).unwrap_or(0);
+    let count = db
+        .fetch_sessions(&user.id)
+        .await
+        .map(|s| s.len())
+        .unwrap_or(0);
     // fail closed: the record comes first
     record.summary = Some(format!("{count} sessions"));
     audited(db, record, async {
         let account = db.fetch_account(&user.id).await?;
         account.delete_all_sessions(db, None).await?;
-        db.revoke_staff_sessions_for_user(&user.id, staff.now).await?;
+        db.revoke_staff_sessions_for_user(&user.id, staff.now)
+            .await?;
         Ok(())
     })
     .await?;
@@ -429,13 +457,25 @@ fn server_row(server: &Server, owners: &[User]) -> ServerRow {
 
 /// # Server directory
 #[get("/servers?<q>&<before>&<limit>")]
-pub async fn servers(db: &State<Database>, staff: StaffContext, q: Option<&str>, before: Option<&str>, limit: Option<usize>) -> Result<Json<Vec<ServerRow>>> {
+pub async fn servers(
+    db: &State<Database>,
+    staff: StaffContext,
+    q: Option<&str>,
+    before: Option<&str>,
+    limit: Option<usize>,
+) -> Result<Json<Vec<ServerRow>>> {
     servers_core(db, &staff, q, before, limit).await.map(Json)
 }
 
 /// The console's `servers`, for any caller holding a [`StaffContext`]
 /// (the console route and Zrzur Desk): the same checks and records
-pub(super) async fn servers_core(db: &Database, staff: &StaffContext, q: Option<&str>, before: Option<&str>, limit: Option<usize>) -> Result<Vec<ServerRow>> {
+pub(super) async fn servers_core(
+    db: &Database,
+    staff: &StaffContext,
+    q: Option<&str>,
+    before: Option<&str>,
+    limit: Option<usize>,
+) -> Result<Vec<ServerRow>> {
     staff.require(db, StaffPermission::ServersRead).await?;
     if q.is_some_and(|q| q.chars().count() > 64) {
         return Err(create_error!(FailedValidation {
@@ -476,17 +516,31 @@ fn channel_kind(channel: &Channel) -> &'static str {
 ///
 /// Metadata only: no messages or member lists.
 #[get("/servers/<id>")]
-pub async fn server(db: &State<Database>, staff: StaffContext, id: &str) -> Result<Json<ServerDetail>> {
+pub async fn server(
+    db: &State<Database>,
+    staff: StaffContext,
+    id: &str,
+) -> Result<Json<ServerDetail>> {
     server_core(db, &staff, id).await.map(Json)
 }
 
 /// The console's `server`, for any caller holding a [`StaffContext`]
 /// (the console route and Zrzur Desk): the same checks and records
-pub(super) async fn server_core(db: &Database, staff: &StaffContext, id: &str) -> Result<ServerDetail> {
+pub(super) async fn server_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+) -> Result<ServerDetail> {
     staff.require(db, StaffPermission::ServersRead).await?;
     let server = db.fetch_server(id).await?;
-    let owners = db.fetch_users(std::slice::from_ref(&server.owner)).await.unwrap_or_default();
-    let channels = db.fetch_channels(&server.channels).await.unwrap_or_default();
+    let owners = db
+        .fetch_users(std::slice::from_ref(&server.owner))
+        .await
+        .unwrap_or_default();
+    let channels = db
+        .fetch_channels(&server.channels)
+        .await
+        .unwrap_or_default();
     let mut kinds = std::collections::BTreeMap::<&str, u64>::new();
     for channel in &channels {
         *kinds.entry(channel_kind(channel)).or_default() += 1;
@@ -495,7 +549,10 @@ pub(super) async fn server_core(db: &Database, staff: &StaffContext, id: &str) -
         members: db.fetch_member_count(&server.id).await.unwrap_or(0),
         channels_by_type: kinds
             .into_iter()
-            .map(|(kind, count)| KindCount { kind: kind.to_string(), count })
+            .map(|(kind, count)| KindCount {
+                kind: kind.to_string(),
+                count,
+            })
             .collect(),
         reports_about: db
             .fetch_safety_cases_for_target(SafetyTargetKind::Server, &server.id, 100)

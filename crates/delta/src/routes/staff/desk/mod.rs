@@ -14,26 +14,26 @@
 //! [`StaffContext`]: super::StaffContext
 
 mod actor;
+#[cfg(test)]
+mod framework_tests;
 mod lookup;
+#[cfg(test)]
+mod lookup_tests;
 mod overview;
 pub(crate) mod registry;
 mod run;
 mod session;
-pub(crate) mod view;
-#[cfg(test)]
-mod framework_tests;
-#[cfg(test)]
-mod lookup_tests;
 #[cfg(test)]
 mod tests;
+pub(crate) mod view;
 
 // for the desk routes of later phases
 #[allow(unused_imports)]
-pub(crate) use actor::{desk_actor, field, DataDeskInteraction, Expect};
+pub(crate) use actor::{DataDeskInteraction, Expect, desk_actor, field};
 
-use revolt_config::{config, FeaturesStaffDesk};
+use revolt_config::{FeaturesStaffDesk, config};
 use revolt_database::User;
-use revolt_result::{create_error, Result};
+use revolt_result::{Result, create_error};
 use rocket::Route;
 
 /// The command's name as the bot registers it (`/desk me`, `/desk logout`)
@@ -75,7 +75,11 @@ pub(crate) mod test_settings {
     }
 
     pub fn get(bot: &str) -> Option<FeaturesStaffDesk> {
-        SETTINGS.lock().unwrap().as_ref().and_then(|all| all.get(bot).cloned())
+        SETTINGS
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|all| all.get(bot).cloned())
     }
 }
 

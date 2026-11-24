@@ -22,25 +22,25 @@
 //! from the same message.
 
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc,
+    atomic::{AtomicBool, Ordering},
 };
 
 use futures::future::BoxFuture;
 use revolt_config::FeaturesStaffDesk;
 use revolt_database::{
-    record_platform_audit, staff_now, AuditOutcome, AuditRecord, Database, DeskPending, Interaction,
-    InteractionSource, User,
+    AuditOutcome, AuditRecord, Database, DeskPending, Interaction, InteractionSource, User,
+    record_platform_audit, staff_now,
 };
 use revolt_models::v0::{ButtonStyle, Component, ComponentBlock, InteractionType};
-use revolt_result::{create_error, ErrorType, Result};
-use rocket::{serde::json::Json, State};
+use revolt_result::{ErrorType, Result, create_error};
+use rocket::{State, serde::json::Json};
 use ulid::Ulid;
 
-use super::super::{audited::audited, StaffContext};
-use super::actor::{desk_actor, DataDeskInteraction, Expect};
+use super::super::{StaffContext, audited::audited};
+use super::actor::{DataDeskInteraction, Expect, desk_actor};
 use super::lookup::PAGE_PREFIX;
-use super::registry::{self, texts, DeskCommand, DeskCommandTree, DeskInput, Lang};
+use super::registry::{self, DeskCommand, DeskCommandTree, DeskInput, Lang, texts};
 use super::view::{DeskButton, DeskButtonStyle, DeskView};
 
 const PATH_RUN: &str = "/staff/desk/run";
@@ -63,7 +63,11 @@ pub async fn commands(user: User) -> Result<Json<DeskCommandTree>> {
 /// press must name a `/desk` command of the same person and the desk bot,
 /// and be made on an answer of that command or of an earlier page press of
 /// it. The page number is bounded; anything else is refused.
-async fn page_origin(db: &Database, settings: &FeaturesStaffDesk, pressed: &Interaction) -> Result<(Interaction, u32)> {
+async fn page_origin(
+    db: &Database,
+    settings: &FeaturesStaffDesk,
+    pressed: &Interaction,
+) -> Result<(Interaction, u32)> {
     let refuse = || create_error!(InvalidOperation);
     let rest = pressed
         .custom_id
@@ -71,7 +75,11 @@ async fn page_origin(db: &Database, settings: &FeaturesStaffDesk, pressed: &Inte
         .and_then(|custom| custom.strip_prefix(PAGE_PREFIX))
         .ok_or_else(refuse)?;
     let (origin_id, page) = rest.rsplit_once(':').ok_or_else(refuse)?;
-    let page: u32 = page.parse().ok().filter(|p| (1..=1000).contains(p)).ok_or_else(refuse)?;
+    let page: u32 = page
+        .parse()
+        .ok()
+        .filter(|p| (1..=1000).contains(p))
+        .ok_or_else(refuse)?;
     let origin = db
         .fetch_interaction(origin_id)
         .await
@@ -90,11 +98,17 @@ async fn page_origin(db: &Database, settings: &FeaturesStaffDesk, pressed: &Inte
         return Err(refuse());
     };
     if interaction_id != &origin.id {
-        let parent = db.fetch_interaction(interaction_id).await.map_err(|_| refuse())?;
+        let parent = db
+            .fetch_interaction(interaction_id)
+            .await
+            .map_err(|_| refuse())?;
         let of_origin = format!("{PAGE_PREFIX}{}:", origin.id);
         let same = parent.user_id == pressed.user_id
             && parent.application_id == settings.bot
-            && parent.custom_id.as_deref().is_some_and(|custom| custom.starts_with(&of_origin));
+            && parent
+                .custom_id
+                .as_deref()
+                .is_some_and(|custom| custom.starts_with(&of_origin));
         if !same {
             return Err(refuse());
         }
@@ -108,8 +122,19 @@ async fn page_origin(db: &Database, settings: &FeaturesStaffDesk, pressed: &Inte
 /// answered (`zd:page:<command>:<page>`). Reading commands answer with
 /// their view; changing ones with a confirmation card.
 #[post("/desk/run", data = "<data>")]
-pub async fn run(db: &State<Database>, user: User, data: Json<DataDeskInteraction>) -> Result<Json<DeskView>> {
-    let (staff, pressed) = desk_actor(db, &user, &data, Expect::CommandOrButton(PAGE_PREFIX), PATH_RUN).await?;
+pub async fn run(
+    db: &State<Database>,
+    user: User,
+    data: Json<DataDeskInteraction>,
+) -> Result<Json<DeskView>> {
+    let (staff, pressed) = desk_actor(
+        db,
+        &user,
+        &data,
+        Expect::CommandOrButton(PAGE_PREFIX),
+        PATH_RUN,
+    )
+    .await?;
     let settings = super::settings(&user).await?;
     // a page press stands for its command: every check below is on that
     let (interaction, page) = if pressed.kind == InteractionType::Component {
@@ -124,7 +149,8 @@ pub async fn run(db: &State<Database>, user: User, data: Json<DataDeskInteractio
         return Err(create_error!(InvalidOperation));
     }
     // `login`, `logout` and `stepup` have their own routes
-    let (group, name, options) = registry::chosen(&interaction).ok_or_else(|| create_error!(InvalidOperation))?;
+    let (group, name, options) =
+        registry::chosen(&interaction).ok_or_else(|| create_error!(InvalidOperation))?;
     let entry = registry::find(group, name).ok_or_else(|| create_error!(InvalidOperation))?;
     if !entry.offered(&settings) {
         return Err(create_error!(NotFound));
@@ -142,9 +168,13 @@ pub async fn run(db: &State<Database>, user: User, data: Json<DataDeskInteractio
         if page != 1 {
             return Err(create_error!(InvalidOperation));
         }
-        return propose(db, &staff, &settings, &interaction, entry, input).await.map(Json);
+        return propose(db, &staff, &settings, &interaction, entry, input)
+            .await
+            .map(Json);
     }
-    registry::dispatch(db, &staff, entry, &input).await.map(|view| Json(view.finish()))
+    registry::dispatch(db, &staff, entry, &input)
+        .await
+        .map(|view| Json(view.finish()))
 }
 
 /// The confirmation card of a pending action, as the bot must show it
@@ -184,7 +214,9 @@ async fn propose(
     if let Some(permission) = entry.permission {
         staff.require_protective(db, permission).await?;
     }
-    let prepare = entry.prepare.ok_or_else(|| create_error!(InvalidOperation))?;
+    let prepare = entry
+        .prepare
+        .ok_or_else(|| create_error!(InvalidOperation))?;
     let prepared = prepare(db, staff, &input).await?;
     let mut lines = prepared.lines;
     if entry.irreversible {
@@ -240,7 +272,11 @@ async fn on_the_card(
         return Ok(false);
     }
     // only the first answer: a follow-up is never the card
-    let Some(message) = parent.ephemeral_message.as_ref().filter(|m| &m.id == message_id) else {
+    let Some(message) = parent
+        .ephemeral_message
+        .as_ref()
+        .filter(|m| &m.id == message_id)
+    else {
         return Ok(false);
     };
     let expected = card(pending, irreversible);
@@ -305,8 +341,19 @@ where
 /// need a step-up made after the card (else `NotElevated`, and the same
 /// card works after it). Executes the stored action.
 #[post("/desk/confirm", data = "<data>")]
-pub async fn confirm(db: &State<Database>, user: User, data: Json<DataDeskInteraction>) -> Result<Json<DeskView>> {
-    let (staff, interaction) = desk_actor(db, &user, &data, Expect::ButtonPrefix(CONFIRM_PREFIX), PATH_CONFIRM).await?;
+pub async fn confirm(
+    db: &State<Database>,
+    user: User,
+    data: Json<DataDeskInteraction>,
+) -> Result<Json<DeskView>> {
+    let (staff, interaction) = desk_actor(
+        db,
+        &user,
+        &data,
+        Expect::ButtonPrefix(CONFIRM_PREFIX),
+        PATH_CONFIRM,
+    )
+    .await?;
     let settings = super::settings(&user).await?;
     let id = interaction
         .custom_id
@@ -343,7 +390,12 @@ pub async fn confirm(db: &State<Database>, user: User, data: Json<DataDeskIntera
         return Err(create_error!(InteractionExpired));
     }
     if pending.session != staff.session.id {
-        record_platform_audit(db, deny("asked on another desk session"), AuditOutcome::Denied).await?;
+        record_platform_audit(
+            db,
+            deny("asked on another desk session"),
+            AuditOutcome::Denied,
+        )
+        .await?;
         return Err(create_error!(NotPrivileged));
     }
     if pending.is_expired() {
@@ -359,17 +411,30 @@ pub async fn confirm(db: &State<Database>, user: User, data: Json<DataDeskIntera
         return Err(create_error!(InvalidOperation));
     };
     if !on_the_card(db, &settings, &interaction, &pending, entry.irreversible).await? {
-        record_platform_audit(db, deny("not pressed on the card the server made"), AuditOutcome::Denied).await?;
+        record_platform_audit(
+            db,
+            deny("not pressed on the card the server made"),
+            AuditOutcome::Denied,
+        )
+        .await?;
         return Err(create_error!(InvalidOperation));
     }
     // the console's full check, again, on this press (step-up list included)
-    let permission = entry.permission.ok_or_else(|| create_error!(InvalidOperation))?;
+    let permission = entry
+        .permission
+        .ok_or_else(|| create_error!(InvalidOperation))?;
     staff.require(db, permission).await?;
     // irreversible: a step-up made after the card was made; the pending
     // action stays usable
     if entry.irreversible {
-        let fresh = staff.session.step_up_until.is_some_and(|until| until > staff.now)
-            && staff.session.step_up_at.is_some_and(|at| at >= pending.created_at);
+        let fresh = staff
+            .session
+            .step_up_until
+            .is_some_and(|until| until > staff.now)
+            && staff
+                .session
+                .step_up_at
+                .is_some_and(|at| at >= pending.created_at);
         if !fresh {
             let mut record = staff.record("staff.step_up.missing", Some(permission));
             record.summary = Some(staff.path.clone());
@@ -394,9 +459,15 @@ pub async fn confirm(db: &State<Database>, user: User, data: Json<DataDeskIntera
     let mut record = base();
     record.summary = Some(format!("desk: confirmed {}", pending.action));
     let db: &Database = db;
-    execute(db, &staff, entry, &pending, &input, record, |record, change| {
-        audited(db, record, change)
-    })
+    execute(
+        db,
+        &staff,
+        entry,
+        &pending,
+        &input,
+        record,
+        |record, change| audited(db, record, change),
+    )
     .await
     .map(Json)
 }

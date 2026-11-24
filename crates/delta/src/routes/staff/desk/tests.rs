@@ -3,13 +3,15 @@
 
 use revolt_config::FeaturesStaffDesk;
 use revolt_database::{
-    new_staff_token, staff_now, staff_token_hash, Account, Bot, Channel, Interaction,
-    PlatformAuditQuery, Session, StaffGrant, StaffRole, StaffSession, StaffSessionKind, Totp,
-    User, STAFF_SESSION_MAX_MS,
+    Account, Bot, Channel, Interaction, PlatformAuditQuery, STAFF_SESSION_MAX_MS, Session,
+    StaffGrant, StaffRole, StaffSession, StaffSessionKind, Totp, User, new_staff_token, staff_now,
+    staff_token_hash,
 };
-use revolt_models::v0::{CommandOptionType, InteractionDataOption, InteractionType, ModalFieldValue};
+use revolt_models::v0::{
+    CommandOptionType, InteractionDataOption, InteractionType, ModalFieldValue,
+};
 use rocket::http::{ContentType, Header, Status};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::session::{CODE_FIELD, LOGIN_MODAL, STEP_UP_MODAL};
 use super::test_settings;
@@ -60,7 +62,12 @@ async fn enable_totp(harness: &TestHarness, account: &mut Account) {
     account.save(&harness.db).await.unwrap();
 }
 
-pub(super) async fn set_grant(harness: &TestHarness, user_id: &str, roles: Vec<StaffRole>, disabled: bool) {
+pub(super) async fn set_grant(
+    harness: &TestHarness,
+    user_id: &str,
+    roles: Vec<StaffRole>,
+    disabled: bool,
+) {
     let current = harness.db.fetch_staff_grant(user_id).await.unwrap();
     let grant = StaffGrant {
         id: user_id.to_string(),
@@ -72,11 +79,13 @@ pub(super) async fn set_grant(harness: &TestHarness, user_id: &str, roles: Vec<S
         updated_at: staff_now(),
         updated_by: "test".to_string(),
     };
-    assert!(harness
-        .db
-        .save_staff_grant(&grant, current.map(|g| g.version))
-        .await
-        .unwrap());
+    assert!(
+        harness
+            .db
+            .save_staff_grant(&grant, current.map(|g| g.version))
+            .await
+            .unwrap()
+    );
 }
 
 pub(super) fn settings(bot: &Bot, places: Vec<String>, allow_dms: bool) -> FeaturesStaffDesk {
@@ -169,18 +178,30 @@ impl Stage {
             }
             Kind::Button(_) => {}
         }
-        self.harness.db.insert_interaction(&interaction).await.unwrap();
+        self.harness
+            .db
+            .insert_interaction(&interaction)
+            .await
+            .unwrap();
         (interaction.id, token)
     }
 
     /// A press in the desk channel
     pub(super) async fn press(&self, who: &Person, kind: Kind<'_>) -> (String, String) {
-        self.press_by(&self.bot.id, who, kind, self.place.id(), Some(&self.server_id)).await
+        self.press_by(
+            &self.bot.id,
+            who,
+            kind,
+            self.place.id(),
+            Some(&self.server_id),
+        )
+        .await
     }
 
     /// The bot hands a press back to `/staff/desk/<path>`
     pub(super) async fn hand(&self, path: &str, pressed: &(String, String)) -> (Status, Value) {
-        self.hand_with("x-bot-token", &self.bot.token, path, pressed).await
+        self.hand_with("x-bot-token", &self.bot.token, path, pressed)
+            .await
     }
 
     async fn hand_with(
@@ -242,14 +263,23 @@ impl Stage {
             .await
             .unwrap()
             .into_iter()
-            .map(|e| (e.action, format!("{:?}", e.outcome), e.summary.unwrap_or_default()))
+            .map(|e| {
+                (
+                    e.action,
+                    format!("{:?}", e.outcome),
+                    e.summary.unwrap_or_default(),
+                )
+            })
             .collect();
         records.reverse();
         records
     }
 
     /// (action, outcome, staff_session_id) of a person's records, oldest first
-    pub(super) async fn record_sessions(&self, who: &Person) -> Vec<(String, String, Option<String>)> {
+    pub(super) async fn record_sessions(
+        &self,
+        who: &Person,
+    ) -> Vec<(String, String, Option<String>)> {
         let mut records: Vec<_> = self
             .harness
             .db
@@ -340,7 +370,13 @@ async fn press_outside_places_denied() {
 
     // another channel of the same server: a sign-out from there does nothing
     let pressed = s
-        .press_by(&s.bot.id, &staff, Kind::Command("logout"), s.elsewhere.id(), Some(&s.server_id))
+        .press_by(
+            &s.bot.id,
+            &staff,
+            Kind::Command("logout"),
+            s.elsewhere.id(),
+            Some(&s.server_id),
+        )
         .await;
     let (status, body) = s.hand("session/close", &pressed).await;
     assert_eq!(status, Status::Forbidden, "{body}");
@@ -358,7 +394,13 @@ async fn press_outside_places_denied() {
     s.harness.db.insert_channel(&dm).await.unwrap();
     let code = code(0);
     let pressed = s
-        .press_by(&s.bot.id, &staff, Kind::Modal(LOGIN_MODAL, &code), dm.id(), None)
+        .press_by(
+            &s.bot.id,
+            &staff,
+            Kind::Modal(LOGIN_MODAL, &code),
+            dm.id(),
+            None,
+        )
         .await;
     let (status, body) = s.hand("session", &pressed).await;
     assert_eq!(status, Status::Forbidden, "{body}");
@@ -374,7 +416,11 @@ async fn press_outside_places_denied() {
         .filter(|(action, _, _)| action == "staff.desk.place")
         .collect();
     assert_eq!(places.len(), 2);
-    assert!(places.iter().all(|(_, outcome, summary)| outcome == "Denied" && summary.starts_with("desk")));
+    assert!(
+        places
+            .iter()
+            .all(|(_, outcome, summary)| outcome == "Denied" && summary.starts_with("desk"))
+    );
     // the refusals name the open desk session
     let sessions: Vec<_> = s
         .record_sessions(&staff)
@@ -383,7 +429,10 @@ async fn press_outside_places_denied() {
         .filter(|(action, _, _)| action == "staff.desk.place")
         .map(|(_, _, session)| session)
         .collect();
-    assert_eq!(sessions, vec![Some(open[0].id.clone()), Some(open[0].id.clone())]);
+    assert_eq!(
+        sessions,
+        vec![Some(open[0].id.clone()), Some(open[0].id.clone())]
+    );
 }
 
 /// With `allow_dms` the presser's DM with the bot is a place; another DM is not
@@ -402,7 +451,13 @@ async fn dm_accepted_only_with_allow_dms() {
     s.harness.db.insert_channel(&dm).await.unwrap();
     let code = code(0);
     let pressed = s
-        .press_by(&s.bot.id, &staff, Kind::Modal(LOGIN_MODAL, &code), dm.id(), None)
+        .press_by(
+            &s.bot.id,
+            &staff,
+            Kind::Modal(LOGIN_MODAL, &code),
+            dm.id(),
+            None,
+        )
         .await;
     let (status, body) = s.hand("session", &pressed).await;
     assert_eq!(status, Status::Ok, "{body}");
@@ -480,13 +535,14 @@ async fn removed_grant_ends_desk_session() {
     let (status, body) = s.me(&staff).await;
     assert_eq!(status, Status::Forbidden, "{body}");
     assert!(s.desk_sessions(&staff).await.is_empty());
-    assert!(s
-        .harness
-        .db
-        .fetch_desk_session(&staff.user.id, &s.bot.id, staff_now())
-        .await
-        .unwrap()
-        .is_none());
+    assert!(
+        s.harness
+            .db
+            .fetch_desk_session(&staff.user.id, &s.bot.id, staff_now())
+            .await
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(
         s.records(&staff).await.last().unwrap(),
         &(
@@ -560,7 +616,9 @@ async fn same_press_twice_refused() {
 
     // a wrong token is not the press
     let other = s.press(&staff, Kind::Command("me")).await;
-    let (status, _) = s.hand("me", &(other.0.clone(), "made-up".to_string())).await;
+    let (status, _) = s
+        .hand("me", &(other.0.clone(), "made-up".to_string()))
+        .await;
     assert_eq!(status, Status::NotFound);
 }
 
@@ -599,7 +657,9 @@ async fn other_callers_not_found() {
     let (other_bot, _) = s.harness.new_bot(&host).await;
 
     let pressed = s.press(&staff, Kind::Command("me")).await;
-    let (status, _) = s.hand_with("x-bot-token", &other_bot.token, "me", &pressed).await;
+    let (status, _) = s
+        .hand_with("x-bot-token", &other_bot.token, "me", &pressed)
+        .await;
     assert_eq!(status, Status::NotFound);
     let (status, _) = s
         .hand_with("x-session-token", &staff.session.token, "me", &pressed)
@@ -608,7 +668,13 @@ async fn other_callers_not_found() {
 
     // a press another bot received, handed in by the desk bot
     let theirs = s
-        .press_by(&other_bot.id, &staff, Kind::Command("me"), s.place.id(), Some(&s.server_id))
+        .press_by(
+            &other_bot.id,
+            &staff,
+            Kind::Command("me"),
+            s.place.id(),
+            Some(&s.server_id),
+        )
         .await;
     let (status, body) = s.hand("me", &theirs).await;
     assert_eq!(status, Status::NotFound);
@@ -657,7 +723,12 @@ async fn sign_in_keeps_newer_desk_session() {
     s.harness.db.insert_staff_session(&older).await.unwrap();
     s.harness.db.insert_staff_session(&newer).await.unwrap();
     s.sign_in(&staff, 0).await;
-    let ids: Vec<String> = s.desk_sessions(&staff).await.into_iter().map(|x| x.id).collect();
+    let ids: Vec<String> = s
+        .desk_sessions(&staff)
+        .await
+        .into_iter()
+        .map(|x| x.id)
+        .collect();
     assert!(!ids.contains(&older.id), "{ids:?}");
     assert!(ids.contains(&newer.id), "{ids:?}");
     assert_eq!(ids.len(), 2, "{ids:?}");
@@ -685,7 +756,10 @@ async fn second_sign_in_revokes_first() {
         .filter(|(action, outcome, _)| action == "staff.session.create" && outcome == "Success")
         .map(|(_, _, session)| session)
         .collect();
-    assert_eq!(created, vec![Some(first[0].id.clone()), Some(second[0].id.clone())]);
+    assert_eq!(
+        created,
+        vec![Some(first[0].id.clone()), Some(second[0].id.clone())]
+    );
 
     // the records carry the desk session's id
     let creates: Vec<_> = s
@@ -726,7 +800,14 @@ async fn me_lists_only_role_permissions() {
     let overview = StaffRole::Support
         .permissions()
         .contains(&revolt_database::StaffPermission::DashboardRead);
-    assert_eq!(me["areas"], if overview { json!(["overview"]) } else { json!([]) });
+    assert_eq!(
+        me["areas"],
+        if overview {
+            json!(["overview"])
+        } else {
+            json!([])
+        }
+    );
 
     // an Owner sees the overview area
     let owner = s.person(vec![StaffRole::Owner]).await;
@@ -746,7 +827,10 @@ async fn me_lists_only_role_permissions() {
     assert_eq!(s.hand("session/close", &pressed).await.0, Status::Ok);
     assert_eq!(s.me(&staff).await.0, Status::Unauthorized);
     let summaries: Vec<String> = s.records(&staff).await.into_iter().map(|r| r.2).collect();
-    assert!(summaries.iter().all(|summary| summary.starts_with("desk")), "{summaries:?}");
+    assert!(
+        summaries.iter().all(|summary| summary.starts_with("desk")),
+        "{summaries:?}"
+    );
 }
 
 /// `stats_core` serves both: the desk overview gives the console's numbers
@@ -785,7 +869,9 @@ async fn overview_is_the_consoles_stats() {
     // other tests run beside this one: the totals can only have grown
     for field in ["users", "servers"] {
         assert!(desk[field]["total"].as_u64().unwrap() >= 1, "{desk}");
-        assert!(console[field]["total"].as_u64().unwrap() >= desk[field]["total"].as_u64().unwrap());
+        assert!(
+            console[field]["total"].as_u64().unwrap() >= desk[field]["total"].as_u64().unwrap()
+        );
     }
     assert!(desk["open_reports"].is_u64(), "{desk}");
 
@@ -809,7 +895,10 @@ async fn overview_is_the_consoles_stats() {
     assert_eq!(denied.len(), 1, "{denied:?}");
     assert_eq!(denied[0].0, "staff.desk.no_grant", "{denied:?}");
     assert_eq!(denied[0].2.as_deref(), Some(session.id.as_str()));
-    assert!(s.desk_sessions(&nobody).await.is_empty(), "the desk session must end");
+    assert!(
+        s.desk_sessions(&nobody).await.is_empty(),
+        "the desk session must end"
+    );
 
     // area off: 404, the press is not even used up
     let mut off = settings(&s.bot, vec![s.place.id().to_string()], false);
@@ -908,7 +997,10 @@ async fn desk_session_bound_to_its_sign_in() {
         options: None,
     }];
     s.harness.db.insert_interaction(&interaction).await.unwrap();
-    assert_eq!(s.hand("me", &(interaction.id, token)).await.0, Status::Unauthorized);
+    assert_eq!(
+        s.hand("me", &(interaction.id, token)).await.0,
+        Status::Unauthorized
+    );
 }
 
 /// Signing out (the ordinary session deleted, as "log out everywhere" and a
@@ -920,7 +1012,11 @@ async fn ending_the_sign_in_ends_the_desk_session() {
     s.sign_in(&staff, -1).await;
     assert_eq!(s.desk_sessions(&staff).await.len(), 1);
 
-    s.harness.db.delete_session(&staff.session.id).await.unwrap();
+    s.harness
+        .db
+        .delete_session(&staff.session.id)
+        .await
+        .unwrap();
     let (status, body) = s.me(&staff).await;
     assert_eq!(status, Status::Unauthorized, "{body}");
     assert!(s.desk_sessions(&staff).await.is_empty());
@@ -958,7 +1054,9 @@ async fn code_never_reaches_the_bot() {
     let server = s.harness.db.fetch_server(&s.server_id).await.unwrap();
     let bot_user = s.harness.db.fetch_user(&s.bot.id).await.unwrap();
     for member in [&staff.user, &bot_user] {
-        Member::create(&s.harness.db, &server, member, None).await.unwrap();
+        Member::create(&s.harness.db, &server, member, None)
+            .await
+            .unwrap();
     }
     revolt_presence::create_session(&s.bot.id, 0).await;
     let command = revolt_database::create_application_command(
@@ -1002,8 +1100,16 @@ async fn code_never_reaches_the_bot() {
     .await;
     assert_eq!(response.status(), Status::Ok);
     let command_press = next_interaction(&mut events).await;
-    let stored = s.harness.db.fetch_interaction(&command_press.id).await.unwrap();
-    assert_eq!(stored.session_id.as_deref(), Some(staff.session.id.as_str()));
+    let stored = s
+        .harness
+        .db
+        .fetch_interaction(&command_press.id)
+        .await
+        .unwrap();
+    assert_eq!(
+        stored.session_id.as_deref(),
+        Some(staff.session.id.as_str())
+    );
 
     // the bot answers with the sign-in form
     let status = s
@@ -1046,7 +1152,10 @@ async fn code_never_reaches_the_bot() {
     assert_eq!(response.status(), Status::Ok);
     let submit = next_interaction(&mut events).await;
     let fields = submit.modal.clone().unwrap().fields;
-    assert!(fields.iter().all(|f| f.custom_id != CODE_FIELD), "{fields:?}");
+    assert!(
+        fields.iter().all(|f| f.custom_id != CODE_FIELD),
+        "{fields:?}"
+    );
     assert!(!serde_json::to_string(&submit).unwrap().contains(&typed));
     // stored until the desk reads it
     let stored = s.harness.db.fetch_interaction(&submit.id).await.unwrap();
@@ -1152,10 +1261,22 @@ async fn account_deletion_removes_staff_sessions() {
 
         for hash in &tokens[..2] {
             assert!(
-                s.harness.db.fetch_staff_session_by_hash(hash).await.unwrap().is_none(),
+                s.harness
+                    .db
+                    .fetch_staff_session_by_hash(hash)
+                    .await
+                    .unwrap()
+                    .is_none(),
                 "full_erase={full_erase}"
             );
         }
-        assert!(s.harness.db.fetch_staff_session_by_hash(&tokens[2]).await.unwrap().is_some());
+        assert!(
+            s.harness
+                .db
+                .fetch_staff_session_by_hash(&tokens[2])
+                .await
+                .unwrap()
+                .is_some()
+        );
     }
 }

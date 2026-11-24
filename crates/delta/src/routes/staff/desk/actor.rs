@@ -22,15 +22,15 @@
 
 use revolt_config::FeaturesStaffDesk;
 use revolt_database::{
-    record_platform_audit, staff_now, AuditOutcome, AuditRecord, Channel, Database, Interaction,
-    StaffGrant, User, STAFF_SESSION_IDLE_MS,
+    AuditOutcome, AuditRecord, Channel, Database, Interaction, STAFF_SESSION_IDLE_MS, StaffGrant,
+    User, record_platform_audit, staff_now,
 };
 use revolt_models::v0::{CommandOptionType, InteractionType};
-use revolt_result::{create_error, ErrorType, Result};
+use revolt_result::{ErrorType, Result, create_error};
 use serde::{Deserialize, Serialize};
 
-use super::super::{guard::TOUCH_EVERY_MS, StaffContext};
-use super::{settings, COMMAND};
+use super::super::{StaffContext, guard::TOUCH_EVERY_MS};
+use super::{COMMAND, settings};
 
 /// The interaction the bot hands back: nothing else is taken from the bot
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -83,7 +83,8 @@ impl Expect<'_> {
                         .is_some_and(|id| id.starts_with(prefix) && id.len() > prefix.len())
             }
             Expect::CommandOrButton(prefix) => {
-                Expect::AnyCommand.matches(interaction) || Expect::ButtonPrefix(prefix).matches(interaction)
+                Expect::AnyCommand.matches(interaction)
+                    || Expect::ButtonPrefix(prefix).matches(interaction)
             }
             Expect::Button(id) => {
                 interaction.kind == InteractionType::Component
@@ -145,7 +146,11 @@ fn presser_record(presser: &str, action: &str, summary: &str) -> AuditRecord {
 /// Whether the press happened where the desk is used: a configured channel,
 /// or (only with `allow_dms`) the presser's DM with the bot
 async fn in_place(db: &Database, settings: &FeaturesStaffDesk, interaction: &Interaction) -> bool {
-    if settings.places.iter().any(|place| place == &interaction.channel_id) {
+    if settings
+        .places
+        .iter()
+        .any(|place| place == &interaction.channel_id)
+    {
         return true;
     }
     if !settings.allow_dms || interaction.server_id.is_some() {
@@ -163,7 +168,11 @@ async fn in_place(db: &Database, settings: &FeaturesStaffDesk, interaction: &Int
 /// The open desk session of the presser for this bot, if any (so refusals
 /// name it in `staff_session_id`)
 async fn open_desk_session(db: &Database, presser: &str, bot: &str, now: i64) -> Option<String> {
-    db.fetch_desk_session(presser, bot, now).await.ok().flatten().map(|s| s.id)
+    db.fetch_desk_session(presser, bot, now)
+        .await
+        .ok()
+        .flatten()
+        .map(|s| s.id)
 }
 
 /// Whether the ordinary session (sign-in) `id` still exists and is
@@ -177,7 +186,12 @@ pub(super) async fn session_alive(db: &Database, id: &str, user: &str) -> Result
             let now = iso8601_timestamp::Timestamp::now_utc();
             Ok(session.user_id == user && !session.is_idle_at(now, idle_days))
         }
-        Err(error) if matches!(error.error_type, ErrorType::UnknownUser | ErrorType::NotFound) => {
+        Err(error)
+            if matches!(
+                error.error_type,
+                ErrorType::UnknownUser | ErrorType::NotFound
+            ) =>
+        {
             Ok(false)
         }
         Err(error) => Err(error),
@@ -229,7 +243,11 @@ pub(super) async fn press(
 
     // 5. the place, from the stored interaction
     if !in_place(db, &settings, &interaction).await {
-        let mut record = presser_record(&presser, "staff.desk.place", "desk: outside the desk's places");
+        let mut record = presser_record(
+            &presser,
+            "staff.desk.place",
+            "desk: outside the desk's places",
+        );
         record.target_kind = Some("channel".to_string());
         record.target_id = Some(interaction.channel_id.clone());
         record.staff_session_id = open_desk_session(db, &presser, &settings.bot, now).await;
@@ -241,15 +259,29 @@ pub(super) async fn press(
     let user = match db.fetch_user(&presser).await {
         Ok(user) if user.bot.is_none() => Some(user),
         Ok(_) => None,
-        Err(error) if matches!(error.error_type, ErrorType::NotFound | ErrorType::UnknownUser) => None,
+        Err(error)
+            if matches!(
+                error.error_type,
+                ErrorType::NotFound | ErrorType::UnknownUser
+            ) =>
+        {
+            None
+        }
         Err(error) => return Err(error),
     };
     let grant = match &user {
-        Some(_) => db.fetch_staff_grant(&presser).await?.filter(|g| g.is_active(now)),
+        Some(_) => db
+            .fetch_staff_grant(&presser)
+            .await?
+            .filter(|g| g.is_active(now)),
         None => None,
     };
     let (Some(user), Some(grant)) = (user, grant) else {
-        let mut record = presser_record(&presser, "staff.desk.no_grant", "desk: no active staff grant");
+        let mut record = presser_record(
+            &presser,
+            "staff.desk.no_grant",
+            "desk: no active staff grant",
+        );
         record.staff_session_id = open_desk_session(db, &presser, &settings.bot, now).await;
         // access was removed (or never given): no desk session survives it
         db.revoke_desk_sessions_for_user(&presser, now).await?;

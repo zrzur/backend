@@ -6,14 +6,14 @@
 
 use revolt_database::{Database, StaffPermission};
 use revolt_models::v0::{DataPlatformWord, PlatformWord};
-use revolt_result::{create_error, Result};
-use rocket::{serde::json::Json, State};
+use revolt_result::{Result, create_error};
+use rocket::{State, serde::json::Json};
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 use validator::Validate;
 
 use super::audited::audited;
-use super::{reason, DataReason, StaffContext};
+use super::{DataReason, StaffContext, reason};
 
 /// # The word list
 #[get("/words")]
@@ -55,7 +55,9 @@ pub async fn add(
 ) -> Result<Json<PlatformWord>> {
     staff.require(db, StaffPermission::ReportsResolve).await?;
     let data = data.into_inner();
-    data.word.validate().map_err(|error| revolt_database::util::validation::validation_failed(&error))?;
+    data.word
+        .validate()
+        .map_err(|error| revolt_database::util::validation::validation_failed(&error))?;
     let pattern = data.word.pattern.trim().to_string();
     if pattern.trim_matches('*').trim().is_empty() {
         return Err(create_error!(FailedValidation {
@@ -97,7 +99,10 @@ pub async fn remove(
     data: Json<DataReason>,
 ) -> Result<rocket_empty::EmptyResponse> {
     staff.require(db, StaffPermission::ReportsResolve).await?;
-    let mut record = staff.record("platform.words.remove", Some(StaffPermission::ReportsResolve));
+    let mut record = staff.record(
+        "platform.words.remove",
+        Some(StaffPermission::ReportsResolve),
+    );
     record.target_kind = Some("platform_word".to_string());
     record.target_id = Some(id.to_string());
     record.reason = Some(reason(&data.reason)?);
