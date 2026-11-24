@@ -301,7 +301,7 @@ pub async fn verifications(
 
 /// Sets or clears the verified flag and the mark on the bot's profile;
 /// `intents` are added to the approved privileged intents
-async fn set_verified(db: &Database, bot_id: &str, verified: bool, intents: i64) -> Result<()> {
+pub(crate) async fn set_verified(db: &Database, bot_id: &str, verified: bool, intents: i64) -> Result<()> {
     let mut bot = db.fetch_bot(bot_id).await?;
     let flags = bot.flags.unwrap_or_default();
     let flags = if verified { flags | VERIFIED } else { flags & !VERIFIED };
@@ -368,6 +368,29 @@ pub async fn decide_verification(
     // nobody verifies their own bot
     if bot.owner == staff.user.id {
         return Err(create_error!(NotPrivileged));
+    }
+    // the Verified Bot Developer numbers still hold (legitimate servers, age,
+    // an adult owner with a confirmed e-mail): this route is no way around them
+    if data.approve {
+        let owner = db.fetch_user(&bot.owner).await?;
+        let programs = revolt_config::config().await.api.badge_programs;
+        let checklist = revolt_database::program_eligibility(
+            db,
+            &programs,
+            revolt_database::BadgeProgram::VerifiedBot,
+            &owner,
+            &bot.id,
+            false,
+            false,
+            staff.now,
+        )
+        .await?;
+        let missing = checklist.missing();
+        if !missing.is_empty() {
+            return Err(create_error!(FailedValidation {
+                error: format!("not_eligible:{}", missing.join(","))
+            }));
+        }
     }
     let mut record = staff.record("staff.bot.verification", Some(StaffPermission::ServersRestrict));
     record.target_kind = Some("bot".to_string());
@@ -459,6 +482,8 @@ pub async fn unverify(
         Ok(())
     })
     .await?;
+    // an approved Verified Bot application ends with the mark
+    revolt_database::bot_programs_ended(db, &bot.id, &bot.owner, "mark_removed").await;
     let name = db.fetch_user(&bot.id).await.map(|u| u.username).unwrap_or_default();
     crate::util::official::bot(db, &bot.owner, "bot.unverified", &name, Some(&why)).await;
     Ok(())

@@ -576,6 +576,14 @@ pub async fn badge_eligibility(db: &Database, user_id: &str, badge: &str) -> Res
             }
             _ => Some("needs a completed beta cycle".into()),
         },
+        // only a partner application a reviewer approved backs it: no
+        // console, command or line gives Partner on its own (Phase 4)
+        "partner" => (!crate::partner_application_backs(db, user_id).await?)
+            .then(|| "needs a partner application approved by a reviewer".to_string()),
+        "verified_server_owner" => (!crate::owns_verified_server(db, user_id).await?)
+            .then(|| "needs a verified server they own".to_string()),
+        "verified_bot_developer" => (!crate::owns_verified_bot(db, user_id).await?)
+            .then(|| "needs a verified bot they own that is not suspended".to_string()),
         "elite_bug_hunter" => {
             let (verified, serious) = bug_hunter_stats(db, user_id).await?;
             if !held_badges(db, user_id).await?.contains("bug_hunter") {

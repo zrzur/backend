@@ -8,6 +8,7 @@
 
 mod guard;
 mod badges;
+mod badge_applications;
 mod change_requests;
 mod beta;
 mod billing;
@@ -91,6 +92,12 @@ pub fn routes() -> Vec<Route> {
         badges::community_checks,
         badges::community_release,
         badges::community_refuse,
+        badge_applications::queue,
+        badge_applications::detail,
+        badge_applications::take,
+        badge_applications::decide,
+        badge_applications::decide_appeal,
+        badge_applications::recheck,
         bots::list,
         bots::detail,
         bots::disable,

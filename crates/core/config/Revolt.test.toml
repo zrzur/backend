@@ -92,3 +92,27 @@ mature_content = "self_declared_adults"
 # the sign-up tests all come from one test address: lift the per-address daily limit
 signups_per_source_per_day = 1000000
 
+
+# Badge programs: small numbers so the tests can reach them (production
+# numbers are in Revolt.toml)
+[api.badge_programs]
+partner_members = 3
+partner_age_days = 0
+partner_weekly_active = 2
+partner_weekly_contributors = 1
+partner_retention_percent = 20
+partner_weeks = 2
+partner_retention_min_joins = 1
+partner_review_days = 180
+verified_server_members = 4
+verified_server_age_days = 0
+bot_servers = 1
+bot_age_days = 0
+bot_server_min_humans = 1
+bot_servers_per_owner = 2
+metrics_min_members = 1
+reapply_days = 90
+appeal_days = 30
+evidence_days = 90
+record_days = 365
+draft_days = 30

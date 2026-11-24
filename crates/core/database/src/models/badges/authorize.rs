@@ -283,6 +283,12 @@ pub fn is_permanent_achievement(definition: &BadgeDefinition) -> bool {
     definition.rule == BadgeGrantRule::Automatic && PERMANENT_ACHIEVEMENTS.contains(&definition.id)
 }
 
+/// Badges the system may take away when the record they rest on ends (a
+/// partnership ends because its server changed hands, was deleted or a
+/// recheck ended it). The system never gives them: a person approves an
+/// application.
+pub const CONDITION_BADGES: [&str; 1] = ["partner"];
+
 /// Sensitive changes that need two people: giving Partner or Elite Bug
 /// Hunter, and taking away any `Privileged` or `Historical` badge or an
 /// earned achievement. (Founder, Staff and Platform Moderator never get
@@ -311,6 +317,7 @@ fn system_rule_check(
         BadgeGrantRule::Locked => return Err(BadgeDenial::Locked),
         BadgeGrantRule::Appointment => return Err(BadgeDenial::Appointment),
         BadgeGrantRule::Historical => return Err(BadgeDenial::Retired),
+        BadgeGrantRule::Staff if change == BadgeChange::Revoke && CONDITION_BADGES.contains(&definition.id) => {}
         BadgeGrantRule::Dynamic | BadgeGrantRule::Staff | BadgeGrantRule::Privileged => {
             return Err(BadgeDenial::NoPermission)
         }
@@ -423,6 +430,10 @@ pub async fn authorize_badge_mutation(
         if let Some(reason) = badge_eligibility(db, &subject.id, definition.id).await? {
             return Ok(Err(BadgeDenial::Ineligible(reason)));
         }
+    }
+    // the system acts only on a record it names
+    if actor.path == BadgePath::System && request.source_ref.as_deref().is_none_or(str::is_empty) {
+        return Ok(Err(BadgeDenial::NoPermission));
     }
     Ok(Ok(AuthorizedBadgeChange {
         definition,

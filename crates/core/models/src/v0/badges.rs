@@ -347,3 +347,185 @@ auto_derived!(
         pub security: Option<bool>,
     }
 );
+
+auto_derived!(
+    /// One line of a program's checklist. `met` is missing when the server
+    /// can't measure it (a reviewer checks it by hand). Clients show the
+    /// `code` in the reader's language.
+    pub struct ProgramCheck {
+        /// `owner`, `members`, `age`, `no_burst`, `activity_weeks`,
+        /// `weekly_active`, `weekly_contributors`, `retention`, `ownership`,
+        /// `bot_active`, `bot_age`, `legit_servers`, `email`, `adult`,
+        /// `target`
+        pub code: String,
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub met: Option<bool>,
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub value: Option<i64>,
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub needed: Option<i64>,
+    }
+
+    /// Whether you may apply to a program for one server or bot
+    pub struct ProgramEligibility {
+        /// `partner`, `verified_server` or `verified_bot`
+        pub program: String,
+        pub target_id: String,
+        pub checks: Vec<ProgramCheck>,
+        /// Every measurable line is met and nothing else blocks it
+        pub can_apply: bool,
+        /// What else blocks it: `open_application`, `already_approved`,
+        /// `reapply_wait`, `too_many_open`
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub blocked: Option<String>,
+        /// `reapply_wait`: from then on
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub blocked_until: Option<i64>,
+    }
+
+    /// A server or bot you own, to apply for
+    pub struct ProgramTarget {
+        pub id: String,
+        pub name: String,
+        /// `server` or `bot`
+        pub kind: String,
+    }
+
+    /// Ownership check of an application (the code itself is shown once)
+    pub struct ApplicationOwnership {
+        /// `dns` or `website`
+        pub method: String,
+        pub domain: String,
+        /// Where the TXT record goes
+        pub record_name: String,
+        /// Where the file goes
+        pub file_url: String,
+        pub expires_at: i64,
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub verified_at: Option<i64>,
+    }
+
+    /// Your appeal against a refusal
+    pub struct ApplicationAppealView {
+        /// `Open`, `Upheld` or `Rejected`
+        pub status: String,
+        pub created_at: i64,
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub decided_at: Option<i64>,
+        pub reasons: Vec<String>,
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub note: Option<String>,
+    }
+
+    /// A link or note you added to an application (never public)
+    pub struct ApplicationEvidence {
+        #[cfg_attr(feature = "serde", serde(rename = "_id"))]
+        pub id: String,
+        /// `link` or `note`
+        pub kind: String,
+        pub text: String,
+        pub created_at: i64,
+    }
+
+    /// One of your badge program applications. Reviewers are never named.
+    pub struct BadgeApplicationView {
+        #[cfg_attr(feature = "serde", serde(rename = "_id"))]
+        pub id: String,
+        /// `partner`, `verified_server` or `verified_bot`
+        pub program: String,
+        pub target_id: String,
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub target_name: Option<String>,
+        /// `Draft`, `Submitted`, `InReview`, `MoreInfo`, `Approved`,
+        /// `Refused`, `Withdrawn` or `Ended`
+        pub status: String,
+        /// Verified Server as an official entity below the numbers
+        pub exception: bool,
+        pub statement: String,
+        pub links: Vec<String>,
+        /// You confirmed you may represent it
+        pub authorized: bool,
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub ownership: Option<ApplicationOwnership>,
+        /// The checklist as it stood when you sent it
+        pub checks: Vec<ProgramCheck>,
+        pub created_at: i64,
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub submitted_at: Option<i64>,
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub decided_at: Option<i64>,
+        /// Reason codes of the last decision
+        pub reasons: Vec<String>,
+        /// The reviewer's words to you
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub note: Option<String>,
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub reapply_after: Option<i64>,
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub appeal_until: Option<i64>,
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub appeal: Option<ApplicationAppealView>,
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub next_review_at: Option<i64>,
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub improve_until: Option<i64>,
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub ended_at: Option<i64>,
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub end_reason: Option<String>,
+        pub evidence: Vec<ApplicationEvidence>,
+    }
+
+    /// Start an application (a draft)
+    pub struct DataCreateBadgeApplication {
+        /// `partner`, `verified_server` or `verified_bot`
+        pub program: String,
+        /// Your server (Partner, Verified Server) or bot (Verified Bot)
+        pub target_id: String,
+        /// Verified Server as an official entity below the numbers
+        #[cfg_attr(feature = "serde", serde(default))]
+        pub exception: bool,
+        #[cfg_attr(feature = "serde", serde(default))]
+        pub statement: Option<String>,
+        #[cfg_attr(feature = "serde", serde(default))]
+        pub links: Option<Vec<String>>,
+        #[cfg_attr(feature = "serde", serde(default))]
+        pub authorized: Option<bool>,
+    }
+
+    /// Change a draft
+    pub struct DataEditBadgeApplication {
+        #[cfg_attr(feature = "serde", serde(default))]
+        pub statement: Option<String>,
+        #[cfg_attr(feature = "serde", serde(default))]
+        pub links: Option<Vec<String>>,
+        #[cfg_attr(feature = "serde", serde(default))]
+        pub authorized: Option<bool>,
+    }
+
+    /// Add a link or a short note
+    pub struct DataApplicationEvidence {
+        /// `link` or `note`
+        pub kind: String,
+        pub text: String,
+    }
+
+    /// Start an ownership check of a domain
+    pub struct DataOwnershipChallenge {
+        /// `dns` or `website`
+        pub method: String,
+        pub domain: String,
+    }
+
+    /// A new ownership check: put `value` in the TXT record or the file.
+    /// It is shown only now.
+    pub struct OwnershipChallengeIssued {
+        pub application: BadgeApplicationView,
+        pub value: String,
+    }
+
+    /// Appeal a refusal
+    pub struct DataApplicationAppeal {
+        pub text: String,
+    }
+);

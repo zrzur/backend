@@ -634,5 +634,149 @@
   "reporter.info_reply_app": {
     "title": "",
     "body": "Please answer in Zrzur: open Settings → Feedback & reports and reply to your report {reference}."
+  },
+  "program.name.partner": {
+    "title": "Zrzur Partner",
+    "body": "Zrzur Partner"
+  },
+  "program.name.verified_server": {
+    "title": "Verified Server",
+    "body": "Verified Server"
+  },
+  "program.name.verified_bot": {
+    "title": "Verified Bot Developer",
+    "body": "Verified Bot Developer"
+  },
+  "program.approved": {
+    "title": "Your application was approved",
+    "body": "Your application for {program} was approved.\n{reasons}\n{note}\n\nThe badge or mark means only what its badge page says. It can be suspended or removed if its conditions end or it was obtained by fraud."
+  },
+  "program.refused": {
+    "title": "Your application was not approved",
+    "body": "Your application for {program} was not approved.\n\nReasons:\n{reasons}\n{note}\n\nYou can appeal once until {appeal_until} (UTC) in Settings → Badges, or apply again from {reapply_after} (UTC). This was decided by a person on the team, not by an automatic check."
+  },
+  "program.more_info": {
+    "title": "Your application needs more information",
+    "body": "The team needs more information for your {program} application.\n{reasons}\n{note}\n\nOpen Settings → Badges, add what is missing and send it again."
+  },
+  "program.appeal_upheld": {
+    "title": "Your appeal was accepted",
+    "body": "We looked at your appeal for {program} again. Your application goes back to the review queue.\n{note}\n\nZrzur is run by volunteers: we review as soon as someone is free, without a promised date."
+  },
+  "program.appeal_rejected": {
+    "title": "Your appeal was not accepted",
+    "body": "We looked at your appeal for {program} again, and the decision stands.\n\nReasons:\n{reasons}\n{note}\n\nYou can apply again from {reapply_after} (UTC)."
+  },
+  "program.recheck_kept": {
+    "title": "Your partnership was reviewed",
+    "body": "We checked your {program} partnership again. It continues; the next check is around {next_review} (UTC).\n{note}"
+  },
+  "program.recheck_warning": {
+    "title": "Your partnership needs attention",
+    "body": "We checked your {program} partnership again and found something to improve.\n\nReasons:\n{reasons}\n{note}\n\nYou have until {improve_until} (UTC) to improve; then we check again."
+  },
+  "program.ended": {
+    "title": "A badge program ended",
+    "body": "{program} ended for you: {reason}\n{note}\n\nIf the condition is met again, you can apply again in Settings → Badges."
+  },
+  "program.reason.criteria_met": {
+    "title": "",
+    "body": "The published criteria are met."
+  },
+  "program.reason.more_information": {
+    "title": "",
+    "body": "Some information is missing to decide."
+  },
+  "program.reason.purpose_unclear": {
+    "title": "",
+    "body": "The server's purpose is not clear from what we saw."
+  },
+  "program.reason.rules_missing": {
+    "title": "",
+    "body": "The server has no published rules, or they are too thin."
+  },
+  "program.reason.moderation": {
+    "title": "",
+    "body": "We did not see active, accountable moderation."
+  },
+  "program.reason.security_measures": {
+    "title": "",
+    "body": "Anti-spam, anti-raid or account-security measures are missing."
+  },
+  "program.reason.safety_violations": {
+    "title": "",
+    "body": "There are unresolved serious safety violations."
+  },
+  "program.reason.fake_engagement": {
+    "title": "",
+    "body": "We found signs of bought members or fake activity."
+  },
+  "program.reason.metrics_not_met": {
+    "title": "",
+    "body": "The numbers on the badge page are not met any more."
+  },
+  "program.reason.other": {
+    "title": "",
+    "body": "Another reason, written below."
+  },
+  "program.reason.ownership_not_proven": {
+    "title": "",
+    "body": "Control of the named website, domain or account was not proven."
+  },
+  "program.reason.not_official": {
+    "title": "",
+    "body": "We could not confirm that the server officially represents the entity."
+  },
+  "program.reason.branding": {
+    "title": "",
+    "body": "The name or branding is not the entity's own."
+  },
+  "program.reason.description_inaccurate": {
+    "title": "",
+    "body": "The bot's description is not clear or not accurate."
+  },
+  "program.reason.no_working_feature": {
+    "title": "",
+    "body": "We could not use a working feature of the bot."
+  },
+  "program.reason.privacy_policy": {
+    "title": "",
+    "body": "The bot processes user data but its privacy policy is missing or unclear."
+  },
+  "program.reason.permissions": {
+    "title": "",
+    "body": "The bot asks for permissions it does not need for what it does."
+  },
+  "program.reason.malicious": {
+    "title": "",
+    "body": "The bot has harmful commands, collects data it may not, or deceives people."
+  },
+  "program.reason.inflated_installs": {
+    "title": "",
+    "body": "The bot's servers were inflated with servers that do not count."
+  },
+  "program.end.ownership_transferred": {
+    "title": "",
+    "body": "the server or bot has a new owner."
+  },
+  "program.end.server_deleted": {
+    "title": "",
+    "body": "the server was deleted."
+  },
+  "program.end.bot_deleted": {
+    "title": "",
+    "body": "the bot was deleted."
+  },
+  "program.end.bot_suspended": {
+    "title": "",
+    "body": "the bot was suspended."
+  },
+  "program.end.mark_removed": {
+    "title": "",
+    "body": "the team took the mark away."
+  },
+  "program.end.recheck": {
+    "title": "",
+    "body": "a new check found the conditions are no longer met."
   }
 }

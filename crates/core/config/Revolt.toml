@@ -172,6 +172,33 @@ limit = 10
 # Days without use after which a session expires. 0 switches expiry off.
 idle_days = 30
 
+[api.badge_programs]
+# Partner, Verified Server and Verified Bot Developer (owner's brief of
+# 2026-11-23). The numbers only let someone apply; a person on the team
+# always decides, and nothing is given automatically from them.
+partner_members = 5000
+partner_age_days = 180
+partner_weekly_active = 500
+partner_weekly_contributors = 200
+partner_retention_percent = 20
+partner_weeks = 8
+partner_retention_min_joins = 50
+partner_review_days = 180
+verified_server_members = 10000
+verified_server_age_days = 180
+bot_servers = 25
+bot_age_days = 30
+bot_server_min_humans = 10
+bot_servers_per_owner = 2
+# crond measures weekly activity (counts only) of servers this large
+metrics_min_members = 5000
+# applications: wait after a refusal, appeal window, and how long data stays
+reapply_days = 90
+appeal_days = 30
+evidence_days = 90
+record_days = 365
+draft_days = 30
+
 [api.users]
 # Minimum allowed length of usernames
 min_username_length = 2

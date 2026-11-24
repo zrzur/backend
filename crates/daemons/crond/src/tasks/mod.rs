@@ -21,4 +21,5 @@ pub mod voice_episodes;
 pub mod vanity_links;
 
 pub mod community_badges;
+pub mod badge_programs;
 pub mod desk_modal_cleanup;

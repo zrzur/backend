@@ -6,6 +6,7 @@
 pub mod beta;
 pub mod bugs;
 pub mod command;
+pub mod programs;
 #[cfg(test)]
 mod authorize_tests;
 #[cfg(test)]
@@ -40,7 +41,18 @@ pub fn routes() -> (Vec<Route>, OpenApi) {
         admin_search,
         admin_user,
         admin_grant,
-        admin_revoke
+        admin_revoke,
+        programs::targets,
+        programs::eligibility,
+        programs::my_applications,
+        programs::create,
+        programs::edit,
+        programs::evidence,
+        programs::ownership,
+        programs::verify_ownership,
+        programs::submit,
+        programs::withdraw,
+        programs::appeal
     ]
 }
 

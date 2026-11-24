@@ -76,6 +76,7 @@ async fn main() {
         cron_task_wrapper(vanity_links::task, db.clone(), amqp.clone()),
 
         cron_task_wrapper(community_badges::task, db.clone(), amqp.clone()),
+        cron_task_wrapper(badge_programs::task, db.clone(), amqp.clone()),
         cron_task_wrapper(desk_modal_cleanup::task, db.clone(), amqp.clone()),
     );
 }

@@ -634,5 +634,149 @@
   "reporter.info_reply_app": {
     "title": "",
     "body": "يرجى الرد من داخل زرزور: افتح الإعدادات ← الملاحظات والبلاغات وأجب عن بلاغك {reference}."
+  },
+  "program.name.partner": {
+    "title": "شريك زرزور",
+    "body": "شريك زرزور"
+  },
+  "program.name.verified_server": {
+    "title": "سيرفر موثّق",
+    "body": "سيرفر موثّق"
+  },
+  "program.name.verified_bot": {
+    "title": "مطوّر بوت موثّق",
+    "body": "مطوّر بوت موثّق"
+  },
+  "program.approved": {
+    "title": "تمت الموافقة على طلبك",
+    "body": "تمت الموافقة على طلبك للانضمام إلى برنامج «{program}».\n{reasons}\n{note}\n\nلا تعني الشارة أو العلامة إلا ما تذكره صفحتها، ويمكن تعليقها أو إزالتها إذا انتهت شروطها أو إذا نيلت بالاحتيال."
+  },
+  "program.refused": {
+    "title": "لم تتم الموافقة على طلبك",
+    "body": "لم تتم الموافقة على طلبك للانضمام إلى برنامج «{program}».\n\nالأسباب:\n{reasons}\n{note}\n\nيمكنك الاعتراض مرة واحدة حتى {appeal_until} (بتوقيت UTC) من الإعدادات ← الشارات، أو التقديم من جديد ابتداءً من {reapply_after} (بتوقيت UTC). اتخذ هذا القرارَ شخصٌ من الفريق، لا فحصٌ آلي."
+  },
+  "program.more_info": {
+    "title": "طلبك يحتاج إلى معلومات إضافية",
+    "body": "يحتاج الفريق إلى معلومات إضافية عن طلبك لبرنامج «{program}».\n{reasons}\n{note}\n\nافتح الإعدادات ← الشارات، وأضف ما ينقص، ثم أرسل الطلب من جديد."
+  },
+  "program.appeal_upheld": {
+    "title": "قُبل اعتراضك",
+    "body": "راجعنا اعتراضك على قرار برنامج «{program}»، وسيعود طلبك إلى قائمة المراجعة.\n{note}\n\nيدير زرزورَ متطوعون، فنراجع الطلبات حين يتاح أحدهم، دون موعد نعد به."
+  },
+  "program.appeal_rejected": {
+    "title": "لم يُقبل اعتراضك",
+    "body": "راجعنا اعتراضك على قرار برنامج «{program}»، ويبقى القرار كما هو.\n\nالأسباب:\n{reasons}\n{note}\n\nيمكنك التقديم من جديد ابتداءً من {reapply_after} (بتوقيت UTC)."
+  },
+  "program.recheck_kept": {
+    "title": "رُوجعت شراكتك",
+    "body": "راجعنا شراكتك في برنامج «{program}» من جديد، وهي مستمرة. المراجعة التالية في حدود {next_review} (بتوقيت UTC).\n{note}"
+  },
+  "program.recheck_warning": {
+    "title": "شراكتك تحتاج إلى عناية",
+    "body": "راجعنا شراكتك في برنامج «{program}» من جديد ووجدنا ما يحتاج إلى تحسين.\n\nالأسباب:\n{reasons}\n{note}\n\nأمامك حتى {improve_until} (بتوقيت UTC) للتحسين، ثم نراجعها من جديد."
+  },
+  "program.ended": {
+    "title": "انتهى برنامج شارة",
+    "body": "انتهى برنامج «{program}» بالنسبة إليك: {reason}\n{note}\n\nإذا تحقق الشرط من جديد، يمكنك التقديم مرة أخرى من الإعدادات ← الشارات."
+  },
+  "program.reason.criteria_met": {
+    "title": "",
+    "body": "الشروط المنشورة مستوفاة."
+  },
+  "program.reason.more_information": {
+    "title": "",
+    "body": "تنقص بعض المعلومات اللازمة لاتخاذ القرار."
+  },
+  "program.reason.purpose_unclear": {
+    "title": "",
+    "body": "هدف السيرفر غير واضح مما اطّلعنا عليه."
+  },
+  "program.reason.rules_missing": {
+    "title": "",
+    "body": "ليس للسيرفر قواعد منشورة، أو أنها غير كافية."
+  },
+  "program.reason.moderation": {
+    "title": "",
+    "body": "لم نجد إشرافاً نشطاً ومسؤولاً."
+  },
+  "program.reason.security_measures": {
+    "title": "",
+    "body": "تنقص إجراءات الحماية من السبام والغارات أو إجراءات أمان الحسابات."
+  },
+  "program.reason.safety_violations": {
+    "title": "",
+    "body": "توجد مخالفات أمان جسيمة لم تُعالج."
+  },
+  "program.reason.fake_engagement": {
+    "title": "",
+    "body": "وجدنا مؤشرات على أعضاء مشتراة أو نشاط مزيّف."
+  },
+  "program.reason.metrics_not_met": {
+    "title": "",
+    "body": "لم تعد الأرقام المذكورة في صفحة الشارة مستوفاة."
+  },
+  "program.reason.other": {
+    "title": "",
+    "body": "سبب آخر، مكتوب أدناه."
+  },
+  "program.reason.ownership_not_proven": {
+    "title": "",
+    "body": "لم تثبت السيطرة على الموقع أو النطاق أو الحساب المذكور."
+  },
+  "program.reason.not_official": {
+    "title": "",
+    "body": "لم نتمكن من التأكد من أن السيرفر يمثّل الجهة رسمياً."
+  },
+  "program.reason.branding": {
+    "title": "",
+    "body": "الاسم أو الهوية البصرية ليسا للجهة نفسها."
+  },
+  "program.reason.description_inaccurate": {
+    "title": "",
+    "body": "وصف البوت غير واضح أو غير دقيق."
+  },
+  "program.reason.no_working_feature": {
+    "title": "",
+    "body": "لم نتمكن من استعمال ميزة عاملة في البوت."
+  },
+  "program.reason.privacy_policy": {
+    "title": "",
+    "body": "يعالج البوت بيانات المستخدمين، وسياسة خصوصيته مفقودة أو غير واضحة."
+  },
+  "program.reason.permissions": {
+    "title": "",
+    "body": "يطلب البوت صلاحيات لا يحتاج إليها لما يقوم به."
+  },
+  "program.reason.malicious": {
+    "title": "",
+    "body": "للبوت أوامر ضارة، أو يجمع بيانات لا يجوز له جمعها، أو يخدع الناس."
+  },
+  "program.reason.inflated_installs": {
+    "title": "",
+    "body": "ضُخّم عدد سيرفرات البوت بسيرفرات لا تُحسب."
+  },
+  "program.end.ownership_transferred": {
+    "title": "",
+    "body": "صار للسيرفر أو البوت مالك جديد."
+  },
+  "program.end.server_deleted": {
+    "title": "",
+    "body": "حُذف السيرفر."
+  },
+  "program.end.bot_deleted": {
+    "title": "",
+    "body": "حُذف البوت."
+  },
+  "program.end.bot_suspended": {
+    "title": "",
+    "body": "عُلّق البوت."
+  },
+  "program.end.mark_removed": {
+    "title": "",
+    "body": "أزال الفريق العلامة."
+  },
+  "program.end.recheck": {
+    "title": "",
+    "body": "أظهرت مراجعة جديدة أن الشروط لم تعد مستوفاة."
   }
 }

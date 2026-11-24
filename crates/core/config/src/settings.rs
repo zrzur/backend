@@ -285,6 +285,92 @@ pub struct Api {
     /// Accounts on other services a person can link to their profile
     #[serde(default)]
     pub connections: ApiConnections,
+    /// Partner, Verified Server and Verified Bot Developer: the numbers that
+    /// let someone apply, and how long application data is kept
+    #[serde(default)]
+    pub badge_programs: ApiBadgePrograms,
+}
+
+/// The badge programs people apply for (Partner, Verified Server, Verified
+/// Bot Developer). The numbers only let someone apply: a person on the team
+/// always decides. Defaults are the owner's numbers (2026-11-23 brief);
+/// `Revolt.test.toml` uses small ones.
+#[derive(Deserialize, Debug, Clone)]
+#[serde(default)]
+pub struct ApiBadgePrograms {
+    /// Partner: genuine human members
+    pub partner_members: usize,
+    /// Partner: server age in days
+    pub partner_age_days: i64,
+    /// Partner: average unique weekly active members over `partner_weeks`
+    pub partner_weekly_active: u32,
+    /// Partner: average unique weekly contributors over `partner_weeks`
+    pub partner_weekly_contributors: u32,
+    /// Partner: per cent of new members still there after their first week
+    pub partner_retention_percent: u32,
+    /// Partner: weeks the averages cover
+    pub partner_weeks: u32,
+    /// Partner: fewer joins than this in the window is "not enough data"
+    /// (the retention item then goes to the reviewer)
+    pub partner_retention_min_joins: u32,
+    /// Partner: a partnership is checked again after this many days
+    pub partner_review_days: i64,
+    /// Verified Server: genuine human members (standard route)
+    pub verified_server_members: usize,
+    /// Verified Server: server age in days (standard route)
+    pub verified_server_age_days: i64,
+    /// Verified Bot Developer: legitimate servers the bot is in
+    pub bot_servers: usize,
+    /// Verified Bot Developer: bot age in days
+    pub bot_age_days: i64,
+    /// A server counts for a bot only with this many genuine human members
+    pub bot_server_min_humans: usize,
+    /// Servers of one owner that count for a bot at most (one person's
+    /// servers, or their other accounts', never add up to the number)
+    pub bot_servers_per_owner: usize,
+    /// crond measures weekly activity of servers with at least this many
+    /// members of any kind
+    pub metrics_min_members: usize,
+    /// After a refusal, a new application waits this many days
+    pub reapply_days: i64,
+    /// A refusal may be appealed within this many days
+    pub appeal_days: i64,
+    /// Evidence and ownership codes are deleted this many days after the
+    /// final decision (or the end of the appeal window)
+    pub evidence_days: i64,
+    /// The application and decision record is kept this many days after a
+    /// refusal, a withdrawal of a submitted application, or the end of the
+    /// badge
+    pub record_days: i64,
+    /// Drafts nobody touched for this many days are deleted
+    pub draft_days: i64,
+}
+
+impl Default for ApiBadgePrograms {
+    fn default() -> Self {
+        ApiBadgePrograms {
+            partner_members: 5000,
+            partner_age_days: 180,
+            partner_weekly_active: 500,
+            partner_weekly_contributors: 200,
+            partner_retention_percent: 20,
+            partner_weeks: 8,
+            partner_retention_min_joins: 50,
+            partner_review_days: 180,
+            verified_server_members: 10000,
+            verified_server_age_days: 180,
+            bot_servers: 25,
+            bot_age_days: 30,
+            bot_server_min_humans: 10,
+            bot_servers_per_owner: 2,
+            metrics_min_members: 5000,
+            reapply_days: 90,
+            appeal_days: 30,
+            evidence_days: 90,
+            record_days: 365,
+            draft_days: 30,
+        }
+    }
 }
 
 /// Accounts on other services a person can link to their profile

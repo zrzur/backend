@@ -166,6 +166,27 @@ pub async fn apply_verification(
     }
     let privacy_policy_url = required_link(&data.privacy_policy_url, "privacy_policy_url")?;
     let terms_of_service_url = required_link(&data.terms_of_service_url, "terms_of_service_url")?;
+    // the Verified Bot Developer numbers only unlock asking: legitimate
+    // servers (not the owner's own, at most two per other owner, each with
+    // genuine members), the bot's age, an adult owner with a confirmed e-mail
+    let programs = revolt_config::config().await.api.badge_programs;
+    let checklist = revolt_database::program_eligibility(
+        db,
+        &programs,
+        revolt_database::BadgeProgram::VerifiedBot,
+        &user,
+        &bot.id,
+        false,
+        false,
+        now_ms(),
+    )
+    .await?;
+    let missing = checklist.missing();
+    if !missing.is_empty() {
+        return Err(create_error!(FailedValidation {
+            error: format!("not_eligible:{}", missing.join(","))
+        }));
+    }
     let request = BotVerification {
         id: Ulid::new().to_string(),
         bot_id: bot.id.clone(),

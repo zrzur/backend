@@ -634,5 +634,149 @@
   "reporter.info_reply_app": {
     "title": "",
     "body": "Bitte antworte in Zrzur: Öffne Einstellungen → Feedback & Meldungen und antworte auf deine Meldung {reference}."
+  },
+  "program.name.partner": {
+    "title": "Zrzur-Partner",
+    "body": "Zrzur-Partner"
+  },
+  "program.name.verified_server": {
+    "title": "Verifizierter Server",
+    "body": "Verifizierter Server"
+  },
+  "program.name.verified_bot": {
+    "title": "Verifizierte Bot-Entwicklung",
+    "body": "Verifizierte Bot-Entwicklung"
+  },
+  "program.approved": {
+    "title": "Deine Bewerbung wurde angenommen",
+    "body": "Deine Bewerbung für {program} wurde angenommen.\n{reasons}\n{note}\n\nDas Abzeichen oder Kennzeichen bedeutet nur, was auf seiner Seite steht. Es kann ausgesetzt oder entfernt werden, wenn seine Bedingungen enden oder es durch Betrug erlangt wurde."
+  },
+  "program.refused": {
+    "title": "Deine Bewerbung wurde nicht angenommen",
+    "body": "Deine Bewerbung für {program} wurde nicht angenommen.\n\nGründe:\n{reasons}\n{note}\n\nDu kannst bis {appeal_until} (UTC) einmal unter Einstellungen → Abzeichen Einspruch einlegen oder dich ab {reapply_after} (UTC) erneut bewerben. Entschieden hat eine Person aus dem Team, keine automatische Prüfung."
+  },
+  "program.more_info": {
+    "title": "Deine Bewerbung braucht mehr Angaben",
+    "body": "Das Team braucht mehr Angaben zu deiner Bewerbung für {program}.\n{reasons}\n{note}\n\nÖffne Einstellungen → Abzeichen, ergänze das Fehlende und sende sie erneut."
+  },
+  "program.appeal_upheld": {
+    "title": "Dein Einspruch wurde angenommen",
+    "body": "Wir haben deinen Einspruch zu {program} erneut geprüft. Deine Bewerbung kommt zurück in die Warteschlange.\n{note}\n\nZrzur wird von Freiwilligen betrieben: Wir prüfen, sobald jemand Zeit hat, ohne versprochenes Datum."
+  },
+  "program.appeal_rejected": {
+    "title": "Dein Einspruch wurde nicht angenommen",
+    "body": "Wir haben deinen Einspruch zu {program} erneut geprüft; die Entscheidung bleibt.\n\nGründe:\n{reasons}\n{note}\n\nDu kannst dich ab {reapply_after} (UTC) erneut bewerben."
+  },
+  "program.recheck_kept": {
+    "title": "Deine Partnerschaft wurde geprüft",
+    "body": "Wir haben deine Partnerschaft bei {program} erneut geprüft. Sie besteht weiter; die nächste Prüfung ist etwa am {next_review} (UTC).\n{note}"
+  },
+  "program.recheck_warning": {
+    "title": "Deine Partnerschaft braucht Aufmerksamkeit",
+    "body": "Wir haben deine Partnerschaft bei {program} erneut geprüft und etwas zu verbessern gefunden.\n\nGründe:\n{reasons}\n{note}\n\nDu hast bis {improve_until} (UTC) Zeit; danach prüfen wir erneut."
+  },
+  "program.ended": {
+    "title": "Ein Abzeichen-Programm ist beendet",
+    "body": "{program} ist für dich beendet: {reason}\n{note}\n\nWenn die Bedingung wieder erfüllt ist, kannst du dich unter Einstellungen → Abzeichen erneut bewerben."
+  },
+  "program.reason.criteria_met": {
+    "title": "",
+    "body": "Die veröffentlichten Kriterien sind erfüllt."
+  },
+  "program.reason.more_information": {
+    "title": "",
+    "body": "Für eine Entscheidung fehlen Angaben."
+  },
+  "program.reason.purpose_unclear": {
+    "title": "",
+    "body": "Der Zweck des Servers ist aus dem Gesehenen nicht klar."
+  },
+  "program.reason.rules_missing": {
+    "title": "",
+    "body": "Der Server hat keine veröffentlichten Regeln, oder sie reichen nicht aus."
+  },
+  "program.reason.moderation": {
+    "title": "",
+    "body": "Wir haben keine aktive, verantwortliche Moderation gesehen."
+  },
+  "program.reason.security_measures": {
+    "title": "",
+    "body": "Schutz vor Spam und Raids oder Maßnahmen zur Kontosicherheit fehlen."
+  },
+  "program.reason.safety_violations": {
+    "title": "",
+    "body": "Es gibt offene schwere Sicherheitsverstöße."
+  },
+  "program.reason.fake_engagement": {
+    "title": "",
+    "body": "Wir haben Hinweise auf gekaufte Mitglieder oder gefälschte Aktivität gefunden."
+  },
+  "program.reason.metrics_not_met": {
+    "title": "",
+    "body": "Die Zahlen auf der Abzeichenseite sind nicht mehr erfüllt."
+  },
+  "program.reason.other": {
+    "title": "",
+    "body": "Ein anderer Grund, unten beschrieben."
+  },
+  "program.reason.ownership_not_proven": {
+    "title": "",
+    "body": "Die Kontrolle über die genannte Website, Domain oder das Konto wurde nicht nachgewiesen."
+  },
+  "program.reason.not_official": {
+    "title": "",
+    "body": "Wir konnten nicht bestätigen, dass der Server die Stelle offiziell vertritt."
+  },
+  "program.reason.branding": {
+    "title": "",
+    "body": "Name oder Branding gehören nicht zur Stelle selbst."
+  },
+  "program.reason.description_inaccurate": {
+    "title": "",
+    "body": "Die Beschreibung des Bots ist unklar oder nicht zutreffend."
+  },
+  "program.reason.no_working_feature": {
+    "title": "",
+    "body": "Wir konnten keine funktionierende Funktion des Bots nutzen."
+  },
+  "program.reason.privacy_policy": {
+    "title": "",
+    "body": "Der Bot verarbeitet Nutzerdaten, aber seine Datenschutzerklärung fehlt oder ist unklar."
+  },
+  "program.reason.permissions": {
+    "title": "",
+    "body": "Der Bot verlangt Berechtigungen, die er für seine Aufgabe nicht braucht."
+  },
+  "program.reason.malicious": {
+    "title": "",
+    "body": "Der Bot hat schädliche Befehle, sammelt unzulässig Daten oder täuscht Menschen."
+  },
+  "program.reason.inflated_installs": {
+    "title": "",
+    "body": "Die Server des Bots wurden mit Servern aufgebläht, die nicht zählen."
+  },
+  "program.end.ownership_transferred": {
+    "title": "",
+    "body": "Der Server oder Bot hat einen neuen Inhaber."
+  },
+  "program.end.server_deleted": {
+    "title": "",
+    "body": "Der Server wurde gelöscht."
+  },
+  "program.end.bot_deleted": {
+    "title": "",
+    "body": "Der Bot wurde gelöscht."
+  },
+  "program.end.bot_suspended": {
+    "title": "",
+    "body": "Der Bot wurde gesperrt."
+  },
+  "program.end.mark_removed": {
+    "title": "",
+    "body": "Das Team hat das Kennzeichen entfernt."
+  },
+  "program.end.recheck": {
+    "title": "",
+    "body": "Eine neue Prüfung hat ergeben, dass die Bedingungen nicht mehr erfüllt sind."
   }
 }

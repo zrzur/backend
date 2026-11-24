@@ -296,6 +296,9 @@ impl Bot {
         db.delete_all_application_commands(&self.id).await?;
         db.delete_oauth_application(&self.id).await?;
         db.delete_bot(&self.id).await?;
+        // its Verified Bot application ends, and the owner's Verified Bot
+        // Developer badge follows (through the badge gate)
+        crate::bot_programs_ended(db, &self.id, &self.owner, "bot_deleted").await;
         // its gateway connections end now, not at the next request. Only
         // after the bot is gone: a connection that reconnects at once must
         // find its token refused, not log in again.

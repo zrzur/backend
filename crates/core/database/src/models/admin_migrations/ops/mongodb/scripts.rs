@@ -69,6 +69,9 @@ const PENDING_OFFICIAL_BOT_FLAGS: i32 = -1;
 const PENDING_BADGE_GATE_INDEXES: i32 = -1;
 // Stream badge-phase3: the coordinator gives the number at merge; -1 never runs
 const PENDING_COMMUNITY_BADGE_INDEXES: i32 = -1;
+/// Badge program applications, evidence, reviews and weekly server activity
+/// (number given by the coordinator at merge)
+const PENDING_BADGE_PROGRAM_INDEXES: i32 = -1;
 
 /// The earliest day a session from before expiry can expire. At least 30
 /// days out, also with expiry switched off (0), for the day it is switched on.
@@ -2690,6 +2693,11 @@ pub async fn run_migrations(db: &MongoDb, revision: i32) -> i32 {
         create_community_badge_indexes(&db.db()).await;
     }
 
+    if revision <= PENDING_BADGE_PROGRAM_INDEXES {
+        info!("Running migration [revision {PENDING_BADGE_PROGRAM_INDEXES} / 24-11-2026]: Indexes for badge program applications and weekly server activity");
+        create_badge_program_indexes(&db.db()).await;
+    }
+
     // Reminder to update LATEST_REVISION when adding new migrations.
     LATEST_REVISION.max(revision)
 }
@@ -2787,6 +2795,41 @@ pub async fn create_community_badge_indexes(db: &mongodb::Database) {
     })
     .await
     .expect("Failed to create the community badge index");
+}
+
+/// Badge program applications are listed by applicant, by server or bot,
+/// by status for the review queue, and found by crond when a recheck or a
+/// retention date comes; evidence and reviews by application; weekly
+/// server activity by server and week, and deleted by week. Only indexes,
+/// no data moves. Safe to run twice: creating an index that exists is a
+/// no-op.
+pub async fn create_badge_program_indexes(db: &mongodb::Database) {
+    for (collection, indexes) in [
+        (
+            "badge_applications",
+            vec![
+                doc! { "key": { "applicant_id": 1_i32, "_id": -1_i32 }, "name": "applicant" },
+                doc! { "key": { "target_id": 1_i32, "_id": -1_i32 }, "name": "target" },
+                doc! { "key": { "status": 1_i32, "program": 1_i32, "_id": -1_i32 }, "name": "queue" },
+                doc! { "key": { "status": 1_i32, "recheck_due": 1_i32, "next_review_at": 1_i32 }, "name": "recheck" },
+                doc! { "key": { "evidence_purge_at": 1_i32 }, "name": "evidence_purge", "sparse": true },
+                doc! { "key": { "purge_at": 1_i32 }, "name": "purge", "sparse": true },
+            ],
+        ),
+        ("badge_evidence", vec![doc! { "key": { "application_id": 1_i32 }, "name": "application" }]),
+        ("badge_reviews", vec![doc! { "key": { "application_id": 1_i32 }, "name": "application" }]),
+        (
+            "server_activity_weeks",
+            vec![
+                doc! { "key": { "server_id": 1_i32, "week": 1_i32 }, "name": "server_week" },
+                doc! { "key": { "week": 1_i32 }, "name": "week" },
+            ],
+        ),
+    ] {
+        db.run_command(doc! { "createIndexes": collection, "indexes": indexes })
+            .await
+            .expect("Failed to create the badge program indexes");
+    }
 }
 
 /// Activity blocks (Trust & Safety) are looked up by value on every
@@ -3994,6 +4037,36 @@ mod statement_migration_tests {
             .await
             .unwrap();
         assert!(names.contains(&"status_checked".to_string()), "{names:?}");
+    }
+
+    /// MongoDB only: the badge program indexes can be made twice
+    #[tokio::test]
+    async fn badge_program_indexes_run_twice_on_mongodb() {
+        let db = crate::DatabaseInfo::Test("badge_program_indexes".to_string())
+            .connect()
+            .await
+            .expect("Database connection failed.");
+        let crate::Database::MongoDb(mongo) = &db else {
+            return;
+        };
+        for _ in 0..2 {
+            super::create_badge_program_indexes(&mongo.db()).await;
+        }
+        for (collection, name) in [
+            ("badge_applications", "queue"),
+            ("badge_applications", "recheck"),
+            ("badge_evidence", "application"),
+            ("badge_reviews", "application"),
+            ("server_activity_weeks", "server_week"),
+        ] {
+            let names = mongo
+                .db()
+                .collection::<Document>(collection)
+                .list_index_names()
+                .await
+                .unwrap();
+            assert!(names.contains(&name.to_string()), "{collection}: {names:?}");
+        }
     }
 
     /// MongoDB only: the activity block indexes can be made twice

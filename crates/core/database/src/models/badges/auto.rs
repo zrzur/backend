@@ -8,8 +8,9 @@ use revolt_result::{ErrorType, Result};
 use ulid::Ulid;
 
 use crate::{
-    grant_badge, held_badges, record_platform_audit, revoke_badge, AuditOutcome, AuditRecord,
-    BadgeSource, Database, PartialUser, User, BADGE_SYSTEM_ACTOR,
+    grant_by_system, held_badges, mutate_badge, record_platform_audit, revoke_badge, AuditOutcome,
+    AuditRecord, BadgeActor, BadgeChange, BadgeMutation, Database, PartialUser, User,
+    BADGE_SYSTEM_ACTOR,
 };
 
 /// Grants read in one go
@@ -19,55 +20,91 @@ const BATCH: usize = 500;
 const SERVER_OFFICIAL: i32 = 1;
 const SERVER_VERIFIED: i32 = 2;
 
-/// Give a badge unless it is held already
-async fn grant_once(db: &Database, user_id: &str, badge: &str, source_ref: &str) -> Result<()> {
-    match grant_badge(
-        db,
-        user_id,
-        badge,
-        BadgeSource::System,
-        Some(source_ref.to_string()),
-        BADGE_SYSTEM_ACTOR,
-        None,
-        None,
-    )
-    .await
-    {
-        Err(error) if !matches!(error.error_type, ErrorType::NoEffect) => Err(error),
-        _ => Ok(()),
-    }
+/// Whether the person owns a verified (or Zrzur official) server
+pub async fn owns_verified_server(db: &Database, user_id: &str) -> Result<bool> {
+    Ok(db
+        .fetch_owned_servers(user_id)
+        .await?
+        .iter()
+        .any(|server| server.flags.unwrap_or_default() & (SERVER_OFFICIAL | SERVER_VERIFIED) != 0))
 }
 
+/// Whether the person owns a verified bot that isn't suspended
+pub async fn owns_verified_bot(db: &Database, user_id: &str) -> Result<bool> {
+    let verified = BotFlags::Verified as i32;
+    let suspended = BotFlags::Suspended as i32;
+    Ok(db.fetch_bots_by_user(user_id).await?.iter().any(|bot| {
+        let flags = bot.flags.unwrap_or_default();
+        flags & verified != 0 && flags & suspended == 0
+    }))
+}
+
+/// The badge follows the record, through the badge gate (system path, with
+/// its audit record): given when earned and not held, taken away when held
+/// and no longer earned. A badge a person took away is not given back.
 async fn follow(db: &Database, user_id: &str, badge: &str, earned: bool, source_ref: &str) -> Result<()> {
     let held = held_badges(db, user_id).await?.contains(badge);
     if earned && !held {
-        grant_once(db, user_id, badge, source_ref).await?;
+        grant_by_system(db, user_id, badge, source_ref, "the record backs it").await?;
     } else if !earned && held {
-        revoke_badge(db, user_id, badge, BADGE_SYSTEM_ACTOR, Some("no longer eligible".into())).await?;
+        match mutate_badge(
+            db,
+            &BadgeActor::system(),
+            BadgeMutation {
+                user_id: user_id.to_string(),
+                badge: badge.to_string(),
+                change: BadgeChange::Revoke,
+                reason: "no longer eligible".to_string(),
+                expires_at: None,
+                source_ref: Some(source_ref.to_string()),
+            },
+        )
+        .await
+        {
+            Err(error) if !matches!(error.error_type, ErrorType::NoEffect) => return Err(error),
+            _ => {}
+        }
     }
     Ok(())
 }
 
-/// The badge follows owning a verified server: after verifying, unverifying
-/// or handing a server over
+/// The badge follows owning a verified server: after verifying, unverifying,
+/// handing a server over or deleting it
 pub async fn sync_verified_server_owner(db: &Database, user_id: &str) -> Result<()> {
-    let earned = db
-        .fetch_owned_servers(user_id)
-        .await?
-        .iter()
-        .any(|server| server.flags.unwrap_or_default() & (SERVER_OFFICIAL | SERVER_VERIFIED) != 0);
+    let earned = owns_verified_server(db, user_id).await?;
     follow(db, user_id, "verified_server_owner", earned, "server").await
 }
 
-/// The badge follows owning a verified bot that isn't suspended
+/// The badge follows owning a verified bot that isn't suspended (deleted
+/// and suspended bots end it)
 pub async fn sync_verified_bot_developer(db: &Database, user_id: &str) -> Result<()> {
-    let verified = BotFlags::Verified as i32;
-    let suspended = BotFlags::Suspended as i32;
-    let earned = db.fetch_bots_by_user(user_id).await?.iter().any(|bot| {
-        let flags = bot.flags.unwrap_or_default();
-        flags & verified != 0 && flags & suspended == 0
-    });
+    let earned = owns_verified_bot(db, user_id).await?;
     follow(db, user_id, "verified_bot_developer", earned, "bot").await
+}
+
+/// Safety net for crond: every holder of the two badges is checked against
+/// the records again (a deletion path that missed the sync). Returns how
+/// many were checked.
+pub async fn resync_verified_badges(db: &Database) -> Result<usize> {
+    let now = crate::epoch_ms(iso8601_timestamp::Timestamp::now_utc());
+    let mut checked = 0;
+    for badge in ["verified_server_owner", "verified_bot_developer"] {
+        for grant in db.fetch_all_badge_holders(badge).await? {
+            if !grant.held(now) {
+                continue;
+            }
+            checked += 1;
+            let result = if badge == "verified_server_owner" {
+                sync_verified_server_owner(db, &grant.user_id).await
+            } else {
+                sync_verified_bot_developer(db, &grant.user_id).await
+            };
+            if let Err(error) = result {
+                log::warn!("{badge} of {}: {:?}", grant.user_id, error.error_type);
+            }
+        }
+    }
+    Ok(checked)
 }
 
 //// Badges that follow the account's age: computed on every read, never
