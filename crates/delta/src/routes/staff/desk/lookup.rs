@@ -14,7 +14,7 @@ use revolt_result::{create_error, Result};
 use serde::Serialize;
 use serde_json::Value;
 
-use super::super::{badges, platform, safety};
+use super::super::{badges, bots, platform, safety};
 use super::super::StaffContext;
 use super::registry::{when, DeskChoice, DeskCommand, DeskGroup, DeskInput, DeskOption, Lang, Text};
 use super::view::{DeskButton, DeskButtonStyle, DeskView};
@@ -409,6 +409,83 @@ async fn user_history_view(db: &Database, staff: &StaffContext, input: &DeskInpu
 }
 handler!(user_history, user_history_view);
 
+// ---- servers and bots ----
+
+pub const SERVER_ROW: &[Show] = &[
+    show("/name", w::NAME),
+    show("@id", w::ID),
+    show("/owner_username", w::OWNER),
+    show("/nsfw", w::NSFW),
+];
+
+pub const SERVER_VIEW: &[Show] = &[
+    show("/name", w::NAME),
+    show("@id", w::ID),
+    show("/owner_username", w::OWNER),
+    show("/owner_id", w::OWNER_ID),
+    show("/created_at", w::CREATED),
+    show("/members", w::MEMBERS),
+    show("/channels", w::CHANNELS),
+    show("/roles", w::ROLES),
+    show("/reports_about", w::REPORTS),
+    show("/flags", w::FLAGS),
+    show("/nsfw", w::NSFW),
+    show("/description", w::DESCRIPTION),
+];
+
+async fn server_find_view(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
+    let rows = platform::servers_core(db, staff, query(input).as_deref(), None, Some(FETCH)).await?;
+    Ok(paged(DeskView::new(w::T_SERVERS.get(input.lang)), &items(json(&rows)), SERVER_ROW, input))
+}
+handler!(server_find, server_find_view);
+
+async fn server_view_view(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
+    let id = required(input, "server", CommandOptionType::String)?;
+    let server = platform::server_core(db, staff, &id).await?;
+    Ok(fields(DeskView::new(w::T_SERVER.get(input.lang)), &json(&server), SERVER_VIEW, input.lang))
+}
+handler!(server_view, server_view_view);
+
+pub const BOT_ROW: &[Show] = &[
+    show("/username", w::NAME),
+    show("@id", w::ID),
+    show("/owner_username", w::OWNER),
+    show("/public", w::PUBLIC),
+    show("/verified", w::VERIFIED),
+    show("/official", w::OFFICIAL),
+    show("/suspended", w::SUSPENDED),
+];
+
+pub const BOT_VIEW: &[Show] = &[
+    show("/username", w::NAME),
+    show("@id", w::ID),
+    show("/owner_username", w::OWNER),
+    show("/owner_id", w::OWNER_ID),
+    show("/servers", w::SERVERS),
+    show("/public", w::PUBLIC),
+    show("/discoverable", w::DISCOVERABLE),
+    show("/verified", w::VERIFIED),
+    show("/official", w::OFFICIAL),
+    show("/suspended", w::SUSPENDED),
+    show("/interactions_url", w::INTERACTIONS_URL),
+    show("/terms_of_service_url", w::TERMS),
+    show("/privacy_policy_url", w::PRIVACY),
+    show("/verifications", w::VERIFICATIONS),
+];
+
+async fn bot_find_view(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
+    let rows = bots::list_core(db, staff, query(input).as_deref(), None, Some(FETCH)).await?;
+    Ok(paged(DeskView::new(w::T_BOTS.get(input.lang)), &items(json(&rows)), BOT_ROW, input))
+}
+handler!(bot_find, bot_find_view);
+
+async fn bot_view_view(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
+    let id = required(input, "bot", CommandOptionType::String)?;
+    let bot = bots::detail_core(db, staff, &id).await?;
+    Ok(fields(DeskView::new(w::T_BOT.get(input.lang)), &json(&bot), BOT_VIEW, input.lang))
+}
+handler!(bot_view, bot_view_view);
+
 // ---- the registry entries ----
 
 const fn opt(name: &'static str, kind: CommandOptionType, required: bool, description: Text) -> DeskOption {
@@ -496,6 +573,8 @@ use StaffPermission as P;
 
 pub static GROUPS: &[DeskGroup] = &[
     DeskGroup { name: "user", description: t("Users", "المستخدمون", "Benutzer") },
+    DeskGroup { name: "server", description: t("Servers", "السيرفرات", "Server") },
+    DeskGroup { name: "bot", description: t("Bots", "البوتات", "Bots") },
 ];
 
 pub static ENTRIES: &[DeskCommand] = &[
@@ -503,4 +582,8 @@ pub static ENTRIES: &[DeskCommand] = &[
     read("lookup", "user", "view", t("Show a user", "عرض مستخدم", "Benutzer zeigen"), &[USER_OPT], Some(P::UsersRead), user_view),
     read("lookup", "user", "badges", t("A user's badges", "شارات مستخدم", "Abzeichen"), &[USER_OPT], Some(P::UsersRead), user_badges),
     read("lookup", "user", "history", t("Safety history", "سجل السلامة", "Sicherheitsverlauf"), &[USER_OPT], Some(P::ReportsRead), user_history),
+    read("lookup", "server", "find", t("Find servers", "البحث عن سيرفرات", "Server suchen"), &[QUERY], Some(P::ServersRead), server_find),
+    read("lookup", "server", "view", t("Show a server", "عرض سيرفر", "Server zeigen"), &[id_opt("server")], Some(P::ServersRead), server_view),
+    read("lookup", "bot", "find", t("Find bots", "البحث عن بوتات", "Bots suchen"), &[QUERY], Some(P::UsersRead), bot_find),
+    read("lookup", "bot", "view", t("Show a bot", "عرض بوت", "Bot zeigen"), &[id_opt("bot")], Some(P::UsersRead), bot_view),
 ];

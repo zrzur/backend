@@ -429,13 +429,13 @@ fn server_row(server: &Server, owners: &[User]) -> ServerRow {
 
 /// # Server directory
 #[get("/servers?<q>&<before>&<limit>")]
-pub async fn servers(
-    db: &State<Database>,
-    staff: StaffContext,
-    q: Option<&str>,
-    before: Option<&str>,
-    limit: Option<usize>,
-) -> Result<Json<Vec<ServerRow>>> {
+pub async fn servers(db: &State<Database>, staff: StaffContext, q: Option<&str>, before: Option<&str>, limit: Option<usize>) -> Result<Json<Vec<ServerRow>>> {
+    servers_core(db, &staff, q, before, limit).await.map(Json)
+}
+
+/// The console's `servers`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn servers_core(db: &Database, staff: &StaffContext, q: Option<&str>, before: Option<&str>, limit: Option<usize>) -> Result<Vec<ServerRow>> {
     staff.require(db, StaffPermission::ServersRead).await?;
     if q.is_some_and(|q| q.chars().count() > 64) {
         return Err(create_error!(FailedValidation {
@@ -447,7 +447,7 @@ pub async fn servers(
         .await?;
     let owner_ids: Vec<String> = list.iter().map(|s| s.owner.clone()).collect();
     let owners = db.fetch_users(&owner_ids).await.unwrap_or_default();
-    Ok(Json(list.iter().map(|s| server_row(s, &owners)).collect()))
+    Ok(list.iter().map(|s| server_row(s, &owners)).collect())
 }
 
 #[derive(Serialize)]
@@ -477,6 +477,12 @@ fn channel_kind(channel: &Channel) -> &'static str {
 /// Metadata only: no messages or member lists.
 #[get("/servers/<id>")]
 pub async fn server(db: &State<Database>, staff: StaffContext, id: &str) -> Result<Json<ServerDetail>> {
+    server_core(db, &staff, id).await.map(Json)
+}
+
+/// The console's `server`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn server_core(db: &Database, staff: &StaffContext, id: &str) -> Result<ServerDetail> {
     staff.require(db, StaffPermission::ServersRead).await?;
     let server = db.fetch_server(id).await?;
     let owners = db.fetch_users(std::slice::from_ref(&server.owner)).await.unwrap_or_default();
@@ -485,7 +491,7 @@ pub async fn server(db: &State<Database>, staff: StaffContext, id: &str) -> Resu
     for channel in &channels {
         *kinds.entry(channel_kind(channel)).or_default() += 1;
     }
-    Ok(Json(ServerDetail {
+    Ok(ServerDetail {
         members: db.fetch_member_count(&server.id).await.unwrap_or(0),
         channels_by_type: kinds
             .into_iter()
@@ -500,7 +506,7 @@ pub async fn server(db: &State<Database>, staff: StaffContext, id: &str) -> Resu
         flags: server.flags.unwrap_or(0),
         nsfw: server.nsfw,
         server: server_row(&server, &owners),
-    }))
+    })
 }
 
 // ---- health ----

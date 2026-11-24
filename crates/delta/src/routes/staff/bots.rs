@@ -127,13 +127,13 @@ async fn rows(db: &Database, bots: Vec<revolt_database::Bot>) -> Result<Vec<BotR
 ///
 /// Newest first; `q` is a bot id or an owner's user id.
 #[get("/bots?<q>&<before>&<limit>")]
-pub async fn list(
-    db: &State<Database>,
-    staff: StaffContext,
-    q: Option<&str>,
-    before: Option<&str>,
-    limit: Option<usize>,
-) -> Result<Json<Vec<BotRow>>> {
+pub async fn list(db: &State<Database>, staff: StaffContext, q: Option<&str>, before: Option<&str>, limit: Option<usize>) -> Result<Json<Vec<BotRow>>> {
+    list_core(db, &staff, q, before, limit).await.map(Json)
+}
+
+/// The console's `list`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn list_core(db: &Database, staff: &StaffContext, q: Option<&str>, before: Option<&str>, limit: Option<usize>) -> Result<Vec<BotRow>> {
     staff.require(db, StaffPermission::UsersRead).await?;
     if q.is_some_and(|q| q.len() > 64) {
         return Err(create_error!(FailedValidation {
@@ -143,12 +143,18 @@ pub async fn list(
     let bots = db
         .staff_list_bots(q, before, limit.unwrap_or(50).clamp(1, 100))
         .await?;
-    rows(db, bots).await.map(Json)
+    rows(db, bots).await
 }
 
 /// # One bot
 #[get("/bots/<id>")]
 pub async fn detail(db: &State<Database>, staff: StaffContext, id: &str) -> Result<Json<BotDetail>> {
+    detail_core(db, &staff, id).await.map(Json)
+}
+
+/// The console's `detail`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn detail_core(db: &Database, staff: &StaffContext, id: &str) -> Result<BotDetail> {
     staff.require(db, StaffPermission::UsersRead).await?;
     let bot = db.fetch_bot(id).await?;
     let servers = db.fetch_server_count(&bot.id).await.unwrap_or(0);
@@ -165,14 +171,14 @@ pub async fn detail(db: &State<Database>, staff: StaffContext, id: &str) -> Resu
         some(&bot.privacy_policy_url),
     );
     let row = rows(db, vec![bot]).await?.pop().ok_or_else(|| create_error!(NotFound))?;
-    Ok(Json(BotDetail {
+    Ok(BotDetail {
         row,
         servers,
         interactions_url,
         terms_of_service_url: terms,
         privacy_policy_url: privacy,
         verifications,
-    }))
+    })
 }
 
 #[derive(Deserialize)]
