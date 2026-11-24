@@ -30,6 +30,7 @@ pub(super) fn all_areas(s: &Stage) {
             "moderation",
             "support",
             "review",
+            "servers",
         ]
         .map(str::to_string)
         .to_vec(),

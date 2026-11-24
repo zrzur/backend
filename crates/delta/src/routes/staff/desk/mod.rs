@@ -28,6 +28,9 @@ mod moderation_tests;
 mod overview;
 pub(crate) mod registry;
 mod run;
+mod server_admin;
+#[cfg(test)]
+mod server_admin_tests;
 mod session;
 mod support;
 #[cfg(test)]
