@@ -1495,6 +1495,9 @@ impl User {
             badges |= UserBadges::Plus as u32;
         }
 
+        // Founder follows `[api.users] founder_id` alone once it is set
+        badges = crate::founder_bit(badges, config.api.users.founder(), &self.id);
+
         if let Some(cutoff) = config.api.users.early_adopter_cutoff {
             if Ulid::from_string(&self.id).unwrap().timestamp_ms() < cutoff {
                 return badges | UserBadges::EarlyAdopter as u32;

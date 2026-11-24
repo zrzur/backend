@@ -32,8 +32,15 @@ pub enum BadgeGrantRule {
     Automatic,
     /// Staff with `badges.grant`, after the eligibility check
     Staff,
-    /// Only `privileged` staff (a database flag no API can set)
+    /// A staff Owner with a fresh step-up (the `privileged` database flag
+    /// no longer gives any badge right)
     Privileged,
+    /// Nobody changes it on any path: Founder follows `[api.users]
+    /// founder_id` (a host-level setting) and nothing else
+    Locked,
+    /// Follows an official appointment (`staff_appointments`, written by
+    /// `zrzur-staff appoint` with two people); no badge permission gives it
+    Appointment,
 }
 
 /// One badge in the catalogue
@@ -78,10 +85,10 @@ const fn def(
 use BadgeGrantRule::*;
 
 pub static BADGE_CATALOGUE: &[BadgeDefinition] = &[
-    def("staff", UserBadges::Staff as u32, Privileged, "official", 2, 10),
-    def("founder", UserBadges::Founder as u32, Privileged, "official", 2, 5),
+    def("staff", UserBadges::Staff as u32, Appointment, "official", 2, 10),
+    def("founder", UserBadges::Founder as u32, Locked, "official", 2, 5),
     def("developer", UserBadges::Developer as u32, Privileged, "official", 1, 20),
-    def("platform_moderator", UserBadges::PlatformModeration as u32, Privileged, "official", 1, 25),
+    def("platform_moderator", UserBadges::PlatformModeration as u32, Appointment, "official", 1, 25),
     def("partner", UserBadges::Partner as u32, Staff, "official", 1, 30),
     def("super_creator", UserBadges::SuperCreator as u32, Staff, "community", 2, 40),
     def("creator", UserBadges::Creator as u32, Automatic, "community", 1, 45),
@@ -142,6 +149,18 @@ pub fn managed_badge_bits() -> u32 {
         .iter()
         .filter(|b| b.rule != Dynamic)
         .fold(0, |bits, b| bits | b.bit)
+}
+
+/// The Founder bit as `[api.users] founder_id` says: once it is set, only
+/// that account shows it (an old grant record of anyone else is history);
+/// unset, the stored bit is left as it is.
+pub fn founder_bit(badges: u32, founder: Option<&str>, user_id: &str) -> u32 {
+    let bit = UserBadges::Founder as u32;
+    match founder {
+        Some(id) if id == user_id => badges | bit,
+        Some(_) => badges & !bit,
+        None => badges,
+    }
 }
 
 /// Id of a grant record

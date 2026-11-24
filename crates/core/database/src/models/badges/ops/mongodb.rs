@@ -2,7 +2,8 @@ use mongodb::options::{FindOptions, ReplaceOptions};
 use revolt_result::Result;
 
 use crate::{
-    BadgeGrant, BadgeLogEntry, BetaFeature, BetaMember, BetaStatus, BugKind, BugReport, MongoDb,
+    BadgeChangeRequest, BadgeGrant, BadgeLogEntry, BadgeRequestStatus, BetaFeature, BetaMember,
+    BetaStatus, BugKind, BugReport, MongoDb, StaffAppointment,
 };
 
 use super::{AbstractBadges, BugReportQuery};
@@ -12,6 +13,8 @@ static LOG: &str = "badge_log";
 static FEATURES: &str = "beta_features";
 static MEMBERS: &str = "beta_members";
 static BUGS: &str = "bug_reports";
+static APPOINTMENTS: &str = "staff_appointments";
+static REQUESTS: &str = "badge_change_requests";
 
 fn to_bson<T: serde::Serialize>(value: &T) -> bson::Bson {
     bson::to_bson(value).expect("failed to serialize")
@@ -204,5 +207,70 @@ impl AbstractBadges for MongoDb {
             .await
             .map(|count| count as usize)
             .map_err(|_| create_database_error!("count_documents", BUGS))
+    }
+
+    async fn fetch_staff_appointment(&self, id: &str) -> Result<Option<StaffAppointment>> {
+        self.col::<StaffAppointment>(APPOINTMENTS)
+            .find_one(doc! { "_id": id })
+            .await
+            .map_err(|_| create_database_error!("find_one", APPOINTMENTS))
+    }
+
+    async fn fetch_staff_appointments(&self) -> Result<Vec<StaffAppointment>> {
+        self.find_with_options(
+            APPOINTMENTS,
+            doc! {},
+            FindOptions::builder().sort(doc! { "_id": 1 }).limit(1000).build(),
+        )
+        .await
+        .map_err(|_| create_database_error!("find", APPOINTMENTS))
+    }
+
+    async fn save_staff_appointment(&self, appointment: &StaffAppointment) -> Result<()> {
+        self.col::<StaffAppointment>(APPOINTMENTS)
+            .replace_one(doc! { "_id": &appointment.id }, appointment)
+            .with_options(ReplaceOptions::builder().upsert(true).build())
+            .await
+            .map(|_| ())
+            .map_err(|_| create_database_error!("replace_one", APPOINTMENTS))
+    }
+
+    async fn insert_badge_request(&self, request: &BadgeChangeRequest) -> Result<()> {
+        self.col::<BadgeChangeRequest>(REQUESTS)
+            .insert_one(request)
+            .await
+            .map(|_| ())
+            .map_err(|_| create_database_error!("insert_one", REQUESTS))
+    }
+
+    async fn fetch_badge_request(&self, id: &str) -> Result<BadgeChangeRequest> {
+        self.col::<BadgeChangeRequest>(REQUESTS)
+            .find_one(doc! { "_id": id })
+            .await
+            .map_err(|_| create_database_error!("find_one", REQUESTS))?
+            .ok_or_else(|| create_error!(NotFound))
+    }
+
+    async fn fetch_badge_requests(&self) -> Result<Vec<BadgeChangeRequest>> {
+        self.find_with_options(
+            REQUESTS,
+            doc! {},
+            FindOptions::builder().sort(doc! { "_id": -1 }).limit(200).build(),
+        )
+        .await
+        .map_err(|_| create_database_error!("find", REQUESTS))
+    }
+
+    async fn decide_badge_request(
+        &self,
+        request: &BadgeChangeRequest,
+        expected: BadgeRequestStatus,
+    ) -> Result<bool> {
+        // approved twice at the same moment: only the first counts
+        self.col::<BadgeChangeRequest>(REQUESTS)
+            .replace_one(doc! { "_id": &request.id, "status": to_bson(&expected) }, request)
+            .await
+            .map(|result| result.matched_count == 1)
+            .map_err(|_| create_database_error!("replace_one", REQUESTS))
     }
 }

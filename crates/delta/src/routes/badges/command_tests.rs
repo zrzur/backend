@@ -6,7 +6,7 @@ use crate::{
     util::test::{PubSubTestHelper, TestHarness},
 };
 use revolt_config::FeaturesBadgeCommand;
-use revolt_database::{events::client::EventV1, Bot, Channel, Member, Server, User};
+use revolt_database::{events::client::EventV1, Bot, Channel, Member, Server, StaffGrant, StaffRole, User};
 use revolt_models::v0;
 use rocket::http::{ContentType, Header, Status};
 use serde_json::{json, Value};
@@ -56,6 +56,22 @@ fn sub(name: &str, choices: &Value, user_kind: &str) -> Value {
     })
 }
 
+/// Give `user` these staff roles (none: no staff grant at all)
+async fn set_staff(harness: &TestHarness, user: &User, roles: Vec<StaffRole>) {
+    let current = harness.db.fetch_staff_grant(&user.id).await.unwrap();
+    let grant = StaffGrant {
+        id: user.id.clone(),
+        roles,
+        disabled: false,
+        expires_at: None,
+        last_totp_step: 0,
+        version: current.as_ref().map(|g| g.version + 1).unwrap_or(1),
+        updated_at: 0,
+        updated_by: "test".to_string(),
+    };
+    assert!(harness.db.save_staff_grant(&grant, current.map(|g| g.version)).await.unwrap());
+}
+
 /// A server with the bot, the owner, another member and the subject; the
 /// bot registered `/badge give|remove` as the server offers it, and the
 /// command is on for it
@@ -93,6 +109,8 @@ async fn stage_with(choices: Value, user_kind: &str) -> Stage {
         owner: owner.id.clone(),
         bot: bot.id.clone(),
     });
+    // the owner acts with his real staff rights
+    set_staff(&harness, &owner, vec![StaffRole::SeniorSupport]).await;
     let events = PubSubTestHelper::new(&format!("{}!", bot.id)).await;
     Stage {
         harness,
@@ -210,32 +228,36 @@ impl Stage {
 }
 
 #[rocket::async_test]
-async fn the_owner_gives_a_privileged_badge_and_takes_it_away() {
+async fn the_owner_gives_a_badge_and_takes_it_away() {
     let mut s = stage().await;
     let (subject, owner) = (s.subject.clone(), s.owner.clone());
     let session = s.owner_session.clone();
 
-    // the catalogue offers the privileged and the retired badges, never one that follows a record
+    // the catalogue offers hand-given staff badges only: never Founder, Staff,
+    // Platform Moderator, a privileged, retired or automatic one
     let (status, catalogue) = s.call(&s.bot.token, "/badges/command/catalogue", None).await;
     assert_eq!(status, Status::Ok);
     assert_eq!(catalogue["enabled"], true);
     let ids: Vec<&str> = catalogue["badges"].as_array().unwrap().iter().map(|b| b["id"].as_str().unwrap()).collect();
-    for wanted in ["staff", "founder", "developer", "platform_moderator", "partner", "paw", "reserved_1", "reserved_2"] {
+    for wanted in ["partner", "community_helper", "early_supporter", "bug_hunter"] {
         assert!(ids.contains(&wanted), "{wanted} missing: {ids:?}");
     }
-    for never in ["plus", "creator", "beta_tester", "early_adopter", "one_year"] {
+    for never in [
+        "founder", "staff", "platform_moderator", "developer", "paw", "reserved_1", "reserved_2", "translator",
+        "supporter", "responsible_disclosure", "plus", "creator", "beta_tester", "early_adopter", "one_year",
+    ] {
         assert!(!ids.contains(&never), "{never} offered");
     }
-    assert_eq!(catalogue["badges"][0]["names"]["ar"], "مؤسس");
+    assert!(catalogue["badges"].as_array().unwrap().iter().all(|b| b["retired"] == false && b["rule"] == "staff"));
 
-    let pressed = s.press(&session, "give", &subject.id, "founder", None).await;
+    let pressed = s.press(&session, "give", &subject.id, "community_helper", None).await;
     let (status, outcome) = s.hand("grant", &pressed).await;
     assert_eq!(status, Status::Ok, "{outcome}");
     assert_eq!(outcome["result"], "done");
     assert_eq!(outcome["action"], "give");
-    assert_eq!(outcome["badge"], "founder");
+    assert_eq!(outcome["badge"], "community_helper");
     assert_eq!(outcome["user"]["id"], subject.id.as_str());
-    assert!(s.holds(&subject, "founder").await);
+    assert!(s.holds(&subject, "community_helper").await);
     let grant = s
         .harness
         .db
@@ -243,7 +265,7 @@ async fn the_owner_gives_a_privileged_badge_and_takes_it_away() {
         .await
         .unwrap()
         .into_iter()
-        .find(|g| g.badge == "founder")
+        .find(|g| g.badge == "community_helper")
         .unwrap();
     assert_eq!(grant.granted_by, owner.id);
     assert_eq!(grant.reason.as_deref(), Some(DEFAULT_REASON));
@@ -252,32 +274,35 @@ async fn the_owner_gives_a_privileged_badge_and_takes_it_away() {
         vec![("badge.command.grant".to_string(), owner.id.clone(), "Success".to_string())]
     );
 
-    // a retired one too, with the owner's own reason
-    let pressed = s.press(&session, "give", &subject.id, "paw", Some("For the old days")).await;
-    let (status, outcome) = s.hand("grant", &pressed).await;
-    assert_eq!((status, outcome["result"].as_str()), (Status::Ok, Some("done")), "{outcome}");
-    assert!(s.holds(&subject, "paw").await);
-
     // given twice: they already have it, nothing changes, and the press writes one record
-    let pressed = s.press(&session, "give", &subject.id, "founder", None).await;
+    let pressed = s.press(&session, "give", &subject.id, "community_helper", Some("Helped again")).await;
     let (status, outcome) = s.hand("grant", &pressed).await;
     assert_eq!((status, outcome["result"].as_str()), (Status::Ok, Some("already")), "{outcome}");
     let log = s.audit_full(&subject).await;
-    assert_eq!(log.len(), 3, "{log:?}");
-    assert!(log.iter().all(|(_, _, outcome, _)| outcome == "Success"), "{log:?}");
-    assert!(log.iter().any(|(_, _, _, summary)| summary == "founder (no change: already)"), "{log:?}");
+    assert_eq!(log.len(), 2, "{log:?}");
+    assert!(log.iter().any(|(_, _, _, summary)| summary == "community_helper (no change: already)"), "{log:?}");
+
+    // Partner waits for a second staff member: nothing is given yet
+    let pressed = s.press(&session, "give", &subject.id, "partner", Some("Official partner")).await;
+    let (status, outcome) = s.hand("grant", &pressed).await;
+    assert_eq!((status, outcome["result"].as_str()), (Status::Ok, Some("pending")), "{outcome}");
+    assert!(!s.holds(&subject, "partner").await);
+    let requests = s.harness.db.fetch_badge_requests().await.unwrap();
+    assert!(requests.iter().any(|r| r.user_id == subject.id && r.badge == "partner" && r.requested_via == "badge_command"));
+    let log = s.audit(&subject).await;
+    assert!(log.contains(&("badge.command.grant.request".to_string(), owner.id.clone(), "Success".to_string())), "{log:?}");
 
     // taken away
-    let pressed = s.press(&session, "remove", &subject.id, "founder", Some("Test is over")).await;
+    let pressed = s.press(&session, "remove", &subject.id, "community_helper", Some("Test is over")).await;
     let (status, outcome) = s.hand("revoke", &pressed).await;
     assert_eq!((status, outcome["result"].as_str()), (Status::Ok, Some("done")), "{outcome}");
     assert_eq!(outcome["action"], "remove");
-    assert!(!s.holds(&subject, "founder").await);
+    assert!(!s.holds(&subject, "community_helper").await);
     let log = s.audit(&subject).await;
     assert!(log.contains(&("badge.command.revoke".to_string(), owner.id.clone(), "Success".to_string())), "{log:?}");
 
     // and again: they do not have it
-    let pressed = s.press(&session, "remove", &subject.id, "founder", None).await;
+    let pressed = s.press(&session, "remove", &subject.id, "community_helper", None).await;
     let (status, outcome) = s.hand("revoke", &pressed).await;
     assert_eq!((status, outcome["result"].as_str()), (Status::Ok, Some("not_held")), "{outcome}");
     // five presses, five records, none failed
@@ -286,16 +311,69 @@ async fn the_owner_gives_a_privileged_badge_and_takes_it_away() {
     assert!(!log.iter().any(|(_, _, outcome)| outcome == "Failed"), "{log:?}");
 
     // a removal handed to the give route is refused, and gives nothing
-    let pressed = s.press(&session, "remove", &subject.id, "founder", None).await;
+    let pressed = s.press(&session, "remove", &subject.id, "community_helper", None).await;
     let (status, _) = s.hand("grant", &pressed).await;
     assert_eq!(status, Status::BadRequest);
-    assert!(!s.holds(&subject, "founder").await);
+    assert!(!s.holds(&subject, "community_helper").await);
 
-    // nobody changes their own badges
-    let pressed = s.press(&session, "give", &owner.id, "founder", None).await;
+    // nobody changes their own badges, and the refusal is written down
+    let pressed = s.press(&session, "give", &owner.id, "community_helper", None).await;
     let (status, outcome) = s.hand("grant", &pressed).await;
     assert_eq!((status, outcome["result"].as_str()), (Status::Ok, Some("self")), "{outcome}");
-    assert!(!s.holds(&owner, "founder").await);
+    assert!(!s.holds(&owner, "community_helper").await);
+    let mine = s.audit_full(&owner).await;
+    assert!(
+        mine.iter().any(|(a, _, o, summary)| a == "badge.command.grant" && o == "Denied" && summary == "community_helper denied:self via badge_command"),
+        "{mine:?}"
+    );
+}
+
+#[rocket::async_test]
+async fn the_owner_needs_real_staff_rights() {
+    let mut s = stage().await;
+    let (subject, owner) = (s.subject.clone(), s.owner.clone());
+    let session = s.owner_session.clone();
+    // the configured owner without a staff grant may give nothing
+    set_staff(&s.harness, &owner, vec![]).await;
+    let pressed = s.press(&session, "give", &subject.id, "community_helper", None).await;
+    let (status, body) = s.hand("grant", &pressed).await;
+    assert_eq!(status, Status::Forbidden, "{body}");
+    assert_eq!(body["permission"], "platform.badges.manage");
+    assert!(!s.holds(&subject, "community_helper").await);
+    assert_eq!(
+        s.audit_full(&subject).await,
+        vec![(
+            "badge.command.grant".to_string(),
+            owner.id.clone(),
+            "Denied".to_string(),
+            "community_helper denied:no_permission via badge_command".to_string()
+        )]
+    );
+}
+
+#[rocket::async_test]
+async fn locked_appointment_and_retired_badges_are_never_given() {
+    // a bot that adds them to its own command anyway
+    let mut choices = offered_choices();
+    for (name, value) in [("Founder badge", "founder"), ("Team badge", "staff"), ("Old paw", "paw"), ("Old translator", "translator")] {
+        choices.as_array_mut().unwrap().push(json!({ "name": name, "value": value }));
+    }
+    let mut s = stage_with(choices, "User").await;
+    let (subject, owner) = (s.subject.clone(), s.owner.clone());
+    let session = s.owner_session.clone();
+    // the owner as a staff Owner changes nothing here
+    set_staff(&s.harness, &owner, vec![StaffRole::Owner]).await;
+    for badge in ["founder", "staff", "paw", "translator"] {
+        for (action, path) in [("give", "grant"), ("remove", "revoke")] {
+            let pressed = s.press(&session, action, &subject.id, badge, None).await;
+            let (status, body) = s.hand(path, &pressed).await;
+            assert_eq!(status, Status::BadRequest, "{badge} {action}: {body}");
+        }
+        assert!(!s.holds(&subject, badge).await, "{badge}");
+    }
+    let log = s.audit_full(&subject).await;
+    assert_eq!(log.len(), 8, "{log:?}");
+    assert!(log.iter().all(|(_, actor, outcome, _)| actor == &owner.id && outcome == "Denied"), "{log:?}");
 }
 
 #[rocket::async_test]
@@ -304,12 +382,12 @@ async fn anyone_else_is_refused_and_logged() {
     let (subject, other) = (s.subject.clone(), s.other.clone());
     let session = s.other_session.clone();
     for (action, path) in [("give", "grant"), ("remove", "revoke")] {
-        let pressed = s.press(&session, action, &subject.id, "staff", None).await;
+        let pressed = s.press(&session, action, &subject.id, "community_helper", None).await;
         let (status, body) = s.hand(path, &pressed).await;
         assert_eq!(status, Status::Forbidden, "{body}");
         assert_eq!(body["type"], "NotPrivileged");
     }
-    assert!(!s.holds(&subject, "staff").await);
+    assert!(!s.holds(&subject, "community_helper").await);
     // the bot cannot make it the owner's: the presser is what the server stored
     let mut log = s.audit(&subject).await;
     log.sort();
@@ -327,7 +405,7 @@ async fn a_wrong_bot_a_replayed_press_and_a_wrong_token_are_refused() {
     let mut s = stage().await;
     let subject = s.subject.clone();
     let session = s.owner_session.clone();
-    let pressed = s.press(&session, "give", &subject.id, "developer", None).await;
+    let pressed = s.press(&session, "give", &subject.id, "community_helper", None).await;
 
     // another bot, without the command
     let (stranger, _) = s.harness.new_bot(&s.owner).await;
@@ -357,17 +435,17 @@ async fn a_wrong_bot_a_replayed_press_and_a_wrong_token_are_refused() {
     // a wrong token
     let (status, _) = s.hand("grant", &(pressed.0.clone(), "not-the-token".to_string())).await;
     assert_eq!(status, Status::NotFound);
-    assert!(!s.holds(&subject, "developer").await);
+    assert!(!s.holds(&subject, "community_helper").await);
 
     // the real one works once
     let (status, outcome) = s.hand("grant", &pressed).await;
     assert_eq!((status, outcome["result"].as_str()), (Status::Ok, Some("done")), "{outcome}");
-    assert!(s.holds(&subject, "developer").await);
+    assert!(s.holds(&subject, "community_helper").await);
     // replayed: refused, nothing more written
     let (status, body) = s.hand("grant", &pressed).await;
     assert_eq!(status, Status::Gone, "{body}");
     assert_eq!(body["type"], "InteractionExpired");
-    let pressed_again = s.press(&session, "remove", &subject.id, "developer", None).await;
+    let pressed_again = s.press(&session, "remove", &subject.id, "community_helper", None).await;
     let (status, _) = s.hand("revoke", &pressed_again).await;
     assert_eq!(status, Status::Ok);
     let (status, _) = s.hand("revoke", &pressed_again).await;
@@ -380,7 +458,7 @@ async fn the_command_is_off_without_settings() {
     let mut s = stage().await;
     let subject = s.subject.clone();
     let session = s.owner_session.clone();
-    let pressed = s.press(&session, "give", &subject.id, "staff", None).await;
+    let pressed = s.press(&session, "give", &subject.id, "community_helper", None).await;
     // a bot with no settings registered falls back to the shipped config: both ids empty
     let (unset, unset_user) = s.harness.new_bot(&s.owner).await;
     assert!(unset_user.bot.is_some());
@@ -391,7 +469,7 @@ async fn the_command_is_off_without_settings() {
     let (status, _) = s.call(&unset.token, "/badges/command/catalogue", None).await;
     assert_eq!(status, Status::NotFound);
     assert!(!revolt_config::config().await.features.badge_command.enabled());
-    assert!(!s.holds(&subject, "staff").await);
+    assert!(!s.holds(&subject, "community_helper").await);
 }
 
 #[rocket::async_test]
@@ -399,8 +477,7 @@ async fn a_relabelled_choice_is_refused() {
     // the bot shows another badge's name but sends `founder` (a registered
     // command may not repeat a choice name, so the label is new)
     let mut choices = offered_choices();
-    let founder = choices.as_array_mut().unwrap().iter_mut().find(|c| c["value"] == "founder").unwrap();
-    founder["name"] = json!("Partner badge");
+    choices.as_array_mut().unwrap().push(json!({ "name": "Partner badge", "value": "founder" }));
     let mut s = stage_with(choices, "User").await;
     let (subject, owner) = (s.subject.clone(), s.owner.clone());
     let session = s.owner_session.clone();
@@ -421,7 +498,7 @@ async fn a_relabelled_choice_is_refused() {
 
     // a translated label that says something else is refused too
     let mut choices = offered_choices();
-    choices[0]["name_localizations"] = json!({ "ar": "شريك" });
+    choices[0]["name_localizations"] = json!({ "ar": "مؤسس زرزور" });
     let mut s = stage_with(choices, "User").await;
     let (subject, session) = (s.subject.clone(), s.owner_session.clone());
     let first = offered_badges()[0].id;
@@ -436,10 +513,10 @@ async fn a_user_asked_for_as_text_is_refused() {
     let mut s = stage_with(offered_choices(), "String").await;
     let (subject, owner) = (s.subject.clone(), s.owner.clone());
     let session = s.owner_session.clone();
-    let pressed = s.press(&session, "give", &subject.id, "staff", None).await;
+    let pressed = s.press(&session, "give", &subject.id, "community_helper", None).await;
     let (status, body) = s.hand("grant", &pressed).await;
     assert_eq!(status, Status::BadRequest, "{body}");
-    assert!(!s.holds(&subject, "staff").await);
+    assert!(!s.holds(&subject, "community_helper").await);
     // the user came as text, so the record names nobody
     let log: Vec<_> = s
         .harness
@@ -454,7 +531,7 @@ async fn a_user_asked_for_as_text_is_refused() {
         .filter(|e| e.actor_id == owner.id && e.action == "badge.command.grant")
         .map(|e| (format!("{:?}", e.outcome), e.target_id, e.summary))
         .collect();
-    assert_eq!(log, vec![("Denied".to_string(), None, Some("staff (command not as offered)".to_string()))]);
+    assert_eq!(log, vec![("Denied".to_string(), None, Some("community_helper (command not as offered)".to_string()))]);
 }
 
 #[rocket::async_test]
@@ -558,8 +635,7 @@ impl Stage {
 async fn a_command_changed_between_the_press_and_the_grant_is_refused() {
     // the bot shows a relabelled command and takes the owner's press ...
     let mut choices = offered_choices();
-    let founder = choices.as_array_mut().unwrap().iter_mut().find(|c| c["value"] == "founder").unwrap();
-    founder["name"] = json!("Partner badge");
+    choices.as_array_mut().unwrap().push(json!({ "name": "Partner badge", "value": "founder" }));
     let mut s = stage_with(choices, "User").await;
     let (subject, owner) = (s.subject.clone(), s.owner.clone());
     let session = s.owner_session.clone();
@@ -593,10 +669,10 @@ async fn a_command_changed_between_the_press_and_the_grant_is_refused() {
         )]
     );
 
-    // a press on the honest command works
+    // a press on the honest command works (for a badge it offers)
     let command: v0::ApplicationCommand = serde_json::from_value(synced[0].clone()).unwrap();
     s.command = command;
-    let pressed = s.press(&session, "give", &subject.id, "founder", None).await;
+    let pressed = s.press(&session, "give", &subject.id, "community_helper", None).await;
     let (status, outcome) = s.hand("grant", &pressed).await;
     assert_eq!((status, outcome["result"].as_str()), (Status::Ok, Some("done")), "{outcome}");
 }

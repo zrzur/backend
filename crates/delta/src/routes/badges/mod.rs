@@ -1,11 +1,13 @@
-//! Profile badges: the catalogue, your own badges, and the staff tools to
-//! grant and revoke them. Every grant goes through
-//! `revolt_database::grant_badge`, which writes the audit log; nothing
-//! here trusts the client about who may do what.
+//! Profile badges: the catalogue, your own badges, and read-only staff
+//! views. Hand-made changes go through `revolt_database::mutate_badge` (the
+//! one authorization gate); `/badges/admin/grant|revoke` are retired and
+//! refuse every change, written to the audit log.
 
 pub mod beta;
 pub mod bugs;
 pub mod command;
+#[cfg(test)]
+mod authorize_tests;
 #[cfg(test)]
 mod command_tests;
 #[cfg(test)]
@@ -13,11 +15,11 @@ mod test;
 
 use iso8601_timestamp::Timestamp;
 use revolt_database::{
-    badge_definition, badge_eligibility, beta_features_for, bug_hunter_stats, creator_eligibility,
-    epoch_ms, grant_badge, platform_permissions, revoke_badge, set_badge_hidden,
-    sync_creator_badge, sync_user_badges, BadgeDefinition, BadgeGrant, BadgeGrantRule, BadgeSource, BetaMember,
-    Database, PlatformPermission, User, BADGE_CATALOGUE, ELITE_MIN_VERIFIED,
-    SUPER_CREATOR_MIN_DESIGNS,
+    badge_definition, badge_eligibility, badge_rule_check, beta_features_for, bug_hunter_stats,
+    creator_eligibility, epoch_ms, mutate_badge, platform_permissions, set_badge_hidden,
+    sync_creator_badge, sync_user_badges, BadgeActor, BadgeChange, BadgeDenial, BadgeGrant,
+    BadgeGrantRule, BadgeMutation, BadgeOutcome, BadgePath, BadgeSource, BetaMember, Database,
+    PlatformPermission, User, BADGE_CATALOGUE, ELITE_MIN_VERIFIED, SUPER_CREATOR_MIN_DESIGNS,
 };
 use revolt_models::v0;
 use revolt_result::{create_error, Result};
@@ -65,6 +67,8 @@ fn rule_name(rule: BadgeGrantRule) -> &'static str {
         BadgeGrantRule::Automatic => "automatic",
         BadgeGrantRule::Staff => "staff",
         BadgeGrantRule::Privileged => "privileged",
+        BadgeGrantRule::Locked => "locked",
+        BadgeGrantRule::Appointment => "appointment",
     }
 }
 
@@ -88,7 +92,7 @@ fn own(grant: BadgeGrant) -> v0::OwnBadge {
     }
 }
 
-fn admin_grant_view(grant: BadgeGrant, now: i64) -> v0::AdminBadgeGrant {
+pub(crate) fn admin_grant_view(grant: BadgeGrant, now: i64) -> v0::AdminBadgeGrant {
     v0::AdminBadgeGrant {
         held: grant.held(now),
         source: source_name(&grant.source).to_string(),
@@ -216,11 +220,15 @@ pub async fn user_badges(
     id: &str,
 ) -> Result<Json<Vec<v0::PublicBadge>>> {
     let now = now_ms();
+    let config = revolt_config::config().await;
+    // Founder: once `founder_id` is set, an old grant of anyone else is history
+    let founder_shown = config.api.users.founder().is_none_or(|founder| founder == id);
     Ok(Json(
         db.fetch_badge_grants(id)
             .await?
             .into_iter()
             .filter(|g| g.held(now) && !g.hidden)
+            .filter(|g| g.badge != "founder" || founder_shown)
             .map(|g| v0::PublicBadge {
                 badge: g.badge,
                 granted_at: g.granted_at,
@@ -229,49 +237,16 @@ pub async fn user_badges(
     ))
 }
 
-/// Which hand-given badges someone may grant and revoke
-#[derive(Clone, Copy)]
-pub(crate) struct BadgeRights {
-    /// `Staff`-rule badges
-    pub staff: bool,
-    /// `Privileged`-rule badges (Staff badge, old official badges)
-    pub privileged: bool,
-}
-
-async fn rights_of(db: &Database, actor: &User) -> Result<BadgeRights> {
-    let perms = platform_permissions(db, actor).await?;
-    Ok(BadgeRights {
-        staff: perms.has(PlatformPermission::BadgesGrant),
-        privileged: actor.privileged,
-    })
-}
-
-/// Can someone with `rights` grant or revoke `definition` on `subject`?
-pub(crate) fn check_rule(
-    actor_id: &str,
-    rights: BadgeRights,
-    subject: &User,
-    definition: &BadgeDefinition,
-) -> Result<()> {
-    if subject.bot.is_some() {
-        return Err(create_error!(IsBot));
-    }
-    // nobody grants or revokes their own badges
-    if subject.id == actor_id {
-        return Err(create_error!(NotPrivileged));
-    }
-    match definition.rule {
-        // Plus comes from the subscription, Creator from designs, Beta
-        // badges from the beta program: change the record, not the badge
-        BadgeGrantRule::Dynamic | BadgeGrantRule::Automatic => {
-            Err(create_error!(InvalidOperation))
-        }
-        BadgeGrantRule::Privileged if rights.privileged => Ok(()),
-        BadgeGrantRule::Privileged => Err(create_error!(NotPrivileged)),
-        BadgeGrantRule::Staff if rights.staff => Ok(()),
-        BadgeGrantRule::Staff => Err(create_error!(MissingPlatformPermission {
-            permission: PlatformPermission::BadgesGrant.name().to_string()
-        })),
+/// The rights for the retired admin routes: every change through them is
+/// refused (and written to the audit log) by `mutate_badge`
+fn admin_route_actor(actor: &User) -> BadgeActor {
+    BadgeActor {
+        id: actor.id.clone(),
+        path: BadgePath::AdminRoute,
+        staff: false,
+        owner: false,
+        step_up: false,
+        session_id: None,
     }
 }
 
@@ -350,17 +325,15 @@ pub async fn admin_user(
     id: &str,
 ) -> Result<Json<v0::AdminUserBadges>> {
     staff_only(db, &user).await?;
-    let rights = rights_of(db, &user).await?;
-    user_record(db, &user.id, rights, id).await.map(Json)
+    // read only: changes happen in the admin console
+    user_record(db, &admin_route_actor(&user), id).await.map(Json)
 }
 
-/// A user's badge record, with what `rights` may give them now
-pub(crate) async fn user_record(
-    db: &Database,
-    actor_id: &str,
-    rights: BadgeRights,
-    id: &str,
-) -> Result<v0::AdminUserBadges> {
+/// A user's badge record, with what `actor` may give them now (a step-up
+/// counts as available: the console asks for one before the change)
+pub(crate) async fn user_record(db: &Database, actor: &BadgeActor, id: &str) -> Result<v0::AdminUserBadges> {
+    let mut actor = actor.clone();
+    actor.step_up = true;
     let subject = db.fetch_user(id).await?;
     no_bots(&subject)?;
     sync_user_badges(db, &subject.id).await?;
@@ -368,9 +341,11 @@ pub(crate) async fn user_record(
     let grants = db.fetch_badge_grants(&subject.id).await?;
     let mut eligibility = vec![];
     for definition in BADGE_CATALOGUE.iter().filter(|b| !b.retired) {
-        let reason = match check_rule(actor_id, rights, &subject, definition) {
+        let reason = match badge_rule_check(&actor, definition, &subject, BadgeChange::Grant) {
+            Err(BadgeDenial::Locked) => Some("locked: follows the founder setting".to_string()),
+            Err(BadgeDenial::Appointment) => Some("follows an official appointment".to_string()),
             Err(_) => Some("not allowed for you".to_string()),
-            Ok(()) => badge_eligibility(db, &subject.id, definition.id).await?,
+            Ok(_) => badge_eligibility(db, &subject.id, definition.id).await?,
         };
         eligibility.push(v0::BadgeEligibility {
             badge: definition.id.to_string(),
@@ -401,11 +376,10 @@ pub(crate) async fn user_record(
     })
 }
 
-/// # Grant a badge
+/// # Grant a badge (retired)
 ///
-/// Staff only, never to yourself, never to a bot. Staff (and the old
-/// official badges) need a privileged account; Plus, Creator and the Beta
-/// badges can't be granted by hand.
+/// Retired: badges are given only in the admin console. Every call is
+/// refused with a clear error and written to the platform audit log.
 #[openapi(tag = "Badges")]
 #[post("/admin/grant", data = "<data>")]
 pub async fn admin_grant(
@@ -414,54 +388,14 @@ pub async fn admin_grant(
     data: Json<v0::DataGrantBadge>,
 ) -> Result<Json<v0::AdminBadgeGrant>> {
     no_bots(&user)?;
-    let rights = rights_of(db, &user).await?;
-    grant_with(db, &user.id, rights, data.into_inner()).await.map(Json)
+    let data = data.into_inner();
+    retired_change(db, &user, data.user, data.badge, BadgeChange::Grant, data.reason).await
 }
 
-/// Grant a hand-given badge (rules checked against `rights`)
-pub(crate) async fn grant_with(
-    db: &Database,
-    actor_id: &str,
-    rights: BadgeRights,
-    data: v0::DataGrantBadge,
-) -> Result<v0::AdminBadgeGrant> {
-    grant_checked(db, actor_id, rights, data, false).await
-}
-
-/// [`grant_with`]; `retired_too`: a retired badge may be given again (the
-/// owner's `/badge` command only)
-pub(crate) async fn grant_checked(
-    db: &Database,
-    actor_id: &str,
-    rights: BadgeRights,
-    data: v0::DataGrantBadge,
-    retired_too: bool,
-) -> Result<v0::AdminBadgeGrant> {
-    let data = validated(data)?;
-    let definition = badge_definition(&data.badge).ok_or_else(|| create_error!(NotFound))?;
-    let subject = db.fetch_user(&data.user).await?;
-    check_rule(actor_id, rights, &subject, definition)?;
-    if definition.retired && !retired_too {
-        return Err(create_error!(InvalidOperation));
-    }
-    if let Some(reason) = badge_eligibility(db, &subject.id, definition.id).await? {
-        return Err(create_error!(FailedValidation { error: reason }));
-    }
-    let grant = grant_badge(
-        db,
-        &subject.id,
-        definition.id,
-        BadgeSource::Admin,
-        None,
-        actor_id,
-        Some(data.reason.trim().to_string()),
-        data.expires_at,
-    )
-    .await?;
-    Ok(admin_grant_view(grant, now_ms()))
-}
-
-/// # Revoke a badge
+/// # Revoke a badge (retired)
+///
+/// Retired: badges are taken away only in the admin console. Every call is
+/// refused with a clear error and written to the platform audit log.
 #[openapi(tag = "Badges")]
 #[post("/admin/revoke", data = "<data>")]
 pub async fn admin_revoke(
@@ -470,28 +404,29 @@ pub async fn admin_revoke(
     data: Json<v0::DataRevokeBadge>,
 ) -> Result<Json<v0::AdminBadgeGrant>> {
     no_bots(&user)?;
-    let rights = rights_of(db, &user).await?;
-    revoke_with(db, &user.id, rights, data.into_inner()).await.map(Json)
+    let data = data.into_inner();
+    retired_change(db, &user, data.user, data.badge, BadgeChange::Revoke, data.reason).await
 }
 
-/// Revoke a hand-given badge (rules checked against `rights`)
-pub(crate) async fn revoke_with(
+/// Through the one gate, which refuses every change of this path
+async fn retired_change(
     db: &Database,
-    actor_id: &str,
-    rights: BadgeRights,
-    data: v0::DataRevokeBadge,
-) -> Result<v0::AdminBadgeGrant> {
-    let data = validated(data)?;
-    let definition = badge_definition(&data.badge).ok_or_else(|| create_error!(NotFound))?;
-    let subject = db.fetch_user(&data.user).await?;
-    check_rule(actor_id, rights, &subject, definition)?;
-    let grant = revoke_badge(
-        db,
-        &subject.id,
-        definition.id,
-        actor_id,
-        Some(data.reason.trim().to_string()),
-    )
-    .await?;
-    Ok(admin_grant_view(grant, now_ms()))
+    actor: &User,
+    user_id: String,
+    badge: String,
+    change: BadgeChange,
+    reason: String,
+) -> Result<Json<v0::AdminBadgeGrant>> {
+    let request = BadgeMutation {
+        user_id,
+        badge,
+        change,
+        // the refusal is logged even without a usable reason
+        reason: if reason.trim().chars().count() >= 3 { reason } else { "(none given)".to_string() },
+        expires_at: None,
+    };
+    match mutate_badge(db, &admin_route_actor(actor), request).await? {
+        BadgeOutcome::Applied(grant) => Ok(Json(admin_grant_view(grant, now_ms()))),
+        BadgeOutcome::Pending(_) => Err(create_error!(InvalidOperation)),
+    }
 }

@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use revolt_result::Result;
 
 use crate::{
-    BadgeGrant, BadgeLogEntry, BetaFeature, BetaMember, BetaStatus, BugKind, BugReport,
-    ReferenceDb,
+    BadgeChangeRequest, BadgeGrant, BadgeLogEntry, BadgeRequestStatus, BetaFeature, BetaMember,
+    BetaStatus, BugKind, BugReport, ReferenceDb, StaffAppointment,
 };
 
 use super::{AbstractBadges, BugReportQuery};
@@ -17,6 +17,8 @@ pub struct BadgeStore {
     pub features: HashMap<String, BetaFeature>,
     pub members: HashMap<String, BetaMember>,
     pub bugs: HashMap<String, BugReport>,
+    pub appointments: HashMap<String, StaffAppointment>,
+    pub requests: HashMap<String, BadgeChangeRequest>,
 }
 
 #[async_trait]
@@ -226,5 +228,65 @@ impl AbstractBadges for ReferenceDb {
             .values()
             .filter(|r| r.author_id == author_id && r.created_at >= since)
             .count())
+    }
+
+    async fn fetch_staff_appointment(&self, id: &str) -> Result<Option<StaffAppointment>> {
+        Ok(self.badge_store.lock().await.appointments.get(id).cloned())
+    }
+
+    async fn fetch_staff_appointments(&self) -> Result<Vec<StaffAppointment>> {
+        let mut list: Vec<_> = self.badge_store.lock().await.appointments.values().cloned().collect();
+        list.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(list)
+    }
+
+    async fn save_staff_appointment(&self, appointment: &StaffAppointment) -> Result<()> {
+        self.badge_store
+            .lock()
+            .await
+            .appointments
+            .insert(appointment.id.clone(), appointment.clone());
+        Ok(())
+    }
+
+    async fn insert_badge_request(&self, request: &BadgeChangeRequest) -> Result<()> {
+        self.badge_store
+            .lock()
+            .await
+            .requests
+            .insert(request.id.clone(), request.clone());
+        Ok(())
+    }
+
+    async fn fetch_badge_request(&self, id: &str) -> Result<BadgeChangeRequest> {
+        self.badge_store
+            .lock()
+            .await
+            .requests
+            .get(id)
+            .cloned()
+            .ok_or_else(|| create_error!(NotFound))
+    }
+
+    async fn fetch_badge_requests(&self) -> Result<Vec<BadgeChangeRequest>> {
+        let mut list: Vec<_> = self.badge_store.lock().await.requests.values().cloned().collect();
+        list.sort_by(|a, b| b.id.cmp(&a.id));
+        list.truncate(200);
+        Ok(list)
+    }
+
+    async fn decide_badge_request(
+        &self,
+        request: &BadgeChangeRequest,
+        expected: BadgeRequestStatus,
+    ) -> Result<bool> {
+        let mut store = self.badge_store.lock().await;
+        match store.requests.get(&request.id) {
+            Some(current) if current.status == expected => {
+                store.requests.insert(request.id.clone(), request.clone());
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
     }
 }

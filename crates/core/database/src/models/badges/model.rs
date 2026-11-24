@@ -200,4 +200,74 @@ auto_derived!(
         pub created_at: i64,
         pub updated_at: i64,
     }
+
+    /// An official appointment to the Zrzur team (`staff_appointments`, id
+    /// `{user_id}:{role}`). The only source of the Staff and Platform
+    /// Moderator badges: no badge permission gives them. Written only by
+    /// `zrzur-staff appoint` / `end-appointment`, with two people.
+    pub struct StaffAppointment {
+        #[serde(rename = "_id")]
+        pub id: String,
+        pub user_id: String,
+        /// Badge id the appointment gives: `staff` or `platform_moderator`
+        pub role: String,
+        /// The two people who made the appointment (user ids)
+        pub appointed_by: Vec<String>,
+        /// Milliseconds since the epoch
+        pub appointed_at: i64,
+        pub reason: String,
+        /// Platform Moderator: moderation rules, conduct and training
+        /// acknowledged (milliseconds since the epoch)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub training_acknowledged_at: Option<i64>,
+        /// Ended appointments are kept for the record
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub ended_at: Option<i64>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub ended_by: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub end_reason: Option<String>,
+    }
+
+    /// State of a badge change that waits for a second person
+    #[derive(Copy)]
+    pub enum BadgeRequestStatus {
+        /// Waiting for a second staff member
+        Pending,
+        /// A second staff member approved it; the change was made
+        Approved,
+        /// Refused (or withdrawn by the requester); nothing changed
+        Refused,
+    }
+
+    /// A sensitive badge change one person asked for
+    /// (`badge_change_requests`). Nothing changes until a different staff
+    /// member with the right to make it approves.
+    pub struct BadgeChangeRequest {
+        #[serde(rename = "_id")]
+        pub id: String,
+        /// The person whose badge changes
+        pub user_id: String,
+        pub badge: String,
+        /// `true` gives the badge, `false` takes it away
+        pub grant: bool,
+        pub reason: String,
+        /// Expiry of the grant, if any (milliseconds since the epoch)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub grant_expires_at: Option<i64>,
+        pub requested_by: String,
+        /// Where it was asked: `staff_console`, `badge_command`, `cli`
+        pub requested_via: String,
+        pub status: BadgeRequestStatus,
+        pub created_at: i64,
+        /// Not approved by then: void
+        pub expires_at: i64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub decided_by: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub decided_at: Option<i64>,
+    }
 );
+
+/// A badge change request not approved within 7 days is void
+pub const BADGE_REQUEST_TTL_MS: i64 = 7 * 24 * 60 * 60 * 1000;

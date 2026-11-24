@@ -48,6 +48,10 @@ pub async fn web() -> Rocket<Build> {
     let db = revolt_database::DatabaseInfo::Auto.connect().await.unwrap();
     db.migrate_database().await.unwrap();
     revolt_database::seed_official_accounts(&db).await;
+    // a changed `[api.users] founder_id` is written to the audit log once
+    if let Err(error) = revolt_database::note_founder_config(&db, config.api.users.founder()).await {
+        log::error!("founder_id audit record failed: {error:?}");
+    }
 
     // Configure CORS
     let cors = CorsOptions {

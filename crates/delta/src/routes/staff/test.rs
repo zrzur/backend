@@ -1012,40 +1012,85 @@ async fn badges_follow_staff_roles() {
     let (status, record) = get(&harness, &support, &support_token, &format!("/staff/users/{}/badges", target.id)).await;
     assert_eq!(status, Status::Ok, "{record}");
     assert!(record["eligibility"].as_array().unwrap().iter().all(|e| e["allowed"] == false));
-    let (status, body) = send(&harness, &support, &support_token, Post, &grant, json!({ "badge": "partner", "reason": "Official partner" })).await;
+    let (status, body) = send(&harness, &support, &support_token, Post, &grant, json!({ "badge": "community_helper", "reason": "Helps a lot" })).await;
     assert_eq!(status, Status::Forbidden);
     assert_eq!(body["permission"], "platform.badges.manage");
 
     // Senior Support gives and takes a staff-rule badge
-    let (status, body) = send(&harness, &senior, &senior_token, Post, &grant, json!({ "badge": "partner", "reason": "Official partner" })).await;
+    let (status, body) = send(&harness, &senior, &senior_token, Post, &grant, json!({ "badge": "community_helper", "reason": "Helps a lot" })).await;
     assert_eq!(status, Status::Ok, "{body}");
+    assert_eq!(body["status"], "applied");
     assert_eq!(body["held"], true);
-    let (status, body) = send(&harness, &senior, &senior_token, Post, &revoke, json!({ "badge": "partner", "reason": "Partnership ended" })).await;
+    let (status, body) = send(&harness, &senior, &senior_token, Post, &revoke, json!({ "badge": "community_helper", "reason": "Asked to remove it" })).await;
     assert_eq!(status, Status::Ok, "{body}");
     assert_eq!(body["held"], false);
-    // but not the Staff badge, and never automatic ones
-    let (status, _) = send(&harness, &senior, &senior_token, Post, &grant, json!({ "badge": "staff", "reason": "try try" })).await;
-    assert_eq!(status, Status::Forbidden);
-    let (status, _) = send(&harness, &senior, &senior_token, Post, &grant, json!({ "badge": "plus", "reason": "try try" })).await;
-    assert_eq!(status, Status::BadRequest);
-    // nor to themselves
-    let (status, _) = send(&harness, &senior, &senior_token, Post, &format!("/staff/users/{}/badges/grant", senior.user.id),
-        json!({ "badge": "partner", "reason": "self self" })).await;
-    assert_eq!(status, Status::Forbidden);
 
-    // the Staff badge: Owner only, after a step-up
-    let (status, body) = send(&harness, &owner, &owner_token, Post, &grant, json!({ "badge": "staff", "reason": "Joined the team" })).await;
-    assert_eq!(status, Status::Forbidden);
-    assert_eq!(body["type"], "NotElevated");
+    // Partner needs a second person: a request, nothing held yet
+    let (status, body) = send(&harness, &senior, &senior_token, Post, &grant, json!({ "badge": "partner", "reason": "Official partner" })).await;
+    assert_eq!(status, Status::Ok, "{body}");
+    assert_eq!(body["status"], "pending");
+    assert_eq!(body["request"]["status"], "Pending");
+    let request = body["request"]["id"].as_str().unwrap().to_string();
+    assert!(!revolt_database::held_badges(&harness.db, &target.id).await.unwrap().contains("partner"));
+    let (status, list) = get(&harness, &support, &support_token, "/staff/badges/requests").await;
+    assert_eq!(status, Status::Ok);
+    assert!(list.as_array().unwrap().iter().any(|r| r["id"] == request.as_str()));
+    // the one who asked can't approve it, even after a step-up
+    let approve = format!("/staff/badges/requests/{request}/approve");
+    step_up(&harness, &senior, &senior_token).await;
+    let (status, body) = send(&harness, &senior, &senior_token, Post, &approve, json!({})).await;
+    assert_eq!(status, Status::Forbidden, "{body}");
+    assert!(!revolt_database::held_badges(&harness.db, &target.id).await.unwrap().contains("partner"));
+    // a second staff member approves (after a step-up)
     let (status, _) = send(&harness, &owner, &owner_token, Post, "/staff/session/step-up", json!({ "totp_code": code(0) })).await;
     assert_eq!(status, Status::Ok);
-    let (status, body) = send(&harness, &owner, &owner_token, Post, &grant, json!({ "badge": "staff", "reason": "Joined the team" })).await;
+    let (status, body) = send(&harness, &owner, &owner_token, Post, &approve, json!({})).await;
     assert_eq!(status, Status::Ok, "{body}");
+    assert_eq!(body["status"], "applied");
+    assert_eq!(body["request"]["status"], "Approved");
+    assert!(revolt_database::held_badges(&harness.db, &target.id).await.unwrap().contains("partner"));
+    // and only once
+    let (status, _) = send(&harness, &owner, &owner_token, Post, &approve, json!({})).await;
+    assert_eq!(status, Status::BadRequest);
+
+    // never the Staff badge, never automatic ones, never to themselves
+    let (status, _) = send(&harness, &senior, &senior_token, Post, &grant, json!({ "badge": "staff", "reason": "try try" })).await;
+    assert_eq!(status, Status::BadRequest);
+    let (status, _) = send(&harness, &senior, &senior_token, Post, &grant, json!({ "badge": "plus", "reason": "try try" })).await;
+    assert_eq!(status, Status::BadRequest);
+    let (status, _) = send(&harness, &senior, &senior_token, Post, &format!("/staff/users/{}/badges/grant", senior.user.id),
+        json!({ "badge": "community_helper", "reason": "self self" })).await;
+    assert_eq!(status, Status::Forbidden);
+
+    // an Owner neither: Founder is locked, Staff follows appointments
+    for badge in ["founder", "staff", "platform_moderator"] {
+        let (status, body) = send(&harness, &owner, &owner_token, Post, &grant, json!({ "badge": badge, "reason": "try as owner" })).await;
+        assert_eq!(status, Status::BadRequest, "{badge}: {body}");
+        let (status, _) = send(&harness, &owner, &owner_token, Post, &revoke, json!({ "badge": badge, "reason": "try as owner" })).await;
+        assert_eq!(status, Status::BadRequest, "{badge}");
+    }
+    // a privileged badge: the Owner, stepped up; taking it away needs a second person
+    let (status, body) = send(&harness, &owner, &owner_token, Post, &grant, json!({ "badge": "developer", "reason": "Built the voice server" })).await;
+    assert_eq!(status, Status::Ok, "{body}");
+    assert_eq!(body["status"], "applied");
+    let (status, body) = send(&harness, &owner, &owner_token, Post, &revoke, json!({ "badge": "developer", "reason": "Left the project" })).await;
+    assert_eq!(status, Status::Ok, "{body}");
+    assert_eq!(body["status"], "pending");
+    // Senior Support may not decide a privileged change
+    let approve = format!("/staff/badges/requests/{}/approve", body["request"]["id"].as_str().unwrap());
+    let (status, _) = send(&harness, &senior, &senior_token, Post, &approve, json!({})).await;
+    assert_eq!(status, Status::Forbidden);
+    assert!(revolt_database::held_badges(&harness.db, &target.id).await.unwrap().contains("developer"));
 
     let actions = audit_actions(&harness).await;
-    assert!(actions.iter().filter(|(a, o)| a == "staff.badge.grant" && o == "Success").count() >= 2);
-    assert!(actions.iter().any(|(a, o)| a == "staff.badge.revoke" && o == "Success"));
-    assert!(actions.iter().any(|(a, o)| a == "staff.badge.grant" && o == "Denied"));
+    let has = |action: &str, outcome: &str| actions.iter().any(|(a, o)| a == action && o == outcome);
+    assert!(actions.iter().filter(|(a, o)| a == "staff.badge.grant" && o == "Success").count() >= 3);
+    assert!(has("staff.badge.revoke", "Success"));
+    assert!(has("staff.badge.grant", "Denied"));
+    assert!(has("staff.badge.revoke", "Denied"));
+    assert!(has("staff.badge.grant.request", "Success"));
+    assert!(has("staff.badge.revoke.request", "Success"));
+    assert!(has("staff.badge.request.approve", "Denied"));
 }
 
 #[rocket::async_test]
@@ -2098,7 +2143,7 @@ async fn official_messages_arrive_and_cannot_be_answered() {
     let senior_token = sign_in(&harness, &senior, -1).await;
     step_up(&harness, &senior, &senior_token).await;
     let (status, body) = send(&harness, &senior, &senior_token, Post, &format!("/staff/users/{}/badges/grant", user.id),
-        json!({ "badge": "partner", "reason": "Official partner since today" })).await;
+        json!({ "badge": "community_helper", "reason": "Helped many people today" })).await;
     assert_eq!(status, Status::Ok, "{body}");
     let zrzur = harness.db.find_direct_message_channel(revolt_database::OfficialAccount::Zrzur.id(), &user.id).await.unwrap();
     let all = harness
@@ -2110,7 +2155,7 @@ async fn official_messages_arrive_and_cannot_be_answered() {
         })
         .await
         .unwrap();
-    assert!(all.iter().any(|m| m.content.as_deref().unwrap_or_default().contains("„Partner“")), "badge message in German");
+    assert!(all.iter().any(|m| m.content.as_deref().unwrap_or_default().contains("„Community-Helfer“")), "badge message in German");
 }
 #[rocket::async_test]
 async fn the_official_account_cannot_be_abused() {

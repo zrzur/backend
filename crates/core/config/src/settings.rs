@@ -239,6 +239,18 @@ pub struct LiveKitNode {
 pub struct ApiUsers {
     pub early_adopter_cutoff: Option<u64>,
     pub min_username_length: usize,
+    /// The one account that shows the Zrzur Founder badge. No API, bot,
+    /// console or command line writes it: changing it is a host-level
+    /// configuration change (two people, see Revolt.toml).
+    #[serde(default)]
+    pub founder_id: Option<String>,
+}
+
+impl ApiUsers {
+    /// `founder_id`, trimmed; `None` when unset or empty
+    pub fn founder(&self) -> Option<&str> {
+        self.founder_id.as_deref().map(str::trim).filter(|id| !id.is_empty())
+    }
 }
 
 #[derive(Deserialize, Debug, Clone)]

@@ -1,30 +1,42 @@
 //! Badges in the admin console: see a user's badges, grant and revoke the
-//! hand-given ones. Same rules as `/badges/admin` (shared functions in
-//! `routes::badges`), through a staff session:
+//! hand-given ones, and approve the sensitive changes another staff member
+//! asked for. Every change goes through `revolt_database::mutate_badge`,
+//! the one authorization gate shared with `/badge` and `zrzur-staff badge`:
 //!
-//! - `platform.users.read`: see the catalogue and a user's badge record
+//! - `platform.users.read`: see the catalogue, a user's badge record and
+//!   the open requests
 //! - `platform.badges.manage`: grant and revoke `Staff`-rule badges
-//! - `Privileged`-rule badges (the Staff badge, old official badges): an
+//! - `Privileged`-rule badges (Zrzur Developer, old official badges): an
 //!   Owner only, with a fresh step-up
+//! - Founder: nobody (`[api.users] founder_id`); Staff and Platform
+//!   Moderator: only an appointment (`zrzur-staff appoint`)
+//! - giving Partner or Elite Bug Hunter, and taking away a `Privileged`
+//!   badge: a second staff member approves (never the one who asked, never
+//!   the person concerned)
 //!
-//! Plus, Creator and Beta badges follow their records and can't be given
-//! by hand. Every change is written to the platform audit log first.
+//! Every change and every refusal is written to the platform audit log.
 
 use revolt_database::{
-    badge_definition, record_platform_audit, AuditOutcome, BadgeGrantRule, Database, StaffPermission,
+    approve_badge_request, badge_request_open, mutate_badge, refuse_badge_request, BadgeActor,
+    BadgeChange, BadgeChangeRequest, BadgeMutation, BadgeOutcome, BadgePath, Database, StaffPermission,
 };
-use revolt_models::v0::{AdminBadgeGrant, AdminUserBadges, BadgeInfo, DataGrantBadge, DataRevokeBadge};
-use revolt_result::{create_error, Result};
+use revolt_models::v0::{AdminBadgeGrant, AdminUserBadges, BadgeInfo};
+use revolt_result::Result;
 use rocket::{serde::json::Json, State};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::StaffContext;
-use crate::routes::badges::{catalogue, grant_with, revoke_with, user_record, BadgeRights};
+use crate::routes::badges::{admin_grant_view, catalogue, now_ms, user_record};
 
-fn rights(staff: &StaffContext) -> BadgeRights {
-    BadgeRights {
+/// The badge rights of this staff session
+fn actor(staff: &StaffContext) -> BadgeActor {
+    BadgeActor {
+        id: staff.user.id.clone(),
+        path: BadgePath::StaffConsole,
         staff: staff.has(StaffPermission::BadgesManage),
-        privileged: staff.grant.is_owner(staff.now),
+        owner: staff.grant.is_owner(staff.now),
+        step_up: staff.session.step_up_until.is_some_and(|until| staff.now < until),
+        session_id: Some(staff.session.id.clone()),
     }
 }
 
@@ -41,7 +53,7 @@ pub async fn badge_catalogue(db: &State<Database>, staff: StaffContext) -> Resul
 #[get("/users/<id>/badges")]
 pub async fn user_badges(db: &State<Database>, staff: StaffContext, id: &str) -> Result<Json<AdminUserBadges>> {
     staff.require(db, StaffPermission::UsersRead).await?;
-    user_record(db, &staff.user.id, rights(&staff), id).await.map(Json)
+    user_record(db, &actor(&staff), id).await.map(Json)
 }
 
 #[derive(Deserialize)]
@@ -52,51 +64,95 @@ pub struct DataBadgeChange {
     pub expires_at: Option<i64>,
 }
 
-/// Permission checks shared by grant and revoke; returns the audit record
-async fn check(
-    db: &Database,
-    staff: &StaffContext,
-    action: &str,
-    id: &str,
-    data: &DataBadgeChange,
-) -> Result<revolt_database::AuditRecord> {
-    staff.require(db, StaffPermission::BadgesManage).await?;
-    let definition = badge_definition(&data.badge).ok_or_else(|| create_error!(NotFound))?;
-    // the Staff badge and old official badges: Owner only, freshly confirmed
-    if definition.rule == BadgeGrantRule::Privileged {
-        if !staff.grant.is_owner(staff.now) {
-            let mut record = staff.record(action, Some(StaffPermission::BadgesManage));
-            record.target_kind = Some("user".to_string());
-            record.target_id = Some(id.to_string());
-            record.summary = Some(format!("{} (owner only)", data.badge));
-            record_platform_audit(db, record, AuditOutcome::Denied).await?;
-            return Err(create_error!(NotPrivileged));
-        }
-        staff.require_step_up(db, StaffPermission::BadgesManage).await?;
-    }
-    let mut record = staff.record(action, Some(StaffPermission::BadgesManage));
-    record.target_kind = Some("user".to_string());
-    record.target_id = Some(id.to_string());
-    record.reason = Some(data.reason.trim().chars().take(500).collect());
-    record.summary = Some(data.badge.clone());
-    Ok(record)
+/// A badge change request, as the console shows it
+#[derive(Serialize, Debug)]
+pub struct BadgeRequestView {
+    pub id: String,
+    pub user_id: String,
+    pub badge: String,
+    pub grant: bool,
+    pub reason: String,
+    pub grant_expires_at: Option<i64>,
+    pub requested_by: String,
+    pub requested_via: String,
+    /// Pending, Approved, Refused or Expired
+    pub status: &'static str,
+    pub created_at: i64,
+    pub expires_at: i64,
+    pub decided_by: Option<String>,
+    pub decided_at: Option<i64>,
 }
 
-async fn finish<T>(
-    db: &Database,
-    record: revolt_database::AuditRecord,
-    change: impl std::future::Future<Output = Result<T>>,
-) -> Result<T> {
-    record_platform_audit(db, record.clone(), AuditOutcome::Success).await?;
-    match change.await {
-        Ok(value) => Ok(value),
-        Err(error) => {
-            let mut failed = record;
-            failed.summary = Some(format!("{:?}", error.error_type).chars().take(200).collect());
-            let _ = record_platform_audit(db, failed, AuditOutcome::Failed).await;
-            Err(error)
-        }
+pub(crate) fn request_view(request: &BadgeChangeRequest, now: i64) -> BadgeRequestView {
+    use revolt_database::BadgeRequestStatus::*;
+    BadgeRequestView {
+        id: request.id.clone(),
+        user_id: request.user_id.clone(),
+        badge: request.badge.clone(),
+        grant: request.grant,
+        reason: request.reason.clone(),
+        grant_expires_at: request.grant_expires_at,
+        requested_by: request.requested_by.clone(),
+        requested_via: request.requested_via.clone(),
+        status: match request.status {
+            Pending if badge_request_open(request, now) => "Pending",
+            Pending => "Expired",
+            Approved => "Approved",
+            Refused => "Refused",
+        },
+        created_at: request.created_at,
+        expires_at: request.expires_at,
+        decided_by: request.decided_by.clone(),
+        decided_at: request.decided_at,
     }
+}
+
+/// What came of a grant or revoke: `applied` (the grant's fields follow, as
+/// before) or `pending` (a second staff member must approve `request`)
+#[derive(Serialize, Debug)]
+pub struct StaffBadgeChange {
+    pub status: &'static str,
+    #[serde(flatten)]
+    pub grant: Option<AdminBadgeGrant>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request: Option<BadgeRequestView>,
+}
+
+async fn change(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataBadgeChange,
+    change: BadgeChange,
+) -> Result<Json<StaffBadgeChange>> {
+    let (badge, note) = (data.badge.clone(), data.reason.clone());
+    let outcome = mutate_badge(
+        db,
+        &actor(staff),
+        BadgeMutation {
+            user_id: id.to_string(),
+            badge: data.badge,
+            change,
+            reason: data.reason,
+            expires_at: if change == BadgeChange::Grant { data.expires_at } else { None },
+        },
+    )
+    .await?;
+    Ok(Json(match outcome {
+        BadgeOutcome::Applied(grant) => {
+            crate::util::official::badge(db, id, change == BadgeChange::Grant, &badge, &note).await;
+            StaffBadgeChange {
+                status: "applied",
+                grant: Some(admin_grant_view(grant, now_ms())),
+                request: None,
+            }
+        }
+        BadgeOutcome::Pending(request) => StaffBadgeChange {
+            status: "pending",
+            grant: None,
+            request: Some(request_view(&request, now_ms())),
+        },
+    }))
 }
 
 /// # Grant a badge
@@ -106,24 +162,8 @@ pub async fn grant(
     staff: StaffContext,
     id: &str,
     data: Json<DataBadgeChange>,
-) -> Result<Json<AdminBadgeGrant>> {
-    let data = data.into_inner();
-    let record = check(db, &staff, "staff.badge.grant", id, &data).await?;
-    let (badge, note) = (data.badge.clone(), data.reason.clone());
-    let change = grant_with(
-        db,
-        &staff.user.id,
-        rights(&staff),
-        DataGrantBadge {
-            user: id.to_string(),
-            badge: data.badge,
-            reason: data.reason,
-            expires_at: data.expires_at,
-        },
-    );
-    let granted = finish(db, record, change).await?;
-    crate::util::official::badge(db, id, true, &badge, &note).await;
-    Ok(Json(granted))
+) -> Result<Json<StaffBadgeChange>> {
+    change(db, &staff, id, data.into_inner(), BadgeChange::Grant).await
 }
 
 /// # Revoke a badge
@@ -133,21 +173,42 @@ pub async fn revoke(
     staff: StaffContext,
     id: &str,
     data: Json<DataBadgeChange>,
-) -> Result<Json<AdminBadgeGrant>> {
-    let data = data.into_inner();
-    let record = check(db, &staff, "staff.badge.revoke", id, &data).await?;
-    let (badge, note) = (data.badge.clone(), data.reason.clone());
-    let change = revoke_with(
-        db,
-        &staff.user.id,
-        rights(&staff),
-        DataRevokeBadge {
-            user: id.to_string(),
-            badge: data.badge,
-            reason: data.reason,
-        },
-    );
-    let revoked = finish(db, record, change).await?;
-    crate::util::official::badge(db, id, false, &badge, &note).await;
-    Ok(Json(revoked))
+) -> Result<Json<StaffBadgeChange>> {
+    change(db, &staff, id, data.into_inner(), BadgeChange::Revoke).await
+}
+
+/// # Badge changes waiting for a second person (and recent decisions)
+#[get("/badges/requests")]
+pub async fn requests(db: &State<Database>, staff: StaffContext) -> Result<Json<Vec<BadgeRequestView>>> {
+    staff.require(db, StaffPermission::UsersRead).await?;
+    let now = now_ms();
+    Ok(Json(db.fetch_badge_requests().await?.iter().map(|r| request_view(r, now)).collect()))
+}
+
+/// # Approve a badge change
+///
+/// A different staff member than the one who asked, never the person
+/// concerned, with the right to make the change and a fresh step-up.
+#[post("/badges/requests/<id>/approve")]
+pub async fn approve(db: &State<Database>, staff: StaffContext, id: &str) -> Result<Json<StaffBadgeChange>> {
+    staff.require_step_up(db, StaffPermission::BadgesManage).await?;
+    let request = db.fetch_badge_request(id).await?;
+    let grant = approve_badge_request(db, &actor(&staff), id).await?;
+    crate::util::official::badge(db, &request.user_id, request.grant, &request.badge, &request.reason).await;
+    let decided = db.fetch_badge_request(id).await?;
+    Ok(Json(StaffBadgeChange {
+        status: "applied",
+        grant: Some(admin_grant_view(grant, now_ms())),
+        request: Some(request_view(&decided, now_ms())),
+    }))
+}
+
+/// # Refuse a badge change
+///
+/// Someone with the right to make it, or the one who asked (withdraw).
+#[post("/badges/requests/<id>/refuse")]
+pub async fn refuse(db: &State<Database>, staff: StaffContext, id: &str) -> Result<Json<BadgeRequestView>> {
+    staff.require(db, StaffPermission::UsersRead).await?;
+    let decided = refuse_badge_request(db, &actor(&staff), id).await?;
+    Ok(Json(request_view(&decided, now_ms())))
 }

@@ -1,12 +1,19 @@
 use revolt_database::{
-    sync_user_badges, BadgeAction, CreatorStanding, File, Metadata, PartialUser,
-    PlatformPermission, PlatformRole, Session, User,
+    mutate_badge, sync_user_badges, BadgeAction, BadgeActor, BadgeChange, BadgeMutation,
+    BadgeOutcome, BadgePath, CreatorStanding, File, Metadata, PartialUser, PlatformPermission,
+    PlatformRole, Session, User,
 };
+use revolt_result::ErrorType;
 use revolt_models::v0::{self, UserBadges};
 use rocket::http::{ContentType, Header, Status};
 use rocket::local::asynchronous::LocalResponse;
 
 use crate::util::test::TestHarness;
+
+/// The error's variant name (`ErrorType` has no `PartialEq`)
+fn kind(error: ErrorType) -> String {
+    format!("{error:?}").split([' ', '{', '(']).next().unwrap_or_default().to_string()
+}
 
 async fn set_role(
     harness: &TestHarness,
@@ -63,20 +70,55 @@ async fn get<'a>(harness: &'a TestHarness, session: &Session, path: &'a str) -> 
         .await
 }
 
-async fn grant(
+/// Badge rights as the admin console gives them (the gate trusts the path
+/// for who is asking; the console builds this from the staff session)
+fn console(user: &User, staff: bool, owner: bool) -> BadgeActor {
+    BadgeActor {
+        id: user.id.clone(),
+        path: BadgePath::StaffConsole,
+        staff,
+        owner,
+        step_up: owner,
+        session_id: None,
+    }
+}
+
+/// A new account with `platform.badges.manage` rights in the console
+async fn badge_staff(harness: &TestHarness) -> (Session, User, BadgeActor) {
+    let (_, session, user) = harness.new_user().await;
+    let actor = console(&user, true, false);
+    (session, user, actor)
+}
+
+async fn change(
     harness: &TestHarness,
-    session: &Session,
+    actor: &BadgeActor,
     user: &User,
     badge: &str,
-) -> Status {
-    post(
-        harness,
-        session,
-        "/badges/admin/grant",
-        json!({ "user": user.id, "badge": badge, "reason": "test grant" }),
+    change: BadgeChange,
+    expires_at: Option<i64>,
+) -> Result<BadgeOutcome, String> {
+    mutate_badge(
+        &harness.db,
+        actor,
+        BadgeMutation {
+            user_id: user.id.clone(),
+            badge: badge.to_string(),
+            change,
+            reason: "test change".to_string(),
+            expires_at,
+        },
     )
     .await
-    .status()
+    .map_err(|e| kind(e.error_type))
+}
+
+/// Grant through the one gate; `Ok(true)` when applied, `Ok(false)` when it
+/// waits for a second person
+async fn grant(harness: &TestHarness, actor: &BadgeActor, user: &User, badge: &str) -> Result<bool, String> {
+    change(harness, actor, user, badge, BadgeChange::Grant, None)
+        .await
+        .map(|outcome| matches!(outcome, BadgeOutcome::Applied(_)))
 }
 
 async fn badges_of(harness: &TestHarness, user: &User) -> u32 {
@@ -177,74 +219,65 @@ async fn catalogue_lists_every_badge() {    let harness = TestHarness::new().awa
 #[rocket::async_test]
 async fn grant_needs_permission() {
     let harness = TestHarness::new().await;
-    let (_, session, _) = harness.new_user().await;
+    let (_, _, me) = harness.new_user().await;
     let (_, _, target) = harness.new_user().await;
-    assert_eq!(grant(&harness, &session, &target, "partner").await, Status::Forbidden);
+    let err = grant(&harness, &console(&me, false, false), &target, "community_helper").await.unwrap_err();
+    assert!(err == "MissingPlatformPermission", "{err:?}");
     assert_eq!(badges_of(&harness, &target).await, 0);
 }
 
 #[rocket::async_test]
 async fn grant_and_revoke_with_audit_log() {
     let harness = TestHarness::new().await;
-    let (session, _) = staff(&harness, vec![PlatformPermission::BadgesGrant]).await;
+    let (_, _, actor) = badge_staff(&harness).await;
     let (_, _, target) = harness.new_user().await;
 
-    assert_eq!(grant(&harness, &session, &target, "partner").await, Status::Ok);
-    assert_ne!(badges_of(&harness, &target).await & UserBadges::Partner as u32, 0);
+    assert_eq!(grant(&harness, &actor, &target, "community_helper").await, Ok(true));
+    assert_ne!(badges_of(&harness, &target).await & UserBadges::CommunityHelper as u32, 0);
 
     // never twice
-    assert_eq!(grant(&harness, &session, &target, "partner").await, Status::BadRequest);
+    assert_eq!(grant(&harness, &actor, &target, "community_helper").await, Err("NoEffect".to_string()));
 
-    let res = post(
-        &harness,
-        &session,
-        "/badges/admin/revoke",
-        json!({ "user": target.id, "badge": "partner", "reason": "partnership ended" }),
-    )
-    .await;
-    assert_eq!(res.status(), Status::Ok);
-    assert_eq!(badges_of(&harness, &target).await & UserBadges::Partner as u32, 0);
+    let res = change(&harness, &actor, &target, "community_helper", BadgeChange::Revoke, None).await;
+    assert!(matches!(res, Ok(BadgeOutcome::Applied(_))));
+    assert_eq!(badges_of(&harness, &target).await & UserBadges::CommunityHelper as u32, 0);
 
     let log = harness.db.fetch_badge_logs(&target.id).await.unwrap();
     assert!(log.iter().any(|e| e.action == BadgeAction::Grant));
     assert!(log
         .iter()
-        .any(|e| e.action == BadgeAction::Revoke && e.reason.as_deref() == Some("partnership ended")));
+        .any(|e| e.action == BadgeAction::Revoke && e.reason.as_deref() == Some("test change")));
 
     // revoking again has no effect
-    let res = post(
-        &harness,
-        &session,
-        "/badges/admin/revoke",
-        json!({ "user": target.id, "badge": "partner", "reason": "again" }),
-    )
-    .await;
-    assert_eq!(res.status(), Status::BadRequest);
+    let res = change(&harness, &actor, &target, "community_helper", BadgeChange::Revoke, None).await;
+    assert_eq!(res.map(|_| ()), Err("NoEffect".to_string()));
 }
 
 #[rocket::async_test]
 async fn self_grant_is_denied() {
     let harness = TestHarness::new().await;
-    let (session, me) = staff(&harness, vec![PlatformPermission::BadgesGrant]).await;
-    assert_eq!(grant(&harness, &session, &me, "partner").await, Status::Forbidden);
+    let (_, me, actor) = badge_staff(&harness).await;
+    assert_eq!(grant(&harness, &actor, &me, "community_helper").await, Err("NotPrivileged".to_string()));
 
-    // not even with a privileged account
+    // not even as an Owner with a step-up, nor with the privileged flag
     make_privileged(&harness, &me).await;
-    assert_eq!(grant(&harness, &session, &me, "staff").await, Status::Forbidden);
+    let owner = console(&me, true, true);
+    assert_eq!(grant(&harness, &owner, &me, "developer").await, Err("NotPrivileged".to_string()));
     assert_eq!(badges_of(&harness, &me).await, 0);
 }
 
 #[rocket::async_test]
-async fn staff_badge_needs_privileged_account() {
+async fn staff_badge_only_from_an_appointment() {
     let harness = TestHarness::new().await;
-    let (session, _) = staff(&harness, vec![PlatformPermission::BadgesGrant]).await;
     let (_, _, target) = harness.new_user().await;
-    assert_eq!(grant(&harness, &session, &target, "staff").await, Status::Forbidden);
-
-    let (_, admin_session, admin) = harness.new_user().await;
+    let (_, _, admin) = harness.new_user().await;
     make_privileged(&harness, &admin).await;
-    assert_eq!(grant(&harness, &admin_session, &target, "staff").await, Status::Ok);
-    assert_ne!(badges_of(&harness, &target).await & UserBadges::Staff as u32, 0);
+    // an Owner with a step-up and the privileged flag still can't
+    let owner = console(&admin, true, true);
+    for badge in ["staff", "platform_moderator"] {
+        assert_eq!(grant(&harness, &owner, &target, badge).await, Err("InvalidOperation".to_string()), "{badge}");
+    }
+    assert_eq!(badges_of(&harness, &target).await, 0);
 }
 
 #[rocket::async_test]
@@ -262,16 +295,15 @@ async fn bots_cannot_grant_or_receive_badges() {
         .post("/badges/admin/grant")
         .header(ContentType::JSON)
         .header(Header::new("x-bot-token", bot.token.clone()))
-        .body(json!({ "user": target.id, "badge": "staff", "reason": "bot api" }).to_string())
+        .body(json!({ "user": target.id, "badge": "community_helper", "reason": "bot api" }).to_string())
         .dispatch()
         .await;
     assert_ne!(res.status(), Status::Ok);
     assert_eq!(badges_of(&harness, &target).await, 0);
 
     // and a bot never receives one
-    let (_, admin_session, admin) = harness.new_user().await;
-    make_privileged(&harness, &admin).await;
-    assert_eq!(grant(&harness, &admin_session, &bot_user, "partner").await, Status::BadRequest);
+    let (_, _, actor) = badge_staff(&harness).await;
+    assert_eq!(grant(&harness, &actor, &bot_user, "community_helper").await, Err("IsBot".to_string()));
 }
 
 #[rocket::async_test]
@@ -294,11 +326,12 @@ async fn raw_bitfield_edit_is_blocked() {
 #[rocket::async_test]
 async fn plus_creator_and_beta_badges_cannot_be_granted_by_hand() {
     let harness = TestHarness::new().await;
-    let (_, session, admin) = harness.new_user().await;
+    let (_, _, admin) = harness.new_user().await;
     make_privileged(&harness, &admin).await;
+    let owner = console(&admin, true, true);
     let (_, _, target) = harness.new_user().await;
     for badge in ["plus", "creator", "beta_tester", "beta_veteran", "early_adopter"] {
-        assert_eq!(grant(&harness, &session, &target, badge).await, Status::BadRequest, "{badge}");
+        assert_eq!(grant(&harness, &owner, &target, badge).await, Err("InvalidOperation".to_string()), "{badge}");
     }
     assert_eq!(badges_of(&harness, &target).await, 0);
 }
@@ -306,18 +339,12 @@ async fn plus_creator_and_beta_badges_cannot_be_granted_by_hand() {
 #[rocket::async_test]
 async fn expired_badge_goes_away() {
     let harness = TestHarness::new().await;
-    let (session, _) = staff(&harness, vec![PlatformPermission::BadgesGrant]).await;
+    let (_, _, actor) = badge_staff(&harness).await;
     let (_, _, target) = harness.new_user().await;
     let soon = super::now_ms() + 60_000;
-    let res = post(
-        &harness,
-        &session,
-        "/badges/admin/grant",
-        json!({ "user": target.id, "badge": "partner", "reason": "event", "expires_at": soon }),
-    )
-    .await;
-    assert_eq!(res.status(), Status::Ok);
-    assert_ne!(badges_of(&harness, &target).await & UserBadges::Partner as u32, 0);
+    let res = change(&harness, &actor, &target, "community_helper", BadgeChange::Grant, Some(soon)).await;
+    assert!(matches!(res, Ok(BadgeOutcome::Applied(_))));
+    assert_ne!(badges_of(&harness, &target).await & UserBadges::CommunityHelper as u32, 0);
 
     // time passes
     let mut grant = harness.db.fetch_badge_grants(&target.id).await.unwrap().pop().unwrap();
@@ -325,7 +352,7 @@ async fn expired_badge_goes_away() {
     harness.db.save_badge_grant(&grant).await.unwrap();
     sync_user_badges(&harness.db, &target.id).await.unwrap();
 
-    assert_eq!(badges_of(&harness, &target).await & UserBadges::Partner as u32, 0);
+    assert_eq!(badges_of(&harness, &target).await & UserBadges::CommunityHelper as u32, 0);
     let log = harness.db.fetch_badge_logs(&target.id).await.unwrap();
     assert!(log.iter().any(|e| e.action == BadgeAction::Expire));
 }
@@ -356,25 +383,25 @@ async fn legacy_bits_are_kept_and_recorded() {
 #[rocket::async_test]
 async fn owner_can_hide_and_show_a_badge() {
     let harness = TestHarness::new().await;
-    let (session, _) = staff(&harness, vec![PlatformPermission::BadgesGrant]).await;
+    let (_, _, actor) = badge_staff(&harness).await;
     let (_, target_session, target) = harness.new_user().await;
-    assert_eq!(grant(&harness, &session, &target, "partner").await, Status::Ok);
+    assert_eq!(grant(&harness, &actor, &target, "community_helper").await, Ok(true));
 
     let hide = |hidden: bool| {
         harness
             .client
-            .patch("/badges/@me/partner")
+            .patch("/badges/@me/community_helper")
             .header(ContentType::JSON)
             .header(Header::new("x-session-token", target_session.token.clone()))
             .body(json!({ "hidden": hidden }).to_string())
             .dispatch()
     };
     assert_eq!(hide(true).await.status(), Status::NoContent);
-    assert_eq!(badges_of(&harness, &target).await & UserBadges::Partner as u32, 0);
+    assert_eq!(badges_of(&harness, &target).await & UserBadges::CommunityHelper as u32, 0);
     // still held
-    assert!(revolt_database::held_badges(&harness.db, &target.id).await.unwrap().contains("partner"));
+    assert!(revolt_database::held_badges(&harness.db, &target.id).await.unwrap().contains("community_helper"));
     assert_eq!(hide(false).await.status(), Status::NoContent);
-    assert_ne!(badges_of(&harness, &target).await & UserBadges::Partner as u32, 0);
+    assert_ne!(badges_of(&harness, &target).await & UserBadges::CommunityHelper as u32, 0);
 
     // hiding something you don't hold does nothing
     let res = harness
@@ -429,7 +456,7 @@ async fn creator_badge_follows_published_designs() {
 #[rocket::async_test]
 async fn super_creator_needs_designs_and_staff() {
     let harness = TestHarness::new().await;
-    let (session, _) = staff(&harness, vec![PlatformPermission::BadgesGrant]).await;
+    let (_, _, actor) = badge_staff(&harness).await;
     let (_, creator_session, creator) = harness.new_user().await;
     set_role(
         &harness,
@@ -439,10 +466,11 @@ async fn super_creator_needs_designs_and_staff() {
     )
     .await;
     publish_design(&harness, &creator_session, &creator, "One").await;
-    assert_eq!(grant(&harness, &session, &creator, "super_creator").await, Status::BadRequest);
+    let refused = grant(&harness, &actor, &creator, "super_creator").await.unwrap_err();
+    assert!(refused == "FailedValidation", "{refused:?}");
     publish_design(&harness, &creator_session, &creator, "Two").await;
     publish_design(&harness, &creator_session, &creator, "Three").await;
-    assert_eq!(grant(&harness, &session, &creator, "super_creator").await, Status::Ok);
+    assert_eq!(grant(&harness, &actor, &creator, "super_creator").await, Ok(true));
     let bits = badges_of(&harness, &creator).await;
     assert_ne!(bits & UserBadges::SuperCreator as u32, 0);
     assert_ne!(bits & UserBadges::Creator as u32, 0);
@@ -690,8 +718,9 @@ async fn bug_hunter_needs_a_verified_report() {
     assert_eq!(res.status(), Status::Conflict);
 
     // Elite is never automatic and needs more than one report
-    let (grant_session, _) = staff(&harness, vec![PlatformPermission::BadgesGrant]).await;
-    assert_eq!(grant(&harness, &grant_session, &reporter, "elite_bug_hunter").await, Status::BadRequest);
+    let (_, _, actor) = badge_staff(&harness).await;
+    let refused = grant(&harness, &actor, &reporter, "elite_bug_hunter").await.unwrap_err();
+    assert!(refused == "FailedValidation", "{refused:?}");
     assert_eq!(badges_of(&harness, &reporter).await & UserBadges::EliteBugHunter as u32, 0);
 }
 

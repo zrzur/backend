@@ -175,6 +175,14 @@ idle_days = 30
 [api.users]
 # Minimum allowed length of usernames
 min_username_length = 2
+# The account id that shows the Zrzur Founder badge (one account). Leave
+# empty until the owner sets his own id. No API, bot, admin console or
+# command line changes it, and no badge path grants, moves or takes the
+# badge. Changing it is a host-level change with two people: the owner
+# (guard mark) edits /etc/zrzur/Revolt.toml while a second team member
+# watches and confirms; delta writes `config.founder_id` to the platform
+# audit log at the next start ("founder_id changed").
+# founder_id = ""
 
 [pushd]
 # this changes the names of the queues to not overlap 
