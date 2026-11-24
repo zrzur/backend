@@ -997,6 +997,85 @@ async fn the_reporter_gets_an_answer() {
 }
 
 #[rocket::async_test]
+async fn held_community_badges_are_released_or_refused_in_the_console() {
+    use rocket::http::Method::Post;
+    let harness = TestHarness::new().await;
+    let (_, _, owner) = harness.new_user().await;
+    let (server, _) = harness.new_server(&owner).await;
+    let (other, _) = harness.new_server(&owner).await;
+    for id in [&server.id, &other.id] {
+        harness
+            .db
+            .save_community_check(&revolt_database::CommunityBadgeCheck {
+                id: id.clone(),
+                owner_id: owner.id.clone(),
+                members: 140,
+                counted: 120,
+                join_burst: 90,
+                signup_burst: 12,
+                status: revolt_database::CommunityCheckStatus::Held,
+                builder_to: None,
+                big_to: None,
+                checked_at: 1,
+                decided_by: None,
+                decided_at: None,
+            })
+            .await
+            .unwrap();
+    }
+    let support = member(&harness, vec![StaffRole::Support]).await;
+    let senior = member(&harness, vec![StaffRole::SeniorSupport]).await;
+    let support_token = sign_in(&harness, &support, 0).await;
+    let senior_token = sign_in(&harness, &senior, 0).await;
+
+    // counts only: no member ids in the list
+    let (status, list) = get(&harness, &support, &support_token, "/staff/badges/community?status=Held").await;
+    assert_eq!(status, Status::Ok, "{list}");
+    let rows = list.as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0]["counted"], 120);
+    assert_eq!(rows[0]["server_name"], "Test Server");
+    assert!(!list.to_string().contains("members\":["));
+    let (status, _) = get(&harness, &support, &support_token, "/staff/badges/community?status=Nope").await;
+    assert_eq!(status, Status::BadRequest);
+
+    // Support may look but not decide
+    let release = format!("/staff/badges/community/{}/release", server.id);
+    let (status, body) = send(&harness, &support, &support_token, Post, &release, json!({ "reason": "real people" })).await;
+    assert_eq!(status, Status::Forbidden, "{body}");
+    assert_eq!(body["permission"], "platform.badges.manage");
+    // a reason is needed
+    let (status, _) = send(&harness, &senior, &senior_token, Post, &release, json!({ "reason": "x" })).await;
+    assert_eq!(status, Status::BadRequest);
+    let (status, body) = send(&harness, &senior, &senior_token, Post, &release, json!({ "reason": "launch post, real people" })).await;
+    assert_eq!(status, Status::Ok, "{body}");
+    assert_eq!(body["status"], "Released");
+    assert_eq!(body["decided_by"], senior.user.id.as_str());
+    // released once: not again
+    let (status, _) = send(&harness, &senior, &senior_token, Post, &release, json!({ "reason": "again please" })).await;
+    assert_eq!(status, Status::BadRequest);
+
+    let refuse = format!("/staff/badges/community/{}/refuse", other.id);
+    let (status, body) = send(&harness, &senior, &senior_token, Post, &refuse, json!({ "reason": "bought accounts" })).await;
+    assert_eq!(status, Status::Ok, "{body}");
+    assert_eq!(body["status"], "Refused");
+
+    let audit = harness
+        .db
+        .fetch_platform_audit(revolt_database::PlatformAuditQuery {
+            action_prefix: Some("staff.badge.community.".to_string()),
+            limit: 20,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(audit.iter().any(|e| e.action == "staff.badge.community.release" && matches!(e.outcome, revolt_database::AuditOutcome::Success)));
+    assert!(audit.iter().any(|e| e.action == "staff.badge.community.refuse" && matches!(e.outcome, revolt_database::AuditOutcome::Success)));
+    // the refusals were written too: no right, bad reason, not pending
+    assert_eq!(audit.iter().filter(|e| matches!(e.outcome, revolt_database::AuditOutcome::Denied)).count(), 3);
+}
+
+#[rocket::async_test]
 async fn badges_follow_staff_roles() {
     use rocket::http::Method::Post;
     let harness = TestHarness::new().await;

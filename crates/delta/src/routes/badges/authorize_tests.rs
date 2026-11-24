@@ -47,6 +47,7 @@ fn mutation(user: &User, badge: &str, change: BadgeChange) -> BadgeMutation {
         change,
         reason: "secret-looking reason text".to_string(),
         expires_at: None,
+        source_ref: None,
     }
 }
 

@@ -3,6 +3,7 @@ use revolt_database::{
     BadgeOutcome, BadgePath, CreatorStanding, File, Metadata, PartialUser, PlatformPermission,
     PlatformRole, Session, User,
 };
+use revolt_database::{AuditOutcome, BugKind, BugStatus};
 use revolt_result::ErrorType;
 use revolt_models::v0::{self, UserBadges};
 use rocket::http::{ContentType, Header, Status};
@@ -107,6 +108,7 @@ async fn change(
             change,
             reason: "test change".to_string(),
             expires_at,
+            source_ref: None,
         },
     )
     .await
@@ -330,7 +332,7 @@ async fn plus_creator_and_beta_badges_cannot_be_granted_by_hand() {
     make_privileged(&harness, &admin).await;
     let owner = console(&admin, true, true);
     let (_, _, target) = harness.new_user().await;
-    for badge in ["plus", "creator", "beta_tester", "beta_veteran", "early_adopter"] {
+    for badge in ["plus", "creator", "beta_tester", "early_adopter"] {
         assert_eq!(grant(&harness, &owner, &target, badge).await, Err("InvalidOperation".to_string()), "{badge}");
     }
     assert_eq!(badges_of(&harness, &target).await, 0);
@@ -417,7 +419,7 @@ async fn owner_can_hide_and_show_a_badge() {
 }
 
 #[rocket::async_test]
-async fn creator_badge_follows_published_designs() {
+async fn creator_badge_is_earned_once_and_stays() {
     let harness = TestHarness::new().await;
     let (_, session, creator) = harness.new_user().await;
     set_role(
@@ -432,15 +434,18 @@ async fn creator_badge_follows_published_designs() {
 
     let item = publish_design(&harness, &session, &creator, "Leaf frame").await;
     assert_ne!(badges_of(&harness, &creator).await & UserBadges::Creator as u32, 0);
+    // the system's grant went through the gate and was written down
+    let records = system_records(&harness, &creator).await;
+    assert!(records.iter().any(|e| e.action == "badge.system.grant"
+        && matches!(e.outcome, AuditOutcome::Success)
+        && e.summary.as_deref().unwrap_or_default().contains("creator via system")));
 
-    // archiving the only design takes it away
+    // archiving the only design keeps it (permanent)
     let res = post(&harness, &session, format!("/community/items/{item}/archive").leak(), json!({})).await;
     assert_eq!(res.status(), Status::Ok);
-    assert_eq!(badges_of(&harness, &creator).await & UserBadges::Creator as u32, 0);
-
-    // revoking the creator record takes it away too
-    publish_design(&harness, &session, &creator, "Second frame").await;
     assert_ne!(badges_of(&harness, &creator).await & UserBadges::Creator as u32, 0);
+
+    // so does losing the creator record
     let (manager_session, _) = staff(&harness, vec![PlatformPermission::CosmeticsManageCreators]).await;
     let res = post(
         &harness,
@@ -450,11 +455,103 @@ async fn creator_badge_follows_published_designs() {
     )
     .await;
     assert_eq!(res.status(), Status::Ok);
-    assert_eq!(badges_of(&harness, &creator).await & UserBadges::Creator as u32, 0);
+    assert_ne!(badges_of(&harness, &creator).await & UserBadges::Creator as u32, 0);
 }
 
 #[rocket::async_test]
-async fn super_creator_needs_designs_and_staff() {
+async fn an_earned_achievement_is_taken_away_only_for_fraud_by_two_people() {
+    let harness = TestHarness::new().await;
+    let (_, session, creator) = harness.new_user().await;
+    set_role(
+        &harness,
+        &creator,
+        vec![PlatformPermission::CosmeticsSubmit, PlatformPermission::CosmeticsManageOwn],
+        Some(CreatorStanding::Active),
+    )
+    .await;
+    publish_design(&harness, &session, &creator, "Copied frame").await;
+    assert!(revolt_database::held_badges(&harness.db, &creator.id).await.unwrap().contains("creator"));
+
+    // nobody gives it by hand
+    let (_, _, first) = badge_staff(&harness).await;
+    assert_eq!(grant(&harness, &first, &creator, "creator").await, Err("InvalidOperation".to_string()));
+    // without badge rights nobody takes it
+    let (_, _, nobody) = harness.new_user().await;
+    let weak = console(&nobody, false, false);
+    assert_eq!(
+        change(&harness, &weak, &creator, "creator", BadgeChange::Revoke, None).await.map(|_| ()),
+        Err("MissingPlatformPermission".to_string())
+    );
+    // the system never takes it back
+    let system = BadgeActor::system();
+    assert_eq!(
+        change(&harness, &system, &creator, "creator", BadgeChange::Revoke, None).await.map(|_| ()),
+        Err("InvalidOperation".to_string())
+    );
+    // staff ask, a second person approves
+    let pending = change(&harness, &first, &creator, "creator", BadgeChange::Revoke, None).await.unwrap();
+    let BadgeOutcome::Pending(request) = pending else { panic!("a second person is needed") };
+    assert!(revolt_database::held_badges(&harness.db, &creator.id).await.unwrap().contains("creator"));
+    let (_, second_user) = staff(&harness, vec![]).await;
+    let second = console(&second_user, true, false);
+    revolt_database::approve_badge_request(&harness.db, &second, &request.id).await.unwrap();
+    assert!(!revolt_database::held_badges(&harness.db, &creator.id).await.unwrap().contains("creator"));
+
+    // a new design never brings it back: staff took it away
+    publish_design(&harness, &session, &creator, "Another frame").await;
+    revolt_database::sync_creator_badge(&harness.db, &creator.id).await.unwrap();
+    assert!(!revolt_database::held_badges(&harness.db, &creator.id).await.unwrap().contains("creator"));
+    assert_eq!(badges_of(&harness, &creator).await & UserBadges::Creator as u32, 0);
+    // and the gate refuses it too, written down
+    let forced = change(&harness, &system, &creator, "creator", BadgeChange::Grant, None).await;
+    assert_eq!(forced.map(|_| ()), Err("InvalidOperation".to_string()));
+    let records = system_records(&harness, &creator).await;
+    assert!(records.iter().any(|e| matches!(e.outcome, AuditOutcome::Denied)
+        && e.summary.as_deref().unwrap_or_default().contains("denied:staff_revoked")));
+}
+
+/// Platform audit records about a user
+async fn system_records(harness: &TestHarness, user: &User) -> Vec<revolt_database::PlatformAuditEntry> {
+    harness
+        .db
+        .fetch_platform_audit(revolt_database::PlatformAuditQuery {
+            target_id: Some(user.id.clone()),
+            limit: 100,
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+}
+
+/// `count` more approved, published designs like `item`
+async fn copy_design(harness: &TestHarness, item: &str, count: usize) {
+    let original = harness.db.fetch_community_item(item).await.unwrap();
+    for _ in 0..count {
+        let mut copy = original.clone();
+        copy.id = ulid::Ulid::new().to_string();
+        harness.db.insert_community_item(&copy).await.unwrap();
+    }
+}
+
+/// The creator joined the program `days` ago (creator log)
+async fn joined_program(harness: &TestHarness, user: &User, days: i64) {
+    harness
+        .db
+        .insert_creator_log(&revolt_database::CreatorPermissionLog {
+            id: ulid::Ulid::new().to_string(),
+            user_id: user.id.clone(),
+            actor_id: "test".to_string(),
+            action: revolt_database::CreatorAction::Grant,
+            permissions: vec![],
+            reason: None,
+            created_at: super::now_ms() - days * 24 * 60 * 60 * 1000 - 60_000,
+        })
+        .await
+        .unwrap();
+}
+
+#[rocket::async_test]
+async fn super_creator_needs_25_designs_180_days_and_staff() {
     let harness = TestHarness::new().await;
     let (_, _, actor) = badge_staff(&harness).await;
     let (_, creator_session, creator) = harness.new_user().await;
@@ -465,11 +562,24 @@ async fn super_creator_needs_designs_and_staff() {
         Some(CreatorStanding::Active),
     )
     .await;
-    publish_design(&harness, &creator_session, &creator, "One").await;
+    let first = publish_design(&harness, &creator_session, &creator, "One").await;
+    joined_program(&harness, &creator, 179).await;
+
+    // 3 designs were enough before: no longer
+    copy_design(&harness, &first, 2).await;
     let refused = grant(&harness, &actor, &creator, "super_creator").await.unwrap_err();
     assert!(refused == "FailedValidation", "{refused:?}");
-    publish_design(&harness, &creator_session, &creator, "Two").await;
-    publish_design(&harness, &creator_session, &creator, "Three").await;
+    // 24 designs: one short
+    copy_design(&harness, &first, 21).await;
+    assert_eq!(grant(&harness, &actor, &creator, "super_creator").await, Err("FailedValidation".to_string()));
+    // 25 designs but 179 days in the program
+    copy_design(&harness, &first, 1).await;
+    let why = revolt_database::badge_eligibility(&harness.db, &creator.id, "super_creator").await.unwrap();
+    assert!(why.as_deref().unwrap_or_default().contains("180 days"), "{why:?}");
+    assert_eq!(grant(&harness, &actor, &creator, "super_creator").await, Err("FailedValidation".to_string()));
+    // 180 days
+    joined_program(&harness, &creator, 180).await;
+    assert_eq!(revolt_database::badge_eligibility(&harness.db, &creator.id, "super_creator").await.unwrap(), None);
     assert_eq!(grant(&harness, &actor, &creator, "super_creator").await, Ok(true));
     let bits = badges_of(&harness, &creator).await;
     assert_ne!(bits & UserBadges::SuperCreator as u32, 0);
@@ -480,6 +590,44 @@ async fn super_creator_needs_designs_and_staff() {
         .unwrap();
     assert!(!perms.has(PlatformPermission::CosmeticsReview));
     assert!(!perms.has(PlatformPermission::BadgesGrant));
+
+    // the My Badges page shows the new rule
+    let mine = get(&harness, &creator_session, "/badges/@me").await.into_json::<v0::MyBadges>().await.unwrap();
+    assert_eq!(mine.creator.super_creator_designs, 25);
+    assert_eq!(mine.creator.super_creator_days, 180);
+    assert!(mine.creator.program_days.is_some_and(|days| days >= 180));
+}
+
+#[rocket::async_test]
+async fn a_super_creator_from_before_keeps_it_and_losing_designs_keeps_it() {
+    let harness = TestHarness::new().await;
+    let (_, creator_session, creator) = harness.new_user().await;
+    set_role(
+        &harness,
+        &creator,
+        vec![PlatformPermission::CosmeticsSubmit, PlatformPermission::CosmeticsManageOwn],
+        Some(CreatorStanding::Active),
+    )
+    .await;
+    let item = publish_design(&harness, &creator_session, &creator, "Old").await;
+    // held from the 3-design rule
+    revolt_database::grant_badge(
+        &harness.db,
+        &creator.id,
+        "super_creator",
+        revolt_database::BadgeSource::Admin,
+        None,
+        "old-staff",
+        Some("old rule".into()),
+        None,
+    )
+    .await
+    .unwrap();
+    let res = post(&harness, &creator_session, format!("/community/items/{item}/archive").leak(), json!({})).await;
+    assert_eq!(res.status(), Status::Ok);
+    revolt_database::sync_creator_badge(&harness.db, &creator.id).await.unwrap();
+    let held = revolt_database::held_badges(&harness.db, &creator.id).await.unwrap();
+    assert!(held.contains("super_creator") && held.contains("creator"));
 }
 
 #[rocket::async_test]
@@ -580,11 +728,149 @@ async fn beta_access_comes_from_membership() {
     .await;
     assert_eq!(res.status(), Status::Ok);
 
-    // Beta Veteran is recognition only: no more beta access
+    // completing ends the beta access; Beta Veteran is no longer automatic
     let bits = badges_of(&harness, &tester).await;
-    assert_ne!(bits & UserBadges::BetaVeteran as u32, 0);
+    assert_eq!(bits & UserBadges::BetaVeteran as u32, 0);
     assert_eq!(bits & UserBadges::BetaTester as u32, 0);
     assert!(!beta_allowed(&harness, &session, "new-composer").await);
+
+    // the team approves it after the cycle, when the record backs it: one
+    // unread feedback report is not enough
+    let (_, _, actor) = badge_staff(&harness).await;
+    assert_eq!(grant(&harness, &actor, &tester, "beta_veteran").await, Err("FailedValidation".to_string()));
+    let why = revolt_database::badge_eligibility(&harness.db, &tester.id, "beta_veteran").await.unwrap();
+    assert!(why.as_deref().unwrap_or_default().contains("has 0 and 0"), "{why:?}");
+}
+
+/// A report by `user` of `kind` and `status`, sent `at`
+async fn report_at(harness: &TestHarness, user: &User, kind: BugKind, status: BugStatus, at: i64) {
+    harness
+        .db
+        .insert_bug_report(&revolt_database::BugReport {
+            id: ulid::Ulid::new().to_string(),
+            author_id: user.id.clone(),
+            kind,
+            title: "Report".to_string(),
+            description: "What happened".to_string(),
+            steps: None,
+            expected: None,
+            actual: None,
+            platform: "web".to_string(),
+            device: None,
+            app_version: None,
+            feature: None,
+            attachments: vec![],
+            status,
+            severity: None,
+            duplicate_of: None,
+            reviewed_by: None,
+            reviewer_note: None,
+            keywords: vec![],
+            history: vec![],
+            created_at: at,
+            updated_at: at,
+        })
+        .await
+        .unwrap();
+}
+
+/// A finished beta cycle from `start` to `end`
+async fn completed_member(harness: &TestHarness, user: &User, start: i64, end: i64) {
+    harness
+        .db
+        .save_beta_member(&revolt_database::BetaMember {
+            id: user.id.clone(),
+            status: revolt_database::BetaStatus::Completed,
+            features: vec![],
+            approved_by: Some("test".to_string()),
+            created_at: start,
+            joined_at: Some(start),
+            ended_at: Some(end),
+            note: None,
+            contributions: 3,
+        })
+        .await
+        .unwrap();
+}
+
+#[rocket::async_test]
+async fn beta_veteran_needs_three_reviewed_feedback_reports_or_one_confirmed_bug() {
+    let harness = TestHarness::new().await;
+    let (_, _, actor) = badge_staff(&harness).await;
+    let now = super::now_ms();
+    let (start, end) = (now - 30 * 24 * 60 * 60 * 1000, now - 24 * 60 * 60 * 1000);
+
+    // two reviewed feedback reports, one unread, one duplicate, one outside the cycle
+    let (_, _, a) = harness.new_user().await;
+    completed_member(&harness, &a, start, end).await;
+    report_at(&harness, &a, BugKind::Feedback, BugStatus::Triaged, start + 1).await;
+    report_at(&harness, &a, BugKind::Feedback, BugStatus::Confirmed, start + 2).await;
+    report_at(&harness, &a, BugKind::Feedback, BugStatus::Open, start + 3).await;
+    report_at(&harness, &a, BugKind::Feedback, BugStatus::Duplicate, start + 4).await;
+    report_at(&harness, &a, BugKind::Feedback, BugStatus::Fixed, end + 1000).await;
+    report_at(&harness, &a, BugKind::Bug, BugStatus::NotABug, start + 5).await;
+    assert_eq!(grant(&harness, &actor, &a, "beta_veteran").await, Err("FailedValidation".to_string()));
+    // the third reviewed one
+    report_at(&harness, &a, BugKind::Feedback, BugStatus::Fixed, end - 1000).await;
+    assert_eq!(grant(&harness, &actor, &a, "beta_veteran").await, Ok(true));
+    assert_ne!(badges_of(&harness, &a).await & UserBadges::BetaVeteran as u32, 0);
+
+    // one confirmed bug report is enough
+    let (_, _, b) = harness.new_user().await;
+    completed_member(&harness, &b, start, end).await;
+    report_at(&harness, &b, BugKind::Bug, BugStatus::Confirmed, start + 10).await;
+    assert_eq!(grant(&harness, &actor, &b, "beta_veteran").await, Ok(true));
+
+    // still in the beta: not yet
+    let (_, _, c) = harness.new_user().await;
+    harness
+        .db
+        .save_beta_member(&revolt_database::BetaMember {
+            id: c.id.clone(),
+            status: revolt_database::BetaStatus::Active,
+            features: vec![],
+            approved_by: None,
+            created_at: start,
+            joined_at: Some(start),
+            ended_at: None,
+            note: None,
+            contributions: 5,
+        })
+        .await
+        .unwrap();
+    report_at(&harness, &c, BugKind::Bug, BugStatus::Confirmed, start + 10).await;
+    assert_eq!(grant(&harness, &actor, &c, "beta_veteran").await, Err("FailedValidation".to_string()));
+
+    // without badge rights: refused
+    let (_, _, nobody) = harness.new_user().await;
+    assert_eq!(
+        grant(&harness, &console(&nobody, false, false), &b, "beta_veteran").await,
+        Err("MissingPlatformPermission".to_string())
+    );
+}
+
+#[rocket::async_test]
+async fn a_beta_veteran_from_the_old_rule_keeps_it() {
+    let harness = TestHarness::new().await;
+    let (_, _, tester) = harness.new_user().await;
+    let now = super::now_ms();
+    completed_member(&harness, &tester, now - 10_000, now - 5_000).await;
+    revolt_database::grant_badge(
+        &harness.db,
+        &tester.id,
+        "beta_veteran",
+        revolt_database::BadgeSource::System,
+        Some("beta".into()),
+        revolt_database::BADGE_SYSTEM_ACTOR,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    // leaving or syncing again never takes it away
+    let member = harness.db.fetch_beta_member(&tester.id).await.unwrap().unwrap();
+    revolt_database::sync_beta_badges(&harness.db, &member, revolt_database::BADGE_SYSTEM_ACTOR).await.unwrap();
+    assert!(revolt_database::held_badges(&harness.db, &tester.id).await.unwrap().contains("beta_veteran"));
 }
 
 #[rocket::async_test]
@@ -814,9 +1100,12 @@ async fn platform_permissions_are_guarded() {
 
 mod automatic_badges {
     use revolt_database::{
-        account_age_badges, held_badges, retire_stored_time_badges, sync_server_size_badges,
-        sync_verified_bot_developer, sync_verified_server_owner, PartialBot, PartialServer,
-        PartialUser, Session, User, TIME_BADGE_RETIRED_REASON,
+        account_age_badges, check_server_community, community_badge_pass, decide_community_check,
+        from_epoch_ms, held_badges, retire_stored_time_badges, sync_verified_bot_developer,
+        sync_verified_server_owner, Account, AuditOutcome, BadgeActor, BadgePath, CommunityCheckOutcome,
+        CommunityCheckStatus, CommunityThresholds, EmailVerification, Member, MemberCompositeKey,
+        PartialBot, PartialServer, PartialUser, PlatformAuditQuery, Session, User,
+        TIME_BADGE_RETIRED_REASON,
     };
     use revolt_models::v0::{self, BotFlags, UserBadges, UserFlags};
     use rocket::http::{ContentType, Header, Status};
@@ -833,27 +1122,333 @@ mod automatic_badges {
             .as_millis() as i64
     }
 
+    /// Small thresholds for the tests: 5 genuine members for Community
+    /// Builder, 8 for Big Community (the rules are the same)
+    const SMALL: CommunityThresholds = CommunityThresholds { builder: 5, big: 8 };
+
+    /// An account made `days_old` days ago (`n` keeps the times apart), its
+    /// e-mail confirmed or not
+    async fn person(harness: &TestHarness, days_old: i64, n: i64, confirmed: bool) -> User {
+        let made = now_ms() - days_old * DAY_MS - n * 3 * 60 * 60 * 1000;
+        let id = ulid::Ulid::from_parts(made as u64, rand::random::<u128>() & 0xffff_ffff).to_string();
+        let user = User::create(&harness.db, TestHarness::rand_string(), Some(id.clone()), None)
+            .await
+            .unwrap();
+        let email = format!("{}@zrzur.cc", TestHarness::rand_string());
+        harness
+            .db
+            .save_account(&Account {
+                id,
+                email: email.clone(),
+                email_normalised: email,
+                password: String::new(),
+                disabled: false,
+                verification: if confirmed {
+                    EmailVerification::Verified
+                } else {
+                    EmailVerification::Pending {
+                        token: TestHarness::rand_string(),
+                        expiry: iso8601_timestamp::Timestamp::now_utc(),
+                    }
+                },
+                password_reset: None,
+                deletion: None,
+                lockout: None,
+                mfa: Default::default(),
+                age: None,
+                terms: None,
+                provisional: None,
+            })
+            .await
+            .unwrap();
+        user
+    }
+
+    /// `user` joined `server` `hours_ago` hours ago
+    async fn joined(harness: &TestHarness, server: &str, user: &User, hours_ago: i64) {
+        harness
+            .db
+            .insert_or_merge_member(&Member {
+                id: MemberCompositeKey {
+                    server: server.to_string(),
+                    user: user.id.clone(),
+                },
+                joined_at: from_epoch_ms(now_ms() - hours_ago * 60 * 60 * 1000),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+    }
+
+    /// `count` genuine members, joined days apart, accounts made days apart
+    async fn genuine_members(harness: &TestHarness, server: &str, count: i64, from: i64) {
+        for n in from..from + count {
+            let user = person(harness, 30 + n * 2, n, true).await;
+            joined(harness, server, &user, 48 + n * 24).await;
+        }
+    }
+
+    async fn check_of(harness: &TestHarness, server: &str) -> revolt_database::CommunityBadgeCheck {
+        harness.db.fetch_community_check(server).await.unwrap().unwrap()
+    }
+
     #[rocket::async_test]
-    async fn a_server_that_grows_earns_badges_and_keeps_them() {
+    async fn only_genuine_human_members_count() {
         let harness = TestHarness::new().await;
         let (_, _, owner) = harness.new_user().await;
         let (server, _) = harness.new_server(&owner).await;
+        genuine_members(&harness, &server.id, 4, 0).await;
 
-        sync_server_size_badges(&harness.db, &server, 99).await.unwrap();
+        // none of these count
+        let young = person(&harness, 3, 0, true).await; // account under 7 days
+        joined(&harness, &server.id, &young, 48).await;
+        let unconfirmed = person(&harness, 40, 1, false).await; // e-mail not confirmed
+        joined(&harness, &server.id, &unconfirmed, 48).await;
+        let just_joined = person(&harness, 40, 2, true).await; // member under 24 hours
+        joined(&harness, &server.id, &just_joined, 2).await;
+        let banned = person(&harness, 40, 3, true).await;
+        harness
+            .db
+            .update_user(&banned.id, &PartialUser { flags: Some(UserFlags::Banned as i32), ..Default::default() }, vec![])
+            .await
+            .unwrap();
+        joined(&harness, &server.id, &banned, 48).await;
+        let deleted = person(&harness, 40, 4, true).await;
+        harness
+            .db
+            .update_user(&deleted.id, &PartialUser { flags: Some(UserFlags::Deleted as i32), ..Default::default() }, vec![])
+            .await
+            .unwrap();
+        joined(&harness, &server.id, &deleted, 48).await;
+        let (bot, _) = harness.new_bot(&owner).await;
+        let bot_user = harness.db.fetch_user(&bot.id).await.unwrap();
+        joined(&harness, &server.id, &bot_user, 48).await;
+
+        let outcome = check_server_community(&harness.db, &server.id, SMALL, now_ms()).await.unwrap();
+        assert_eq!(outcome, CommunityCheckOutcome::Counted);
+        let check = check_of(&harness, &server.id).await;
+        assert_eq!(check.counted, 4, "{check:?}");
+        assert!(check.members >= 10, "{check:?}");
         assert!(held_badges(&harness.db, &owner.id).await.unwrap().is_empty());
 
-        sync_server_size_badges(&harness.db, &server, 100).await.unwrap();
+        // the fifth genuine member: Community Builder, written down
+        genuine_members(&harness, &server.id, 1, 10).await;
+        let outcome = check_server_community(&harness.db, &server.id, SMALL, now_ms()).await.unwrap();
+        assert_eq!(outcome, CommunityCheckOutcome::Granted(vec!["community_builder"]));
         let held = held_badges(&harness.db, &owner.id).await.unwrap();
         assert!(held.contains("community_builder") && !held.contains("big_community"));
+        let records = harness
+            .db
+            .fetch_platform_audit(PlatformAuditQuery { target_id: Some(owner.id.clone()), limit: 50, ..Default::default() })
+            .await
+            .unwrap();
+        assert!(records.iter().any(|e| e.action == "badge.system.grant"
+            && matches!(e.outcome, AuditOutcome::Success)
+            && e.summary.as_deref().unwrap_or_default().contains("community_builder via system")));
+        assert_eq!(check_of(&harness, &server.id).await.builder_to.as_deref(), Some(owner.id.as_str()));
 
-        sync_server_size_badges(&harness.db, &server, 1000).await.unwrap();
-        // running it again is fine, and so is the server shrinking
-        sync_server_size_badges(&harness.db, &server, 1000).await.unwrap();
-        sync_server_size_badges(&harness.db, &server, 3).await.unwrap();
+        // counting again gives nothing twice
+        assert_eq!(
+            check_server_community(&harness.db, &server.id, SMALL, now_ms()).await.unwrap(),
+            CommunityCheckOutcome::Counted
+        );
+
+        // eight: Big Community too, from the crond pass
+        genuine_members(&harness, &server.id, 3, 20).await;
+        let report = community_badge_pass(&harness.db, SMALL, now_ms()).await.unwrap();
+        assert_eq!(report.failures, 0, "{report:?}");
         let held = held_badges(&harness.db, &owner.id).await.unwrap();
         assert!(held.contains("community_builder") && held.contains("big_community"));
         let bits = harness.db.fetch_user(&owner.id).await.unwrap().badges.unwrap_or_default();
         assert_ne!(bits & UserBadges::BigCommunity as i32, 0);
+        assert_eq!(
+            check_server_community(&harness.db, &server.id, SMALL, now_ms()).await.unwrap(),
+            CommunityCheckOutcome::Done
+        );
+
+        // the server shrinks: both stay
+        for member in harness.db.fetch_all_members(&server.id).await.unwrap() {
+            if member.id.user != owner.id {
+                harness.db.force_delete_member(&member.id).await.unwrap();
+            }
+        }
+        community_badge_pass(&harness.db, SMALL, now_ms()).await.unwrap();
+        let held = held_badges(&harness.db, &owner.id).await.unwrap();
+        assert!(held.contains("community_builder") && held.contains("big_community"));
+    }
+
+    #[rocket::async_test]
+    async fn a_burst_of_joins_or_signups_waits_for_staff() {
+        let harness = TestHarness::new().await;
+        let (_, _, owner) = harness.new_user().await;
+        let (server, _) = harness.new_server(&owner).await;
+        // five accounts that joined within the same hour
+        for n in 0..5 {
+            let user = person(&harness, 30 + n * 2, n, true).await;
+            joined(&harness, &server.id, &user, 48).await;
+        }
+        let outcome = check_server_community(&harness.db, &server.id, SMALL, now_ms()).await.unwrap();
+        assert_eq!(outcome, CommunityCheckOutcome::Held);
+        let check = check_of(&harness, &server.id).await;
+        assert_eq!(check.status, CommunityCheckStatus::Held);
+        assert_eq!(check.join_burst, 5);
+        assert!(held_badges(&harness.db, &owner.id).await.unwrap().is_empty());
+        // one hold record, not one per pass
+        check_server_community(&harness.db, &server.id, SMALL, now_ms()).await.unwrap();
+        let holds = harness
+            .db
+            .fetch_platform_audit(PlatformAuditQuery {
+                target_id: Some(server.id.clone()),
+                action_prefix: Some("badge.system.community.hold".to_string()),
+                limit: 10,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(holds.len(), 1);
+
+        // accounts all made in the same hour: held as well
+        let (_, _, owner_b) = harness.new_user().await;
+        let (server_b, _) = harness.new_server(&owner_b).await;
+        for n in 0..5 {
+            let user = person(&harness, 30, 0, true).await;
+            joined(&harness, &server_b.id, &user, 48 + n * 24).await;
+        }
+        assert_eq!(
+            check_server_community(&harness.db, &server_b.id, SMALL, now_ms()).await.unwrap(),
+            CommunityCheckOutcome::Held
+        );
+        assert!(check_of(&harness, &server_b.id).await.signup_burst >= 5);
+
+        // staff without badge rights can't release; the owner never can
+        let (_, _, nobody) = harness.new_user().await;
+        let weak = BadgeActor { staff: false, ..staff_actor(&nobody) };
+        let error = decide_community_check(&harness.db, &weak, &server.id, true, "looked at it", SMALL, now_ms())
+            .await
+            .unwrap_err();
+        assert!(format!("{error:?}").contains("MissingPlatformPermission"));
+        let own = decide_community_check(&harness.db, &staff_actor(&owner), &server.id, true, "mine", SMALL, now_ms())
+            .await
+            .unwrap_err();
+        assert!(format!("{own:?}").contains("NotPrivileged"));
+        assert!(held_badges(&harness.db, &owner.id).await.unwrap().is_empty());
+
+        // a staff member looks and releases it: given at once, written down
+        let (_, _, reviewer) = harness.new_user().await;
+        let after = decide_community_check(
+            &harness.db,
+            &staff_actor(&reviewer),
+            &server.id,
+            true,
+            "launch announcement, real people",
+            SMALL,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(after.status, CommunityCheckStatus::Released);
+        assert!(held_badges(&harness.db, &owner.id).await.unwrap().contains("community_builder"));
+        let decisions = harness
+            .db
+            .fetch_platform_audit(PlatformAuditQuery {
+                target_id: Some(server.id.clone()),
+                action_prefix: Some("staff.badge.community.".to_string()),
+                limit: 10,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert!(decisions.iter().any(|e| matches!(e.outcome, AuditOutcome::Success) && e.action.ends_with("release")));
+        assert_eq!(decisions.iter().filter(|e| matches!(e.outcome, AuditOutcome::Denied)).count(), 2);
+
+        // the other one is refused: no badge from it, pass after pass
+        decide_community_check(&harness.db, &staff_actor(&reviewer), &server_b.id, false, "bought accounts", SMALL, now_ms())
+            .await
+            .unwrap();
+        assert_eq!(
+            check_server_community(&harness.db, &server_b.id, SMALL, now_ms()).await.unwrap(),
+            CommunityCheckOutcome::Done
+        );
+        assert!(held_badges(&harness.db, &owner_b.id).await.unwrap().is_empty());
+    }
+
+    fn staff_actor(user: &User) -> BadgeActor {
+        BadgeActor {
+            id: user.id.clone(),
+            path: BadgePath::StaffConsole,
+            staff: true,
+            owner: false,
+            step_up: false,
+            session_id: None,
+        }
+    }
+
+    #[rocket::async_test]
+    async fn a_server_gives_each_badge_once_and_old_holders_keep_theirs() {
+        let harness = TestHarness::new().await;
+        let (_, _, owner) = harness.new_user().await;
+        let (server, _) = harness.new_server(&owner).await;
+        genuine_members(&harness, &server.id, 5, 0).await;
+        check_server_community(&harness.db, &server.id, SMALL, now_ms()).await.unwrap();
+        assert!(held_badges(&harness.db, &owner.id).await.unwrap().contains("community_builder"));
+
+        // handed to someone else: the new owner gets nothing from this server
+        let (_, _, next) = harness.new_user().await;
+        harness
+            .db
+            .update_server(&server.id, &PartialServer { owner: Some(next.id.clone()), ..Default::default() }, vec![])
+            .await
+            .unwrap();
+        check_server_community(&harness.db, &server.id, SMALL, now_ms()).await.unwrap();
+        assert!(held_badges(&harness.db, &next.id).await.unwrap().is_empty());
+
+        // someone who got it under the old rule (any member counted) keeps it
+        let (_, _, old_holder) = harness.new_user().await;
+        let (small, _) = harness.new_server(&old_holder).await;
+        revolt_database::grant_badge(
+            &harness.db,
+            &old_holder.id,
+            "community_builder",
+            revolt_database::BadgeSource::System,
+            Some(format!("server:{}", small.id)),
+            revolt_database::BADGE_SYSTEM_ACTOR,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        community_badge_pass(&harness.db, SMALL, now_ms()).await.unwrap();
+        check_server_community(&harness.db, &small.id, SMALL, now_ms()).await.unwrap();
+        assert!(held_badges(&harness.db, &old_holder.id).await.unwrap().contains("community_builder"));
+
+        // a banned owner gets nothing until the ban ends
+        let (_, _, banned_owner) = harness.new_user().await;
+        let (third, _) = harness.new_server(&banned_owner).await;
+        genuine_members(&harness, &third.id, 5, 40).await;
+        harness
+            .db
+            .update_user(&banned_owner.id, &PartialUser { flags: Some(UserFlags::Banned as i32), ..Default::default() }, vec![])
+            .await
+            .unwrap();
+        assert_eq!(
+            check_server_community(&harness.db, &third.id, SMALL, now_ms()).await.unwrap(),
+            CommunityCheckOutcome::OwnerSkipped
+        );
+        assert!(held_badges(&harness.db, &banned_owner.id).await.unwrap().is_empty());
+    }
+
+    #[rocket::async_test]
+    async fn joining_a_server_never_gives_a_community_badge() {
+        // the count is crond's: a join only adds a member
+        let harness = TestHarness::new().await;
+        let (_, _, owner) = harness.new_user().await;
+        let (server, _) = harness.new_server(&owner).await;
+        for _ in 0..3 {
+            let (_, _, user) = harness.new_user().await;
+            Member::create(&harness.db, &server, &user, None).await.unwrap();
+        }
+        assert!(held_badges(&harness.db, &owner.id).await.unwrap().is_empty());
+        assert!(harness.db.fetch_community_check(&server.id).await.unwrap().is_none());
     }
 
     #[rocket::async_test]
