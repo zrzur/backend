@@ -187,6 +187,7 @@ async fn desk_servers_run_the_consoles_actions() {
         json!([
             user_opt(&leaving.id),
             text("confirm_name", &handle(&leaving)),
+            text("category", "Spam"),
             text("reason", "Asked by email")
         ]),
     )
@@ -254,6 +255,7 @@ async fn desk_servers_run_the_consoles_actions() {
         json!([
             user_opt(&leaving.id),
             text("confirm_name", &handle(&leaving)),
+            text("category", "Spam"),
             text("reason", "Asked by email")
         ]),
     )
@@ -300,6 +302,7 @@ async fn desk_deletions_need_the_exact_name() {
             json!([
                 user_opt(&leaving.id),
                 text("confirm_name", &format!("{}x", handle(&leaving))),
+                text("category", "Spam"),
                 text("reason", "Asked by email")
             ]),
         ),
@@ -447,6 +450,7 @@ async fn desk_server_deletions_need_the_owner_role() {
             json!([
                 user_opt(&leaving.id),
                 text("confirm_name", &handle(&leaving)),
+                text("category", "Spam"),
                 text("reason", "Asked by email")
             ]),
             "staff.user.delete_request",
@@ -504,6 +508,7 @@ async fn desk_delete_request_refuses_protected_accounts() {
             json!([
                 user_opt(&who.id),
                 text("confirm_name", &handle(who)),
+                text("category", "Spam"),
                 text("reason", "Asked by email")
             ]),
         )
@@ -588,6 +593,7 @@ async fn desk_delete_request_shows_what_goes_and_can_be_cancelled() {
         json!([
             user_opt(&keeper.id),
             text("confirm_name", &handle(&keeper)),
+            text("category", "Spam"),
             text("reason", "Asked by email")
         ]),
     )
@@ -614,6 +620,7 @@ async fn desk_delete_request_shows_what_goes_and_can_be_cancelled() {
         json!([
             user_opt(&person.id),
             text("confirm_name", &handle(&person)),
+            text("category", "Spam"),
             text("reason", "Asked by email")
         ]),
     )
@@ -633,6 +640,7 @@ async fn desk_delete_request_shows_what_goes_and_can_be_cancelled() {
         json!([
             user_opt(&other.id),
             text("confirm_name", &handle(&other)),
+            text("category", "Spam"),
             text("reason", "Asked by email")
         ]),
     )

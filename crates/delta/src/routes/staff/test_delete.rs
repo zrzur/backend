@@ -962,7 +962,7 @@ async fn staff_delete_request_schedules_and_cancels() {
     let (_, _, person) = harness.new_user().await;
     owned_server(&harness, &person).await;
     let path = format!("/staff/users/{}/delete-request", person.id);
-    let body = json!({ "reason": "Asked by email to delete" });
+    let body = json!({ "reason": "Asked by email to delete", "category": "Spam" });
 
     // not an Owner: refused, recorded
     let safety = member(&harness, vec![StaffRole::TrustSafety]).await;
@@ -1059,7 +1059,7 @@ async fn cancelling_a_staff_request_restores_the_state_before() {
     use revolt_database::DeletionInfo;
     let harness = TestHarness::new().await;
     let (owner, token) = stepped_up_owner(&harness).await;
-    let body = json!({ "reason": "Asked by email to delete" });
+    let body = json!({ "reason": "Asked by email to delete", "category": "Spam" });
 
     // disabled before the request
     let (mut quiet_account, _, quiet) = harness.new_user().await;
@@ -1100,5 +1100,258 @@ async fn cancelling_a_staff_request_restores_the_state_before() {
         let account = harness.db.fetch_account(&user.id).await.unwrap();
         assert!(account.deletion.is_none());
         assert_eq!(account.disabled, disabled, "{}", user.id);
+    }
+}
+
+/// A safety case about `user` with one piece of evidence; gives the case
+async fn case_about(
+    harness: &TestHarness,
+    user: &User,
+    status: &str,
+    category: &str,
+    hold: bool,
+) -> revolt_models::v0::SafetyCase {
+    let now = revolt_database::staff_now();
+    let id = ulid::Ulid::new().to_string();
+    let case: revolt_models::v0::SafetyCase = serde_json::from_value(json!({
+        "_id": id, "reference": format!("R-{}", &id[20..]), "reporter_id": "reporter",
+        "target": { "kind": "User", "id": user.id }, "route": "Platform",
+        "category": category, "description": "", "evidence_ids": [],
+        "status": status, "priority": "Normal", "policy_version": "1",
+        "created_at": now, "updated_at": now, "version": 1, "legal_hold": hold
+    }))
+    .unwrap();
+    harness.db.insert_safety_case(&case).await.unwrap();
+    let evidence: revolt_models::v0::SafetyEvidence = serde_json::from_value(json!({
+        "_id": ulid::Ulid::new().to_string(), "case_id": case.id, "kind": "User",
+        "object_id": user.id, "captured_at": now, "content": "kept",
+        "expires_at": now + 30 * 86_400_000_i64, "legal_hold": false
+    }))
+    .unwrap();
+    harness.db.insert_safety_evidence(&evidence).await.unwrap();
+    case
+}
+
+/// DK-10: no deletion while a safety matter is open: an open case, a held
+/// case, preserved evidence of illegal content, a pending appeal; each
+/// refused with a record that counts them and an answer that names them
+#[rocket::async_test]
+async fn delete_request_waits_for_open_safety_matters() {
+    let harness = TestHarness::new().await;
+    let (owner, token) = stepped_up_owner(&harness).await;
+    let body = json!({ "reason": "Asked by email to delete", "category": "Spam" });
+
+    let (_, _, open) = harness.new_user().await;
+    let open_case = case_about(&harness, &open, "UnderReview", "Spam", false).await;
+    let (_, _, held) = harness.new_user().await;
+    let held_case = case_about(&harness, &held, "Closed", "Spam", true).await;
+    let (_, _, preserved) = harness.new_user().await;
+    let preserved_case = case_about(&harness, &preserved, "Closed", "IllegalContent", false).await;
+    let (_, _, appealing) = harness.new_user().await;
+    let appeal: revolt_models::v0::SafetyAppeal = serde_json::from_value(json!({
+        "_id": ulid::Ulid::new().to_string(), "action_id": ulid::Ulid::new().to_string(),
+        "user_id": appealing.id, "statement": "I did not do it", "status": "Pending",
+        "created_at": revolt_database::staff_now()
+    }))
+    .unwrap();
+    harness.db.insert_safety_appeal(&appeal).await.unwrap();
+
+    for (user, named) in [
+        (&open, open_case.reference.clone()),
+        (&held, held_case.reference.clone()),
+        (&preserved, preserved_case.reference.clone()),
+        (&appealing, appeal.id.clone()),
+    ] {
+        let path = format!("/staff/users/{}/delete-request", user.id);
+        let (status, answer) = send(&harness, &owner, &token, Post, &path, body.clone()).await;
+        assert_eq!(status, Status::BadRequest, "{answer}");
+        assert!(answer.to_string().contains(&named), "{named}: {answer}");
+        assert!(
+            harness
+                .db
+                .fetch_account(&user.id)
+                .await
+                .unwrap()
+                .deletion
+                .is_none()
+        );
+    }
+    let records = harness
+        .db
+        .fetch_platform_audit(revolt_database::PlatformAuditQuery {
+            limit: 500,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let refused = records
+        .iter()
+        .filter(|e| {
+            e.action == "staff.user.delete_request"
+                && format!("{:?}", e.outcome) == "Denied"
+                && e.summary.as_deref() == Some("open safety matters: 1")
+        })
+        .count();
+    assert_eq!(refused, 4);
+}
+
+/// DK-10: an account with only a closed case is deleted, and the deletion
+/// job leaves the case and its evidence; DK-09: the person gets the
+/// statement of reasons and the delivery is recorded by category only
+#[rocket::async_test]
+async fn deleted_accounts_leave_safety_evidence_and_get_a_statement() {
+    use revolt_database::DeletionInfo;
+    let harness = TestHarness::new().await;
+    let (owner, token) = stepped_up_owner(&harness).await;
+    let (_, _, person) = harness.new_user().await;
+    let case = case_about(&harness, &person, "Closed", "Spam", false).await;
+    let path = format!("/staff/users/{}/delete-request", person.id);
+    // the ground is required, and the facts are short
+    let (status, _) = send(
+        &harness,
+        &owner,
+        &token,
+        Post,
+        &path,
+        json!({ "reason": "Spam waves" }),
+    )
+    .await;
+    assert_eq!(status, Status::BadRequest);
+    let long = "x".repeat(301);
+    let (status, _) = send(
+        &harness,
+        &owner,
+        &token,
+        Post,
+        &path,
+        json!({ "reason": long, "category": "Spam" }),
+    )
+    .await;
+    assert_eq!(status, Status::BadRequest);
+    let (status, answer) = send(
+        &harness,
+        &owner,
+        &token,
+        Post,
+        &path,
+        json!({ "reason": "Sent the same advert to 400 servers", "category": "Spam" }),
+    )
+    .await;
+    assert_eq!(status, Status::Ok, "{answer}");
+
+    let records = harness
+        .db
+        .fetch_platform_audit(revolt_database::PlatformAuditQuery {
+            limit: 500,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let notice = records
+        .iter()
+        .find(|e| e.action == "staff.user.delete_request_notice")
+        .expect("the delivery is recorded");
+    assert_eq!(format!("{:?}", notice.outcome), "Success");
+    // the test stack may or may not have a mail server: both are delivery
+    // states, never text
+    let summary = notice.summary.clone().unwrap_or_default();
+    assert!(
+        summary == "category=Spam; message=sent; email=sent"
+            || summary == "category=Spam; message=sent; email=off",
+        "{summary}"
+    );
+    assert!(
+        notice.reason.is_none(),
+        "no free text in the delivery record"
+    );
+
+    // the deletion job runs: the case and its evidence stay
+    let mut account = harness.db.fetch_account(&person.id).await.unwrap();
+    assert!(matches!(
+        account.deletion,
+        Some(DeletionInfo::Scheduled { .. })
+    ));
+    account.mark_deleted(&harness.db).await.unwrap();
+    assert!(harness.db.fetch_safety_case(&case.id).await.is_ok());
+    assert_eq!(
+        harness
+            .db
+            .fetch_safety_evidence(&case.id)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+/// DK-09: the statement of reasons in ar, en and de: a person decided, the
+/// ground, the facts, the date, objection and appeal with the pause, a copy
+/// of the data, the out-of-court line; the cancel text has no free text
+#[test]
+fn deletion_notice_says_what_the_law_asks_in_three_languages() {
+    use crate::routes::staff::deletion::{Notice, notice_text};
+    let facts = "Sent the same advert to 400 servers";
+    let scheduled = Notice::Scheduled {
+        date: "2026-12-08".to_string(),
+        category: revolt_models::v0::SafetyCategory::Spam,
+        facts: facts.to_string(),
+    };
+    for (language, words) in [
+        (
+            "en",
+            [
+                "person",
+                "appeal",
+                "paused",
+                "copy of your data",
+                "data protection",
+            ],
+        ),
+        (
+            "ar",
+            [
+                "إنسان",
+                "الطعن",
+                "يتوقف الحذف",
+                "نسخة من بياناتك",
+                "حماية البيانات",
+            ],
+        ),
+        (
+            "de",
+            [
+                "Mensch",
+                "Einspruch",
+                "angehalten",
+                "Kopie deiner Daten",
+                "Datenschutzbehörde",
+            ],
+        ),
+    ] {
+        let (title, body) = notice_text(language, &scheduled, "2026-11-24");
+        assert!(!title.is_empty());
+        for part in [
+            facts,
+            "2026-12-08",
+            "2026-11-24",
+            revolt_database::ACCOUNT_CONTACT_EMAIL,
+        ] {
+            assert!(body.contains(part), "{language} {part}: {body}");
+        }
+        for word in words {
+            assert!(body.contains(word), "{language} {word}: {body}");
+        }
+        let ground =
+            crate::util::official::rule_name(language, revolt_models::v0::SafetyCategory::Spam);
+        assert!(body.contains(&ground), "{language} ground: {body}");
+        assert!(body.contains(&crate::util::official::out_of_court_lines(language)));
+        let (_, cancelled) = notice_text(
+            language,
+            &Notice::Cancelled {
+                stays_disabled: false,
+            },
+            "2026-11-24",
+        );
+        assert!(!cancelled.contains(facts));
     }
 }

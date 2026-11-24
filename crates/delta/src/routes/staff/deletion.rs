@@ -12,12 +12,14 @@
 //! refusal and the audit records are `revolt_database::staff_deletion`,
 //! shared with `zrzur-staff delete-owned`.
 
+use revolt_database::OfficialAccount;
 use revolt_database::{
     AuditOutcome, AuditRecord, Bot, Database, DeletionInfo, Server, StaffPermission,
     record_platform_audit,
     staff_deletion::{self, DeleteOwnedResult, PlanIds},
     voice::VoiceClient,
 };
+use revolt_models::v0::SafetyCategory;
 use revolt_result::{Result, create_error};
 use rocket::{State, serde::json::Json};
 use serde::{Deserialize, Serialize};
@@ -134,7 +136,13 @@ pub(super) async fn delete_owned_core(
 /// What an account deletion request asks for
 #[derive(Deserialize)]
 pub struct DataDeletionRequest {
+    /// The facts, written for the person: at most 300 characters, no
+    /// names or details of other people
     pub reason: String,
+    /// The ground: the rule broken (required for a request; not used by
+    /// a cancel)
+    #[serde(default)]
+    pub category: Option<SafetyCategory>,
 }
 
 /// An account waiting for its deletion
@@ -148,6 +156,9 @@ pub struct ScheduledDeletion {
 
 const REQUEST: &str = "staff.user.delete_request";
 const CANCEL: &str = "staff.user.delete_request_cancel";
+const NOTICE: &str = "staff.user.delete_request_notice";
+/// The facts the person reads: kept short
+pub(super) const FACTS_MAX: usize = 300;
 
 /// A refusal written to the audit log, as every refused staff deletion is
 async fn refused(
@@ -161,11 +172,73 @@ async fn refused(
     Ok(error)
 }
 
+/// Open safety matters about an account, one line each (case references,
+/// appeal ids): an open case about the account or its content, a pending
+/// appeal, a legal hold, evidence on hold, and preserved evidence of
+/// illegal content, an underage case or a public report. Deleting the
+/// account would lose or prejudge them.
+pub(super) async fn open_matters(db: &Database, user_id: &str, now: i64) -> Result<Vec<String>> {
+    use revolt_models::v0::{SafetyAppealStatus, SafetyStatus, SafetyTargetKind};
+    let mut out = Vec::new();
+    let cases = db
+        .fetch_safety_cases(revolt_database::SafetyCaseQuery {
+            search: Some(user_id.to_string()),
+            limit: 500,
+            ..Default::default()
+        })
+        .await?;
+    for case in cases.iter().filter(|c| {
+        (c.target.kind == SafetyTargetKind::User && c.target.id == user_id)
+            || c.target_owner_id.as_deref() == Some(user_id)
+    }) {
+        let open = matches!(
+            case.status,
+            SafetyStatus::Submitted
+                | SafetyStatus::Queued
+                | SafetyStatus::UnderReview
+                | SafetyStatus::MoreInfoRequired
+                | SafetyStatus::Escalated
+                | SafetyStatus::Appealed
+        );
+        if open {
+            out.push(format!("case {} open", case.reference));
+        }
+        if case.legal_hold {
+            out.push(format!("case {} legal hold", case.reference));
+            continue;
+        }
+        let evidence = db.fetch_safety_evidence(&case.id).await?;
+        if evidence.iter().any(|e| e.legal_hold) {
+            out.push(format!("case {} evidence on hold", case.reference));
+            continue;
+        }
+        let preserved = matches!(
+            case.category,
+            SafetyCategory::IllegalContent | SafetyCategory::Underage
+        ) || case.public_reporter.is_some();
+        if preserved
+            && evidence
+                .iter()
+                .any(|e| e.expires_at.is_none_or(|t| t > now))
+        {
+            out.push(format!("case {} preserved evidence", case.reference));
+        }
+    }
+    for appeal in db.fetch_safety_appeals_for_user(user_id).await? {
+        if appeal.status == SafetyAppealStatus::Pending {
+            out.push(format!("appeal {} pending", appeal.id));
+        }
+    }
+    out.dedup();
+    Ok(out)
+}
+
 /// Who may have their account deleted by staff, and what goes with it:
 /// the Owner role first; never yourself, a bot, staff, a privileged or
-/// official account, nor an account that owns an official server or bot
-/// (the deletion job removes everything the account owns). Every refusal
-/// is recorded. Shared by the console route and Zrzur Desk's card.
+/// official account, an account that owns an official server or bot (the
+/// deletion job removes everything the account owns), nor one with open
+/// safety matters ([`open_matters`]: no override yet). Every refusal is
+/// recorded. Shared by the console route and Zrzur Desk's card.
 pub(super) async fn delete_request_check(
     db: &Database,
     staff: &StaffContext,
@@ -213,7 +286,27 @@ pub(super) async fn delete_request_check(
         )
         .await?);
     }
+    let matters = open_matters(db, &user.id, staff.now).await?;
+    if !matters.is_empty() {
+        // the record names how many, the refusal names which
+        let summary = format!("open safety matters: {}", matters.len());
+        let error = create_error!(FailedValidation {
+            error: format!("open safety matters: {}", matters.join("; "))
+        });
+        return Err(refused(db, record, &summary, error).await?);
+    }
     Ok((user, plan))
+}
+
+/// Whether the person can be told at all: by e-mail (mail switched on and
+/// an address that can take it) or by an official message
+async fn reachable(db: &Database, email: &str) -> (bool, bool) {
+    let smtp = revolt_config::config().await.api.smtp;
+    let mail = !smtp.host.is_empty() && revolt_database::util::email::validate_email(email).is_ok();
+    let message = revolt_database::official_account(db, OfficialAccount::Safety)
+        .await
+        .is_ok();
+    (mail, message)
 }
 
 /// # Schedule an account's deletion
@@ -221,10 +314,13 @@ pub(super) async fn delete_request_check(
 /// The same path as a person deleting their own account: the account is
 /// disabled now (signed out everywhere) and deleted after the grace
 /// period by the scheduled job, with every server and bot it owns. The
-/// person is told by message and e-mail, with the reason and the privacy
-/// contact; staff can cancel it during the grace period
-/// (`.../delete-request/cancel`). The Owner role,
-/// `platform.users.delete.request` and a fresh step-up; see
+/// person gets a statement of reasons by official message and e-mail:
+/// that a person decided, the ground (`category`) and the facts
+/// (`reason`, 300 characters at most), the date, how to object or appeal
+/// (the deletion is paused: an Owner cancels it, `.../cancel`), that they
+/// can ask for a copy of their data, and the out-of-court line. Refused
+/// when the person cannot be told; undone when no notice arrived. The
+/// Owner role, `platform.users.delete.request` and a fresh step-up; see
 /// [`delete_request_check`] for who is refused.
 #[post("/users/<id>/delete-request", data = "<data>")]
 pub async fn delete_request(
@@ -236,6 +332,17 @@ pub async fn delete_request(
     delete_request_core(db, &staff, id, data.into_inner(), None)
         .await
         .map(Json)
+}
+
+/// The facts the person reads: the reason rules, and 300 characters at most
+pub(super) fn facts(text: &str) -> Result<String> {
+    let why = reason(text)?;
+    if why.chars().count() > FACTS_MAX {
+        return Err(revolt_result::failed_validation(vec![
+            revolt_result::ValidationProblem::length("reason", 3, FACTS_MAX),
+        ]));
+    }
+    Ok(why)
 }
 
 /// See [`delete_request`]; shared with Zrzur Desk. `expected`: the servers
@@ -251,7 +358,12 @@ pub(super) async fn delete_request_core(
     let permission = StaffPermission::UsersDeleteRequest;
     let (user, plan) = delete_request_check(db, staff, id).await?;
     staff.require_step_up(db, permission).await?;
-    let why = reason(&data.reason)?;
+    let why = facts(&data.reason)?;
+    let category = data.category.ok_or_else(|| {
+        revolt_result::failed_validation(vec![revolt_result::ValidationProblem::new(
+            "category", "required",
+        )])
+    })?;
     if expected.is_some_and(|ids| *ids != plan.ids()) {
         return Err(create_error!(InvalidOperation));
     }
@@ -265,9 +377,24 @@ pub(super) async fn delete_request_core(
     let mut record = staff.record(REQUEST, Some(permission));
     record.target_kind = Some("user".to_string());
     record.target_id = Some(user.id.clone());
+    // no way to tell the person: no deletion
+    let (mail, message) = reachable(db, &account.email).await;
+    if !mail && !message {
+        return Err(refused(
+            db,
+            record,
+            "notice cannot be delivered",
+            create_error!(FailedValidation {
+                error: "the person cannot be told: no e-mail delivery and no official message"
+                    .to_string()
+            }),
+        )
+        .await?);
+    }
+    let disabled_before = account.disabled;
     record.reason = Some(why.clone());
     record.summary = Some(format!(
-        "scheduled; owns {} servers, {} bots",
+        "scheduled; category={category:?}; owns {} servers, {} bots",
         plan.servers.len(),
         plan.bots.len()
     ));
@@ -283,7 +410,34 @@ pub(super) async fn delete_request_core(
         }
         _ => (0, String::new()),
     };
-    tell(db, &user, &account.email, Notice::Scheduled { date }, &why).await;
+    let delivery = tell(
+        db,
+        &user,
+        &account.email,
+        Notice::Scheduled {
+            date,
+            category,
+            facts: why,
+        },
+        staff.now,
+    )
+    .await;
+    // the delivery, by category only (no free text)
+    let mut sent = staff.record(NOTICE, Some(permission));
+    sent.target_kind = Some("user".to_string());
+    sent.target_id = Some(user.id.clone());
+    sent.summary = Some(format!("category={category:?}; {}", delivery.summary()));
+    if !delivery.arrived() {
+        // nobody was told: the request is undone
+        account.deletion = None;
+        account.disabled = disabled_before;
+        account.save(db).await?;
+        record_platform_audit(db, sent, AuditOutcome::Failed).await?;
+        return Err(create_error!(FailedValidation {
+            error: "the person could not be told: the request was undone".to_string()
+        }));
+    }
+    record_platform_audit(db, sent, AuditOutcome::Success).await?;
     Ok(ScheduledDeletion {
         user_id: user.id,
         username: Some(revolt_models::v0::user_handle(
@@ -296,11 +450,13 @@ pub(super) async fn delete_request_core(
 
 /// # Cancel a staff deletion request
 ///
-/// During the grace period: the deletion is called off and the account
-/// goes back to exactly the state it had before the request: enabled only
-/// if it was enabled then and is not suspended, banned or marked as spam
-/// now. Only a deletion staff asked for; a person's own deletion is theirs. The Owner role,
-/// `platform.users.delete.request` and a fresh step-up; the person is told.
+/// During the grace period, for example on an appeal: the deletion is
+/// called off and the account goes back to exactly the state it had before
+/// the request: enabled only if it was enabled then and is not suspended,
+/// banned or marked as spam now. Only a deletion staff asked for; a
+/// person's own deletion is theirs. The Owner role,
+/// `platform.users.delete.request` and a fresh step-up; the person is told
+/// with a fixed text (the reason stays in the audit log).
 #[post("/users/<id>/delete-request/cancel", data = "<data>")]
 pub async fn cancel_delete_request(
     db: &State<Database>,
@@ -358,7 +514,7 @@ pub(super) async fn cancel_delete_request_core(
         .await?);
     }
     staff.require_step_up(db, permission).await?;
-    let why = reason(&data.reason)?;
+    let why = facts(&data.reason)?;
     let user = db.fetch_user(id).await?;
     let mut account = db.fetch_account(&user.id).await?;
     if !matches!(account.deletion, Some(DeletionInfo::Scheduled { .. })) {
@@ -373,7 +529,7 @@ pub(super) async fn cancel_delete_request_core(
         )
         .await?);
     };
-    record.reason = Some(why.clone());
+    record.reason = Some(why);
     record.summary = Some(
         if stays_disabled {
             "cancelled; stays disabled as before"
@@ -385,7 +541,28 @@ pub(super) async fn cancel_delete_request_core(
     account.deletion = None;
     account.disabled = stays_disabled;
     super::audited::audited(db, record, account.save(db)).await?;
-    tell(db, &user, &account.email, Notice::Cancelled, &why).await;
+    let delivery = tell(
+        db,
+        &user,
+        &account.email,
+        Notice::Cancelled { stays_disabled },
+        staff.now,
+    )
+    .await;
+    let mut sent = staff.record(NOTICE, Some(permission));
+    sent.target_kind = Some("user".to_string());
+    sent.target_id = Some(user.id.clone());
+    sent.summary = Some(format!("cancelled; {}", delivery.summary()));
+    record_platform_audit(
+        db,
+        sent,
+        if delivery.arrived() {
+            AuditOutcome::Success
+        } else {
+            AuditOutcome::Failed
+        },
+    )
+    .await?;
     Ok(ScheduledDeletion {
         user_id: user.id.clone(),
         username: Some(revolt_models::v0::user_handle(
@@ -396,79 +573,178 @@ pub(super) async fn cancel_delete_request_core(
     })
 }
 
-enum Notice {
-    /// The day the deletion runs, `YYYY-MM-DD` (UTC)
+pub(super) enum Notice {
+    /// The statement of reasons: the day the deletion runs (`YYYY-MM-DD`,
+    /// UTC), the ground and the facts staff wrote
     Scheduled {
         date: String,
+        category: SafetyCategory,
+        facts: String,
     },
-    Cancelled,
+    /// A fixed text: no words of staff or of other people
+    Cancelled { stays_disabled: bool },
 }
 
-/// Tell the person, in their messages and by e-mail (they are signed out
-/// and cannot read messages until the deletion is cancelled): what
-/// happens, why, and where to write. Best effort: the change is saved.
-async fn tell(db: &Database, user: &revolt_database::User, email: &str, notice: Notice, why: &str) {
-    let contact = revolt_database::ACCOUNT_CONTACT_EMAIL;
-    let (title, body): ([&str; 3], [String; 3]) = match notice {
-        Notice::Scheduled { date } => (
-            [
-                "Your account will be deleted",
-                "سيُحذف حسابك",
-                "Dein Konto wird gelöscht",
-            ],
-            [
-                format!(
-                    "The Zrzur team has scheduled the deletion of your account. It is disabled now and will be deleted for good on {date}, with the servers and bots it owns.\n\nReason: {why}\n\nIf you think this is a mistake, write to {contact} before then."
-                ),
-                format!(
-                    "جدول فريق زرزور حذف حسابك. الحساب معطّل الآن وسيُحذف نهائيًا في {date} مع السيرفرات والبوتات التي يملكها.\n\nالسبب: {why}\n\nإن رأيت أن في ذلك خطأ فراسلنا على {contact} قبل هذا الموعد."
-                ),
-                format!(
-                    "Das Zrzur-Team hat die Löschung deines Kontos geplant. Es ist jetzt deaktiviert und wird am {date} endgültig gelöscht, mit den Servern und Bots, die ihm gehören.\n\nGrund: {why}\n\nWenn du das für einen Fehler hältst, schreib vorher an {contact}."
-                ),
-            ],
-        ),
-        Notice::Cancelled => (
-            [
-                "Your account will not be deleted",
-                "لن يُحذف حسابك",
-                "Dein Konto wird nicht gelöscht",
-            ],
-            [
-                format!(
-                    "The Zrzur team has cancelled the deletion of your account.\n\nReason: {why}\n\nQuestions? Write to {contact}."
-                ),
-                format!(
-                    "ألغى فريق زرزور حذف حسابك.\n\nالسبب: {why}\n\nلأي سؤال راسلنا على {contact}."
-                ),
-                format!(
-                    "Das Zrzur-Team hat die Löschung deines Kontos abgesagt.\n\nGrund: {why}\n\nFragen? Schreib an {contact}."
-                ),
-            ],
-        ),
-    };
-    let languages = ["en", "ar", "de"];
-    let titles = languages
-        .iter()
-        .zip(title)
-        .map(|(l, t)| (l.to_string(), t.to_string()))
-        .collect();
-    let bodies = languages
-        .iter()
-        .zip(body.clone())
-        .map(|(l, b)| (l.to_string(), b))
-        .collect();
-    crate::util::official::notice(db, &user.id, &titles, &bodies, None).await;
+/// How the notice went: the official message, and the e-mail (`None`: mail
+/// is off or the address cannot take it)
+struct Delivery {
+    message: bool,
+    email: Option<bool>,
+}
+
+impl Delivery {
+    fn arrived(&self) -> bool {
+        self.message || self.email == Some(true)
+    }
+
+    /// For the audit summary: delivery states only
+    fn summary(&self) -> String {
+        let email = match self.email {
+            Some(true) => "sent",
+            Some(false) => "failed",
+            None => "off",
+        };
+        let message = if self.message { "sent" } else { "failed" };
+        format!("message={message}; email={email}")
+    }
+}
+
+/// The person's language: Arabic, German, else English
+fn language_of(user: &revolt_database::User) -> &'static str {
     let locale = user.locale.as_deref().unwrap_or_default().to_lowercase();
-    let index = if locale.starts_with("ar") {
-        1
+    if locale.starts_with("ar") {
+        "ar"
     } else if locale.starts_with("de") {
-        2
+        "de"
     } else {
-        0
+        "en"
+    }
+}
+
+/// The fixed texts of a notice in `language` (MSA Arabic): title and body
+pub(super) fn notice_text(language: &str, notice: &Notice, today: &str) -> (String, String) {
+    let contact = revolt_database::ACCOUNT_CONTACT_EMAIL;
+    match notice {
+        Notice::Scheduled {
+            date,
+            category,
+            facts,
+        } => {
+            let ground = crate::util::official::rule_name(language, *category);
+            let out_of_court = crate::util::official::out_of_court_lines(language);
+            match language {
+                "ar" => (
+                    "سيُحذف حسابك".to_string(),
+                    format!(
+                        "في {today} قرّر أحد أعضاء فريق زرزور حذف حسابك. اتخذ هذا القرار إنسان، لا نظام آلي.\n\nالأساس: {ground} (شروط الخدمة وإرشادات المجتمع).\nما وجدناه: {facts}\n\nحسابك معطّل الآن وقد سُجّل خروجك. وفي {date} يُحذف نهائيًا مع السيرفرات والبوتات التي يملكها.\n\nللاعتراض أو الطعن راسل {contact} قبل {date}. ويتوقف الحذف ريثما يُبت في طعنك، ويبت فيه شخص لم يتخذ هذا القرار.\n\nويمكنك قبل {date} أن تطلب من {contact} نسخة من بياناتك.\n\n{out_of_court}\n\nويمكنك أيضًا تقديم شكوى إلى سلطة حماية البيانات."
+                    ),
+                ),
+                "de" => (
+                    "Dein Konto wird gelöscht".to_string(),
+                    format!(
+                        "Am {today} hat ein Mitglied des Zrzur-Teams entschieden, dein Konto zu löschen. Ein Mensch hat das entschieden, kein automatisches System.\n\nGrundlage: {ground} (unsere Nutzungsbedingungen und Community-Richtlinien).\nWas wir festgestellt haben: {facts}\n\nDein Konto ist jetzt deaktiviert und du bist abgemeldet. Am {date} wird es endgültig gelöscht, zusammen mit den Servern und Bots, die ihm gehören.\n\nUm zu widersprechen oder Einspruch einzulegen, schreib vor dem {date} an {contact}. Solange über deinen Einspruch entschieden wird, ist die Löschung angehalten; entscheiden wird eine Person, die diese Entscheidung nicht getroffen hat.\n\nVor dem {date} kannst du bei {contact} auch eine Kopie deiner Daten anfordern.\n\n{out_of_court}\n\nDu kannst dich außerdem bei der Datenschutzbehörde beschweren."
+                    ),
+                ),
+                _ => (
+                    "Your account will be deleted".to_string(),
+                    format!(
+                        "On {today}, a member of the Zrzur team decided to delete your account. A person took this decision, not an automated system.\n\nGround: {ground} (our Terms of Service and Community Guidelines).\nWhat we found: {facts}\n\nYour account is disabled now and you are signed out. On {date} it will be deleted for good, together with the servers and bots it owns.\n\nTo object or appeal, write to {contact} before {date}. While your appeal is decided, the deletion is paused; a person who did not take this decision decides it.\n\nBefore {date} you can also ask {contact} for a copy of your data.\n\n{out_of_court}\n\nYou can also complain to the data protection authority."
+                    ),
+                ),
+            }
+        }
+        Notice::Cancelled { stays_disabled } => {
+            let state = match (language, stays_disabled) {
+                ("ar", false) => "يمكنك تسجيل الدخول من جديد.",
+                ("ar", true) => "ويبقى حسابك معطّلًا كما كان قبل ذلك.",
+                ("de", false) => "Du kannst dich wieder anmelden.",
+                ("de", true) => "Dein Konto bleibt deaktiviert, wie es vorher war.",
+                (_, false) => "You can sign in again.",
+                (_, true) => "Your account stays disabled, as it was before.",
+            };
+            match language {
+                "ar" => (
+                    "لن يُحذف حسابك".to_string(),
+                    format!(
+                        "في {today} ألغى أحد أعضاء فريق زرزور حذف حسابك. {state}\n\nلأي سؤال راسلنا على {contact}."
+                    ),
+                ),
+                "de" => (
+                    "Dein Konto wird nicht gelöscht".to_string(),
+                    format!(
+                        "Am {today} hat ein Mitglied des Zrzur-Teams die Löschung deines Kontos abgesagt. {state}\n\nFragen? Schreib an {contact}."
+                    ),
+                ),
+                _ => (
+                    "Your account will not be deleted".to_string(),
+                    format!(
+                        "On {today}, a member of the Zrzur team cancelled the deletion of your account. {state}\n\nQuestions? Write to {contact}."
+                    ),
+                ),
+            }
+        }
+    }
+}
+
+/// Tell the person, in their language, by official message and by e-mail
+/// (they are signed out and may never open the app again); gives what
+/// arrived
+async fn tell(
+    db: &Database,
+    user: &revolt_database::User,
+    email: &str,
+    notice: Notice,
+    now: i64,
+) -> Delivery {
+    let language = language_of(user);
+    let today = day(now);
+    let (title, body) = notice_text(language, &notice, &today);
+    let message = revolt_database::send_official_message(
+        db,
+        None,
+        OfficialAccount::Safety,
+        &user.id,
+        format!("**{title}**\n\n{body}"),
+    )
+    .await
+    .is_ok();
+    let (mail, _) = reachable(db, email).await;
+    let email = if mail {
+        Some(send_mail(email, language, &title, &body).await)
+    } else {
+        None
     };
-    crate::util::official::email_in_language(email, languages[index], title[index], &body[index])
-        .await;
+    Delivery { message, email }
+}
+
+/// A day as `YYYY-MM-DD` (UTC)
+fn day(ms: i64) -> String {
+    (iso8601_timestamp::Timestamp::UNIX_EPOCH + iso8601_timestamp::Duration::milliseconds(ms))
+        .to_string()
+        .chars()
+        .take(10)
+        .collect()
+}
+
+/// The e-mail, sent now; gives whether the mail server took it
+async fn send_mail(to: &str, language: &str, subject: &str, body: &str) -> bool {
+    use revolt_database::util::email::{email_templates, send_email};
+    let smtp = revolt_config::config().await.api.smtp;
+    let mut template = email_templates().await.statement;
+    template.title = subject
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(200)
+        .collect();
+    let variables = serde_json::json!({
+        "body": body.replace("**", ""),
+        "dir": if language == "ar" { "rtl" } else { "ltr" },
+    });
+    let to = to.to_string();
+    matches!(
+        tokio::task::spawn_blocking(move || send_email(&smtp, to, &template, variables)).await,
+        Ok(Ok(()))
+    )
 }
 
 fn millis(at: &iso8601_timestamp::Timestamp) -> i64 {

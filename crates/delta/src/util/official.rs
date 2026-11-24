@@ -163,6 +163,19 @@ pub fn out_of_court_body() -> Option<String> {
         .filter(|name| !name.is_empty())
 }
 
+/// The out-of-court settlement lines of a statement of reasons in
+/// `language`, with the body Zrzur works with when one is set
+pub fn out_of_court_lines(language: &str) -> String {
+    let mut lines = text(language, "statement.out_of_court").body;
+    if let Some(body) = out_of_court_body() {
+        lines.push_str("
+
+");
+        lines.push_str(&fill(&text(language, "statement.out_of_court_body").body, &[("body", body)]));
+    }
+    lines
+}
+
 fn action_key(action: &SafetyAction) -> &'static str {
     match action.kind {
         SafetyActionKind::Warning => "action.warning",

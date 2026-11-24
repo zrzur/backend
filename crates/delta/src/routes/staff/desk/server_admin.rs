@@ -130,10 +130,16 @@ mod w {
         "يجدول حذف الحساب {user}: يُعطَّل ويُسجَّل خروجه الآن، وبعد {days} يومًا يُحذف نهائيًا مع كل ما يملكه:",
         "Plant die Löschung des Kontos {user}: es wird jetzt deaktiviert und abgemeldet und nach {days} Tagen endgültig gelöscht, mit allem, was ihm gehört:",
     );
+    pub const GROUND: Text = t("Ground: {ground}", "الأساس: {ground}", "Grundlage: {ground}");
+    pub const FACTS: Text = t(
+        "Facts the person reads: {facts}",
+        "الوقائع التي يقرؤها صاحب الحساب: {facts}",
+        "Fakten, die die Person liest: {facts}",
+    );
     pub const REQUEST_TOLD: Text = t(
-        "The person is told by message and e-mail, with the reason. Staff can cancel it until then (user delete-cancel).",
-        "يُبلَّغ صاحب الحساب برسالة وبالبريد الإلكتروني مع السبب. ويمكن للإدارة إلغاء الحذف حتى ذلك الحين (user delete-cancel).",
-        "Die Person wird per Nachricht und E-Mail mit dem Grund informiert. Das Team kann es bis dahin absagen (user delete-cancel).",
+        "The person gets a statement of reasons by message and e-mail: that a person decided, the ground and these facts, the date, how to object or appeal (an Owner then cancels with user delete-cancel) and how to ask for a copy of their data. With no way to tell them, nothing is scheduled.",
+        "يتلقى صاحب الحساب بيان أسباب برسالة وبالبريد الإلكتروني: أن إنسانًا قرّر، والأساس وهذه الوقائع، والتاريخ، وكيف يعترض أو يطعن (فيلغي المالك الحذف بالأمر user delete-cancel)، وكيف يطلب نسخة من بياناته. وإن تعذّر إبلاغه فلا يُجدول شيء.",
+        "Die Person erhält eine Begründung per Nachricht und E-Mail: dass ein Mensch entschieden hat, die Grundlage und diese Fakten, das Datum, wie sie widersprechen oder Einspruch einlegen kann (ein Owner sagt dann mit user delete-cancel ab) und wie sie eine Kopie ihrer Daten anfordert. Ist sie nicht erreichbar, wird nichts geplant.",
     );
     pub const T_DELETE_CANCEL: Text = t(
         "Cancel an account deletion",
@@ -792,8 +798,19 @@ async fn delete_request_card(
         ],
     )];
     owned_lines(&plan, lang, &mut lines);
+    let category = category_of(input)?;
+    let code = match lang {
+        Lang::Ar => "ar",
+        Lang::De => "de",
+        Lang::En => "en",
+    };
+    lines.push(w::GROUND.fill(
+        lang,
+        &[("ground", &crate::util::official::rule_name(code, category))],
+    ));
+    let facts = super::super::deletion::facts(&required(input, "reason")?)?;
+    lines.push(w::FACTS.fill(lang, &[("facts", &facts)]));
     lines.push(w::REQUEST_TOLD.get(lang).to_string());
-    lines.push(w::REASON.fill(lang, &[("reason", &required(input, "reason")?)]));
     let ids = plan.ids();
     let mut card = permanent(prepared("user", &id, w::T_DELETE_REQUEST, lang, lines));
     card.stored = vec![
@@ -801,6 +818,12 @@ async fn delete_request_card(
         stored_text(BOTS, ids_text(&ids.bots)),
     ];
     Ok(card)
+}
+
+/// The ground chosen on the command
+fn category_of(input: &DeskInput) -> Result<revolt_models::v0::SafetyCategory> {
+    serde_json::from_value(Value::String(required(input, "category")?))
+        .map_err(|_| create_error!(InvalidOperation))
 }
 
 /// The servers (with members) and bots an account owns, one per line
@@ -851,6 +874,7 @@ async fn delete_request_run(
 ) -> Result<DeskView> {
     let data = DataDeletionRequest {
         reason: required(input, "reason")?,
+        category: Some(category_of(input)?),
     };
     let expected = stored_plan(input);
     let scheduled = delete_request_core(
@@ -930,6 +954,7 @@ async fn delete_cancel_run(
 ) -> Result<DeskView> {
     let data = DataDeletionRequest {
         reason: required(input, "reason")?,
+        category: None,
     };
     let cancelled =
         cancel_delete_request_core(db, staff, &required_user(input, "user")?, data).await?;
@@ -1017,7 +1042,7 @@ const USER: DeskOption = opt(
     true,
     t("The user", "المستخدم", "Der Benutzer"),
 );
-const REASON: DeskOption = text("reason", true, 500, t("Reason", "السبب", "Grund"));
+const REASON: DeskOption = text("reason", true, 300, t("Reason", "السبب", "Grund"));
 const CONFIRM_NAME: DeskOption = text(
     "confirm_name",
     true,
@@ -1036,6 +1061,57 @@ const CONFIRM_HANDLE: DeskOption = text(
         "Type name#tag exactly to confirm",
         "اكتب الاسم#الرمز بدقة للتأكيد",
         "Name#Tag genau zur Bestätigung eingeben",
+    ),
+);
+
+/// The ground of a staff deletion: the rules of the Terms and Community
+/// Guidelines it can rest on (the safety categories)
+const GROUND: DeskOption = DeskOption {
+    choices: &[
+        choice("Harassment", "Harassment", "التحرش", "Belästigung"),
+        choice(
+            "HateOrThreats",
+            "Hate or threats",
+            "الكراهية أو التهديد",
+            "Hass oder Drohungen",
+        ),
+        choice("Spam", "Spam", "الرسائل المزعجة", "Spam"),
+        choice("ScamFraud", "Scam or fraud", "الاحتيال", "Betrug"),
+        choice(
+            "Impersonation",
+            "Impersonation",
+            "انتحال الشخصية",
+            "Identitätsmissbrauch",
+        ),
+        choice("Malware", "Malware", "البرمجيات الخبيثة", "Schadsoftware"),
+        choice(
+            "IllegalContent",
+            "Illegal content",
+            "محتوى غير قانوني",
+            "Illegale Inhalte",
+        ),
+        choice("Underage", "Underage", "دون السن", "Minderjährig"),
+        choice("Other", "Other rule", "قاعدة أخرى", "Andere Regel"),
+    ],
+    ..opt(
+        "category",
+        CommandOptionType::String,
+        true,
+        t(
+            "Ground (rule broken)",
+            "الأساس (القاعدة المخالَفة)",
+            "Grundlage (verletzte Regel)",
+        ),
+    )
+};
+const FACTS: DeskOption = text(
+    "reason",
+    true,
+    300,
+    t(
+        "Facts the person reads (no names of others)",
+        "الوقائع التي يقرؤها (دون أسماء آخرين)",
+        "Fakten für die Person (keine fremden Namen)",
     ),
 );
 
@@ -1178,7 +1254,7 @@ pub static ENTRIES: &[DeskCommand] = &[
                 "حذف الحساب (المالك)",
                 "Konto löschen (Owner)",
             ),
-            &[USER, CONFIRM_HANDLE, REASON],
+            &[USER, CONFIRM_HANDLE, GROUND, FACTS],
             P::UsersDeleteRequest,
             Some(user_delete_request_card),
             user_delete_request,
