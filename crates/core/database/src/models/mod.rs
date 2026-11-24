@@ -13,6 +13,7 @@ mod channels;
 mod community_items;
 mod platform_words;
 mod activity_blocks;
+mod desk_pending;
 mod discover_requests;
 mod emojis;
 mod file_hashes;
@@ -65,6 +66,7 @@ pub use channels::*;
 pub use community_items::*;
 pub use platform_words::*;
 pub use activity_blocks::*;
+pub use desk_pending::*;
 pub use discover_requests::*;
 pub use emojis::*;
 pub use file_hashes::*;
@@ -161,6 +163,7 @@ pub trait AbstractDatabase:
     + team_volunteers::AbstractTeamVolunteers
     + linked_accounts::AbstractLinkedAccounts
     + saved_reminders::AbstractSavedReminders
+    + desk_pending::AbstractDeskPending
 {
 }
 

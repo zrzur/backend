@@ -6,17 +6,17 @@
 //! writes the mark: no public route, not the raw edit of a user.
 
 use revolt_database::{
-    is_seeded_official, passes_for_official, record_platform_audit, AuditOutcome, AuditRecord, Database,
-    NameRecord, NameScan, OfficialMarkRequest, OfficialMarkStatus, PartialUser, StaffPermission,
-    User, OFFICIAL_MARK_REQUEST_TTL_MS,
+    AuditOutcome, AuditRecord, Database, NameRecord, NameScan, OFFICIAL_MARK_REQUEST_TTL_MS,
+    OfficialMarkRequest, OfficialMarkStatus, PartialUser, StaffPermission, User,
+    is_seeded_official, passes_for_official, record_platform_audit,
 };
-use revolt_result::{create_error, Result};
-use rocket::{serde::json::Json, State};
+use revolt_result::{Result, create_error};
+use rocket::{State, serde::json::Json};
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
 use super::audited::{audited, audited_noting};
-use super::{reason, StaffContext};
+use super::{StaffContext, reason};
 
 /// Move a request out of Pending, with the audit record written first.
 ///
@@ -93,7 +93,7 @@ pub struct OfficialOverview {
     pub requests: Vec<OfficialRequestView>,
 }
 
-fn status_of(request: &OfficialMarkRequest, now: i64) -> &'static str {
+pub(super) fn status_of(request: &OfficialMarkRequest, now: i64) -> &'static str {
     match request.status {
         OfficialMarkStatus::Pending if now >= request.expires_at => "Expired",
         OfficialMarkStatus::Pending => "Pending",
@@ -104,7 +104,10 @@ fn status_of(request: &OfficialMarkRequest, now: i64) -> &'static str {
 }
 
 async fn name_of(db: &Database, id: &str) -> Option<String> {
-    db.fetch_user(id).await.ok().map(|user| revolt_models::v0::user_handle(&user.username, &user.discriminator))
+    db.fetch_user(id)
+        .await
+        .ok()
+        .map(|user| revolt_models::v0::user_handle(&user.username, &user.discriminator))
 }
 
 async fn view(db: &Database, request: &OfficialMarkRequest, now: i64) -> OfficialRequestView {
@@ -164,8 +167,22 @@ pub async fn propose(
     id: &str,
     data: Json<DataOfficialProposal>,
 ) -> Result<Json<OfficialRequestView>> {
-    staff.require_step_up(db, StaffPermission::OfficialManage).await?;
-    let data = data.into_inner();
+    propose_core(db, &staff, id, data.into_inner())
+        .await
+        .map(Json)
+}
+
+/// The console's `propose`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn propose_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataOfficialProposal,
+) -> Result<OfficialRequestView> {
+    staff
+        .require_step_up(db, StaffPermission::OfficialManage)
+        .await?;
     let why = reason(&data.reason)?;
     let subject = db.fetch_user(id).await?;
     if subject.bot.is_some() {
@@ -181,7 +198,10 @@ pub async fn propose(
         return Err(create_error!(InvalidOperation));
     }
     let open = db.fetch_official_mark_requests().await?;
-    if open.iter().any(|r| r.user_id == subject.id && status_of(r, staff.now) == "Pending") {
+    if open
+        .iter()
+        .any(|r| r.user_id == subject.id && status_of(r, staff.now) == "Pending")
+    {
         return Err(create_error!(InvalidOperation));
     }
 
@@ -197,13 +217,20 @@ pub async fn propose(
         decided_by: None,
         decided_at: None,
     };
-    let mut record = staff.record("staff.official.propose", Some(StaffPermission::OfficialManage));
+    let mut record = staff.record(
+        "staff.official.propose",
+        Some(StaffPermission::OfficialManage),
+    );
     record.target_kind = Some("user".to_string());
     record.target_id = Some(subject.id.clone());
     record.reason = Some(why);
-    record.summary = Some(format!("{} {}", if data.grant { "give" } else { "remove" }, request.id));
+    record.summary = Some(format!(
+        "{} {}",
+        if data.grant { "give" } else { "remove" },
+        request.id
+    ));
     audited(db, record, db.insert_official_mark_request(&request)).await?;
-    Ok(Json(view(db, &request, staff.now).await))
+    Ok(view(db, &request, staff.now).await)
 }
 
 /// # Confirm a proposal
@@ -216,9 +243,24 @@ pub async fn confirm(
     staff: StaffContext,
     id: &str,
 ) -> Result<Json<OfficialRequestView>> {
-    staff.require_step_up(db, StaffPermission::OfficialManage).await?;
+    confirm_core(db, &staff, id).await.map(Json)
+}
+
+/// The console's `confirm`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn confirm_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+) -> Result<OfficialRequestView> {
+    staff
+        .require_step_up(db, StaffPermission::OfficialManage)
+        .await?;
     let mut request = db.fetch_official_mark_request(id).await?;
-    let mut record = staff.record("staff.official.confirm", Some(StaffPermission::OfficialManage));
+    let mut record = staff.record(
+        "staff.official.confirm",
+        Some(StaffPermission::OfficialManage),
+    );
     record.target_kind = Some("user".to_string());
     record.target_id = Some(request.user_id.clone());
     record.reason = Some(request.reason.clone());
@@ -256,7 +298,7 @@ pub async fn confirm(
         ),
     )
     .await?;
-    Ok(Json(view(db, &request, staff.now).await))
+    Ok(view(db, &request, staff.now).await)
 }
 
 #[derive(Deserialize)]
@@ -272,24 +314,47 @@ pub async fn refuse(
     id: &str,
     data: Json<DataOfficialRefusal>,
 ) -> Result<Json<OfficialRequestView>> {
-    staff.require_step_up(db, StaffPermission::OfficialManage).await?;
+    refuse_core(db, &staff, id, data.into_inner())
+        .await
+        .map(Json)
+}
+
+/// The console's `refuse`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn refuse_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataOfficialRefusal,
+) -> Result<OfficialRequestView> {
+    staff
+        .require_step_up(db, StaffPermission::OfficialManage)
+        .await?;
     let why = reason(&data.reason)?;
     let mut request = db.fetch_official_mark_request(id).await?;
     if status_of(&request, staff.now) != "Pending" {
         return Err(create_error!(InvalidOperation));
     }
     let own = request.requested_by == staff.user.id;
-    request.status = if own { OfficialMarkStatus::Withdrawn } else { OfficialMarkStatus::Refused };
+    request.status = if own {
+        OfficialMarkStatus::Withdrawn
+    } else {
+        OfficialMarkStatus::Refused
+    };
     request.decided_by = Some(staff.user.id.clone());
     request.decided_at = Some(staff.now);
-    let action = if own { "staff.official.withdraw" } else { "staff.official.refuse" };
+    let action = if own {
+        "staff.official.withdraw"
+    } else {
+        "staff.official.refuse"
+    };
     let mut record = staff.record(action, Some(StaffPermission::OfficialManage));
     record.target_kind = Some("user".to_string());
     record.target_id = Some(request.user_id.clone());
     record.reason = Some(why);
     record.summary = Some(request.id.clone());
     decide_audited(db, record, request.clone(), async { Ok(()) }).await?;
-    Ok(Json(view(db, &request, staff.now).await))
+    Ok(view(db, &request, staff.now).await)
 }
 
 #[derive(Serialize)]
@@ -364,7 +429,12 @@ mod tests {
     }
 
     async fn status(harness: &TestHarness, id: &str) -> OfficialMarkStatus {
-        harness.db.fetch_official_mark_request(id).await.unwrap().status
+        harness
+            .db
+            .fetch_official_mark_request(id)
+            .await
+            .unwrap()
+            .status
     }
 
     /// The record is written before the status changes, and a change that
@@ -373,7 +443,11 @@ mod tests {
     async fn official_confirm_audit_failure_leaves_request_open() {
         let harness = TestHarness::new().await;
         let open = request("req-failing");
-        harness.db.insert_official_mark_request(&open).await.unwrap();
+        harness
+            .db
+            .insert_official_mark_request(&open)
+            .await
+            .unwrap();
         let mut decided = open.clone();
         decided.status = OfficialMarkStatus::Confirmed;
         decided.decided_by = Some("confirmer".to_string());
@@ -384,11 +458,17 @@ mod tests {
         })
         .await;
         assert!(result.is_err());
-        assert!(matches!(status(&harness, "req-failing").await, OfficialMarkStatus::Pending));
+        assert!(matches!(
+            status(&harness, "req-failing").await,
+            OfficialMarkStatus::Pending
+        ));
 
         let entries = harness
             .db
-            .fetch_platform_audit(PlatformAuditQuery { limit: 100, ..Default::default() })
+            .fetch_platform_audit(PlatformAuditQuery {
+                limit: 100,
+                ..Default::default()
+            })
             .await
             .unwrap();
         let outcomes: Vec<String> = entries
@@ -397,11 +477,16 @@ mod tests {
             .map(|e| format!("{:?}", e.outcome))
             .collect();
         assert_eq!(outcomes.len(), 2);
-        assert!(outcomes.contains(&"Success".to_string()) && outcomes.contains(&"Failed".to_string()));
+        assert!(
+            outcomes.contains(&"Success".to_string()) && outcomes.contains(&"Failed".to_string())
+        );
 
         // when the change works, the request stays decided
         let ok: Result<()> = decide_audited(&harness.db, record(), decided, async { Ok(()) }).await;
         assert!(ok.is_ok());
-        assert!(matches!(status(&harness, "req-failing").await, OfficialMarkStatus::Confirmed));
+        assert!(matches!(
+            status(&harness, "req-failing").await,
+            OfficialMarkStatus::Confirmed
+        ));
     }
 }

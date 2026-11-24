@@ -99,13 +99,31 @@ impl AbstractAccounts for ReferenceDb {
         Ok(accounts
             .values()
             .filter(|account| {
-                if let Some(DeletionInfo::Scheduled { after }) = &account.deletion {
+                if let Some(DeletionInfo::Scheduled { after, .. }) = &account.deletion {
                     after <= &now
                 } else {
                     false
                 }
             })
             .cloned()
+            .collect())
+    }
+
+    async fn fetch_accounts_scheduled_for_deletion(&self, limit: i64) -> Result<Vec<Account>> {
+        let accounts = self.accounts.lock().await;
+        let mut scheduled: Vec<(Timestamp, Account)> = accounts
+            .values()
+            .filter_map(|account| match &account.deletion {
+                Some(DeletionInfo::Scheduled { after, .. }) => Some((*after, account.clone())),
+                _ => None,
+            })
+            .collect();
+        // newest first, then the limit (as the MongoDB query)
+        scheduled.sort_by(|a, b| b.0.cmp(&a.0));
+        Ok(scheduled
+            .into_iter()
+            .take(limit.max(0) as usize)
+            .map(|(_, account)| account)
             .collect())
     }
 

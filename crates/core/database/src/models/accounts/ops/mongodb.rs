@@ -132,6 +132,18 @@ impl AbstractAccounts for MongoDb {
         )
     }
 
+    async fn fetch_accounts_scheduled_for_deletion(&self, limit: i64) -> Result<Vec<Account>> {
+        self.col::<Account>(COL)
+            .find(doc! { "deletion.status": "Scheduled" })
+            .sort(doc! { "deletion.after": -1 })
+            .limit(limit)
+            .await
+            .map_err(|_| create_database_error!("find", COL))?
+            .try_collect()
+            .await
+            .map_err(|_| create_database_error!("collect", COL))
+    }
+
     async fn fetch_provisional_accounts_before(&self, before: Timestamp) -> Result<Vec<Account>> {
         query!(
             self,

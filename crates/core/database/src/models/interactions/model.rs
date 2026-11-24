@@ -57,6 +57,10 @@ pub struct Interaction {
     /// changed in between
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub command_version: Option<String>,
+    /// The language the person's client uses, kept with `command_options`
+    /// (Zrzur Desk answers in it)
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub locale: Option<String>,
     pub nonce: String,
     /// The ordinary session (sign-in) the person used. A route acting on
     /// the person's behalf can bind its own state to that sign-in, so
@@ -168,6 +172,7 @@ impl Interaction {
                 command_name: None,
                 command_options: vec![],
                 command_version: None,
+                locale: None,
                 nonce,
                 session_id: None,
                 token_hash: hash_interaction_token(&token),

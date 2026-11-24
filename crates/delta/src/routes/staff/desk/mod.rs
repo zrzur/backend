@@ -14,18 +14,41 @@
 //! [`StaffContext`]: super::StaffContext
 
 mod actor;
+mod admin;
+#[cfg(test)]
+mod admin_tests;
+mod decisions;
+#[cfg(test)]
+mod decisions_tests;
+#[cfg(test)]
+mod framework_tests;
+mod lookup;
+#[cfg(test)]
+mod lookup_tests;
+mod moderation;
+#[cfg(test)]
+mod moderation_tests;
 mod overview;
+pub(crate) mod registry;
+mod run;
+mod server_admin;
+#[cfg(test)]
+mod server_admin_tests;
 mod session;
+mod support;
+#[cfg(test)]
+mod support_tests;
 #[cfg(test)]
 mod tests;
+pub(crate) mod view;
 
 // for the desk routes of later phases
 #[allow(unused_imports)]
-pub(crate) use actor::{desk_actor, field, DataDeskInteraction, Expect};
+pub(crate) use actor::{DataDeskInteraction, Expect, desk_actor, field};
 
-use revolt_config::{config, FeaturesStaffDesk};
+use revolt_config::{FeaturesStaffDesk, config};
 use revolt_database::User;
-use revolt_result::{create_error, Result};
+use revolt_result::{Result, create_error};
 use rocket::Route;
 
 /// The command's name as the bot registers it (`/desk me`, `/desk logout`)
@@ -37,7 +60,16 @@ pub const CODE_FIELD: &str = "code";
 
 /// The routes, mounted under `/staff` (so at `/staff/desk/...`)
 pub fn routes() -> Vec<Route> {
-    routes![session::open, session::close, session::step_up, session::me, overview::overview]
+    routes![
+        session::open,
+        session::close,
+        session::step_up,
+        session::me,
+        overview::overview,
+        run::commands,
+        run::run,
+        run::confirm
+    ]
 }
 
 #[cfg(test)]
@@ -58,7 +90,11 @@ pub(crate) mod test_settings {
     }
 
     pub fn get(bot: &str) -> Option<FeaturesStaffDesk> {
-        SETTINGS.lock().unwrap().as_ref().and_then(|all| all.get(bot).cloned())
+        SETTINGS
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|all| all.get(bot).cloned())
     }
 }
 
@@ -113,9 +149,38 @@ pub(crate) async fn hides_field_from_bot(bot: &str, form: &str) -> bool {
     config().await.features.staff_desk.bot.trim() == bot
 }
 
+/// Whether every answer to `interaction` must be private: a desk command,
+/// or a `zd:` button or form, of the configured desk bot (also while the
+/// desk is off). This guards against a mistake in the bot, not against the
+/// bot: a bot holding the data could post it anywhere with its own token.
+/// The privacy boundary is the server answering only what the presser may
+/// see, in the bot's private answer.
+pub(crate) async fn answers_privately(interaction: &revolt_database::Interaction) -> bool {
+    let bot = interaction.application_id.trim();
+    let desk = interaction
+        .command_name
+        .as_deref()
+        .is_some_and(registry::is_desk_command)
+        || interaction
+            .custom_id
+            .as_deref()
+            .is_some_and(|id| id.starts_with(FORM_PREFIX));
+    if !desk || bot.is_empty() {
+        return false;
+    }
+    #[cfg(test)]
+    if let Some(settings) = test_settings::get(bot) {
+        return settings.bot.trim() == bot;
+    }
+    config().await.features.staff_desk.bot.trim() == bot
+}
+
 /// Whether a new command interaction keeps its options: only `/desk` of
 /// the configured desk bot, so the desk routes can read the sub-command
-/// the server itself checked; no other bot's options are ever stored
+/// and options the server itself checked; no other bot's options are ever
+/// stored. Such a press must name the command version the person saw
+/// (`/interactions` refuses it without one), and the version is stored
+/// with the options for the registered-as-offered check.
 pub(crate) async fn keeps_options(bot: &str, command_name: &str) -> bool {
-    command_name == COMMAND && current(bot).await.is_some_and(|s| s.bot == bot)
+    registry::is_desk_command(command_name) && current(bot).await.is_some_and(|s| s.bot == bot)
 }

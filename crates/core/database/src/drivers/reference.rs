@@ -32,6 +32,7 @@ database_derived!(
         pub command_permissions:
             Arc<Mutex<HashMap<String, revolt_models::v0::CommandPermissions>>>,
         pub interactions: Arc<Mutex<HashMap<String, crate::Interaction>>>,
+        pub desk_pending: Arc<Mutex<HashMap<String, crate::DeskPending>>>,
         pub oauth: Arc<Mutex<crate::ReferenceOAuth>>,
         pub emojis: Arc<Mutex<HashMap<String, Emoji>>>,
         pub soundboard_sounds: Arc<Mutex<HashMap<String, crate::SoundboardSound>>>,

@@ -9,11 +9,11 @@
 //! Every decision is written to the platform audit log first.
 
 use revolt_database::{
-    record_platform_audit, AuditOutcome, Database, DiscoverRequestType, StaffPermission,
+    AuditOutcome, Database, DiscoverRequestType, StaffPermission, record_platform_audit,
 };
 use revolt_models::v0::{DataDiscoverDecision, DiscoverDecision, DiscoverQueueEntry};
-use revolt_result::{create_error, Result};
-use rocket::{serde::json::Json, State};
+use revolt_result::{Result, create_error};
+use rocket::{State, serde::json::Json};
 
 use super::StaffContext;
 use crate::routes::discover::{decide::decide_request, queue::queue_entries};
@@ -22,9 +22,21 @@ use crate::routes::discover::{decide::decide_request, queue::queue_entries};
 ///
 /// Requests waiting for a decision (pending or under review).
 #[get("/discover/requests")]
-pub async fn requests(db: &State<Database>, staff: StaffContext) -> Result<Json<Vec<DiscoverQueueEntry>>> {
+pub async fn requests(
+    db: &State<Database>,
+    staff: StaffContext,
+) -> Result<Json<Vec<DiscoverQueueEntry>>> {
+    requests_core(db, &staff).await.map(Json)
+}
+
+/// The console's `requests`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn requests_core(
+    db: &Database,
+    staff: &StaffContext,
+) -> Result<Vec<DiscoverQueueEntry>> {
     staff.require(db, StaffPermission::ServersRead).await?;
-    queue_entries(db).await.map(Json)
+    queue_entries(db).await
 }
 
 /// # Decide a Discover request
@@ -40,37 +52,74 @@ pub async fn decide(
     id: &str,
     data: Json<DataDiscoverDecision>,
 ) -> Result<()> {
+    decide_core(db, &staff, kind, id, data.into_inner()).await
+}
+
+/// The console's `decide`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn decide_core(
+    db: &Database,
+    staff: &StaffContext,
+    kind: &str,
+    id: &str,
+    data: DataDiscoverDecision,
+) -> Result<()> {
     staff.require(db, StaffPermission::ServersRestrict).await?;
-    let data = data.into_inner();
     let request_type = match kind {
         "server" => DiscoverRequestType::Server,
         "bot" => DiscoverRequestType::Bot,
         _ => return Err(create_error!(InvalidOperation)),
     };
-    let reason = data.reason.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    if matches!(data.decision, Some(DiscoverDecision::Deny | DiscoverDecision::Remove))
-        && reason.is_none_or(|r| r.chars().count() < 3)
+    let reason = data
+        .reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    if matches!(
+        data.decision,
+        Some(DiscoverDecision::Deny | DiscoverDecision::Remove)
+    ) && reason.is_none_or(|r| r.chars().count() < 3)
     {
         return Err(revolt_result::failed_validation(vec![
-            revolt_result::ValidationProblem::length("reason", 3, 512),
+            revolt_result::ValidationProblem::length("reason", 3, 300),
+        ]));
+    }
+    // the owner reads it, the audit log keeps it: 300 at most
+    if reason.is_some_and(|r| r.chars().count() > 300) {
+        return Err(revolt_result::failed_validation(vec![
+            revolt_result::ValidationProblem::length("reason", 3, 300),
         ]));
     }
     // the request must exist before we log deciding it
-    db.fetch_discover_request_by_item_id(request_type, id).await?;
+    db.fetch_discover_request_by_item_id(request_type, id)
+        .await?;
 
-    let mut record = staff.record("staff.discover.decide", Some(StaffPermission::ServersRestrict));
+    let mut record = staff.record(
+        "staff.discover.decide",
+        Some(StaffPermission::ServersRestrict),
+    );
     record.target_kind = Some(kind.to_string());
     record.target_id = Some(id.to_string());
     record.reason = reason.map(|r| r.chars().take(500).collect());
     record.summary = Some(format!(
         "{}{}",
-        data.decision.as_ref().map(|d| format!("{d:?}")).unwrap_or_else(|| "-".to_string()),
-        data.featured.map(|f| format!(" featured={f}")).unwrap_or_default()
+        data.decision
+            .as_ref()
+            .map(|d| format!("{d:?}"))
+            .unwrap_or_else(|| "-".to_string()),
+        data.featured
+            .map(|f| format!(" featured={f}"))
+            .unwrap_or_default()
     ));
     record_platform_audit(db, record.clone(), AuditOutcome::Success).await?;
     if let Err(error) = decide_request(db, kind, id, data).await {
         let mut failed = record;
-        failed.summary = Some(format!("{:?}", error.error_type).chars().take(200).collect());
+        failed.summary = Some(
+            format!("{:?}", error.error_type)
+                .chars()
+                .take(200)
+                .collect(),
+        );
         let _ = record_platform_audit(db, failed, AuditOutcome::Failed).await;
         return Err(error);
     }

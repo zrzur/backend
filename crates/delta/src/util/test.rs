@@ -142,6 +142,7 @@ impl TestHarness {
                     expires_at: now + revolt_database::STAFF_SESSION_MAX_MS,
                     // a fresh step-up too: edits of other people need one
                     step_up_until: Some(now + revolt_database::STAFF_SESSION_MAX_MS),
+                    step_up_at: Some(now),
                     revoked_at: None,
                     user_agent: None,
                     kind: Default::default(),

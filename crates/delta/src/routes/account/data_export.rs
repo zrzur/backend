@@ -438,7 +438,7 @@ mod account_data_tests {
         let harness = TestHarness::new().await;
         let (mut account, _, _) = harness.new_user().await;
         account.schedule_deletion(&harness.db).await.unwrap();
-        let Some(DeletionInfo::Scheduled { after }) = account.deletion else {
+        let Some(DeletionInfo::Scheduled { after, .. }) = account.deletion else {
             panic!("not scheduled")
         };
         let expected = Timestamp::now_utc() + Duration::days(ACCOUNT_DELETION_GRACE_DAYS);

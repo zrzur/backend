@@ -29,11 +29,16 @@ use serde::{Deserialize, Serialize};
 use super::StaffContext;
 use crate::routes::badges::{admin_grant_view, catalogue, now_ms, user_record};
 
-/// The badge rights of this staff session
+/// The badge rights of this staff session in the console
 fn actor(staff: &StaffContext) -> BadgeActor {
+    actor_on(staff, BadgePath::StaffConsole)
+}
+
+/// The badge rights of this staff session on a path (console or Zrzur Desk)
+pub(super) fn actor_on(staff: &StaffContext, path: BadgePath) -> BadgeActor {
     BadgeActor {
         id: staff.user.id.clone(),
-        path: BadgePath::StaffConsole,
+        path,
         staff: staff.has(StaffPermission::BadgesManage),
         owner: staff.grant.is_owner(staff.now),
         step_up: staff.session.step_up_until.is_some_and(|until| staff.now < until),
@@ -53,8 +58,18 @@ pub async fn badge_catalogue(db: &State<Database>, staff: StaffContext) -> Resul
 /// Grants, badge history and which badges you may give them now.
 #[get("/users/<id>/badges")]
 pub async fn user_badges(db: &State<Database>, staff: StaffContext, id: &str) -> Result<Json<AdminUserBadges>> {
+    user_badges_core(db, &staff, id).await.map(Json)
+}
+
+/// The console's `user_badges`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks
+pub(super) async fn user_badges_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+) -> Result<AdminUserBadges> {
     staff.require(db, StaffPermission::UsersRead).await?;
-    user_record(db, &actor(&staff), id).await.map(Json)
+    user_record(db, &actor(staff), id).await
 }
 
 #[derive(Deserialize)]
@@ -119,28 +134,38 @@ pub struct StaffBadgeChange {
     pub request: Option<BadgeRequestView>,
 }
 
+/// A grant or revoke through beta's single gate, on `path` (the console,
+/// or Zrzur Desk with its own audit prefix `staff.desk.badge`)
 async fn change(
     db: &Database,
     staff: &StaffContext,
+    path: BadgePath,
     id: &str,
     data: DataBadgeChange,
     change: BadgeChange,
-) -> Result<Json<StaffBadgeChange>> {
+) -> Result<StaffBadgeChange> {
     let (badge, note) = (data.badge.clone(), data.reason.clone());
-    let outcome = mutate_badge(
-        db,
-        &actor(staff),
-        BadgeMutation {
-            user_id: id.to_string(),
-            badge: data.badge,
-            change,
-            reason: data.reason,
-            expires_at: if change == BadgeChange::Grant { data.expires_at } else { None },
-            source_ref: None,
-        },
-    )
-    .await?;
-    Ok(Json(match outcome {
+    let actor = actor_on(staff, path);
+    let mutation = BadgeMutation {
+        user_id: id.to_string(),
+        badge: data.badge,
+        change,
+        reason: data.reason,
+        expires_at: if change == BadgeChange::Grant { data.expires_at } else { None },
+        source_ref: None,
+    };
+    // the person reads the reason and the audit log keeps it: 300 at most
+    // (DK-13). Rights first: a change the gate refuses goes on to the gate,
+    // which records the refusal.
+    if mutation.reason.trim().chars().count() > 300
+        && revolt_database::authorize_badge_mutation(db, &actor, &mutation).await?.is_ok()
+    {
+        return Err(revolt_result::failed_validation(vec![
+            revolt_result::ValidationProblem::length("reason", 3, 300),
+        ]));
+    }
+    let outcome = mutate_badge(db, &actor, mutation).await?;
+    Ok(match outcome {
         BadgeOutcome::Applied(grant) => {
             crate::util::official::badge(db, id, change == BadgeChange::Grant, &badge, &note).await;
             StaffBadgeChange {
@@ -154,7 +179,27 @@ async fn change(
             grant: None,
             request: Some(request_view(&request, now_ms())),
         },
-    }))
+    })
+}
+
+/// The console's grant, for Zrzur Desk: the same gate on the desk's path
+pub(super) async fn grant_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataBadgeChange,
+) -> Result<StaffBadgeChange> {
+    change(db, staff, BadgePath::Desk, id, data, BadgeChange::Grant).await
+}
+
+/// The console's revoke, for Zrzur Desk: the same gate on the desk's path
+pub(super) async fn revoke_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataBadgeChange,
+) -> Result<StaffBadgeChange> {
+    change(db, staff, BadgePath::Desk, id, data, BadgeChange::Revoke).await
 }
 
 /// # Grant a badge
@@ -165,7 +210,9 @@ pub async fn grant(
     id: &str,
     data: Json<DataBadgeChange>,
 ) -> Result<Json<StaffBadgeChange>> {
-    change(db, &staff, id, data.into_inner(), BadgeChange::Grant).await
+    change(db, &staff, BadgePath::StaffConsole, id, data.into_inner(), BadgeChange::Grant)
+        .await
+        .map(Json)
 }
 
 /// # Revoke a badge
@@ -176,7 +223,9 @@ pub async fn revoke(
     id: &str,
     data: Json<DataBadgeChange>,
 ) -> Result<Json<StaffBadgeChange>> {
-    change(db, &staff, id, data.into_inner(), BadgeChange::Revoke).await
+    change(db, &staff, BadgePath::StaffConsole, id, data.into_inner(), BadgeChange::Revoke)
+        .await
+        .map(Json)
 }
 
 /// # Badge changes waiting for a second person (and recent decisions)

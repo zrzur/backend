@@ -18,23 +18,23 @@
 //! Every change is written to the platform audit log first.
 
 use revolt_database::{
-    record_platform_audit, AuditOutcome, AuditRecord, BugReport, CommunityItemQuery,
-    CommunityItemStatus, CommunityReviewAction, Database, Session, StaffPermission,
+    AuditOutcome, AuditRecord, BugReport, CommunityItemQuery, CommunityItemStatus,
+    CommunityReviewAction, Database, Session, StaffPermission, record_platform_audit,
 };
 use revolt_models::v0::{self, BugReportReview, DataBugReview};
-use revolt_result::{create_error, Result};
+use revolt_result::{Result, create_error};
 use rocket::{
+    State,
     http::{ContentType, Header},
     serde::json::Json,
-    State,
 };
 use serde::Deserialize;
 
-use super::{reason, StaffContext};
+use super::{StaffContext, reason};
 use crate::routes::badges::bugs::{is_security, queue_of, report_for, review_as};
 use crate::routes::plugins::{
-    approve_as, publisher_as, queue_items, reinstate_as, reject_as, remove_as, revoke_as,
-    suspend_as, DataPluginReview, PluginsOpen, ReviewItem,
+    DataPluginReview, PluginsOpen, ReviewItem, approve_as, publisher_as, queue_items, reinstate_as,
+    reject_as, remove_as, revoke_as, suspend_as,
 };
 
 async fn audited<T>(
@@ -47,7 +47,12 @@ async fn audited<T>(
         Ok(value) => Ok(value),
         Err(error) => {
             let mut failed = record;
-            failed.summary = Some(format!("{:?}", error.error_type).chars().take(200).collect());
+            failed.summary = Some(
+                format!("{:?}", error.error_type)
+                    .chars()
+                    .take(200)
+                    .collect(),
+            );
             let _ = record_platform_audit(db, failed, AuditOutcome::Failed).await;
             Err(error)
         }
@@ -65,6 +70,15 @@ pub async fn design_queue(
     db: &State<Database>,
     staff: StaffContext,
 ) -> Result<Json<v0::CommunityReviewQueue>> {
+    design_queue_core(db, &staff).await.map(Json)
+}
+
+/// The console's `design_queue`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn design_queue_core(
+    db: &Database,
+    staff: &StaffContext,
+) -> Result<v0::CommunityReviewQueue> {
     staff.require(db, StaffPermission::ReportsRead).await?;
     let fetch = |statuses: Vec<CommunityItemStatus>, reported: bool, pending_revision: bool| {
         db.fetch_community_items(CommunityItemQuery {
@@ -79,7 +93,10 @@ pub async fn design_queue(
     pending.reverse();
     let revisions = fetch(vec![CommunityItemStatus::Published], false, true).await?;
     let reported = fetch(
-        vec![CommunityItemStatus::Published, CommunityItemStatus::Suspended],
+        vec![
+            CommunityItemStatus::Published,
+            CommunityItemStatus::Suspended,
+        ],
         true,
         false,
     )
@@ -94,14 +111,16 @@ pub async fn design_queue(
     )
     .await?;
     let api = |list: Vec<revolt_database::CommunityItem>| {
-        list.into_iter().map(|item| item.into_v0(true, false)).collect()
+        list.into_iter()
+            .map(|item| item.into_v0(true, false))
+            .collect()
     };
-    Ok(Json(v0::CommunityReviewQueue {
+    Ok(v0::CommunityReviewQueue {
         pending: api(pending),
         revisions: api(revisions),
         reported: api(reported),
         creators,
-    }))
+    })
 }
 
 /// How long the console waits for the file service
@@ -159,7 +178,10 @@ pub async fn design_file(
         "image/webp" => ContentType::WEBP,
         _ => ContentType::PNG,
     };
-    let body = response.bytes().await.map_err(|_| create_error!(ProxyError))?;
+    let body = response
+        .bytes()
+        .await
+        .map_err(|_| create_error!(ProxyError))?;
     Ok(DesignFile {
         body: body.to_vec(),
         content_type,
@@ -191,20 +213,39 @@ pub async fn design_decide(
     id: &str,
     data: Json<DataStaffDesignDecision>,
 ) -> Result<Json<v0::CommunityItem>> {
-    staff.require_step_up(db, StaffPermission::ReportsResolve).await?;
-    let data = data.into_inner();
+    design_decide_core(db, &staff, id, data.into_inner())
+        .await
+        .map(Json)
+}
+
+/// The console's `design_decide`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn design_decide_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataStaffDesignDecision,
+) -> Result<v0::CommunityItem> {
+    staff
+        .require_step_up(db, StaffPermission::ReportsResolve)
+        .await?;
     let action = match data.action.as_str() {
         "approve" => CommunityReviewAction::Approve,
         "reject" => CommunityReviewAction::Reject,
         "suspend" => CommunityReviewAction::Suspend,
         _ => return Err(create_error!(InvalidOperation)),
     };
-    let why = match data.reason.as_deref().map(str::trim).filter(|r| !r.is_empty()) {
+    let why = match data
+        .reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|r| !r.is_empty())
+    {
         Some(text) => Some(reason(text)?),
         None if action != CommunityReviewAction::Approve => {
             return Err(revolt_result::failed_validation(vec![
                 revolt_result::ValidationProblem::new("reason", "required"),
-            ]))
+            ]));
         }
         None => None,
     };
@@ -229,16 +270,28 @@ pub async fn design_decide(
         crate::routes::community::decide_as(db, &staff.user, id, action, decision),
     )
     .await
-    .map(Json)
 }
 
 // ---- plugins ----
 
 /// # Plugin releases waiting for review
 #[get("/plugins/review")]
-pub async fn plugin_queue(_open: PluginsOpen, db: &State<Database>, staff: StaffContext) -> Result<Json<Vec<ReviewItem>>> {
+pub async fn plugin_queue(
+    _open: PluginsOpen,
+    db: &State<Database>,
+    staff: StaffContext,
+) -> Result<Json<Vec<ReviewItem>>> {
+    plugin_queue_core(db, &staff).await.map(Json)
+}
+
+/// The console's `plugin_queue`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn plugin_queue_core(
+    db: &Database,
+    staff: &StaffContext,
+) -> Result<Vec<ReviewItem>> {
     staff.require(db, StaffPermission::ReportsRead).await?;
-    queue_items(db).await.map(Json)
+    queue_items(db).await
 }
 
 #[derive(Deserialize)]
@@ -270,15 +323,42 @@ pub async fn plugin_decide(
     id: &str,
     data: Json<DataStaffPluginDecision>,
 ) -> Result<Json<serde_json::Value>> {
-    staff.require_step_up(db, StaffPermission::ReportsResolve).await?;
-    let data = data.into_inner();
-    let needs_reason = !matches!(data.action.as_str(), "approve" | "reinstate" | "verify" | "reinstate_publisher");
-    let why = match data.reason.as_deref().map(str::trim).filter(|r| !r.is_empty()) {
+    plugin_decide_core(db, &staff, id, data.into_inner())
+        .await
+        .map(Json)
+}
+
+/// The console's `plugin_decide`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn plugin_decide_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataStaffPluginDecision,
+) -> Result<serde_json::Value> {
+    // the plugin switch, like the console route's guard: a caller without
+    // the guard (Zrzur Desk's confirmation) is refused here
+    if !revolt_config::config().await.features.plugins_enabled {
+        return Err(create_error!(PluginsDisabled));
+    }
+    staff
+        .require_step_up(db, StaffPermission::ReportsResolve)
+        .await?;
+    let needs_reason = !matches!(
+        data.action.as_str(),
+        "approve" | "reinstate" | "verify" | "reinstate_publisher"
+    );
+    let why = match data
+        .reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|r| !r.is_empty())
+    {
         Some(text) => Some(reason(text)?),
         None if needs_reason => {
             return Err(revolt_result::failed_validation(vec![
                 revolt_result::ValidationProblem::new("reason", "required"),
-            ]))
+            ]));
         }
         None => None,
     };
@@ -314,7 +394,9 @@ pub async fn plugin_decide(
             "reinstate" => serde_json::to_value(reinstate_as(db, user, id, review).await?),
             "remove" => serde_json::to_value(remove_as(db, user, id, review).await?),
             "verify" => serde_json::to_value(publisher_as(db, user, id, "verify", None).await?),
-            "suspend_publisher" => serde_json::to_value(publisher_as(db, user, id, "suspend", why.clone()).await?),
+            "suspend_publisher" => {
+                serde_json::to_value(publisher_as(db, user, id, "suspend", why.clone()).await?)
+            }
             _ => serde_json::to_value(publisher_as(db, user, id, "reinstate", None).await?),
         }
         .unwrap_or(serde_json::Value::Null))
@@ -332,7 +414,15 @@ pub async fn plugin_decide(
                         "reject" => "plugin.rejected",
                         _ => "plugin.revoked",
                     };
-                    crate::util::official::plugin(db, &plugin.publisher_id, key, &plugin.name, &release.version, note).await;
+                    crate::util::official::plugin(
+                        db,
+                        &plugin.publisher_id,
+                        key,
+                        &plugin.name,
+                        &release.version,
+                        note,
+                    )
+                    .await;
                 }
             }
         }
@@ -343,7 +433,15 @@ pub async fn plugin_decide(
                     "reinstate" => "plugin.reinstated",
                     _ => "plugin.removed",
                 };
-                crate::util::official::plugin(db, &plugin.publisher_id, key, &plugin.name, "", note).await;
+                crate::util::official::plugin(
+                    db,
+                    &plugin.publisher_id,
+                    key,
+                    &plugin.name,
+                    "",
+                    note,
+                )
+                .await;
             }
         }
         _ => {
@@ -355,12 +453,12 @@ pub async fn plugin_decide(
             crate::util::official::send(db, id, key, &[("note", note.unwrap_or_default())]).await;
         }
     }
-    Ok(Json(out))
+    Ok(out)
 }
 
 // ---- bug reports ----
 
-fn sees(staff: &StaffContext, report: &BugReport) -> bool {
+pub(super) fn sees(staff: &StaffContext, report: &BugReport) -> bool {
     staff.has(if is_security(report) {
         StaffPermission::SecurityRead
     } else {
@@ -380,24 +478,56 @@ pub async fn bugs(
     security: Option<bool>,
     status: Option<&str>,
 ) -> Result<Json<Vec<BugReportReview>>> {
+    bugs_core(db, &staff, security, status).await.map(Json)
+}
+
+/// The console's `bugs`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn bugs_core(
+    db: &Database,
+    staff: &StaffContext,
+    security: Option<bool>,
+    status: Option<&str>,
+) -> Result<Vec<BugReportReview>> {
     let security = security.unwrap_or(false);
     staff
-        .require(db, if security { StaffPermission::SecurityRead } else { StaffPermission::SupportRead })
+        .require(
+            db,
+            if security {
+                StaffPermission::SecurityRead
+            } else {
+                StaffPermission::SupportRead
+            },
+        )
         .await?;
     if status.is_some_and(|s| s.len() > 128) {
         return Err(create_error!(InvalidOperation));
     }
-    queue_of(db, security, status).await.map(Json)
+    queue_of(db, security, status).await
 }
 
 /// # A bug report
 #[get("/bugs/<id>")]
-pub async fn bug(db: &State<Database>, staff: StaffContext, id: &str) -> Result<Json<BugReportReview>> {
+pub async fn bug(
+    db: &State<Database>,
+    staff: StaffContext,
+    id: &str,
+) -> Result<Json<BugReportReview>> {
+    bug_core(db, &staff, id).await.map(Json)
+}
+
+/// The console's `bug`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn bug_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+) -> Result<BugReportReview> {
     // a report you may not see is a 404, like for anyone else
     if !staff.has(StaffPermission::SupportRead) && !staff.has(StaffPermission::SecurityRead) {
         staff.require(db, StaffPermission::SupportRead).await?;
     }
-    report_for(db, id, |r| sees(&staff, r)).await.map(Json)
+    report_for(db, id, |r| sees(&staff, r)).await
 }
 
 /// # Review a bug report
@@ -412,9 +542,25 @@ pub async fn bug_review(
     id: &str,
     data: Json<DataBugReview>,
 ) -> Result<Json<BugReportReview>> {
+    bug_review_core(db, &staff, id, data.into_inner())
+        .await
+        .map(Json)
+}
+
+/// The console's `bug_review`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn bug_review_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataBugReview,
+) -> Result<BugReportReview> {
     let report = db.fetch_bug_report(id).await?;
     let (read, manage) = if is_security(&report) {
-        (StaffPermission::SecurityRead, StaffPermission::SecurityRespond)
+        (
+            StaffPermission::SecurityRead,
+            StaffPermission::SecurityRespond,
+        )
     } else {
         (StaffPermission::SupportRead, StaffPermission::SupportManage)
     };
@@ -422,7 +568,6 @@ pub async fn bug_review(
         return Err(create_error!(NotFound));
     }
     staff.require(db, manage).await?;
-    let data = data.into_inner();
     let mut record = staff.record("staff.bug.review", Some(manage));
     record.target_kind = Some("bug_report".to_string());
     record.target_id = Some(id.to_string());
@@ -431,6 +576,13 @@ pub async fn bug_review(
     let action = data.action.clone();
     let note = data.note.clone().unwrap_or_default();
     let reviewed = audited(db, record, review_as(db, &staff.user, can, id, data)).await?;
-    crate::util::official::bug(db, &reviewed.report.author_id, &action, &reviewed.report.title, &note).await;
-    Ok(Json(reviewed))
+    crate::util::official::bug(
+        db,
+        &reviewed.report.author_id,
+        &action,
+        &reviewed.report.title,
+        &note,
+    )
+    .await;
+    Ok(reviewed)
 }

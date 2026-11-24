@@ -34,6 +34,9 @@ pub trait AbstractAccounts: Sync + Send {
     /// Find accounts which are due to be deleted
     async fn fetch_accounts_due_for_deletion(&self) -> Result<Vec<Account>>;
 
+    /// Accounts whose deletion is scheduled (due or not), at most `limit`
+    async fn fetch_accounts_scheduled_for_deletion(&self, limit: i64) -> Result<Vec<Account>>;
+
     /// Accounts made from an invite link before `before` whose e-mail is
     /// still not confirmed
     async fn fetch_provisional_accounts_before(&self, before: Timestamp) -> Result<Vec<Account>>;

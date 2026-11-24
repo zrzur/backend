@@ -14,16 +14,16 @@
 use std::collections::BTreeSet;
 
 use revolt_database::{
-    record_platform_audit, AuditOutcome, AuditRecord, Database, PlatformPermission,
-    PlatformPermissions, StaffPermission,
+    AuditOutcome, AuditRecord, Database, PlatformPermission, PlatformPermissions, StaffPermission,
+    record_platform_audit,
 };
 use revolt_models::v0::{
     DataSafetyAction, DataSafetyAppealDecision, DataSafetyCaseEdit, DataSafetyCaseStatus,
     DataSafetyNote, DataSafetyRevoke, SafetyAction, SafetyActionKind, SafetyAppeal, SafetyCase,
     SafetyCaseDetails, SafetyCasePage, SafetyCategory, SafetyTargetKind,
 };
-use revolt_result::{create_error, Error, ErrorType, Result};
-use rocket::{serde::json::Json, State};
+use revolt_result::{Error, ErrorType, Result, create_error};
+use rocket::{State, serde::json::Json};
 
 use super::StaffContext;
 use crate::routes::safety::{
@@ -31,13 +31,16 @@ use crate::routes::safety::{
     appeals::{appeals_of, decide_as},
     reports::open_staff_case,
     review::{
-        case_as, edit_as, note_as, queue_as, set_status_as, user_history_of, SafetyQueueFilter,
-        SafetyUserHistory,
+        SafetyQueueFilter, SafetyUserHistory, case_as, edit_as, note_as, queue_as, set_status_as,
+        user_history_of,
     },
 };
 
 fn stepped_up(staff: &StaffContext) -> bool {
-    staff.session.step_up_until.is_some_and(|until| staff.now < until)
+    staff
+        .session
+        .step_up_until
+        .is_some_and(|until| staff.now < until)
 }
 
 /// Whether the staff member could make senior decisions after a step-up
@@ -84,7 +87,9 @@ fn translate(staff: &StaffContext, error: Error) -> Error {
 fn is_denial(error: &Error) -> bool {
     matches!(
         error.error_type,
-        ErrorType::MissingPlatformPermission { .. } | ErrorType::NotElevated | ErrorType::NotPrivileged
+        ErrorType::MissingPlatformPermission { .. }
+            | ErrorType::NotElevated
+            | ErrorType::NotPrivileged
     )
 }
 
@@ -103,7 +108,12 @@ async fn audited<T>(
         Err(error) => {
             let error = translate(staff, error);
             let mut failed = record;
-            failed.summary = Some(format!("{:?}", error.error_type).chars().take(200).collect());
+            failed.summary = Some(
+                format!("{:?}", error.error_type)
+                    .chars()
+                    .take(200)
+                    .collect(),
+            );
             let outcome = if is_denial(&error) {
                 AuditOutcome::Denied
             } else {
@@ -116,7 +126,12 @@ async fn audited<T>(
     }
 }
 
-fn case_record(staff: &StaffContext, action: &str, permission: StaffPermission, id: &str) -> AuditRecord {
+fn case_record(
+    staff: &StaffContext,
+    action: &str,
+    permission: StaffPermission,
+    id: &str,
+) -> AuditRecord {
     let mut record = staff.record(action, Some(permission));
     record.target_kind = Some("safety_case".to_string());
     record.target_id = Some(id.to_string());
@@ -130,7 +145,9 @@ fn note_reason(text: Option<&str>) -> Option<String> {
 }
 
 /// # Report queue
-#[get("/safety/cases?<status>&<kind>&<category>&<priority>&<assignee>&<search>&<before>&<oldest>&<limit>")]
+#[get(
+    "/safety/cases?<status>&<kind>&<category>&<priority>&<assignee>&<search>&<before>&<oldest>&<limit>"
+)]
 #[allow(clippy::too_many_arguments)]
 pub async fn cases(
     db: &State<Database>,
@@ -145,6 +162,28 @@ pub async fn cases(
     oldest: Option<bool>,
     limit: Option<usize>,
 ) -> Result<Json<SafetyCasePage>> {
+    cases_core(
+        db, &staff, status, kind, category, priority, assignee, search, before, oldest, limit,
+    )
+    .await
+    .map(Json)
+}
+
+/// The console's `cases`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn cases_core(
+    db: &Database,
+    staff: &StaffContext,
+    status: Option<&str>,
+    kind: Option<&str>,
+    category: Option<&str>,
+    priority: Option<&str>,
+    assignee: Option<&str>,
+    search: Option<&str>,
+    before: Option<&str>,
+    oldest: Option<bool>,
+    limit: Option<usize>,
+) -> Result<SafetyCasePage> {
     staff.require(db, StaffPermission::ReportsRead).await?;
     let filter = SafetyQueueFilter {
         status: status.map(str::to_string),
@@ -159,7 +198,6 @@ pub async fn cases(
     };
     queue_as(db, &staff.user, &bridged(&staff), filter)
         .await
-        .map(Json)
         .map_err(|e| translate(&staff, e))
 }
 
@@ -167,14 +205,37 @@ pub async fn cases(
 ///
 /// Shows evidence (the reported content), so opening a case is recorded.
 #[get("/safety/cases/<id>")]
-pub async fn case(db: &State<Database>, staff: StaffContext, id: &str) -> Result<Json<SafetyCaseDetails>> {
+pub async fn case(
+    db: &State<Database>,
+    staff: StaffContext,
+    id: &str,
+) -> Result<Json<SafetyCaseDetails>> {
+    case_core(db, &staff, id).await.map(Json)
+}
+
+/// The console's `case`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn case_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+) -> Result<SafetyCaseDetails> {
     staff.require(db, StaffPermission::ReportsRead).await?;
     // the case must exist before we log looking at it
     db.fetch_safety_case(id).await?;
-    let record = case_record(&staff, "staff.safety.case.view", StaffPermission::ReportsRead, id);
-    audited(db, &staff, record, case_as(db, &staff.user, &bridged(&staff), id))
-        .await
-        .map(Json)
+    let record = case_record(
+        &staff,
+        "staff.safety.case.view",
+        StaffPermission::ReportsRead,
+        id,
+    );
+    audited(
+        db,
+        &staff,
+        record,
+        case_as(db, &staff.user, &bridged(&staff), id),
+    )
+    .await
 }
 
 /// # Change case status
@@ -185,14 +246,35 @@ pub async fn set_status(
     id: &str,
     data: Json<DataSafetyCaseStatus>,
 ) -> Result<Json<SafetyCase>> {
-    staff.require(db, StaffPermission::ReportsResolve).await?;
-    let data = data.into_inner();
-    let mut record = case_record(&staff, "staff.safety.case.status", StaffPermission::ReportsResolve, id);
-    record.summary = Some(format!("{:?}", data.status));
-    record.reason = note_reason(data.note.as_deref().or(data.public_note.as_deref()));
-    audited(db, &staff, record, set_status_as(db, &staff.user, &bridged(&staff), id, data))
+    set_status_core(db, &staff, id, data.into_inner())
         .await
         .map(Json)
+}
+
+/// The console's `set_status`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn set_status_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataSafetyCaseStatus,
+) -> Result<SafetyCase> {
+    staff.require(db, StaffPermission::ReportsResolve).await?;
+    let mut record = case_record(
+        &staff,
+        "staff.safety.case.status",
+        StaffPermission::ReportsResolve,
+        id,
+    );
+    record.summary = Some(format!("{:?}", data.status));
+    record.reason = note_reason(data.note.as_deref().or(data.public_note.as_deref()));
+    audited(
+        db,
+        &staff,
+        record,
+        set_status_as(db, &staff.user, &bridged(&staff), id, data),
+    )
+    .await
 }
 
 /// # Edit case
@@ -205,12 +287,30 @@ pub async fn edit(
     id: &str,
     data: Json<DataSafetyCaseEdit>,
 ) -> Result<Json<SafetyCase>> {
+    edit_core(db, &staff, id, data.into_inner()).await.map(Json)
+}
+
+/// The console's `edit`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn edit_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataSafetyCaseEdit,
+) -> Result<SafetyCase> {
     staff.require(db, StaffPermission::ReportsResolve).await?;
-    let data = data.into_inner();
-    let mut record = case_record(&staff, "staff.safety.case.edit", StaffPermission::ReportsResolve, id);
+    let mut record = case_record(
+        &staff,
+        "staff.safety.case.edit",
+        StaffPermission::ReportsResolve,
+        id,
+    );
     let mut parts = vec![];
     if let Some(a) = &data.assignee_id {
-        parts.push(format!("assignee={}", if a.is_empty() { "none" } else { a }));
+        parts.push(format!(
+            "assignee={}",
+            if a.is_empty() { "none" } else { a }
+        ));
     }
     if let Some(p) = data.priority {
         parts.push(format!("priority={p:?}"));
@@ -222,9 +322,13 @@ pub async fn edit(
         parts.push(format!("legal_hold={h}"));
     }
     record.summary = Some(parts.join(" "));
-    audited(db, &staff, record, edit_as(db, &staff.user, &bridged(&staff), id, data))
-        .await
-        .map(Json)
+    audited(
+        db,
+        &staff,
+        record,
+        edit_as(db, &staff.user, &bridged(&staff), id, data),
+    )
+    .await
 }
 
 /// # Internal note
@@ -235,16 +339,39 @@ pub async fn note(
     id: &str,
     data: Json<DataSafetyNote>,
 ) -> Result<Json<SafetyCase>> {
+    note_core(db, &staff, id, data.into_inner()).await.map(Json)
+}
+
+/// The console's `note`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn note_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataSafetyNote,
+) -> Result<SafetyCase> {
     staff.require(db, StaffPermission::ReportsResolve).await?;
     // the note itself stays in the case trail, shown to reviewers only
-    let record = case_record(&staff, "staff.safety.case.note", StaffPermission::ReportsResolve, id);
-    audited(db, &staff, record, note_as(db, &staff.user, &bridged(&staff), id, data.into_inner()))
-        .await
-        .map(Json)
+    let record = case_record(
+        &staff,
+        "staff.safety.case.note",
+        StaffPermission::ReportsResolve,
+        id,
+    );
+    audited(
+        db,
+        &staff,
+        record,
+        note_as(db, &staff.user, &bridged(&staff), id, data),
+    )
+    .await
 }
 
 fn affects_account(kind: SafetyActionKind) -> bool {
-    matches!(kind, SafetyActionKind::SuspendAccount | SafetyActionKind::BanAccount)
+    matches!(
+        kind,
+        SafetyActionKind::SuspendAccount | SafetyActionKind::BanAccount
+    )
 }
 
 /// # Take action
@@ -259,23 +386,52 @@ pub async fn take(
     id: &str,
     data: Json<DataSafetyAction>,
 ) -> Result<Json<SafetyAction>> {
+    take_core(db, &staff, id, data.into_inner()).await.map(Json)
+}
+
+/// The console's `take`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn take_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataSafetyAction,
+) -> Result<SafetyAction> {
     staff.require(db, StaffPermission::ReportsResolve).await?;
-    let data = data.into_inner();
     if affects_account(data.kind) {
-        staff.require_step_up(db, StaffPermission::UsersSuspend).await?;
+        staff
+            .require_step_up(db, StaffPermission::UsersSuspend)
+            .await?;
     }
     let case = db.fetch_safety_case(id).await?;
-    let mut record = case_record(&staff, "staff.safety.action.take", StaffPermission::ReportsResolve, id);
+    let mut record = case_record(
+        &staff,
+        "staff.safety.action.take",
+        StaffPermission::ReportsResolve,
+        id,
+    );
     record.reason = note_reason(Some(&data.public_reason));
     record.summary = Some(match data.duration_days {
         Some(days) if data.kind == SafetyActionKind::SuspendAccount => {
-            format!("{:?} {days}d subject={}", data.kind, case.target_owner_id.as_deref().unwrap_or("-"))
+            format!(
+                "{:?} {days}d subject={}",
+                data.kind,
+                case.target_owner_id.as_deref().unwrap_or("-")
+            )
         }
-        _ => format!("{:?} subject={}", data.kind, case.target_owner_id.as_deref().unwrap_or("-")),
+        _ => format!(
+            "{:?} subject={}",
+            data.kind,
+            case.target_owner_id.as_deref().unwrap_or("-")
+        ),
     });
-    audited(db, &staff, record, take_as(db, &staff.user, &bridged(&staff), id, data))
-        .await
-        .map(Json)
+    audited(
+        db,
+        &staff,
+        record,
+        take_as(db, &staff.user, &bridged(&staff), id, data),
+    )
+    .await
 }
 
 /// # Revoke action
@@ -286,13 +442,30 @@ pub async fn revoke(
     id: &str,
     data: Json<DataSafetyRevoke>,
 ) -> Result<Json<SafetyAction>> {
+    revoke_core(db, &staff, id, data.into_inner())
+        .await
+        .map(Json)
+}
+
+/// The console's `revoke`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn revoke_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataSafetyRevoke,
+) -> Result<SafetyAction> {
     staff.require(db, StaffPermission::ReportsResolve).await?;
     let action = db.fetch_safety_action(id).await?;
     if affects_account(action.kind) {
-        staff.require_step_up(db, StaffPermission::UsersSuspend).await?;
+        staff
+            .require_step_up(db, StaffPermission::UsersSuspend)
+            .await?;
     }
-    let data = data.into_inner();
-    let mut record = staff.record("staff.safety.action.revoke", Some(StaffPermission::ReportsResolve));
+    let mut record = staff.record(
+        "staff.safety.action.revoke",
+        Some(StaffPermission::ReportsResolve),
+    );
     record.target_kind = Some("safety_action".to_string());
     record.target_id = Some(action.id.clone());
     record.reason = note_reason(Some(&data.reason));
@@ -302,11 +475,17 @@ pub async fn revoke(
         action.subject_user_id.as_deref().unwrap_or("-")
     ));
     let note = data.reason.clone();
-    let revoked = audited(db, &staff, record, revoke_as(db, &staff.user, &bridged(&staff), id, data)).await?;
+    let revoked = audited(
+        db,
+        &staff,
+        record,
+        revoke_as(db, &staff.user, &bridged(&staff), id, data),
+    )
+    .await?;
     if let Some(subject) = &revoked.subject_user_id {
         crate::util::official::action_revoked(db, subject, &note).await;
     }
-    Ok(Json(revoked))
+    Ok(revoked)
 }
 
 /// # Appeal queue
@@ -318,8 +497,22 @@ pub async fn appeals(
     before: Option<&str>,
     limit: Option<usize>,
 ) -> Result<Json<Vec<SafetyAppeal>>> {
+    appeals_core(db, &staff, status, before, limit)
+        .await
+        .map(Json)
+}
+
+/// The console's `appeals`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn appeals_core(
+    db: &Database,
+    staff: &StaffContext,
+    status: Option<&str>,
+    before: Option<&str>,
+    limit: Option<usize>,
+) -> Result<Vec<SafetyAppeal>> {
     staff.require(db, StaffPermission::ReportsRead).await?;
-    appeals_of(db, status, before, limit).await.map(Json)
+    appeals_of(db, status, before, limit).await
 }
 
 /// # Decide appeal
@@ -330,16 +523,35 @@ pub async fn decide(
     id: &str,
     data: Json<DataSafetyAppealDecision>,
 ) -> Result<Json<SafetyAppeal>> {
+    decide_core(db, &staff, id, data.into_inner())
+        .await
+        .map(Json)
+}
+
+/// The console's `decide`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn decide_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataSafetyAppealDecision,
+) -> Result<SafetyAppeal> {
     staff.require(db, StaffPermission::ReportsResolve).await?;
-    let data = data.into_inner();
-    let mut record = staff.record("staff.safety.appeal.decide", Some(StaffPermission::ReportsResolve));
+    let mut record = staff.record(
+        "staff.safety.appeal.decide",
+        Some(StaffPermission::ReportsResolve),
+    );
     record.target_kind = Some("safety_appeal".to_string());
     record.target_id = Some(id.to_string());
     record.reason = note_reason(Some(&data.note));
     record.summary = Some(if data.overturn { "overturn" } else { "uphold" }.to_string());
-    audited(db, &staff, record, decide_as(db, &staff.user, &bridged(&staff), id, data))
-        .await
-        .map(Json)
+    audited(
+        db,
+        &staff,
+        record,
+        decide_as(db, &staff.user, &bridged(&staff), id, data),
+    )
+    .await
 }
 
 /// # Account history
@@ -351,9 +563,19 @@ pub async fn user_history(
     staff: StaffContext,
     id: &str,
 ) -> Result<Json<SafetyUserHistory>> {
+    user_history_core(db, &staff, id).await.map(Json)
+}
+
+/// The console's `user_history`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn user_history_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+) -> Result<SafetyUserHistory> {
     staff.require(db, StaffPermission::ReportsRead).await?;
     db.fetch_user(id).await?;
-    user_history_of(db, id).await.map(Json)
+    user_history_of(db, id).await
 }
 
 /// Action taken from the user page
@@ -380,8 +602,20 @@ pub async fn user_action(
     id: &str,
     data: Json<DataUserAction>,
 ) -> Result<Json<SafetyAction>> {
+    user_action_core(db, &staff, id, data.into_inner())
+        .await
+        .map(Json)
+}
+
+/// The console's `user_action`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn user_action_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataUserAction,
+) -> Result<SafetyAction> {
     staff.require(db, StaffPermission::ReportsResolve).await?;
-    let data = data.into_inner();
     if !matches!(
         data.kind,
         SafetyActionKind::Warning | SafetyActionKind::SuspendAccount | SafetyActionKind::BanAccount
@@ -389,12 +623,15 @@ pub async fn user_action(
         return Err(create_error!(InvalidOperation));
     }
     if affects_account(data.kind) {
-        staff.require_step_up(db, StaffPermission::UsersSuspend).await?;
+        staff
+            .require_step_up(db, StaffPermission::UsersSuspend)
+            .await?;
     }
     let reason = data.public_reason.trim().to_string();
-    if reason.chars().count() < 3 || reason.chars().count() > 500 {
+    // the person reads it, the audit log keeps it: 300 at most
+    if reason.chars().count() < 3 || reason.chars().count() > 300 {
         return Err(revolt_result::failed_validation(vec![
-            revolt_result::ValidationProblem::length("public_reason", 3, 500),
+            revolt_result::ValidationProblem::length("public_reason", 3, 300),
         ]));
     }
     // refuse protected accounts before a case is opened
@@ -415,7 +652,9 @@ pub async fn user_action(
     record.target_id = Some(subject.id.clone());
     record.reason = note_reason(Some(&reason));
     record.summary = Some(match data.duration_days {
-        Some(days) if data.kind == SafetyActionKind::SuspendAccount => format!("{:?} {days}d", data.kind),
+        Some(days) if data.kind == SafetyActionKind::SuspendAccount => {
+            format!("{:?} {days}d", data.kind)
+        }
         _ => format!("{:?}", data.kind),
     });
     if protected {
@@ -455,5 +694,4 @@ pub async fn user_action(
         .await
     })
     .await
-    .map(Json)
 }

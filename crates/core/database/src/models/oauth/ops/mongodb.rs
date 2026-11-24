@@ -1,10 +1,21 @@
 use futures::StreamExt;
 use mongodb::options::ReplaceOptions;
+use iso8601_timestamp::Timestamp;
 use revolt_result::Result;
 
 use crate::{AppInstall, MongoDb, OAuthClient, OAuthCode, OAuthGrant, OAuthToken};
 
 use super::AbstractOAuth;
+
+/// `expires_at` as a BSON date: the TTL index only fires on a date, and
+/// the model keeps an ISO text
+fn purge_at(expires_at: &Timestamp) -> bson::DateTime {
+    bson::DateTime::from_millis(
+        expires_at
+            .duration_since(Timestamp::UNIX_EPOCH)
+            .whole_milliseconds() as i64,
+    )
+}
 
 static CLIENTS: &str = "oauth_clients";
 static CODES: &str = "oauth_codes";
@@ -56,8 +67,12 @@ impl AbstractOAuth for MongoDb {
     }
 
     async fn insert_oauth_code(&self, code: &OAuthCode) -> Result<()> {
-        self.col::<OAuthCode>(CODES)
-            .insert_one(code)
+        // `purge_at`: a BSON date copy of `expires_at` for the TTL index
+        let mut document =
+            bson::to_document(code).map_err(|_| create_database_error!("to_document", CODES))?;
+        document.insert("purge_at", purge_at(&code.expires_at));
+        self.col::<bson::Document>(CODES)
+            .insert_one(document)
             .await
             .map(|_| ())
             .map_err(|_| create_database_error!("insert_one", CODES))
@@ -71,8 +86,12 @@ impl AbstractOAuth for MongoDb {
     }
 
     async fn insert_oauth_token(&self, token: &OAuthToken) -> Result<()> {
-        self.col::<OAuthToken>(TOKENS)
-            .insert_one(token)
+        // `purge_at`: a BSON date copy of the refresh expiry for the TTL index
+        let mut document =
+            bson::to_document(token).map_err(|_| create_database_error!("to_document", TOKENS))?;
+        document.insert("purge_at", purge_at(&token.expires_at));
+        self.col::<bson::Document>(TOKENS)
+            .insert_one(document)
             .await
             .map(|_| ())
             .map_err(|_| create_database_error!("insert_one", TOKENS))

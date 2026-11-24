@@ -843,6 +843,17 @@ pub(crate) async fn prepare_public_case(db: &Database, reviewer: &User, case: &m
     Ok(())
 }
 
+/// The account an action on `case` would concern, read only: the same
+/// owner resolution as [`prepare_public_case`], without changing the case
+/// or copying evidence
+pub(crate) async fn resolved_owner(db: &Database, case: &SafetyCase) -> Option<String> {
+    if owner_is_stale(db, case).await {
+        super::public_report::resolve_owner(db, case.target.kind, &case.target.id).await.0
+    } else {
+        case.target_owner_id.clone()
+    }
+}
+
 /// Nobody is named yet, or the case names the webhook or bot that posted the
 /// message (older cases): neither can be acted against or told anything
 async fn owner_is_stale(db: &Database, case: &SafetyCase) -> bool {

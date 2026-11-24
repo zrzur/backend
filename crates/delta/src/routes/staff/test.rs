@@ -1832,7 +1832,7 @@ async fn policy_updates_reach_users() {
     let token = sign_in(&harness, &owner, -1).await;
     let change = json!({
         "messages": { "ar": "حدّثنا شروط الاستخدام", "en": "We updated the terms of use", "de": "Wir haben die Nutzungsbedingungen aktualisiert" },
-        "url": "https://zrzur.com/terms",
+        "url": "https://zrzur.com/legal/terms",
         "effective_in_days": 14
     });
 
@@ -1847,7 +1847,7 @@ async fn policy_updates_reach_users() {
     let (status, _) = send(&harness, &owner, &token, Post, "/staff/policies", missing).await;
     assert_eq!(status, Status::BadRequest);
     let mut plain = change.clone();
-    plain["url"] = json!("http://zrzur.com/terms");
+    plain["url"] = json!("http://zrzur.com/legal/terms");
     let (status, _) = send(&harness, &owner, &token, Post, "/staff/policies", plain).await;
     assert_eq!(status, Status::BadRequest);
     let (status, body) = send(&harness, &owner, &token, Post, "/staff/policies", change).await;
@@ -3104,4 +3104,24 @@ async fn removing_staff_access_ends_the_staff_badge() {
         .filter(|(action, outcome)| action == revolt_database::STAFF_GRANT_END_ACTION && outcome == "Success")
         .count();
     assert_eq!(ended, 2);
+}
+
+/// An empty report queue answers with an empty page on both drivers: the
+/// unfiltered list and every status filter (e2e finding: a 500 was seen
+/// on a development database)
+#[rocket::async_test]
+async fn an_empty_report_queue_is_an_empty_page() {
+    let harness = TestHarness::new().await;
+    let reviewer = member(&harness, vec![StaffRole::TrustSafety]).await;
+    let token = sign_in(&harness, &reviewer, 0).await;
+    for path in [
+        "/staff/safety/cases",
+        "/staff/safety/cases?status=Queued",
+        "/staff/safety/cases?status=Submitted",
+        "/staff/safety/cases?oldest=true",
+    ] {
+        let (status, body) = get(&harness, &reviewer, &token, path).await;
+        assert_eq!(status, Status::Ok, "{path}: {body}");
+        assert_eq!(body["cases"], json!([]), "{path}");
+    }
 }
