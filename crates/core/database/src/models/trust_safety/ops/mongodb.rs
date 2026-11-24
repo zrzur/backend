@@ -49,10 +49,18 @@ impl MongoDb {
             .find(filter)
             .with_options(FindOptions::builder().sort(sort).limit(limit).build())
             .await
-            .map_err(|_| create_database_error!("find", collection))?
+            .map_err(|error| {
+                // the cause stays in the log (the answer says only "find")
+                log::warn!("{collection}: find failed: {error}");
+                create_database_error!("find", collection)
+            })?
             .try_collect()
             .await
-            .map_err(|_| create_database_error!("find", collection))
+            .map_err(|error| {
+                // a stored row the model cannot read shows up here
+                log::warn!("{collection}: reading the rows failed: {error}");
+                create_database_error!("find", collection)
+            })
     }
 
     async fn ts_insert<T: serde::Serialize + Send + Sync>(

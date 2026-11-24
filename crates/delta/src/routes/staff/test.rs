@@ -3105,3 +3105,23 @@ async fn removing_staff_access_ends_the_staff_badge() {
         .count();
     assert_eq!(ended, 2);
 }
+
+/// An empty report queue answers with an empty page on both drivers: the
+/// unfiltered list and every status filter (e2e finding: a 500 was seen
+/// on a development database)
+#[rocket::async_test]
+async fn an_empty_report_queue_is_an_empty_page() {
+    let harness = TestHarness::new().await;
+    let reviewer = member(&harness, vec![StaffRole::TrustSafety]).await;
+    let token = sign_in(&harness, &reviewer, 0).await;
+    for path in [
+        "/staff/safety/cases",
+        "/staff/safety/cases?status=Queued",
+        "/staff/safety/cases?status=Submitted",
+        "/staff/safety/cases?oldest=true",
+    ] {
+        let (status, body) = get(&harness, &reviewer, &token, path).await;
+        assert_eq!(status, Status::Ok, "{path}: {body}");
+        assert_eq!(body["cases"], json!([]), "{path}");
+    }
+}

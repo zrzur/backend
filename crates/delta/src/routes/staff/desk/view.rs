@@ -117,6 +117,57 @@ pub fn escape_markdown(text: &str) -> String {
     out
 }
 
+/// Whether `c` is a Crockford base32 character of an id (a ULID)
+fn id_char(c: char) -> bool {
+    c.is_ascii_digit() || (c.is_ascii_uppercase() && !matches!(c, 'I' | 'L' | 'O' | 'U'))
+}
+
+/// Every id (26 id characters, not part of a longer word) set apart with a
+/// left-to-right mark on both sides, together with the escaped brackets
+/// around it: in an Arabic card `(01ABC…)` then stays one left-to-right
+/// piece and its brackets stay with it. Runs after escaping (the marks are
+/// added by the server, never taken from people's text).
+pub fn isolate_ids(text: &str) -> String {
+    const LRM: char = '\u{200E}';
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len() + 8);
+    let mut i = 0;
+    while i < chars.len() {
+        let starts = id_char(chars[i])
+            && (i == 0 || !chars[i - 1].is_ascii_alphanumeric())
+            && i + 26 <= chars.len()
+            && chars[i..i + 26].iter().all(|c| id_char(*c))
+            && chars.get(i + 26).is_none_or(|c| !c.is_ascii_alphanumeric());
+        if !starts {
+            out.push(chars[i]);
+            i += 1;
+            continue;
+        }
+        // an escaped opening bracket right before it goes inside the marks
+        let open = out.ends_with("\\(");
+        if open {
+            out.truncate(out.len() - 2);
+        }
+        out.push(LRM);
+        if open {
+            out.push_str("\\(");
+        }
+        out.extend(&chars[i..i + 26]);
+        i += 26;
+        if chars.get(i) == Some(&'\\') && chars.get(i + 1) == Some(&')') {
+            out.push_str("\\)");
+            i += 2;
+        }
+        out.push(LRM);
+    }
+    out
+}
+
+/// One part of a card as it is shown: escaped, ids set apart
+fn shown(text: &str) -> String {
+    isolate_ids(&escape_markdown(text))
+}
+
 /// Whether the text of a card fits the message limit as it is, nothing cut
 pub fn fits(title: &str, lines: &[String]) -> bool {
     let full = 2
@@ -124,7 +175,7 @@ pub fn fits(title: &str, lines: &[String]) -> bool {
         + 2
         + lines
             .iter()
-            .map(|l| escape_markdown(l).chars().count() + 1)
+            .map(|l| shown(l).chars().count() + 1)
             .sum::<usize>();
     full <= CONTENT_MAX
 }
@@ -152,14 +203,8 @@ pub fn canonical_render(title: &str, fields: &[DeskField], lines: &[String]) -> 
     );
     let mut parts: Vec<String> = fields
         .iter()
-        .map(|field| {
-            format!(
-                "{}: {}",
-                escape_markdown(&field.name),
-                escape_markdown(&field.value)
-            )
-        })
-        .chain(lines.iter().map(|line| escape_markdown(line)))
+        .map(|field| format!("{}: {}", escape_markdown(&field.name), shown(&field.value)))
+        .chain(lines.iter().map(|line| shown(line)))
         .collect();
     let total = |parts: &[String]| {
         head.chars().count() + parts.iter().map(|p| p.chars().count() + 1).sum::<usize>()
@@ -249,5 +294,22 @@ Note \*\*bold\*\* \<\@01ABC\> \[x\]\(https://e.x\) \$x^2\$ next"
         assert_eq!(text, canonical_render("Test change", &[], &lines));
         // short ones are untouched
         assert_eq!(canonical_render("T", &[], &["a".to_string()]), "**T**\na");
+    }
+
+    #[test]
+    fn desk_ids_keep_their_brackets_in_rtl() {
+        let id = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+        let out = shown(&format!("يحذف السيرفر Test ({id}) الآن"));
+        assert!(
+            out.contains(&format!("\u{200E}\\({id}\\)\u{200E}")),
+            "{out:?}"
+        );
+        // a bare id too; a longer word is left alone
+        assert!(shown(id).starts_with('\u{200E}'));
+        let word = format!("{id}X");
+        assert_eq!(shown(&word), word);
+        // people cannot bring their own marks around a fake id
+        let typed = shown("note \u{2066}x\u{2069}");
+        assert!(!typed.contains('\u{2066}'));
     }
 }

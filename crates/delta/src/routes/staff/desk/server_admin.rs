@@ -27,6 +27,7 @@ use super::super::servers::{DataServerAction, act_core};
 use super::lookup::{Show, fields, paged};
 use super::registry::{
     DeskChoice, DeskCommand, DeskGroup, DeskInput, DeskOption, Lang, Prepare, Prepared, Text,
+    counted,
 };
 use super::view::DeskView;
 
@@ -91,14 +92,14 @@ mod w {
         "Übergibt den Server {name} ({id}) von {owner} an {to}; beide werden informiert.",
     );
     pub const DELETE_SERVER: Text = t(
-        "Deletes the server {name} ({id}) of {owner}: {channels} channels and {members} members go with it.",
-        "يحذف السيرفر {name} ({id}) التابع لـ {owner}: وتُحذف معه {channels} قناة و{members} عضو.",
-        "Löscht den Server {name} ({id}) von {owner}: {channels} Kanäle und {members} Mitglieder gehen mit.",
+        "Deletes the server {name} ({id}) of {owner}: {channels} and {members} go with it.",
+        "يحذف السيرفر {name} ({id}) التابع لـ {owner}، ومعه القنوات ({channels}) والأعضاء ({members}).",
+        "Löscht den Server {name} ({id}) von {owner}: {channels} und {members} gehen mit.",
     );
     pub const DELETE_BOT: Text = t(
-        "Deletes the bot {name} ({id}) of {owner}: it leaves its {servers} servers, its commands go and its token stops working.",
-        "يحذف البوت {name} ({id}) التابع لـ {owner}: يغادر {servers} سيرفر، وتُحذف أوامره ويتوقف رمزه.",
-        "Löscht den Bot {name} ({id}) von {owner}: er verlässt seine {servers} Server, seine Befehle gehen und sein Token funktioniert nicht mehr.",
+        "Deletes the bot {name} ({id}) of {owner}: it leaves {servers}, its commands go and its token stops working.",
+        "يحذف البوت {name} ({id}) التابع لـ {owner}: يغادر السيرفرات ({servers})، وتُحذف أوامره ويتوقف رمزه.",
+        "Löscht den Bot {name} ({id}) von {owner}: er verlässt {servers}, seine Befehle gehen und sein Token funktioniert nicht mehr.",
     );
     pub const DELETE_OWNED: Text = t(
         "Deletes everything the banned account {user} owns:",
@@ -106,9 +107,9 @@ mod w {
         "Löscht alles, was das gesperrte Konto {user} besitzt:",
     );
     pub const OWNED_SERVER: Text = t(
-        "Server {name} ({id}), {members} members",
-        "سيرفر {name} ({id})، {members} عضو",
-        "Server {name} ({id}), {members} Mitglieder",
+        "Server {name} ({id}), {members}",
+        "سيرفر {name} ({id})، الأعضاء ({members})",
+        "Server {name} ({id}), {members}",
     );
     pub const OWNED_BOT: Text = t(
         "Bot {name} ({id})",
@@ -167,7 +168,11 @@ mod w {
         "يقرأ المالك: {reason}",
         "Die Besitzer lesen: {reason}",
     );
-    pub const WRONG_NAME: &str = "the typed name is not the target's exact name";
+    pub const NAME_MISMATCH: Text = t(
+        "The typed name does not match {name}. Type it exactly, as shown.",
+        "الاسم المكتوب لا يطابق {name}. اكتبه كما هو تمامًا.",
+        "Der eingegebene Name stimmt nicht mit {name} überein. Gib ihn genau so ein.",
+    );
     pub const NAME_CHANGED: &str = "the target's name changed since the card";
     pub const OWNER_CHANGED: &str = "the server's owner changed since the card";
     pub const PLAN_CHANGED: &str = "what the account owns changed since the card";
@@ -292,7 +297,7 @@ fn typed(input: &DeskInput, name: &str) -> Result<()> {
         Ok(())
     } else {
         Err(create_error!(FailedValidation {
-            error: w::WRONG_NAME.to_string()
+            error: w::NAME_MISMATCH.fill(input.lang, &[("name", name)])
         }))
     }
 }
@@ -501,8 +506,24 @@ async fn delete_server_card(
                     ("name", &server.name),
                     ("id", &id),
                     ("owner", &person(db, &server.owner).await),
-                    ("channels", &channels),
-                    ("members", &members),
+                    (
+                        "channels",
+                        &counted(
+                            lang,
+                            &channels,
+                            ("channel", "Kanal"),
+                            ("channels", "Kanäle"),
+                        ),
+                    ),
+                    (
+                        "members",
+                        &counted(
+                            lang,
+                            &members,
+                            ("member", "Mitglied"),
+                            ("members", "Mitglieder"),
+                        ),
+                    ),
                 ],
             ),
             w::OWNER_READS.fill(lang, &[("reason", &reason)]),
@@ -609,7 +630,10 @@ async fn delete_bot_card(
                     ("name", &name),
                     ("id", &id),
                     ("owner", &person(db, &bot.owner).await),
-                    ("servers", &servers),
+                    (
+                        "servers",
+                        &counted(lang, &servers, ("server", "Server"), ("servers", "Server")),
+                    ),
                 ],
             ),
             w::OWNER_READS.fill(lang, &[("reason", &reason)]),
@@ -835,7 +859,15 @@ fn owned_lines(plan: &staff_deletion::DeleteOwnedPlan, lang: Lang, lines: &mut V
             &[
                 ("name", &planned.server.name),
                 ("id", &planned.server.id),
-                ("members", &planned.members.to_string()),
+                (
+                    "members",
+                    &counted(
+                        lang,
+                        &planned.members.to_string(),
+                        ("member", "Mitglied"),
+                        ("members", "Mitglieder"),
+                    ),
+                ),
             ],
         ));
     }
@@ -1041,7 +1073,11 @@ const USER: DeskOption = opt(
     "user",
     CommandOptionType::User,
     true,
-    t("The user", "المستخدم", "Der Benutzer"),
+    t(
+        "User ID or name#tag",
+        "معرّف المستخدم أو الاسم#الرمز",
+        "Benutzer-ID oder Name#Tag",
+    ),
 );
 const REASON: DeskOption = text("reason", true, 300, t("Reason", "السبب", "Grund"));
 const CONFIRM_NAME: DeskOption = text(

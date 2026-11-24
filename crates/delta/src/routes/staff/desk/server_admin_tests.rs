@@ -143,10 +143,16 @@ async fn desk_servers_run_the_consoles_actions() {
     // the card says what goes
     let content = delete.view["content"].as_str().unwrap().to_string();
     assert!(
-        content.contains(&format!("{} channels", doomed.channels.len())),
+        content.contains(&match doomed.channels.len() {
+            1 => "1 channel".to_string(),
+            n => format!("{n} channels"),
+        }),
         "{content}"
     );
-    assert!(content.contains("1 members"), "{content}");
+    assert!(
+        content.contains("1 member and") || content.contains("1 member "),
+        "{content}"
+    );
     let bot_delete = card(
         &s,
         &owner,

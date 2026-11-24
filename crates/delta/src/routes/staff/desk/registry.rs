@@ -524,6 +524,73 @@ pub fn is_desk_command(name: &str) -> bool {
     name == COMMAND || AREA_COMMANDS.iter().any(|(_, command, _)| *command == name)
 }
 
+/// A count in words: `1 channel`, `3 channels` in English and German. In
+/// Arabic the number alone: its texts name the thing before the number
+/// (`القنوات (3)`), so no number agreement is needed.
+pub fn counted(lang: Lang, n: &str, one: (&str, &str), many: (&str, &str)) -> String {
+    let single = n.trim() == "1";
+    match lang {
+        Lang::Ar => n.to_string(),
+        Lang::En => format!("{n} {}", if single { one.0 } else { many.0 }),
+        Lang::De => format!("{n} {}", if single { one.1 } else { many.1 }),
+    }
+}
+
+/// The longest text a person can be given as (`name#tag`, an id, a mention)
+const PERSON_MAX: u32 = 64;
+
+/// The person a text names: a user id, `<@id>`, `name#tag`, or a name with
+/// no tag. Refused, with what was typed, when nobody matches.
+pub async fn find_person(db: &Database, given: &str) -> Result<String> {
+    let given = given.trim();
+    let given = given
+        .strip_prefix("<@")
+        .and_then(|rest| rest.strip_suffix('>'))
+        .unwrap_or(given);
+    let found = if given.len() == 26 && given.chars().all(|c| c.is_ascii_alphanumeric()) {
+        db.fetch_user(&given.to_uppercase()).await.ok()
+    } else if let Some((name, tag)) = given.rsplit_once('#') {
+        db.fetch_user_by_username(name, tag).await.ok()
+    } else if !given.is_empty() {
+        db.fetch_user_by_username(given, revolt_models::v0::UNIQUE_DISCRIMINATOR)
+            .await
+            .ok()
+    } else {
+        None
+    };
+    found.map(|user| user.id).ok_or_else(|| {
+        revolt_result::create_error!(FailedValidation {
+            error: format!("no user found for \"{given}\": give a user id or name#tag")
+        })
+    })
+}
+
+/// The chosen options with every person option (a `User` option of the
+/// entry, sent as text) replaced by the person's id, as a `User` option:
+/// the handlers read people only as ids the server found
+pub async fn resolve_people(
+    db: &Database,
+    entry: &DeskCommand,
+    options: Vec<InteractionDataOption>,
+) -> Result<Vec<InteractionDataOption>> {
+    let mut out = Vec::with_capacity(options.len());
+    for mut option in options {
+        let person = entry
+            .options
+            .iter()
+            .any(|o| o.name == option.name && o.kind == CommandOptionType::User);
+        if person && option.kind == CommandOptionType::String {
+            if let Some(InteractionOptionValue::String(given)) = &option.value {
+                let id = find_person(db, given).await?;
+                option.kind = CommandOptionType::User;
+                option.value = Some(InteractionOptionValue::String(id));
+            }
+        }
+        out.push(option);
+    }
+    Ok(out)
+}
+
 /// The command `/<command> [group] name`
 pub fn find(command: &str, group: Option<&str>, name: &str) -> Option<&'static DeskCommand> {
     entries().find(|e| e.command() == command && e.group == group && e.name == name)
@@ -593,8 +660,16 @@ fn parameter(option: &DeskOption) -> ApplicationCommandOption {
             value: CommandOptionValue::String(choice.value.to_string()),
         })
         .collect();
+    // a person is offered as text (an id or name#tag) and found by the
+    // server: a User option resolves only for members of the place's server
+    // and never in a DM (`resolve_people`)
+    let person = option.kind == CommandOptionType::User;
     ApplicationCommandOption {
-        kind: option.kind,
+        kind: if person {
+            CommandOptionType::String
+        } else {
+            option.kind
+        },
         name: option.name.to_string(),
         name_localizations: None,
         description: option.description.en.to_string(),
@@ -606,7 +681,11 @@ fn parameter(option: &DeskOption) -> ApplicationCommandOption {
         min_value: option.min_value,
         max_value: option.max_value,
         min_length: None,
-        max_length: option.max_length,
+        max_length: if person {
+            Some(PERSON_MAX)
+        } else {
+            option.max_length
+        },
         autocomplete: false,
     }
 }

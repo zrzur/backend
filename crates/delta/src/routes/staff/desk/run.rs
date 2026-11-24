@@ -179,6 +179,8 @@ pub async fn run(
     if !entry.offered(&settings) {
         return Err(create_error!(NotFound));
     }
+    // people are typed as an id or name#tag: found here, before any check
+    let options = registry::resolve_people(db, entry, options).await?;
     let input = DeskInput {
         options,
         areas: settings.areas.clone(),

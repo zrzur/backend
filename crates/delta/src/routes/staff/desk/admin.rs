@@ -164,9 +164,9 @@ mod w {
         "Gleicht Bestellungen und Abos mit dem Zahlungsanbieter ab und liefert Fehlgeschlagenes. Es entsteht nie eine Zahlung oder Erstattung. Offene Probleme werden danach gezeigt.",
     );
     pub const GRANT: Text = t(
-        "Gives {user} Feather for {days} days without payment; they are told.",
-        "يمنح {user} ريشة لمدة {days} يومًا دون دفع؛ ويُبلَّغ بذلك.",
-        "Gibt {user} Feather für {days} Tage ohne Zahlung; die Person wird informiert.",
+        "Gives {user} Feather for {days} without payment; they are told.",
+        "يمنح {user} ريشة دون دفع، وعدد الأيام ({days})؛ ويُبلَّغ بذلك.",
+        "Gibt {user} Feather für {days} ohne Zahlung; die Person wird informiert.",
     );
     pub const FEATURE_ON: Text = t(
         "Switches the beta feature {name} ({id}) on for {who}.",
@@ -587,7 +587,15 @@ async fn grant_card(db: &Database, staff: &StaffContext, input: &DeskInput) -> R
                 lang,
                 &[
                     ("user", &format!("{} ({})", handle(&subject), subject.id)),
-                    ("days", &days.to_string()),
+                    (
+                        "days",
+                        &super::registry::counted(
+                            lang,
+                            &days.to_string(),
+                            ("day", "Tag"),
+                            ("days", "Tage"),
+                        ),
+                    ),
                 ],
             ),
             reason_line(input)?,
@@ -1181,7 +1189,11 @@ const USER: DeskOption = opt(
     "user",
     CommandOptionType::User,
     true,
-    t("The user", "المستخدم", "Der Benutzer"),
+    t(
+        "User ID or name#tag",
+        "معرّف المستخدم أو الاسم#الرمز",
+        "Benutzer-ID oder Name#Tag",
+    ),
 );
 const REASON: DeskOption = text("reason", true, 300, t("Reason", "السبب", "Grund"));
 const ORDER: DeskOption = text(

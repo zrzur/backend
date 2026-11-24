@@ -341,7 +341,9 @@ async fn desk_commands_only_enabled_areas() {
     let test = &offered["options"][5];
     assert_eq!(test["type"], json!("SubCommandGroup"));
     assert_eq!(test["options"][0]["name"], json!("change"));
-    assert_eq!(test["options"][0]["options"][0]["type"], json!("User"));
+    // a person is offered as text (an id or name#tag) the server resolves
+    assert_eq!(test["options"][0]["options"][0]["type"], json!("String"));
+    assert_eq!(test["options"][0]["options"][0]["max_length"], json!(64));
     assert_eq!(test["options"][0]["options"][0]["required"], json!(true));
 
     // the overview area off: only what is always offered
@@ -397,9 +399,14 @@ async fn desk_run_refuses_changed_command() {
             change(&|t| t["options"][4]["description"] = json!("Show the weather")),
             sub("stats"),
         ),
-        // `user` as text: a name typed in, not a user the server resolved
+        // `user` as a platform-resolved User option: not what the desk offers
         (
-            change(&|t| t["options"][5]["options"][0]["options"][0]["type"] = json!("String")),
+            change(&|t| {
+                let person = &mut t["options"][5]["options"][0]["options"][0];
+                person["type"] = json!("User");
+                // a User option has no length
+                person.as_object_mut().unwrap().remove("max_length");
+            }),
             test_change("change", &staff.user.id, "n"),
         ),
         // `note` no longer required
@@ -1207,7 +1214,12 @@ async fn desk_interaction_keeps_options_and_version() {
             "application_id": s.bot.id,
             "channel_id": s.place.id(),
             "command_id": command.id,
-            "options": test_change("change", &staff.user.id, "kept"),
+            "options": json!([{ "type": "SubCommandGroup", "name": "test", "options": [{
+                "type": "SubCommand", "name": "change", "options": [
+                    { "type": "String", "name": "user", "value": staff.user.id },
+                    { "type": "String", "name": "note", "value": "kept" }
+                ]
+            }]}]),
             "locale": "ar",
             "nonce": ulid::Ulid::new().to_string(),
         });
@@ -1248,9 +1260,10 @@ async fn desk_interaction_keeps_options_and_version() {
             kind: CommandOptionType::SubCommand,
             value: None,
             options: Some(vec![
+                // a person goes as text: the desk finds them (`resolve_people`)
                 InteractionDataOption {
                     name: "user".to_string(),
-                    kind: CommandOptionType::User,
+                    kind: CommandOptionType::String,
                     value: Some(InteractionOptionValue::String(staff.user.id.clone())),
                     options: None,
                 },
@@ -1305,4 +1318,132 @@ async fn desk_answers_are_private() {
     .dispatch()
     .await;
     assert_eq!(response.status(), Status::NoContent);
+}
+
+/// A person is typed as an id or name#tag and found by the server: the real
+/// `/interactions` route takes it in a DM with the bot, for someone who
+/// shares no server with the presser, and the desk finds them; a name
+/// nobody has is refused with what was typed (e2e finding 1)
+#[rocket::async_test]
+async fn desk_people_are_found_by_id_or_name_also_in_a_dm() {
+    use revolt_database::Channel;
+    let s = super::tests::stage_with(true).await;
+    test_settings::register(revolt_config::FeaturesStaffDesk {
+        enabled: true,
+        bot: s.bot.id.clone(),
+        places: vec![s.place.id().to_string()],
+        allow_dms: true,
+        areas: vec!["moderation".to_string()],
+    });
+    let staff = s.person(vec![StaffRole::Owner]).await;
+    s.sign_in(&staff, -1).await;
+    let command = super::tests::register_served(&s)
+        .await
+        .remove("desk-mod")
+        .unwrap();
+    // the person is offered as text
+    let user_group = command
+        .options
+        .iter()
+        .find(|o| o.name == "user")
+        .and_then(|o| o.options.as_ref())
+        .unwrap();
+    let warn = user_group.iter().find(|o| o.name == "warn").unwrap();
+    let person = warn
+        .options
+        .as_ref()
+        .unwrap()
+        .iter()
+        .find(|o| o.name == "user")
+        .unwrap();
+    assert_eq!(person.kind, CommandOptionType::String);
+
+    let dm = Channel::DirectMessage {
+        id: ulid::Ulid::new().to_string(),
+        active: true,
+        recipients: vec![staff.user.id.clone(), s.bot.id.clone()],
+        last_message_id: None,
+        started_by: vec![],
+        stopped_by: vec![],
+    };
+    s.harness.db.insert_channel(&dm).await.unwrap();
+    // in no server of the presser's
+    let (_, _, outsider) = s.harness.new_user().await;
+    let options = |who: &str| {
+        json!([{ "type": "SubCommandGroup", "name": "user", "options": [{
+            "type": "SubCommand", "name": "warn", "options": [
+                { "type": "String", "name": "user", "value": who },
+                { "type": "String", "name": "category", "value": "Spam" },
+                { "type": "String", "name": "reason", "value": "Spam waves" }
+            ]
+        }]}])
+    };
+
+    // the platform takes the command in the DM
+    revolt_presence::create_session(&s.bot.id, 0).await;
+    let response = s
+        .harness
+        .client
+        .post("/interactions")
+        .header(Header::new("x-session-token", staff.session.token.clone()))
+        .header(ContentType::JSON)
+        .body(
+            json!({
+                "type": "Command",
+                "application_id": s.bot.id,
+                "channel_id": dm.id(),
+                "command_id": command.id,
+                "command_version": command.version,
+                "options": options(&outsider.id),
+                "nonce": ulid::Ulid::new().to_string(),
+            })
+            .to_string(),
+        )
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Ok);
+
+    // the desk finds the person, by id and by name#tag, in the DM
+    let handle = revolt_models::v0::user_handle(&outsider.username, &outsider.discriminator);
+    for given in [outsider.id.clone(), handle.clone()] {
+        let (mut interaction, token) = Interaction::new(
+            InteractionType::Command,
+            s.bot.id.clone(),
+            staff.user.id.clone(),
+            None,
+            dm.id().to_string(),
+            ulid::Ulid::new().to_string(),
+        );
+        interaction.session_id = Some(staff.session.id.clone());
+        interaction.command_id = Some(command.id.clone());
+        interaction.command_name = Some(command.name.clone());
+        interaction.command_version = Some(command.version.clone());
+        interaction.command_options = serde_json::from_value(options(&given)).unwrap();
+        s.harness.db.insert_interaction(&interaction).await.unwrap();
+        let (status, card) = s.hand("run", &(interaction.id, token)).await;
+        assert_eq!(status, Status::Ok, "{given}: {card}");
+        assert!(
+            card["content"].as_str().unwrap().contains(&outsider.id),
+            "{given}: {card}"
+        );
+    }
+
+    // nobody by that name
+    let (mut interaction, token) = Interaction::new(
+        InteractionType::Command,
+        s.bot.id.clone(),
+        staff.user.id.clone(),
+        None,
+        dm.id().to_string(),
+        ulid::Ulid::new().to_string(),
+    );
+    interaction.session_id = Some(staff.session.id.clone());
+    interaction.command_id = Some(command.id.clone());
+    interaction.command_name = Some(command.name.clone());
+    interaction.command_version = Some(command.version.clone());
+    interaction.command_options = serde_json::from_value(options("nobody#0001")).unwrap();
+    s.harness.db.insert_interaction(&interaction).await.unwrap();
+    let (status, body) = s.hand("run", &(interaction.id, token)).await;
+    assert_eq!(status, Status::BadRequest, "{body}");
+    assert!(body.to_string().contains("nobody#0001"), "{body}");
 }

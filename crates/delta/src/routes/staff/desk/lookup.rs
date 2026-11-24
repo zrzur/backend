@@ -72,9 +72,9 @@ mod w {
     pub const ONLINE: Text = t("Online", "متصل", "Online");
     pub const SERVERS: Text = t("Servers", "السيرفرات", "Server");
     pub const SESSIONS: Text = t("Sessions", "الجلسات", "Sitzungen");
-    pub const VERIFIED: Text = t("verified", "موثّق", "verifiziert");
+    pub const VERIFIED: Text = t("Verified", "موثّق", "Verifiziert");
     pub const MFA: Text = t("Two-factor", "التحقق بخطوتين", "Zwei-Faktor");
-    pub const DISABLED: Text = t("disabled", "معطّل", "deaktiviert");
+    pub const DISABLED: Text = t("Disabled", "معطّل", "Deaktiviert");
     pub const DELETION: Text = t(
         "deletion pending",
         "الحذف قيد الانتظار",
@@ -1307,7 +1307,11 @@ const USER_OPT: DeskOption = opt(
     "user",
     CommandOptionType::User,
     true,
-    t("The user", "المستخدم", "Der Benutzer"),
+    t(
+        "User ID or name#tag",
+        "معرّف المستخدم أو الاسم#الرمز",
+        "Benutzer-ID oder Name#Tag",
+    ),
 );
 const fn id_opt(name: &'static str) -> DeskOption {
     DeskOption {

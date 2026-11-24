@@ -979,7 +979,11 @@ const USER: DeskOption = opt(
     "user",
     CommandOptionType::User,
     true,
-    t("The user", "المستخدم", "Der Benutzer"),
+    t(
+        "User ID or name#tag",
+        "معرّف المستخدم أو الاسم#الرمز",
+        "Benutzer-ID oder Name#Tag",
+    ),
 );
 const REASON: DeskOption = DeskOption {
     max_length: Some(300),

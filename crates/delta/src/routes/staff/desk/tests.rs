@@ -115,7 +115,7 @@ pub(super) async fn stage() -> Stage {
 
 /// A server with a desk channel and another channel; the desk is on for a
 /// fresh bot, in the desk channel only (and DMs when `allow_dms`)
-async fn stage_with(allow_dms: bool) -> Stage {
+pub(super) async fn stage_with(allow_dms: bool) -> Stage {
     let harness = TestHarness::new().await;
     let (_, _, host) = harness.new_user().await;
     let (server, channels) = harness.new_server(&host).await;
