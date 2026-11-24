@@ -28,7 +28,7 @@ use crate::{
     badge_definition, badge_eligibility, epoch_ms, grant_badge, held_badges, record_platform_audit,
     revoke_badge, AuditOutcome, AuditRecord, BadgeChangeRequest, BadgeDefinition, BadgeGrant,
     BadgeGrantRule, BadgeRequestStatus, BadgeSource, Database, PlatformAuditQuery, StaffAppointment,
-    StaffPermission, User, BADGE_REQUEST_TTL_MS,
+    StaffGrant, StaffPermission, User, BADGE_REQUEST_TTL_MS,
 };
 
 /// Where a badge change comes from
@@ -168,6 +168,8 @@ pub enum BadgeDenial {
     SameApprover,
     /// The request is no longer waiting (decided or expired)
     NotPending,
+    /// The reason is not 3 to 500 characters (its text is never logged)
+    BadReason,
 }
 
 impl BadgeDenial {
@@ -190,6 +192,7 @@ impl BadgeDenial {
             BadgeDenial::Ineligible(_) => "ineligible",
             BadgeDenial::SameApprover => "same_person",
             BadgeDenial::NotPending => "not_pending",
+            BadgeDenial::BadReason => "bad_reason",
         }
     }
 
@@ -215,6 +218,9 @@ impl BadgeDenial {
             }),
             BadgeDenial::StepUpRequired => create_error!(NotElevated),
             BadgeDenial::Ineligible(reason) => create_error!(FailedValidation { error: reason.clone() }),
+            BadgeDenial::BadReason => revolt_result::failed_validation(vec![
+                revolt_result::ValidationProblem::length("reason", 3, 500),
+            ]),
         }
     }
 }
@@ -360,7 +366,8 @@ fn base_record(actor: &BadgeActor, action: String, user_id: &str, reason: Option
         action,
         permission: Some(StaffPermission::BadgesManage),
         target_kind: Some("user".to_string()),
-        target_id: Some(user_id.to_string()),
+        // only a real id: never text a caller typed in its place
+        target_id: Ulid::from_string(user_id).ok().map(|_| user_id.to_string()),
         reason,
         staff_session_id: actor.session_id.clone(),
         summary: None,
@@ -412,13 +419,21 @@ async fn mutate_badge_inner(
     request: BadgeMutation,
     approval: Option<&BadgeChangeRequest>,
 ) -> Result<BadgeOutcome> {
-    let reason = checked_reason(&request.reason)?;
+    // Rights first, so a reason of the wrong length never skips the Denied
+    // record (security review F3). The retired route never keeps the
+    // caller's text, and a reason of the wrong length is never written.
+    let reason = checked_reason(&request.reason).ok();
     let action = format!("{}.{}", actor.path.action_prefix(), request.change.word());
-    let record = base_record(actor, action.clone(), &request.user_id, Some(reason.clone()));
+    let kept = if actor.path == BadgePath::AdminRoute { None } else { reason.clone() };
+    let mut record = base_record(actor, action.clone(), &request.user_id, kept);
 
     let authorized = match authorize_badge_mutation(db, actor, &request).await? {
         Ok(authorized) => authorized,
         Err(denial) => return Err(deny(db, record, &request.badge, actor.path, denial).await),
+    };
+    let Some(reason) = reason else {
+        record.reason = None;
+        return Err(deny(db, record, &request.badge, actor.path, BadgeDenial::BadReason).await);
     };
     let definition = authorized.definition;
     let mut summary = format!("{} via {}", definition.id, actor.path.name());
@@ -475,13 +490,7 @@ async fn ask_second_person(
     let grant = request.change == BadgeChange::Grant;
     record.action = format!("{}.request", record.action);
     // one open request per change: asking again shows the same one
-    if let Some(open) = db.fetch_badge_requests().await?.into_iter().find(|r| {
-        r.status == BadgeRequestStatus::Pending
-            && now < r.expires_at
-            && r.user_id == request.user_id
-            && r.badge == definition.id
-            && r.grant == grant
-    }) {
+    if let Some(open) = db.fetch_open_badge_request(&request.user_id, definition.id, grant, now).await? {
         record.summary = Some(format!("{} request {} already open via {}", definition.id, open.id, actor.path.name()));
         record_platform_audit(db, record, AuditOutcome::Success).await?;
         return Ok(open);
@@ -521,6 +530,13 @@ pub fn badge_request_open(request: &BadgeChangeRequest, now: i64) -> bool {
 /// approver's own rights, checked again in full.
 pub async fn approve_badge_request(db: &Database, approver: &BadgeActor, id: &str) -> Result<BadgeGrant> {
     let request = db.fetch_badge_request(id).await?;
+    approve_loaded_badge_request(db, approver, request).await
+}
+
+/// [`approve_badge_request`] with the request already read (tests use it to
+/// stand in for a request decided meanwhile)
+#[doc(hidden)]
+pub async fn approve_loaded_badge_request(db: &Database, approver: &BadgeActor, request: BadgeChangeRequest) -> Result<BadgeGrant> {
     let action = format!("{}.request.approve", approver.path.action_prefix());
     let record = base_record(approver, action, &request.user_id, None);
     if !badge_request_open(&request, now_ms()) {
@@ -529,13 +545,6 @@ pub async fn approve_badge_request(db: &Database, approver: &BadgeActor, id: &st
     if request.requested_by == approver.id || request.user_id == approver.id {
         return Err(deny(db, record, &request.badge, approver.path, BadgeDenial::SameApprover).await);
     }
-    let mut decided = request.clone();
-    decided.status = BadgeRequestStatus::Approved;
-    decided.decided_by = Some(approver.id.clone());
-    decided.decided_at = Some(now_ms());
-    if !db.decide_badge_request(&decided, BadgeRequestStatus::Pending).await? {
-        return Err(deny(db, record, &request.badge, approver.path, BadgeDenial::NotPending).await);
-    }
     let change = BadgeMutation {
         user_id: request.user_id.clone(),
         badge: request.badge.clone(),
@@ -543,6 +552,19 @@ pub async fn approve_badge_request(db: &Database, approver: &BadgeActor, id: &st
         reason: request.reason.clone(),
         expires_at: request.grant_expires_at,
     };
+    // the approver's rights before the request is marked: someone without
+    // them never holds it as Approved, not even for a moment, so a real
+    // approver at the same time is never turned away (security review F4)
+    if let Err(denial) = authorize_badge_mutation(db, approver, &change).await? {
+        return Err(deny(db, record, &request.badge, approver.path, denial).await);
+    }
+    let mut decided = request.clone();
+    decided.status = BadgeRequestStatus::Approved;
+    decided.decided_by = Some(approver.id.clone());
+    decided.decided_at = Some(now_ms());
+    if !db.decide_badge_request(&decided, BadgeRequestStatus::Pending).await? {
+        return Err(deny(db, record, &request.badge, approver.path, BadgeDenial::NotPending).await);
+    }
     match mutate_badge_inner(db, approver, change, Some(&request)).await {
         Ok(BadgeOutcome::Applied(grant)) => Ok(grant),
         other => {
@@ -562,6 +584,13 @@ pub async fn approve_badge_request(db: &Database, approver: &BadgeActor, id: &st
 /// badge is about.
 pub async fn refuse_badge_request(db: &Database, actor: &BadgeActor, id: &str) -> Result<BadgeChangeRequest> {
     let request = db.fetch_badge_request(id).await?;
+    refuse_loaded_badge_request(db, actor, request).await
+}
+
+/// [`refuse_badge_request`] with the request already read (tests use it to
+/// stand in for a request decided meanwhile)
+#[doc(hidden)]
+pub async fn refuse_loaded_badge_request(db: &Database, actor: &BadgeActor, request: BadgeChangeRequest) -> Result<BadgeChangeRequest> {
     let action = format!("{}.request.refuse", actor.path.action_prefix());
     let mut record = base_record(actor, action, &request.user_id, None);
     if !badge_request_open(&request, now_ms()) {
@@ -585,10 +614,21 @@ pub async fn refuse_badge_request(db: &Database, actor: &BadgeActor, id: &str) -
     decided.status = BadgeRequestStatus::Refused;
     decided.decided_by = Some(actor.id.clone());
     decided.decided_at = Some(now_ms());
-    record.summary = Some(format!("{} request {}", known(&request.badge), request.id));
-    record_platform_audit(db, record, AuditOutcome::Success).await?;
+    // the atomic decision first: Success only for a refusal that happened
+    // (security review F5)
+    let summary = format!("{} request {}", known(&request.badge), request.id);
     if !db.decide_badge_request(&decided, BadgeRequestStatus::Pending).await? {
+        record.summary = Some(format!("{summary} failed:not_pending"));
+        let _ = record_platform_audit(db, record, AuditOutcome::Failed).await;
         return Err(create_error!(InvalidOperation));
+    }
+    record.summary = Some(summary);
+    if let Err(error) = record_platform_audit(db, record, AuditOutcome::Success).await {
+        // no change without a record: the request waits again
+        if !db.decide_badge_request(&request, BadgeRequestStatus::Refused).await.unwrap_or(false) {
+            log::error!("badge request {} could not be put back", request.id);
+        }
+        return Err(error);
     }
     Ok(decided)
 }
@@ -606,25 +646,56 @@ pub fn appointment_id(user_id: &str, role: &str) -> String {
 /// Actor id prefix for appointment records made from the host
 const APPOINTMENT_ACTION: &str = "staff.cli.appointment";
 
-/// The two people behind an appointment change: `first` an active staff
-/// Owner, `second` any other active staff member. The command line checks
-/// both TOTP codes before it calls in here; this checks their grants again.
-async fn check_operators(db: &Database, first: &str, second: &str, subject: &str) -> Result<()> {
-    let now = now_ms();
+/// How long the second person must have held an active staff grant
+pub const SECOND_PERSON_MIN_AGE_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+
+/// Why the two people behind an appointment change were refused (the code
+/// goes to the audit log)
+fn operators_refused(
+    first: &str,
+    second: &str,
+    subject: &str,
+    first_grant: Option<&StaffGrant>,
+    second_grant: Option<&StaffGrant>,
+    now: i64,
+) -> Option<&'static str> {
     if first == second {
-        return Err(create_error!(NotPrivileged));
+        return Some("same_person");
     }
     if first == subject || second == subject {
-        return Err(create_error!(NotPrivileged));
+        return Some("self");
     }
-    let owner = db.fetch_staff_grant(first).await?.is_some_and(|g| g.is_owner(now));
-    let staff = db.fetch_staff_grant(second).await?.is_some_and(|g| g.is_active(now));
-    if !owner || !staff {
-        return Err(create_error!(NotPrivileged));
+    if !first_grant.is_some_and(|g| g.is_owner(now)) {
+        return Some("first_not_owner");
     }
-    Ok(())
+    let Some(second_grant) = second_grant.filter(|g| g.is_active(now)) else {
+        return Some("second_not_staff");
+    };
+    // the second person is not someone the first one just made staff: an
+    // active grant for more than 7 days, not given by the first person.
+    // A grant from before these dates were kept has none: not counted.
+    match (second_grant.active_since, second_grant.activated_by.as_deref()) {
+        (Some(since), Some(by)) if now - since >= SECOND_PERSON_MIN_AGE_MS && by != first => None,
+        (Some(_), Some(by)) if by == first => Some("second_made_by_first"),
+        _ => Some("second_too_new"),
+    }
 }
 
+/// The two people behind an appointment change: `first` an active staff
+/// Owner, `second` another active staff member whose grant is older than 7
+/// days and was not given by `first`. The command line checks both TOTP
+/// codes before it calls in here; this checks their grants again.
+async fn check_operators(db: &Database, first: &str, second: &str, subject: &str) -> Result<std::result::Result<(), &'static str>> {
+    let now = now_ms();
+    let first_grant = db.fetch_staff_grant(first).await?;
+    let second_grant = db.fetch_staff_grant(second).await?;
+    Ok(match operators_refused(first, second, subject, first_grant.as_ref(), second_grant.as_ref(), now) {
+        Some(code) => Err(code),
+        None => Ok(()),
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn appointment_record(
     db: &Database,
     first: &str,
@@ -642,7 +713,7 @@ async fn appointment_record(
             action: format!("{APPOINTMENT_ACTION}.{action}"),
             permission: Some(StaffPermission::StaffManage),
             target_kind: Some("user".to_string()),
-            target_id: Some(user_id.to_string()),
+            target_id: Ulid::from_string(user_id).ok().map(|_| user_id.to_string()),
             reason: Some(reason.to_string()),
             staff_session_id: None,
             summary: Some(format!("{summary}; second person {second}")),
@@ -671,12 +742,19 @@ pub async fn appoint_staff(
         .copied()
         .find(|r| *r == role)
         .ok_or_else(|| create_error!(NotFound))?;
-    let refuse = |code: &'static str| format!("{role} denied:{code}");
-    if let Err(error) = check_operators(db, first, second, user_id).await {
-        appointment_record(db, first, second, "appoint", user_id, &reason, refuse("operators"), AuditOutcome::Denied).await?;
-        return Err(error);
+    let refuse = |code: &str| format!("{role} denied:{code}");
+    if let Err(code) = check_operators(db, first, second, user_id).await? {
+        appointment_record(db, first, second, "appoint", user_id, &reason, refuse(code), AuditOutcome::Denied).await?;
+        return Err(create_error!(NotPrivileged));
     }
-    let subject = db.fetch_user(user_id).await?;
+    let subject = match db.fetch_user(user_id).await {
+        Ok(user) => user,
+        Err(error) if matches!(error.error_type, revolt_result::ErrorType::NotFound) => {
+            appointment_record(db, first, second, "appoint", user_id, &reason, refuse("unknown_user"), AuditOutcome::Denied).await?;
+            return Err(create_error!(UnknownUser));
+        }
+        Err(error) => return Err(error),
+    };
     if subject.bot.is_some() || subject.flags.unwrap_or_default() & UserFlags::Deleted as i32 != 0 {
         appointment_record(db, first, second, "appoint", user_id, &reason, refuse("not_a_person"), AuditOutcome::Denied).await?;
         return Err(create_error!(IsBot));
@@ -689,6 +767,7 @@ pub async fn appoint_staff(
     }
     let id = appointment_id(user_id, role);
     if db.fetch_staff_appointment(&id).await?.is_some_and(|a| a.ended_at.is_none()) {
+        appointment_record(db, first, second, "appoint", user_id, &reason, refuse("already"), AuditOutcome::Denied).await?;
         return Err(create_error!(NoEffect));
     }
     let now = now_ms();
@@ -726,6 +805,38 @@ pub async fn appoint_staff(
     Ok(appointment)
 }
 
+/// The end of an appointment, once it is decided: the record is closed and
+/// the badge taken away (also one held from before appointments). The
+/// caller has written the Success record. `ended_by` are the people behind
+/// it; `actor` takes the badge away in the badge log.
+#[allow(clippy::too_many_arguments)]
+async fn close_appointment(
+    db: &Database,
+    user_id: &str,
+    role: &str,
+    open: Option<StaffAppointment>,
+    holds: bool,
+    ended_by: Vec<String>,
+    actor: &str,
+    reason: &str,
+) -> Result<()> {
+    if let Some(mut appointment) = open {
+        appointment.ended_at = Some(now_ms());
+        appointment.ended_by = ended_by;
+        appointment.end_reason = Some(reason.to_string());
+        db.save_staff_appointment(&appointment).await?;
+    }
+    if holds {
+        match revoke_badge(db, user_id, role, actor, Some(format!("appointment ended: {reason}"))).await {
+            Ok(_) => {}
+            // taken away in the same moment by someone else
+            Err(error) if matches!(error.error_type, revolt_result::ErrorType::NoEffect) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
 /// End an appointment and take the badge away. Also takes away a badge
 /// held from before appointments (no record), so a grant without one can
 /// be removed the same way.
@@ -743,38 +854,67 @@ pub async fn end_staff_appointment(
         .copied()
         .find(|r| *r == role)
         .ok_or_else(|| create_error!(NotFound))?;
-    if let Err(error) = check_operators(db, first, second, user_id).await {
-        appointment_record(db, first, second, "end", user_id, &reason, format!("{role} denied:operators"), AuditOutcome::Denied).await?;
-        return Err(error);
+    if let Err(code) = check_operators(db, first, second, user_id).await? {
+        appointment_record(db, first, second, "end", user_id, &reason, format!("{role} denied:{code}"), AuditOutcome::Denied).await?;
+        return Err(create_error!(NotPrivileged));
     }
     let id = appointment_id(user_id, role);
     let open = db.fetch_staff_appointment(&id).await?.filter(|a| a.ended_at.is_none());
     let holds = held_badges(db, user_id).await?.contains(role);
     if open.is_none() && !holds {
+        appointment_record(db, first, second, "end", user_id, &reason, format!("{role} denied:not_held"), AuditOutcome::Denied).await?;
         return Err(create_error!(NoEffect));
     }
     appointment_record(db, first, second, "end", user_id, &reason, format!("{role} {id}"), AuditOutcome::Success).await?;
-    if let Some(mut appointment) = open {
-        appointment.ended_at = Some(now_ms());
-        appointment.ended_by = vec![first.to_string(), second.to_string()];
-        appointment.end_reason = Some(reason.clone());
-        db.save_staff_appointment(&appointment).await?;
+    close_appointment(db, user_id, role, open, holds, vec![first.to_string(), second.to_string()], first, &reason).await
+}
+
+/// Audit action when a removed staff grant ends the Staff appointment
+pub const STAFF_GRANT_END_ACTION: &str = "staff.appointment.end_on_revoke";
+
+/// A staff grant was removed (no roles left) or switched off: the Staff
+/// badge goes with it, through the same end as `end-appointment`. `actor`
+/// is who removed the grant (`system:cli` from the host). Nothing to do
+/// when the person neither holds the badge nor has an open appointment.
+/// Returns whether the badge or an appointment was ended.
+pub async fn end_staff_badge_with_grant(db: &Database, actor: &str, user_id: &str, reason: &str) -> Result<bool> {
+    let role = "staff";
+    let id = appointment_id(user_id, role);
+    let open = db.fetch_staff_appointment(&id).await?.filter(|a| a.ended_at.is_none());
+    let holds = held_badges(db, user_id).await?.contains(role);
+    if open.is_none() && !holds {
+        return Ok(false);
     }
-    if holds {
-        revoke_badge(db, user_id, role, first, Some(format!("appointment ended: {reason}"))).await?;
-    }
-    Ok(())
+    let reason: String = format!("staff grant removed: {}", reason.trim()).chars().take(500).collect();
+    record_platform_audit(
+        db,
+        AuditRecord {
+            actor_id: actor.to_string(),
+            action: STAFF_GRANT_END_ACTION.to_string(),
+            permission: Some(StaffPermission::StaffManage),
+            target_kind: Some("user".to_string()),
+            target_id: Ulid::from_string(user_id).ok().map(|_| user_id.to_string()),
+            reason: Some(reason.clone()),
+            staff_session_id: None,
+            summary: Some(format!("{role} {id} ended with the staff grant")),
+        },
+        AuditOutcome::Success,
+    )
+    .await?;
+    close_appointment(db, user_id, role, open, holds, vec![actor.to_string()], actor, &reason).await?;
+    Ok(true)
 }
 
 /// Read only: people holding Staff or Platform Moderator without an active
 /// appointment (`(badge, user id)`). They keep the badge until the owner
-/// confirms them with `appoint` or ends it with `end-appointment`.
+/// confirms them with `appoint` or ends it with `end-appointment`. Reads
+/// every holder (no page limit).
 pub async fn appointment_gaps(db: &Database) -> Result<Vec<(String, String)>> {
     let appointments = db.fetch_staff_appointments().await?;
+    let now = now_ms();
     let mut gaps = vec![];
     for badge in APPOINTMENT_BADGES {
-        for grant in db.fetch_badge_holders(badge, 200).await? {
-            let now = now_ms();
+        for grant in db.fetch_all_badge_holders(badge).await? {
             if !grant.held(now) {
                 continue;
             }

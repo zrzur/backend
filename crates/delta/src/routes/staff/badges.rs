@@ -182,7 +182,15 @@ pub async fn revoke(
 pub async fn requests(db: &State<Database>, staff: StaffContext) -> Result<Json<Vec<BadgeRequestView>>> {
     staff.require(db, StaffPermission::UsersRead).await?;
     let now = now_ms();
-    Ok(Json(db.fetch_badge_requests().await?.iter().map(|r| request_view(r, now)).collect()))
+    // every waiting request, however old the list is, and recent decisions
+    let mut list = db.fetch_pending_badge_requests().await?;
+    for request in db.fetch_badge_requests().await? {
+        if !list.iter().any(|r| r.id == request.id) {
+            list.push(request);
+        }
+    }
+    list.sort_by(|a, b| b.id.cmp(&a.id));
+    Ok(Json(list.iter().map(|r| request_view(r, now)).collect()))
 }
 
 /// # Approve a badge change

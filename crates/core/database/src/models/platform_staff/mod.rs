@@ -108,6 +108,37 @@ pub async fn privileged_in_effect(db: &Database, user_id: &str, session_id: &str
         .unwrap_or(false)
 }
 
+/// Whether `user_id` may use the `privileged` flag for a high-risk edit on
+/// the ordinary session `session_id` right now: the flag is in effect
+/// ([`privileged_in_effect`]), the staff grant holds `permission`, and the
+/// console session opened from this sign-in has a fresh step-up (TOTP).
+pub async fn privileged_step_up_in_effect(
+    db: &Database,
+    user_id: &str,
+    session_id: &str,
+    permission: crate::StaffPermission,
+) -> bool {
+    let now = staff_now();
+    match db.fetch_staff_grant(user_id).await {
+        Ok(Some(grant)) if grant.is_owner(now) && grant.effective(now).contains(&permission) => {}
+        _ => return false,
+    }
+    db.fetch_staff_sessions_for_user(user_id, now)
+        .await
+        .map(|sessions| {
+            sessions.iter().any(|staff| {
+                staff.kind == StaffSessionKind::Console
+                    && staff.session_id == session_id
+                    && staff.user_id == user_id
+                    && staff.revoked_at.is_none()
+                    && now < staff.expires_at
+                    && now - staff.last_seen_at < STAFF_SESSION_IDLE_MS
+                    && staff.step_up_until.is_some_and(|until| now < until)
+            })
+        })
+        .unwrap_or(false)
+}
+
 /// In-memory store used by the reference driver
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlatformStaffStore {
@@ -154,6 +185,8 @@ mod desk_session_tests {
             version: 1,
             updated_at: now,
             updated_by: "test".into(),
+            active_since: None,
+            activated_by: None,
         };
         assert!(db.save_staff_grant(&owner, None).await.unwrap());
         let live = |id: &str, kind: StaffSessionKind, bot: Option<&str>| StaffSession {
