@@ -44,11 +44,16 @@ pub struct DataDeskInteraction {
 pub enum Expect<'a> {
     /// `/desk <sub-command>`
     Command(&'a str),
+    /// Any `/desk` command (the generic `/staff/desk/run`, which then reads
+    /// the stored group and sub-command itself)
+    AnyCommand,
     /// A button with this custom id (`zd:<action>`); for later phases
     #[allow(dead_code)]
     Button(&'a str),
     /// A submitted form with this custom id (`zd:<action>`)
     Modal(&'a str),
+    /// A button whose custom id starts with this (`zd:confirm:`)
+    ButtonPrefix(&'a str),
 }
 
 impl Expect<'_> {
@@ -62,6 +67,17 @@ impl Expect<'_> {
                         .command_options
                         .iter()
                         .any(|o| o.kind == CommandOptionType::SubCommand && o.name == *sub)
+            }
+            Expect::AnyCommand => {
+                interaction.kind == InteractionType::Command
+                    && interaction.command_name.as_deref() == Some(COMMAND)
+            }
+            Expect::ButtonPrefix(prefix) => {
+                interaction.kind == InteractionType::Component
+                    && interaction
+                        .custom_id
+                        .as_deref()
+                        .is_some_and(|id| id.starts_with(prefix) && id.len() > prefix.len())
             }
             Expect::Button(id) => {
                 interaction.kind == InteractionType::Component

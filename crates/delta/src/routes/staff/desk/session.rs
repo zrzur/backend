@@ -27,9 +27,6 @@ const PATH_CLOSE: &str = "/staff/desk/session/close";
 const PATH_STEP_UP: &str = "/staff/desk/step-up";
 const PATH_ME: &str = "/staff/desk/me";
 
-/// Areas the desk knows, and the permission each one needs
-const AREAS: &[(&str, StaffPermission)] = &[("overview", StaffPermission::DashboardRead)];
-
 #[derive(Serialize, Debug)]
 pub struct DeskOpened {
     pub expires_at: i64,
@@ -187,15 +184,8 @@ pub async fn me(db: &State<Database>, user: User, data: Json<DataDeskInteraction
     let press = press(db, &user, &data, Expect::Command("me"), PATH_ME).await?;
     let enabled = press.settings.areas.clone();
     let (staff, _) = context(db, press).await?;
-    let mut areas: Vec<String> = Vec::new();
-    for area in enabled {
-        let allowed = AREAS
-            .iter()
-            .any(|(name, permission)| *name == area && staff.has(*permission));
-        if allowed && !areas.contains(&area) {
-            areas.push(area);
-        }
-    }
+    // an area counts when at least one of its commands is visible to them
+    let areas = super::registry::usable_areas(&enabled, &staff);
     let mut record = staff.record("staff.desk.me", None);
     record.summary = Some("desk me".to_string());
     record_platform_audit(db, record, AuditOutcome::Success).await?;

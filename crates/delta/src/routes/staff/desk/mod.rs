@@ -15,7 +15,12 @@
 
 mod actor;
 mod overview;
+pub(crate) mod registry;
+mod run;
 mod session;
+pub(crate) mod view;
+#[cfg(test)]
+mod framework_tests;
 #[cfg(test)]
 mod tests;
 
@@ -37,7 +42,16 @@ pub const CODE_FIELD: &str = "code";
 
 /// The routes, mounted under `/staff` (so at `/staff/desk/...`)
 pub fn routes() -> Vec<Route> {
-    routes![session::open, session::close, session::step_up, session::me, overview::overview]
+    routes![
+        session::open,
+        session::close,
+        session::step_up,
+        session::me,
+        overview::overview,
+        run::commands,
+        run::run,
+        run::confirm
+    ]
 }
 
 #[cfg(test)]
@@ -115,7 +129,10 @@ pub(crate) async fn hides_field_from_bot(bot: &str, form: &str) -> bool {
 
 /// Whether a new command interaction keeps its options: only `/desk` of
 /// the configured desk bot, so the desk routes can read the sub-command
-/// the server itself checked; no other bot's options are ever stored
+/// and options the server itself checked; no other bot's options are ever
+/// stored. Such a press must name the command version the person saw
+/// (`/interactions` refuses it without one), and the version is stored
+/// with the options for the registered-as-offered check.
 pub(crate) async fn keeps_options(bot: &str, command_name: &str) -> bool {
     command_name == COMMAND && current(bot).await.is_some_and(|s| s.bot == bot)
 }
