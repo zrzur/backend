@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Badges: catalogue clean-up and time badges (2026-11-24, badge plan phases 1 and 2)
+
+- New badge rule `historical` (`BadgeGrantRule::Historical`): retired for good, never given on any path; holders keep it; taking one away is an Owner change with a step-up and a second person. Saha Champion (bit 67108864, no holders) and Paw (bit 128) are historical; their bits stay reserved. `GET /badges/catalogue` answers `rule: "historical"` for them.
+- Early Adopter, One Year and Three Years are computed on every read: Early Adopter for accounts made strictly before `[api.users] early_adopter_cutoff` (UTC milliseconds; Zrzur's value 1803859200000 = 2027-03-01T00:00:00Z is a deploy-time setting), One Year and Three Years after full calendar years in UTC (an account made on 29 February has its day on 28 February in other years). Bots, official and system accounts, deleted, banned and suspended accounts get none of them.
+- These three follow the "Member since" profile section: when a person hides it, the badges are hidden too, for everyone and in the API. Changing the section publishes the new badges at once.
+- Apps show one anniversary, the highest year reached (up to ten), from the One Year bit and the account's creation time; Two and Four to Ten Years have no bit of their own (only four bits were left).
+- The one-year/three-year worker is gone. On start, delta ends every stored One Year / Three Years grant once (platform audit record `badge.system.revoke` first, then the revoke in the badge log; records kept as history) and clears the stored bits; afterwards it finds nothing to do.
+- The official bot mark has one source, `BotFlags::Official`: `zrzur-staff official-bot` (and system bot creation) sets the flag and its mirror `User.official_bot` together; Discover, deletion protection and bot name edits read the flag. Migration `PENDING_OFFICIAL_BOT_FLAGS` gives the flag to every bot whose account already has `official_bot`.
+- Badge names in official notices and `/badge` match the app in en, ar and de (Creator «مصمم», Super Creator «مصمم متميز»; «صانع محتوى» is kept for Content Creator).
+- `GET /badges/users/<id>` no longer lists old stored grants of computed badges.
+
 ## 26.3.0-beta.6 (2026-11-23)
 
 ### Name styles (2026-11-22)

@@ -296,7 +296,7 @@
     "body": ""
   },
   "badge_name.founder": {
-    "title": "مؤسس",
+    "title": "مؤسس زرزور",
     "body": ""
   },
   "badge_name.developer": {
@@ -308,35 +308,35 @@
     "body": ""
   },
   "badge_name.partner": {
-    "title": "شريك",
+    "title": "شريك زرزور",
     "body": ""
   },
   "badge_name.super_creator": {
-    "title": "صانع مميّز",
+    "title": "مصمم متميز",
     "body": ""
   },
   "badge_name.creator": {
-    "title": "صانع محتوى",
+    "title": "مصمم",
     "body": ""
   },
   "badge_name.elite_bug_hunter": {
-    "title": "صائد أخطاء نخبة",
+    "title": "صائد الأخطاء النخبة",
     "body": ""
   },
   "badge_name.bug_hunter": {
-    "title": "صائد أخطاء",
+    "title": "صائد الأخطاء",
     "body": ""
   },
   "badge_name.beta_tester": {
-    "title": "مختبِر تجريبي",
+    "title": "مختبِر النسخة التجريبية",
     "body": ""
   },
   "badge_name.beta_veteran": {
-    "title": "مختبِر قديم",
+    "title": "مختبِر مخضرم",
     "body": ""
   },
   "badge_name.plus": {
-    "title": "ريشة",
+    "title": "ريشة زرزور",
     "body": ""
   },
   "badge_name.early_supporter": {
@@ -344,7 +344,7 @@
     "body": ""
   },
   "badge_name.early_adopter": {
-    "title": "مستخدم مبكر",
+    "title": "من المستخدمين الأوائل",
     "body": ""
   },
   "badge_name.translator": {
@@ -364,11 +364,11 @@
     "body": ""
   },
   "badge_name.reserved_1": {
-    "title": "محجوزة 1",
+    "title": "شارة خاصة",
     "body": ""
   },
   "badge_name.reserved_2": {
-    "title": "محجوزة 2",
+    "title": "شارة خاصة",
     "body": ""
   },
   "signature": {

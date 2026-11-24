@@ -296,35 +296,35 @@
     "body": ""
   },
   "badge_name.founder": {
-    "title": "Gründer",
+    "title": "Zrzur-Gründer",
     "body": ""
   },
   "badge_name.developer": {
-    "title": "Zrzur-Entwicklung",
+    "title": "Zrzur-Entwickler",
     "body": ""
   },
   "badge_name.platform_moderator": {
-    "title": "Plattform-Moderation",
+    "title": "Plattform-Moderator",
     "body": ""
   },
   "badge_name.partner": {
-    "title": "Partner",
+    "title": "Zrzur-Partner",
     "body": ""
   },
   "badge_name.super_creator": {
-    "title": "Super-Creator",
+    "title": "Top-Designer",
     "body": ""
   },
   "badge_name.creator": {
-    "title": "Creator",
+    "title": "Designer",
     "body": ""
   },
   "badge_name.elite_bug_hunter": {
-    "title": "Elite-Bugjäger",
+    "title": "Elite-Fehlerjäger",
     "body": ""
   },
   "badge_name.bug_hunter": {
-    "title": "Bugjäger",
+    "title": "Fehlerjäger",
     "body": ""
   },
   "badge_name.beta_tester": {
@@ -336,7 +336,7 @@
     "body": ""
   },
   "badge_name.plus": {
-    "title": "Feder",
+    "title": "Zrzur Feather",
     "body": ""
   },
   "badge_name.early_supporter": {
@@ -344,11 +344,11 @@
     "body": ""
   },
   "badge_name.early_adopter": {
-    "title": "Früh dabei",
+    "title": "Früher Nutzer",
     "body": ""
   },
   "badge_name.translator": {
-    "title": "Übersetzung",
+    "title": "Übersetzer",
     "body": ""
   },
   "badge_name.responsible_disclosure": {
@@ -364,11 +364,11 @@
     "body": ""
   },
   "badge_name.reserved_1": {
-    "title": "Reserviert 1",
+    "title": "Besonderes Abzeichen",
     "body": ""
   },
   "badge_name.reserved_2": {
-    "title": "Reserviert 2",
+    "title": "Besonderes Abzeichen",
     "body": ""
   },
   "signature": {

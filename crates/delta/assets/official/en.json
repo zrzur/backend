@@ -260,59 +260,59 @@
     "body": "For your safety, the Zrzur team signed you out on all devices. Sign in again; if you didn't expect this, change your password.\n{note}"
   },
   "badge_name.one_year": {
-    "title": "One year on Zrzur",
+    "title": "One Year on Zrzur",
     "body": ""
   },
   "badge_name.three_years": {
-    "title": "Three years on Zrzur",
+    "title": "Three Years on Zrzur",
     "body": ""
   },
   "badge_name.community_builder": {
-    "title": "Community builder",
+    "title": "Community Builder",
     "body": ""
   },
   "badge_name.big_community": {
-    "title": "Big community",
+    "title": "Big Community",
     "body": ""
   },
   "badge_name.verified_server_owner": {
-    "title": "Verified server owner",
+    "title": "Verified Server Owner",
     "body": ""
   },
   "badge_name.verified_bot_developer": {
-    "title": "Verified bot developer",
+    "title": "Verified Bot Developer",
     "body": ""
   },
   "badge_name.saha_champion": {
-    "title": "Saha champion",
+    "title": "Saha Champion",
     "body": ""
   },
   "badge_name.community_helper": {
-    "title": "Community helper",
+    "title": "Community Helper",
     "body": ""
   },
   "badge_name.staff": {
-    "title": "Zrzur staff",
+    "title": "Zrzur Staff",
     "body": ""
   },
   "badge_name.founder": {
-    "title": "Founder",
+    "title": "Zrzur Founder",
     "body": ""
   },
   "badge_name.developer": {
-    "title": "Zrzur developer",
+    "title": "Zrzur Developer",
     "body": ""
   },
   "badge_name.platform_moderator": {
-    "title": "Platform moderator",
+    "title": "Platform Moderator",
     "body": ""
   },
   "badge_name.partner": {
-    "title": "Partner",
+    "title": "Zrzur Partner",
     "body": ""
   },
   "badge_name.super_creator": {
-    "title": "Super creator",
+    "title": "Super Creator",
     "body": ""
   },
   "badge_name.creator": {
@@ -320,31 +320,31 @@
     "body": ""
   },
   "badge_name.elite_bug_hunter": {
-    "title": "Elite bug hunter",
+    "title": "Elite Bug Hunter",
     "body": ""
   },
   "badge_name.bug_hunter": {
-    "title": "Bug hunter",
+    "title": "Bug Hunter",
     "body": ""
   },
   "badge_name.beta_tester": {
-    "title": "Beta tester",
+    "title": "Beta Tester",
     "body": ""
   },
   "badge_name.beta_veteran": {
-    "title": "Beta veteran",
+    "title": "Beta Veteran",
     "body": ""
   },
   "badge_name.plus": {
-    "title": "Feather",
+    "title": "Zrzur Feather",
     "body": ""
   },
   "badge_name.early_supporter": {
-    "title": "Early supporter",
+    "title": "Early Supporter",
     "body": ""
   },
   "badge_name.early_adopter": {
-    "title": "Early adopter",
+    "title": "Early Adopter",
     "body": ""
   },
   "badge_name.translator": {
@@ -352,7 +352,7 @@
     "body": ""
   },
   "badge_name.responsible_disclosure": {
-    "title": "Responsible disclosure",
+    "title": "Responsible Disclosure",
     "body": ""
   },
   "badge_name.supporter": {
@@ -364,11 +364,11 @@
     "body": ""
   },
   "badge_name.reserved_1": {
-    "title": "Reserved 1",
+    "title": "Special badge",
     "body": ""
   },
   "badge_name.reserved_2": {
-    "title": "Reserved 2",
+    "title": "Special badge",
     "body": ""
   },
   "signature": {

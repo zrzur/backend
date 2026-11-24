@@ -620,6 +620,38 @@ mod tests {
     }
 
     #[test]
+    fn every_badge_has_its_app_name_in_every_language() {
+        // every catalogue badge has a name in each language
+        for badge in revolt_database::BADGE_CATALOGUE {
+            let names = badge_names(badge.id);
+            for (code, _) in LANGUAGES {
+                assert!(names.get(code).is_some_and(|n| !n.is_empty()), "{code} {}", badge.id);
+            }
+        }
+        // the names the apps show (web Lingui catalogs); «صانع محتوى» is kept
+        // for the Content Creator badge, the designer badges say «مصمم»
+        for (badge, ar, en, de) in [
+            ("creator", "مصمم", "Creator", "Designer"),
+            ("super_creator", "مصمم متميز", "Super Creator", "Top-Designer"),
+            ("early_adopter", "من المستخدمين الأوائل", "Early Adopter", "Früher Nutzer"),
+            ("beta_tester", "مختبِر النسخة التجريبية", "Beta Tester", "Beta-Tester"),
+            ("beta_veteran", "مختبِر مخضرم", "Beta Veteran", "Beta-Veteran"),
+            ("elite_bug_hunter", "صائد الأخطاء النخبة", "Elite Bug Hunter", "Elite-Fehlerjäger"),
+            ("founder", "مؤسس زرزور", "Zrzur Founder", "Zrzur-Gründer"),
+        ] {
+            let names = badge_names(badge);
+            assert_eq!(names["ar"], ar, "{badge}");
+            assert_eq!(names["en"], en, "{badge}");
+            assert_eq!(names["de"], de, "{badge}");
+        }
+        for (code, _) in LANGUAGES {
+            for badge in revolt_database::BADGE_CATALOGUE {
+                assert_ne!(badge_names(badge.id)[code], "صانع محتوى", "{}", badge.id);
+            }
+        }
+    }
+
+    #[test]
     fn grant_notices_carry_no_staff_reason() {
         let secret = "internal staff reason";
         let vars = [("note", secret.to_string()), ("name", "x".to_string()), ("version", "1".to_string())];
