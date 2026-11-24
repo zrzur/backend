@@ -374,12 +374,13 @@ fn sees(staff: &StaffContext, report: &BugReport) -> bool {
 /// otherwise bug and feedback reports (`support.read`). `status` is a
 /// comma-separated list (default: Open, Triaged, NeedsInfo).
 #[get("/bugs?<security>&<status>")]
-pub async fn bugs(
-    db: &State<Database>,
-    staff: StaffContext,
-    security: Option<bool>,
-    status: Option<&str>,
-) -> Result<Json<Vec<BugReportReview>>> {
+pub async fn bugs(db: &State<Database>, staff: StaffContext, security: Option<bool>, status: Option<&str>) -> Result<Json<Vec<BugReportReview>>> {
+    bugs_core(db, &staff, security, status).await.map(Json)
+}
+
+/// The console's `bugs`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn bugs_core(db: &Database, staff: &StaffContext, security: Option<bool>, status: Option<&str>) -> Result<Vec<BugReportReview>> {
     let security = security.unwrap_or(false);
     staff
         .require(db, if security { StaffPermission::SecurityRead } else { StaffPermission::SupportRead })
@@ -387,17 +388,23 @@ pub async fn bugs(
     if status.is_some_and(|s| s.len() > 128) {
         return Err(create_error!(InvalidOperation));
     }
-    queue_of(db, security, status).await.map(Json)
+    queue_of(db, security, status).await
 }
 
 /// # A bug report
 #[get("/bugs/<id>")]
 pub async fn bug(db: &State<Database>, staff: StaffContext, id: &str) -> Result<Json<BugReportReview>> {
+    bug_core(db, &staff, id).await.map(Json)
+}
+
+/// The console's `bug`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn bug_core(db: &Database, staff: &StaffContext, id: &str) -> Result<BugReportReview> {
     // a report you may not see is a 404, like for anyone else
     if !staff.has(StaffPermission::SupportRead) && !staff.has(StaffPermission::SecurityRead) {
         staff.require(db, StaffPermission::SupportRead).await?;
     }
-    report_for(db, id, |r| sees(&staff, r)).await.map(Json)
+    report_for(db, id, |r| sees(&staff, r)).await
 }
 
 /// # Review a bug report

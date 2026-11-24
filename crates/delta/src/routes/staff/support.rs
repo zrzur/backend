@@ -174,15 +174,13 @@ fn parse_status(name: &str) -> Result<SupportTicketStatus> {
 /// Most recently updated first. `assigned` is `me`, `none` or a staff
 /// member's id; `before` is an `updated_at` for paging.
 #[get("/support/tickets?<status>&<assigned>&<category>&<user>&<before>")]
-pub async fn tickets(
-    db: &State<Database>,
-    staff: StaffContext,
-    status: Option<&str>,
-    assigned: Option<&str>,
-    category: Option<&str>,
-    user: Option<&str>,
-    before: Option<i64>,
-) -> Result<Json<Vec<StaffTicket>>> {
+pub async fn tickets(db: &State<Database>, staff: StaffContext, status: Option<&str>, assigned: Option<&str>, category: Option<&str>, user: Option<&str>, before: Option<i64>) -> Result<Json<Vec<StaffTicket>>> {
+    tickets_core(db, &staff, status, assigned, category, user, before).await.map(Json)
+}
+
+/// The console's `tickets`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn tickets_core(db: &Database, staff: &StaffContext, status: Option<&str>, assigned: Option<&str>, category: Option<&str>, user: Option<&str>, before: Option<i64>) -> Result<Vec<StaffTicket>> {
     staff.require(db, StaffPermission::SupportRead).await?;
     if category.is_some_and(|c| !SUPPORT_CATEGORIES.contains(&c)) || user.is_some_and(|u| u.len() > 64) || assigned.is_some_and(|a| a.len() > 64) {
         return Err(create_error!(InvalidOperation));
@@ -207,15 +205,21 @@ pub async fn tickets(
     let mut ids: Vec<String> = list.iter().map(|t| t.user_id.clone()).collect();
     ids.extend(list.iter().filter_map(|t| t.assigned_to.clone()));
     let names = names(db, ids).await?;
-    Ok(Json(list.iter().map(|t| staff_view(t, &names, false)).collect()))
+    Ok(list.iter().map(|t| staff_view(t, &names, false)).collect())
 }
 
 /// # A support ticket, with staff notes
 #[get("/support/tickets/<id>")]
 pub async fn ticket(db: &State<Database>, staff: StaffContext, id: &str) -> Result<Json<StaffTicket>> {
+    ticket_core(db, &staff, id).await.map(Json)
+}
+
+/// The console's `ticket`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn ticket_core(db: &Database, staff: &StaffContext, id: &str) -> Result<StaffTicket> {
     staff.require(db, StaffPermission::SupportRead).await?;
     let t = db.fetch_support_ticket(id).await?;
-    Ok(Json(full_view(db, &t).await?))
+    Ok(full_view(db, &t).await?)
 }
 
 fn ticket_record(staff: &StaffContext, action: &str, t: &SupportTicket) -> AuditRecord {

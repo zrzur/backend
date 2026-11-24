@@ -14,7 +14,7 @@ use revolt_result::{create_error, Result};
 use serde::Serialize;
 use serde_json::Value;
 
-use super::super::{badges, bots, platform, safety};
+use super::super::{badges, bots, platform, review, safety, support};
 use super::super::StaffContext;
 use super::registry::{when, DeskChoice, DeskCommand, DeskGroup, DeskInput, DeskOption, Lang, Text};
 use super::view::{DeskButton, DeskButtonStyle, DeskView};
@@ -550,6 +550,82 @@ async fn appeal_list_view(db: &Database, staff: &StaffContext, input: &DeskInput
 }
 handler!(appeal_list, appeal_list_view);
 
+// ---- tickets and bugs ----
+
+pub const TICKET_ROW: &[Show] = &[
+    show("/subject", w::SUBJECT),
+    show("/status", w::STATUS),
+    show("/category", w::CATEGORY),
+    show("/user", w::USER),
+    show("/updated_at", w::UPDATED),
+    show("/waiting", w::WAITING),
+    show("@id", w::ID),
+];
+
+pub const TICKET_VIEW: &[Show] = &[
+    show("/subject", w::SUBJECT),
+    show("@id", w::ID),
+    show("/status", w::STATUS),
+    show("/category", w::CATEGORY),
+    show("/user", w::USER),
+    show("/user_id", w::ID),
+    show("/assignee", w::ASSIGNEE),
+    show("/created_at", w::CREATED),
+    show("/updated_at", w::UPDATED),
+    show("/closed_at", w::CLOSED_AT),
+    show("/message_count", w::MESSAGES),
+    show("/waiting", w::WAITING),
+];
+
+async fn ticket_list_view(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
+    let status = input.text("status");
+    let list = support::tickets_core(db, staff, status.as_deref(), None, None, None, None).await?;
+    Ok(paged(DeskView::new(w::T_TICKETS.get(input.lang)), &items(json(&list)), TICKET_ROW, input))
+}
+handler!(ticket_list, ticket_list_view);
+
+async fn ticket_view_view(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
+    let id = required(input, "ticket", CommandOptionType::String)?;
+    let ticket = support::ticket_core(db, staff, &id).await?;
+    Ok(fields(DeskView::new(w::T_TICKET.get(input.lang)), &json(&ticket), TICKET_VIEW, input.lang))
+}
+handler!(ticket_view, ticket_view_view);
+
+pub const BUG_ROW: &[Show] = &[
+    show("/report/title", w::TITLE),
+    show("/report/status", w::STATUS),
+    show("/report/kind", w::KIND),
+    show("/report/_id", w::ID),
+];
+
+pub const BUG_VIEW: &[Show] = &[
+    show("/report/title", w::TITLE),
+    show("/report/_id", w::ID),
+    show("/report/kind", w::KIND),
+    show("/report/status", w::STATUS),
+    show("/report/platform", w::PLATFORM),
+    show("/report/app_version", w::VERSION),
+    show("/author/username", w::AUTHOR),
+    show("/possible_duplicates", w::DUPLICATES),
+];
+
+async fn bug_list_view(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
+    let list = review::bugs_core(db, staff, input.boolean("security"), None).await?;
+    Ok(paged(DeskView::new(w::T_BUGS.get(input.lang)), &items(json(&list)), BUG_ROW, input))
+}
+handler!(bug_list, bug_list_view);
+
+async fn bug_view_view(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
+    let id = required(input, "bug", CommandOptionType::String)?;
+    let bug = json(&review::bug_core(db, staff, &id).await?);
+    let view = fields(DeskView::new(w::T_BUG.get(input.lang)), &bug, BUG_VIEW, input.lang);
+    Ok(match bug.pointer("/report/description").and_then(Value::as_str).filter(|d| !d.is_empty()) {
+        Some(description) => view.line(description.to_string()),
+        None => view,
+    })
+}
+handler!(bug_view, bug_view_view);
+
 // ---- the registry entries ----
 
 const fn opt(name: &'static str, kind: CommandOptionType, required: bool, description: Text) -> DeskOption {
@@ -641,6 +717,8 @@ pub static GROUPS: &[DeskGroup] = &[
     DeskGroup { name: "bot", description: t("Bots", "البوتات", "Bots") },
     DeskGroup { name: "case", description: t("Reports", "البلاغات", "Meldungen") },
     DeskGroup { name: "appeal", description: t("Appeals", "الطعون", "Einsprüche") },
+    DeskGroup { name: "ticket", description: t("Support tickets", "تذاكر الدعم", "Support-Tickets") },
+    DeskGroup { name: "bug", description: t("Bug reports", "بلاغات الأخطاء", "Fehlerberichte") },
 ];
 
 pub static ENTRIES: &[DeskCommand] = &[
@@ -655,4 +733,17 @@ pub static ENTRIES: &[DeskCommand] = &[
     read("lookup", "case", "list", t("Report queue", "طابور البلاغات", "Meldungen"), &[CASE_STATUS], Some(P::ReportsRead), case_list),
     read("lookup", "case", "view", t("Show a report", "عرض بلاغ", "Meldung zeigen"), &[id_opt("case")], Some(P::ReportsRead), case_view),
     read("lookup", "appeal", "list", t("Appeal queue", "طابور الطعون", "Einsprüche"), &[APPEAL_STATUS], Some(P::ReportsRead), appeal_list),
+    read("lookup", "ticket", "list", t("Support tickets", "تذاكر الدعم", "Support-Tickets"), &[TICKET_STATUS], Some(P::SupportRead), ticket_list),
+    read("lookup", "ticket", "view", t("Show a ticket", "عرض تذكرة", "Ticket zeigen"), &[id_opt("ticket")], Some(P::SupportRead), ticket_view),
+    // bugs: Support or Security, decided by the console's core
+    read(
+        "lookup",
+        "bug",
+        "list",
+        t("Bug reports", "بلاغات الأخطاء", "Fehlerberichte"),
+        &[opt("security", CommandOptionType::Boolean, false, t("Security reports", "بلاغات أمنية", "Sicherheitsmeldungen"))],
+        None,
+        bug_list,
+    ),
+    read("lookup", "bug", "view", t("Show a bug report", "عرض بلاغ خطأ", "Fehlerbericht zeigen"), &[id_opt("bug")], None, bug_view),
 ];
