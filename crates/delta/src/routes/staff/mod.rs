@@ -591,10 +591,23 @@ async fn set_member(
     id: &str,
     data: Json<DataSetMember>,
 ) -> Result<Json<StaffMember>> {
+    set_member_core(db, &staff, id, data.into_inner())
+        .await
+        .map(Json)
+}
+
+/// The console's `set_member`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+async fn set_member_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataSetMember,
+) -> Result<StaffMember> {
     staff
         .require_step_up(db, StaffPermission::StaffManage)
         .await?;
-    let data = data.into_inner();
+    let data = data;
     let reason = reason(&data.reason)?;
     let target = db.fetch_user(id).await?;
     if target.bot.is_some() {
@@ -679,7 +692,7 @@ async fn set_member(
     }
     db.revoke_staff_sessions_for_user(&target.id, staff.now)
         .await?;
-    Ok(Json(StaffMember {
+    Ok(std::convert::identity(StaffMember {
         user_id: grant.id.clone(),
         username: Some(target.username),
         active: grant.is_active(staff.now),
@@ -704,6 +717,17 @@ async fn disable_member(
     staff: StaffContext,
     id: &str,
     data: Json<DataReason>,
+) -> Result<()> {
+    disable_member_core(db, &staff, id, data.into_inner()).await
+}
+
+/// The console's `disable_member`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+async fn disable_member_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataReason,
 ) -> Result<()> {
     staff
         .require_step_up(db, StaffPermission::StaffManage)
@@ -749,6 +773,19 @@ async fn revoke_member_sessions(
     id: &str,
     data: Json<DataReason>,
 ) -> Result<Json<usize>> {
+    revoke_member_sessions_core(db, &staff, id, data.into_inner())
+        .await
+        .map(Json)
+}
+
+/// The console's `revoke_member_sessions`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+async fn revoke_member_sessions_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataReason,
+) -> Result<usize> {
     staff
         .require_protective(db, StaffPermission::StaffManage)
         .await?;
@@ -770,7 +807,7 @@ async fn revoke_member_sessions(
         staff.require(db, StaffPermission::StaffManage).await?;
     }
     record_platform_audit(db, record, AuditOutcome::Success).await?;
-    Ok(Json(
+    Ok(std::convert::identity(
         db.revoke_staff_sessions_for_user(id, staff.now).await?,
     ))
 }

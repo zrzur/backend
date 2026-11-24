@@ -138,6 +138,17 @@ pub async fn lock(
     id: &str,
     data: Json<DataLock>,
 ) -> Result<Json<usize>> {
+    lock_core(db, &staff, id, data.into_inner()).await.map(Json)
+}
+
+/// The console's `lock`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn lock_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataLock,
+) -> Result<usize> {
     staff
         .require_step_up(db, StaffPermission::SecurityRespond)
         .await?;
@@ -162,7 +173,7 @@ pub async fn lock(
         record_platform_audit(db, record, AuditOutcome::Denied).await?;
         return Err(create_error!(NotPrivileged));
     }
-    Ok(Json(
+    Ok(std::convert::identity(
         audited(db, record, db.revoke_staff_sessions_for_user(id, staff.now)).await?,
     ))
 }

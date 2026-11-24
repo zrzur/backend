@@ -208,10 +208,23 @@ pub async fn refund(
     id: &str,
     data: Json<v0::DataRefundOrder>,
 ) -> Result<Json<v0::AdminOrder>> {
+    refund_core(db, &staff, id, data.into_inner())
+        .await
+        .map(Json)
+}
+
+/// The console's `refund`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn refund_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: v0::DataRefundOrder,
+) -> Result<v0::AdminOrder> {
     staff
         .require_step_up(db, StaffPermission::BillingManage)
         .await?;
-    let data = validated(data.into_inner())?;
+    let data = validated(data)?;
     db.fetch_order(id).await?;
     let mut record = order_record(&staff, "staff.billing.refund", id);
     record.reason = Some(data.reason.trim().chars().take(500).collect());
@@ -235,7 +248,7 @@ pub async fn refund(
     let minor = data.amount.map(|a| a as f64).unwrap_or(order.amount as f64);
     let amount = format!("{:.2} {}", minor / 100.0, order.currency.to_uppercase());
     crate::util::official::refunded(db, &order.user_id, &amount, &data.reason).await;
-    Ok(Json(order.into()))
+    Ok(std::convert::identity(order.into()))
 }
 
 /// # Deliver a paid order again
@@ -247,13 +260,23 @@ pub async fn deliver(
     staff: StaffContext,
     id: &str,
 ) -> Result<Json<v0::AdminOrder>> {
+    deliver_core(db, &staff, id).await.map(Json)
+}
+
+/// The console's `deliver`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn deliver_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+) -> Result<v0::AdminOrder> {
     staff
         .require_step_up(db, StaffPermission::BillingManage)
         .await?;
     db.fetch_order(id).await?;
     let record = order_record(&staff, "staff.billing.deliver", id);
     audited(db, record, fulfil_order(db, id)).await?;
-    Ok(Json(db.fetch_order(id).await?.into()))
+    Ok(std::convert::identity(db.fetch_order(id).await?.into()))
 }
 
 /// # Retry a failed webhook event
@@ -263,6 +286,16 @@ pub async fn retry_webhook(
     staff: StaffContext,
     id: &str,
 ) -> Result<Json<v0::WebhookEventInfo>> {
+    retry_webhook_core(db, &staff, id).await.map(Json)
+}
+
+/// The console's `retry_webhook`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn retry_webhook_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+) -> Result<v0::WebhookEventInfo> {
     staff
         .require_step_up(db, StaffPermission::BillingManage)
         .await?;
@@ -286,7 +319,7 @@ pub async fn retry_webhook(
         process_webhook_event(db, id).await
     })
     .await?;
-    Ok(Json(
+    Ok(std::convert::identity(
         db.fetch_webhook_event(id)
             .await?
             .ok_or_else(|| create_error!(NotFound))?
@@ -303,6 +336,15 @@ pub async fn reconcile_now(
     db: &State<Database>,
     staff: StaffContext,
 ) -> Result<Json<Vec<v0::ReconciliationIssue>>> {
+    reconcile_now_core(db, &staff).await.map(Json)
+}
+
+/// The console's `reconcile_now`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn reconcile_now_core(
+    db: &Database,
+    staff: &StaffContext,
+) -> Result<Vec<v0::ReconciliationIssue>> {
     staff
         .require_step_up(db, StaffPermission::BillingManage)
         .await?;
@@ -311,7 +353,9 @@ pub async fn reconcile_now(
         Some(StaffPermission::BillingManage),
     );
     audited(db, record, reconcile(db)).await?;
-    Ok(Json(db.fetch_reconciliation_issues(false, 200).await?))
+    Ok(std::convert::identity(
+        db.fetch_reconciliation_issues(false, 200).await?,
+    ))
 }
 
 /// # Grant Feather
@@ -323,10 +367,20 @@ pub async fn grant(
     staff: StaffContext,
     data: Json<v0::DataGrantPlus>,
 ) -> Result<Json<v0::BillingOverview>> {
+    grant_core(db, &staff, data.into_inner()).await.map(Json)
+}
+
+/// The console's `grant`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn grant_core(
+    db: &Database,
+    staff: &StaffContext,
+    data: v0::DataGrantPlus,
+) -> Result<v0::BillingOverview> {
     staff
         .require_step_up(db, StaffPermission::BillingManage)
         .await?;
-    let data = validated(data.into_inner())?;
+    let data = validated(data)?;
     let subject = db.fetch_user(&data.user).await?;
     if subject.bot.is_some() {
         return Err(create_error!(IsBot));
@@ -347,7 +401,7 @@ pub async fn grant(
     )
     .await?;
     crate::util::official::feather_granted(db, &data.user, data.days as i64).await;
-    Ok(Json(
+    Ok(std::convert::identity(
         crate::routes::billing::overview_of(db, &data.user).await?,
     ))
 }

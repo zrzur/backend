@@ -7,10 +7,12 @@
 //!
 //! Every change is written to the platform audit log first.
 
-use revolt_database::{record_platform_audit, AuditOutcome, AuditRecord, Database, StaffPermission};
+use revolt_database::{
+    AuditOutcome, AuditRecord, Database, StaffPermission, record_platform_audit,
+};
 use revolt_models::v0::{BetaFeature, BetaMemberRecord, DataBetaFeature, DataBetaMember};
-use revolt_result::{create_error, Result};
-use rocket::{serde::json::Json, State};
+use revolt_result::{Result, create_error};
+use rocket::{State, serde::json::Json};
 
 use super::StaffContext;
 use crate::routes::badges::beta::{features_list, member_change, members_list, save_feature};
@@ -25,7 +27,12 @@ async fn audited<T>(
         Ok(value) => Ok(value),
         Err(error) => {
             let mut failed = record;
-            failed.summary = Some(format!("{:?}", error.error_type).chars().take(200).collect());
+            failed.summary = Some(
+                format!("{:?}", error.error_type)
+                    .chars()
+                    .take(200)
+                    .collect(),
+            );
             let _ = record_platform_audit(db, failed, AuditOutcome::Failed).await;
             Err(error)
         }
@@ -41,14 +48,33 @@ pub async fn features(db: &State<Database>, staff: StaffContext) -> Result<Json<
 
 /// # Create or change a beta feature
 #[post("/beta/features", data = "<data>")]
-pub async fn save(db: &State<Database>, staff: StaffContext, data: Json<DataBetaFeature>) -> Result<Json<BetaFeature>> {
-    staff.require_step_up(db, StaffPermission::SettingsManage).await?;
-    let data = data.into_inner();
+pub async fn save(
+    db: &State<Database>,
+    staff: StaffContext,
+    data: Json<DataBetaFeature>,
+) -> Result<Json<BetaFeature>> {
+    save_core(db, &staff, data.into_inner()).await.map(Json)
+}
+
+/// The console's `save`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn save_core(
+    db: &Database,
+    staff: &StaffContext,
+    data: DataBetaFeature,
+) -> Result<BetaFeature> {
+    staff
+        .require_step_up(db, StaffPermission::SettingsManage)
+        .await?;
+    let data = data;
     let mut record = staff.record("staff.beta.feature", Some(StaffPermission::SettingsManage));
     record.target_kind = Some("beta_feature".to_string());
     record.target_id = Some(data.id.chars().take(64).collect());
-    record.summary = Some(format!("enabled={} all_testers={}", data.enabled, data.all_testers));
-    audited(db, record, save_feature(db, &staff.user.id, data)).await.map(Json)
+    record.summary = Some(format!(
+        "enabled={} all_testers={}",
+        data.enabled, data.all_testers
+    ));
+    audited(db, record, save_feature(db, &staff.user.id, data)).await
 }
 
 /// # Beta members
@@ -56,7 +82,11 @@ pub async fn save(db: &State<Database>, staff: StaffContext, data: Json<DataBeta
 /// `status` is Requested, Invited, Active, Removed or Completed (all when
 /// absent).
 #[get("/beta/members?<status>")]
-pub async fn members(db: &State<Database>, staff: StaffContext, status: Option<&str>) -> Result<Json<Vec<BetaMemberRecord>>> {
+pub async fn members(
+    db: &State<Database>,
+    staff: StaffContext,
+    status: Option<&str>,
+) -> Result<Json<Vec<BetaMemberRecord>>> {
     staff.require(db, StaffPermission::SettingsRead).await?;
     members_list(db, status).await.map(Json)
 }
@@ -66,10 +96,29 @@ pub async fn members(db: &State<Database>, staff: StaffContext, status: Option<&
 /// `invite`, `approve`, `remove`, `complete` (an active tester who sent
 /// feedback or a bug report) or `features`.
 #[post("/beta/members", data = "<data>")]
-pub async fn member(db: &State<Database>, staff: StaffContext, data: Json<DataBetaMember>) -> Result<Json<BetaMemberRecord>> {
-    staff.require_step_up(db, StaffPermission::SettingsManage).await?;
-    let data = data.into_inner();
-    if !matches!(data.action.as_str(), "invite" | "approve" | "remove" | "complete" | "features") {
+pub async fn member(
+    db: &State<Database>,
+    staff: StaffContext,
+    data: Json<DataBetaMember>,
+) -> Result<Json<BetaMemberRecord>> {
+    member_core(db, &staff, data.into_inner()).await.map(Json)
+}
+
+/// The console's `member`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn member_core(
+    db: &Database,
+    staff: &StaffContext,
+    data: DataBetaMember,
+) -> Result<BetaMemberRecord> {
+    staff
+        .require_step_up(db, StaffPermission::SettingsManage)
+        .await?;
+    let data = data;
+    if !matches!(
+        data.action.as_str(),
+        "invite" | "approve" | "remove" | "complete" | "features"
+    ) {
         return Err(create_error!(InvalidOperation));
     }
     let mut record = staff.record("staff.beta.member", Some(StaffPermission::SettingsManage));
@@ -79,5 +128,5 @@ pub async fn member(db: &State<Database>, staff: StaffContext, data: Json<DataBe
     let (user, action) = (data.user.clone(), data.action.clone());
     let changed = audited(db, record, member_change(db, &staff.user.id, data)).await?;
     crate::util::official::beta(db, &user, &action).await;
-    Ok(Json(changed))
+    Ok(std::convert::identity(changed))
 }
