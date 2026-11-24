@@ -94,6 +94,7 @@ pub fn routes() -> Vec<Route> {
         bots::delete,
         deletion::delete_owned,
         deletion::delete_request,
+        deletion::cancel_delete_request,
         deletion::deletions,
         change_requests::list,
         change_requests::create,

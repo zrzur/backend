@@ -509,6 +509,8 @@ async fn desk_delete_request_refuses_protected_accounts() {
         )
         .await;
         assert_eq!(got, error);
+        // refused with the console's record
+        assert_eq!(last(&s, &owner).await.1, "Denied");
     }
 }
 
@@ -523,7 +525,7 @@ async fn desk_servers_refused_without_permission() {
     let entries: Vec<_> = super::registry::entries()
         .filter(|e| e.area == Some("servers"))
         .collect();
-    assert_eq!(entries.len(), 7);
+    assert_eq!(entries.len(), 8);
     for entry in entries {
         let before = s.records(&analyst).await.len();
         let pressed = press(
@@ -550,4 +552,238 @@ async fn desk_servers_refused_without_permission() {
             ("staff.access.denied", "Denied")
         );
     }
+}
+
+// ---- review fixes ----
+
+/// A deletion request: an account owning an official server is refused
+/// with a record; the card lists what goes and how to cancel; a changed
+/// plan is refused at confirmation; a staff request is cancelled from the
+/// desk and the account is enabled again
+#[rocket::async_test]
+async fn desk_delete_request_shows_what_goes_and_can_be_cancelled() {
+    let s = stage().await;
+    all_areas(&s);
+    let owner = s.person(vec![StaffRole::Owner]).await;
+    s.sign_in(&owner, -1).await;
+    let command = register_servers(&s).await;
+
+    let (_, _, keeper) = s.harness.new_user().await;
+    let official = owned_server(&s, &keeper, None).await;
+    server_update(
+        &s,
+        &official.id,
+        PartialServer {
+            flags: Some(1),
+            ..Default::default()
+        },
+    )
+    .await;
+    let error = refused(
+        &s,
+        &owner,
+        &command,
+        "user",
+        "delete-request",
+        json!([
+            user_opt(&keeper.id),
+            text("confirm_name", &handle(&keeper)),
+            text("reason", "Asked by email")
+        ]),
+    )
+    .await;
+    assert_eq!(error, "NotPrivileged");
+    assert_eq!(
+        last(&s, &owner).await,
+        (
+            "staff.user.delete_request".to_string(),
+            "Denied".to_string(),
+            "owns official servers or bots".to_string()
+        )
+    );
+
+    let (_, _, person) = s.harness.new_user().await;
+    let server = owned_server(&s, &person, None).await;
+    let (bot, _) = s.harness.new_bot(&person).await;
+    let request = card(
+        &s,
+        &owner,
+        &command,
+        "user",
+        "delete-request",
+        json!([
+            user_opt(&person.id),
+            text("confirm_name", &handle(&person)),
+            text("reason", "Asked by email")
+        ]),
+    )
+    .await;
+    let content = request.view["content"].as_str().unwrap().to_string();
+    for part in [server.id.as_str(), bot.id.as_str(), "cancel", "mail"] {
+        assert!(content.contains(part), "{part}: {content}");
+    }
+    // another account gets a new server after its card
+    let (_, _, other) = s.harness.new_user().await;
+    let changed = card(
+        &s,
+        &owner,
+        &command,
+        "user",
+        "delete-request",
+        json!([
+            user_opt(&other.id),
+            text("confirm_name", &handle(&other)),
+            text("reason", "Asked by email")
+        ]),
+    )
+    .await;
+    owned_server(&s, &other, None).await;
+
+    step_up(&s, &owner, 0).await;
+    let (status, body) = confirm(&s, &owner, &request).await;
+    assert_eq!(status, Status::Ok, "{body}");
+    let (_, body) = confirm(&s, &owner, &changed).await;
+    assert_eq!(error_type(&body), "InvalidOperation", "{body}");
+    assert!(
+        s.harness
+            .db
+            .fetch_account(&other.id)
+            .await
+            .unwrap()
+            .deletion
+            .is_none()
+    );
+
+    // cancelled from the desk
+    let cancel = card(
+        &s,
+        &owner,
+        &command,
+        "user",
+        "delete-cancel",
+        json!([user_opt(&person.id), text("reason", "Sent by mistake")]),
+    )
+    .await;
+    assert!(cancel.danger());
+    let (_, body) = confirm(&s, &owner, &cancel).await;
+    assert_eq!(error_type(&body), "NotElevated", "{body}");
+    step_up(&s, &owner, 1).await;
+    let (status, body) = confirm(&s, &owner, &cancel).await;
+    assert_eq!(status, Status::Ok, "{body}");
+    recorded(&s, &owner, "staff.user.delete_request_cancel").await;
+    let account = s.harness.db.fetch_account(&person.id).await.unwrap();
+    assert!(account.deletion.is_none() && !account.disabled);
+}
+
+/// The hand-over and the deletion check the server's owner again; an
+/// official server is never handed over; the typed name is compared to the
+/// character
+#[rocket::async_test]
+async fn desk_transfer_and_delete_check_the_owner_again() {
+    let s = stage().await;
+    all_areas(&s);
+    let owner = s.person(vec![StaffRole::Owner]).await;
+    s.sign_in(&owner, -1).await;
+    let command = register_servers(&s).await;
+    let (_, _, someone) = s.harness.new_user().await;
+    let (_, _, heir) = s.harness.new_user().await;
+    let (_, _, third) = s.harness.new_user().await;
+
+    let official = owned_server(&s, &someone, Some(&heir)).await;
+    server_update(
+        &s,
+        &official.id,
+        PartialServer {
+            flags: Some(1),
+            ..Default::default()
+        },
+    )
+    .await;
+    let error = refused(
+        &s,
+        &owner,
+        &command,
+        "server",
+        "transfer",
+        json!([
+            text("server", &official.id),
+            user_opt(&heir.id),
+            text("reason", "The owner asked us")
+        ]),
+    )
+    .await;
+    assert_eq!(error, "NotPrivileged");
+    let (action, outcome, summary) = last(&s, &owner).await;
+    assert_eq!(
+        (action.as_str(), outcome.as_str(), summary.as_str()),
+        (
+            "staff.server.action",
+            "Denied",
+            "transfer of an official server"
+        )
+    );
+
+    let handed = owned_server(&s, &someone, Some(&heir)).await;
+    let doomed = owned_server(&s, &someone, None).await;
+    let error = refused(
+        &s,
+        &owner,
+        &command,
+        "server",
+        "delete",
+        json!([
+            text("server", &doomed.id),
+            text("confirm_name", &format!("{} ", doomed.name)),
+            text("reason", "Spam server")
+        ]),
+    )
+    .await;
+    assert_eq!(error, "FailedValidation");
+    let transfer = card(
+        &s,
+        &owner,
+        &command,
+        "server",
+        "transfer",
+        json!([
+            text("server", &handed.id),
+            user_opt(&heir.id),
+            text("reason", "The owner asked us")
+        ]),
+    )
+    .await;
+    let delete = card(
+        &s,
+        &owner,
+        &command,
+        "server",
+        "delete",
+        json!([
+            text("server", &doomed.id),
+            text("confirm_name", &doomed.name),
+            text("reason", "Spam server")
+        ]),
+    )
+    .await;
+    for id in [&handed.id, &doomed.id] {
+        server_update(
+            &s,
+            id,
+            PartialServer {
+                owner: Some(third.id.clone()),
+                ..Default::default()
+            },
+        )
+        .await;
+    }
+    step_up(&s, &owner, 0).await;
+    for c in [&transfer, &delete] {
+        let (_, body) = confirm(&s, &owner, c).await;
+        assert_eq!(error_type(&body), "InvalidOperation", "{body}");
+    }
+    assert_eq!(
+        s.harness.db.fetch_server(&handed.id).await.unwrap().owner,
+        third.id
+    );
+    assert!(s.harness.db.fetch_server(&doomed.id).await.is_ok());
 }

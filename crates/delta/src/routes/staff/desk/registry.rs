@@ -183,6 +183,15 @@ impl DeskInput {
         self.string_of(name, CommandOptionType::String)
     }
 
+    /// A `String` option exactly as typed, not trimmed (a typed
+    /// confirmation must match to the character)
+    pub fn raw_text(&self, name: &str) -> Option<String> {
+        match self.value(name, CommandOptionType::String) {
+            Some(InteractionOptionValue::String(value)) => Some(value.clone()),
+            _ => None,
+        }
+    }
+
     /// A `User` option: the user's id, as the server resolved it
     pub fn user(&self, name: &str) -> Option<String> {
         self.string_of(name, CommandOptionType::User)
@@ -271,6 +280,14 @@ pub struct DeskCommand {
 }
 
 impl DeskCommand {
+    /// With a check right before the confirmed change (see `verify`)
+    pub const fn checked(self, verify: Verify) -> DeskCommand {
+        DeskCommand {
+            verify: Some(verify),
+            ..self
+        }
+    }
+
     /// `group.name`, or `name`: the action key of audit records and
     /// pending actions. Unique across all the desk's commands (checked by
     /// `desk_registry_is_consistent`), so it needs no command name.

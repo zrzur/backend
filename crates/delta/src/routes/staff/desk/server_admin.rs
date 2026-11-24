@@ -20,7 +20,8 @@ use serde_json::Value;
 use super::super::StaffContext;
 use super::super::bots::{DataDeleteBot, delete_core as delete_bot_core};
 use super::super::deletion::{
-    DataDeleteOwned, DataDeletionRequest, delete_owned_core, delete_request_core, deletions_core,
+    DataDeleteOwned, DataDeletionRequest, cancel_delete_request_core, delete_owned_core,
+    delete_request_check, delete_request_core, deletions_core, requested_by_staff,
 };
 use super::super::servers::{DataServerAction, act_core};
 use super::lookup::{Show, fields, paged};
@@ -38,6 +39,8 @@ const fn show(key: &'static str, label: Text) -> Show {
 }
 
 const SERVERS: &str = "_servers";
+/// The server's owner as the card showed it
+const OWNER: &str = "_owner";
 const BOTS: &str = "_bots";
 
 mod w {
@@ -123,9 +126,24 @@ mod w {
         "Es besitzt nichts zum Löschen.",
     );
     pub const DELETE_REQUEST: Text = t(
-        "Schedules the deletion of the account {user}: it is disabled and signed out now, and deleted for good after {days} days, as when a person deletes their own account.",
-        "يجدول حذف الحساب {user}: يُعطَّل ويُسجَّل خروجه الآن، ثم يُحذف نهائيًا بعد {days} يومًا، كما لو حذف صاحبه حسابه بنفسه.",
-        "Plant die Löschung des Kontos {user}: es wird jetzt deaktiviert und abgemeldet und nach {days} Tagen endgültig gelöscht, wie wenn eine Person ihr eigenes Konto löscht.",
+        "Schedules the deletion of the account {user}: it is disabled and signed out now, and after {days} days it is deleted for good with everything it owns:",
+        "يجدول حذف الحساب {user}: يُعطَّل ويُسجَّل خروجه الآن، وبعد {days} يومًا يُحذف نهائيًا مع كل ما يملكه:",
+        "Plant die Löschung des Kontos {user}: es wird jetzt deaktiviert und abgemeldet und nach {days} Tagen endgültig gelöscht, mit allem, was ihm gehört:",
+    );
+    pub const REQUEST_TOLD: Text = t(
+        "The person is told by message and e-mail, with the reason. Staff can cancel it until then (user delete-cancel).",
+        "يُبلَّغ صاحب الحساب برسالة وبالبريد الإلكتروني مع السبب. ويمكن للإدارة إلغاء الحذف حتى ذلك الحين (user delete-cancel).",
+        "Die Person wird per Nachricht und E-Mail mit dem Grund informiert. Das Team kann es bis dahin absagen (user delete-cancel).",
+    );
+    pub const T_DELETE_CANCEL: Text = t(
+        "Cancel an account deletion",
+        "إلغاء حذف حساب",
+        "Kontolöschung absagen",
+    );
+    pub const DELETE_CANCEL: Text = t(
+        "Cancels the scheduled deletion of {user}: the account is enabled again (it stays disabled if staff banned it) and the person is told.",
+        "يلغي الحذف المجدول للحساب {user}: يُفعَّل الحساب من جديد (ويبقى معطّلًا إن كانت الإدارة قد حظرته)، ويُبلَّغ صاحبه.",
+        "Sagt die geplante Löschung von {user} ab: das Konto wird wieder aktiviert (bleibt deaktiviert, wenn das Team es gesperrt hat), und die Person wird informiert.",
     );
     pub const REASON: Text = t("Reason: {reason}", "السبب: {reason}", "Grund: {reason}");
     pub const OWNER_READS: Text = t(
@@ -135,6 +153,9 @@ mod w {
     );
     pub const WRONG_NAME: &str = "the typed name is not the target's exact name";
     pub const NAME_CHANGED: &str = "the target's name changed since the card";
+    pub const OWNER_CHANGED: &str = "the server's owner changed since the card";
+    pub const PLAN_CHANGED: &str = "what the account owns changed since the card";
+    pub const OFFICIAL_TRANSFER: &str = "transfer of an official server";
 }
 
 // ---- helpers ----
@@ -251,13 +272,18 @@ async fn owner_only(
 
 /// The typed name, exactly the target's current one
 fn typed(input: &DeskInput, name: &str) -> Result<()> {
-    if input.text("confirm_name").as_deref() == Some(name) {
+    if same_name(input, name) {
         Ok(())
     } else {
         Err(create_error!(FailedValidation {
             error: w::WRONG_NAME.to_string()
         }))
     }
+}
+
+/// The typed confirmation, compared to the character (not trimmed)
+fn same_name(input: &DeskInput, name: &str) -> bool {
+    input.raw_text("confirm_name").as_deref() == Some(name)
 }
 
 macro_rules! boxed {
@@ -331,6 +357,18 @@ async fn transfer_card(db: &Database, staff: &StaffContext, input: &DeskInput) -
     }
     let id = required(input, "server")?;
     let server = db.fetch_server(&id).await?;
+    if staff_deletion::is_official_server(&server) {
+        denied(
+            db,
+            staff,
+            "staff.server.action",
+            "server",
+            &id,
+            StaffPermission::ServersRestrict,
+            w::OFFICIAL_TRANSFER,
+        )
+        .await?;
+    }
     let to = required_user(input, "user")?;
     if to == server.owner {
         return Err(create_error!(InvalidOperation));
@@ -341,7 +379,7 @@ async fn transfer_card(db: &Database, staff: &StaffContext, input: &DeskInput) -
     // only someone already in the server
     db.fetch_member(&server.id, &to).await?;
     let reason = required(input, "reason")?;
-    Ok(prepared(
+    let mut card = prepared(
         "server",
         &id,
         w::T_TRANSFER,
@@ -358,8 +396,21 @@ async fn transfer_card(db: &Database, staff: &StaffContext, input: &DeskInput) -
             ),
             w::REASON.fill(lang, &[("reason", &reason)]),
         ],
-    ))
+    );
+    card.stored = vec![stored_text(OWNER, server.owner.clone())];
+    Ok(card)
 }
+
+/// Right before the hand-over: the owner is still the one on the card
+async fn transfer_check(
+    db: &Database,
+    _: &StaffContext,
+    input: &DeskInput,
+) -> Result<Option<&'static str>> {
+    let server = db.fetch_server(&required(input, "server")?).await?;
+    Ok((input.text(OWNER).as_deref() != Some(server.owner.as_str())).then_some(w::OWNER_CHANGED))
+}
+boxed!(server_transfer_verify, transfer_check, Option<&'static str>);
 
 async fn transfer_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
     let data = DataServerAction {
@@ -422,7 +473,7 @@ async fn delete_server_card(
         .to_string();
     let channels = server.channels.len().to_string();
     let reason = required(input, "reason")?;
-    Ok(permanent(prepared(
+    let mut card = permanent(prepared(
         "server",
         &id,
         w::T_DELETE_SERVER,
@@ -440,7 +491,9 @@ async fn delete_server_card(
             ),
             w::OWNER_READS.fill(lang, &[("reason", &reason)]),
         ],
-    )))
+    ));
+    card.stored = vec![stored_text(OWNER, server.owner.clone())];
+    Ok(card)
 }
 
 async fn delete_server_check(
@@ -449,10 +502,10 @@ async fn delete_server_check(
     input: &DeskInput,
 ) -> Result<Option<&'static str>> {
     let server = db.fetch_server(&required(input, "server")?).await?;
-    Ok(
-        (input.text("confirm_name").as_deref() != Some(server.name.as_str()))
-            .then_some(w::NAME_CHANGED),
-    )
+    if !same_name(input, &server.name) {
+        return Ok(Some(w::NAME_CHANGED));
+    }
+    Ok((input.text(OWNER).as_deref() != Some(server.owner.as_str())).then_some(w::OWNER_CHANGED))
 }
 
 async fn delete_server_run(
@@ -553,7 +606,7 @@ async fn delete_bot_check(
     input: &DeskInput,
 ) -> Result<Option<&'static str>> {
     let (_, _, name) = bot_name(db, &required(input, "bot")?).await?;
-    Ok((input.text("confirm_name").as_deref() != Some(name.as_str())).then_some(w::NAME_CHANGED))
+    Ok((!same_name(input, &name)).then_some(w::NAME_CHANGED))
 }
 
 async fn delete_bot_run(
@@ -621,19 +674,7 @@ async fn delete_owned_card(
         lang,
         &[("user", &format!("{} ({})", handle(&user), user.id))],
     )];
-    for planned in &plan.servers {
-        lines.push(w::OWNED_SERVER.fill(
-            lang,
-            &[
-                ("name", &planned.server.name),
-                ("id", &planned.server.id),
-                ("members", &planned.members.to_string()),
-            ],
-        ));
-    }
-    for planned in &plan.bots {
-        lines.push(w::OWNED_BOT.fill(lang, &[("name", &planned.name), ("id", &planned.bot.id)]));
-    }
+    owned_lines(&plan, lang, &mut lines);
     for kept in &plan.skipped {
         let kind = if kept.kind == "bot" {
             w::KIND_BOT
@@ -648,9 +689,6 @@ async fn delete_owned_card(
                 ("id", &kept.id),
             ],
         ));
-    }
-    if plan.servers.is_empty() && plan.bots.is_empty() {
-        lines.push(w::OWNED_NONE.get(lang).to_string());
     }
     lines.push(w::REASON.fill(lang, &[("reason", &required(input, "reason")?)]));
     let ids = plan.ids();
@@ -669,10 +707,7 @@ async fn delete_owned_check(
     input: &DeskInput,
 ) -> Result<Option<&'static str>> {
     let user = db.fetch_user(&required_user(input, "user")?).await?;
-    Ok(
-        (input.text("confirm_name").as_deref() != Some(handle(&user).as_str()))
-            .then_some(w::NAME_CHANGED),
-    )
+    Ok((!same_name(input, &handle(&user))).then_some(w::NAME_CHANGED))
 }
 
 async fn delete_owned_run(
@@ -728,30 +763,8 @@ async fn delete_request_card(
 ) -> Result<Prepared> {
     let lang = input.lang;
     let id = required_user(input, "user")?;
-    owner_only(
-        db,
-        staff,
-        "staff.user.delete_request",
-        "user",
-        &id,
-        StaffPermission::UsersDeleteRequest,
-    )
-    .await?;
-    let user = db.fetch_user(&id).await?;
-    // the console core's cheap refusals, before a card is made
-    if user.id == staff.user.id {
-        return Err(create_error!(CannotReportYourself));
-    }
-    if user.bot.is_some() {
-        return Err(create_error!(IsBot));
-    }
-    let staff_member = db
-        .fetch_staff_grant(&user.id)
-        .await?
-        .is_some_and(|grant| grant.is_active(staff.now));
-    if user.privileged || user.official || staff_member {
-        return Err(create_error!(NotPrivileged));
-    }
+    // the console core's own refusals, with its records
+    let (user, plan) = delete_request_check(db, staff, &id).await?;
     let account = db.fetch_account(&user.id).await?;
     if matches!(
         account.deletion,
@@ -761,22 +774,64 @@ async fn delete_request_card(
     }
     typed(input, &handle(&user))?;
     let days = revolt_database::ACCOUNT_DELETION_GRACE_DAYS.to_string();
-    Ok(permanent(prepared(
-        "user",
-        &id,
-        w::T_DELETE_REQUEST,
+    let mut lines = vec![w::DELETE_REQUEST.fill(
         lang,
-        vec![
-            w::DELETE_REQUEST.fill(
-                lang,
-                &[
-                    ("user", &format!("{} ({})", handle(&user), user.id)),
-                    ("days", &days),
-                ],
-            ),
-            w::REASON.fill(lang, &[("reason", &required(input, "reason")?)]),
+        &[
+            ("user", &format!("{} ({})", handle(&user), user.id)),
+            ("days", &days),
         ],
-    )))
+    )];
+    owned_lines(&plan, lang, &mut lines);
+    lines.push(w::REQUEST_TOLD.get(lang).to_string());
+    lines.push(w::REASON.fill(lang, &[("reason", &required(input, "reason")?)]));
+    let ids = plan.ids();
+    let mut card = permanent(prepared("user", &id, w::T_DELETE_REQUEST, lang, lines));
+    card.stored = vec![
+        stored_text(SERVERS, ids_text(&ids.servers)),
+        stored_text(BOTS, ids_text(&ids.bots)),
+    ];
+    Ok(card)
+}
+
+/// The servers (with members) and bots an account owns, one per line
+fn owned_lines(plan: &staff_deletion::DeleteOwnedPlan, lang: Lang, lines: &mut Vec<String>) {
+    for planned in &plan.servers {
+        lines.push(w::OWNED_SERVER.fill(
+            lang,
+            &[
+                ("name", &planned.server.name),
+                ("id", &planned.server.id),
+                ("members", &planned.members.to_string()),
+            ],
+        ));
+    }
+    for planned in &plan.bots {
+        lines.push(w::OWNED_BOT.fill(lang, &[("name", &planned.name), ("id", &planned.bot.id)]));
+    }
+    if plan.servers.is_empty() && plan.bots.is_empty() {
+        lines.push(w::OWNED_NONE.get(lang).to_string());
+    }
+}
+
+fn stored_plan(input: &DeskInput) -> PlanIds {
+    PlanIds {
+        servers: ids_of(input, SERVERS),
+        bots: ids_of(input, BOTS),
+    }
+}
+
+/// Right before the request: the same name, and the same servers and bots
+async fn delete_request_recheck(
+    db: &Database,
+    _: &StaffContext,
+    input: &DeskInput,
+) -> Result<Option<&'static str>> {
+    let user = db.fetch_user(&required_user(input, "user")?).await?;
+    if !same_name(input, &handle(&user)) {
+        return Ok(Some(w::NAME_CHANGED));
+    }
+    let plan = staff_deletion::plan_delete_owned(db, &user).await?;
+    Ok((plan.ids() != stored_plan(input)).then_some(w::PLAN_CHANGED))
 }
 
 async fn delete_request_run(
@@ -787,7 +842,15 @@ async fn delete_request_run(
     let data = DataDeletionRequest {
         reason: required(input, "reason")?,
     };
-    let scheduled = delete_request_core(db, staff, &required_user(input, "user")?, data).await?;
+    let expected = stored_plan(input);
+    let scheduled = delete_request_core(
+        db,
+        staff,
+        &required_user(input, "user")?,
+        data,
+        Some(&expected),
+    )
+    .await?;
     Ok(fields(
         DeskView::new(w::DONE.get(input.lang)),
         &json(&scheduled),
@@ -798,10 +861,70 @@ async fn delete_request_run(
 boxed!(user_delete_request_card, delete_request_card, Prepared);
 boxed!(
     user_delete_request_verify,
-    delete_owned_check,
+    delete_request_recheck,
     Option<&'static str>
 );
 boxed!(user_delete_request, delete_request_run, DeskView);
+
+async fn delete_cancel_card(
+    db: &Database,
+    staff: &StaffContext,
+    input: &DeskInput,
+) -> Result<Prepared> {
+    let lang = input.lang;
+    let id = required_user(input, "user")?;
+    owner_only(
+        db,
+        staff,
+        "staff.user.delete_request_cancel",
+        "user",
+        &id,
+        StaffPermission::UsersDeleteRequest,
+    )
+    .await?;
+    let user = db.fetch_user(&id).await?;
+    let account = db.fetch_account(&user.id).await?;
+    if !matches!(account.deletion, Some(DeletionInfo::Scheduled { .. })) {
+        return Err(create_error!(NoEffect));
+    }
+    // a person's own deletion is theirs
+    if !requested_by_staff(db, &user.id).await? {
+        return Err(create_error!(InvalidOperation));
+    }
+    Ok(prepared(
+        "user",
+        &id,
+        w::T_DELETE_CANCEL,
+        lang,
+        vec![
+            w::DELETE_CANCEL.fill(
+                lang,
+                &[("user", &format!("{} ({})", handle(&user), user.id))],
+            ),
+            w::REASON.fill(lang, &[("reason", &required(input, "reason")?)]),
+        ],
+    ))
+}
+
+async fn delete_cancel_run(
+    db: &Database,
+    staff: &StaffContext,
+    input: &DeskInput,
+) -> Result<DeskView> {
+    let data = DataDeletionRequest {
+        reason: required(input, "reason")?,
+    };
+    let cancelled =
+        cancel_delete_request_core(db, staff, &required_user(input, "user")?, data).await?;
+    Ok(fields(
+        DeskView::new(w::DONE.get(input.lang)),
+        &json(&cancelled),
+        &[show("/username", w::USER), show("/user_id", w::ID)],
+        input.lang,
+    ))
+}
+boxed!(user_delete_cancel_card, delete_cancel_card, Prepared);
+boxed!(user_delete_cancel, delete_cancel_run, DeskView);
 
 pub const DELETION_ROW: &[Show] = &[
     show("/username", w::USER),
@@ -978,7 +1101,8 @@ pub static ENTRIES: &[DeskCommand] = &[
         P::ServersRestrict,
         Some(server_transfer_card),
         server_transfer,
-    ),
+    )
+    .checked(server_transfer_verify),
     DeskCommand {
         verify: Some(server_delete_verify),
         ..entry(
@@ -1044,11 +1168,25 @@ pub static ENTRIES: &[DeskCommand] = &[
         )
     },
     entry(
+        Some("user"),
+        "delete-cancel",
+        t(
+            "Cancel a deletion (Owner)",
+            "إلغاء الحذف (المالك)",
+            "Löschung absagen (Owner)",
+        ),
+        &[USER, REASON],
+        P::UsersDeleteRequest,
+        Some(user_delete_cancel_card),
+        user_delete_cancel,
+    ),
+    // who is leaving, and when: personal data
+    entry(
         Some("deletion"),
         "list",
         t("Waiting for deletion", "بانتظار الحذف", "Vor der Löschung"),
         &[],
-        P::UsersRead,
+        P::UsersPiiRead,
         None,
         deletion_list,
     ),

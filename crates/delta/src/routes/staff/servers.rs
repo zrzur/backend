@@ -121,6 +121,24 @@ pub(super) async fn act_core(
             partial.nsfw = Some(nsfw);
         }
         "transfer" => {
+            // an official server is not handed over until a two-person
+            // rule for it exists
+            if flags & FLAG_OFFICIAL != 0 {
+                let mut record = staff.record(
+                    "staff.server.action",
+                    Some(StaffPermission::ServersRestrict),
+                );
+                record.target_kind = Some("server".to_string());
+                record.target_id = Some(server.id.clone());
+                record.summary = Some("transfer of an official server".to_string());
+                revolt_database::record_platform_audit(
+                    db,
+                    record,
+                    revolt_database::AuditOutcome::Denied,
+                )
+                .await?;
+                return Err(create_error!(NotPrivileged));
+            }
             let to = data
                 .to
                 .as_deref()

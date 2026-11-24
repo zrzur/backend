@@ -1418,16 +1418,6 @@ const fn entry(
     }
 }
 
-impl DeskCommand {
-    /// With a check right before the confirmed change
-    const fn checked(self, verify: super::registry::Verify) -> DeskCommand {
-        DeskCommand {
-            verify: Some(verify),
-            ..self
-        }
-    }
-}
-
 use StaffPermission as P;
 
 pub static GROUPS: &[DeskGroup] = &[
