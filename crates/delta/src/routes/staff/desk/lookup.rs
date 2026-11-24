@@ -486,6 +486,70 @@ async fn bot_view_view(db: &Database, staff: &StaffContext, input: &DeskInput) -
 }
 handler!(bot_view, bot_view_view);
 
+// ---- cases and appeals ----
+
+pub const CASE_ROW: &[Show] = &[
+    show("/reference", w::REFERENCE),
+    show("/status", w::STATUS),
+    show("/category", w::CATEGORY),
+    show("/priority", w::PRIORITY),
+    show("/created_at", w::CREATED),
+    show("@id", w::ID),
+];
+
+pub const CASE_VIEW: &[Show] = &[
+    show("/case/reference", w::REFERENCE),
+    show("/case/_id", w::ID),
+    show("/case/status", w::STATUS),
+    show("/case/category", w::CATEGORY),
+    show("/case/subcategory", w::SUBCATEGORY),
+    show("/case/priority", w::PRIORITY),
+    show("/case/route", w::ROUTE),
+    show("/case/target", w::TARGET),
+    show("/case/assignee_id", w::ASSIGNEE),
+    show("/case/created_at", w::CREATED),
+    show("/case/updated_at", w::UPDATED),
+    show("/distinct_reporters", w::REPORTERS),
+    show("/evidence", w::EVIDENCE),
+    show("/actions", w::ACTIONS),
+    show("/appeals", w::APPEALS),
+    show("/related", w::RELATED),
+];
+
+async fn case_list_view(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
+    let status = input.text("status");
+    let page = safety::cases_core(db, staff, status.as_deref(), None, None, None, None, None, None, None, Some(FETCH)).await?;
+    let all = json(&page);
+    Ok(paged(DeskView::new(w::T_CASES.get(input.lang)), &items(all["cases"].clone()), CASE_ROW, input))
+}
+handler!(case_list, case_list_view);
+
+async fn case_view_view(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
+    let id = required(input, "case", CommandOptionType::String)?;
+    // the console's audited read: opening a case is recorded
+    let details = json(&safety::case_core(db, staff, &id).await?);
+    let view = fields(DeskView::new(w::T_CASE.get(input.lang)), &details, CASE_VIEW, input.lang);
+    Ok(match details.pointer("/case/description").and_then(Value::as_str).filter(|d| !d.is_empty()) {
+        Some(description) => view.line(description.to_string()),
+        None => view,
+    })
+}
+handler!(case_view, case_view_view);
+
+pub const APPEAL_ROW: &[Show] = &[
+    show("/status", w::STATUS),
+    show("/user_id", w::USER),
+    show("/created_at", w::CREATED),
+    show("@id", w::ID),
+];
+
+async fn appeal_list_view(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
+    let status = input.text("status");
+    let list = safety::appeals_core(db, staff, status.as_deref(), None, Some(FETCH)).await?;
+    Ok(paged(DeskView::new(w::T_APPEALS.get(input.lang)), &items(json(&list)), APPEAL_ROW, input))
+}
+handler!(appeal_list, appeal_list_view);
+
 // ---- the registry entries ----
 
 const fn opt(name: &'static str, kind: CommandOptionType, required: bool, description: Text) -> DeskOption {
@@ -575,6 +639,8 @@ pub static GROUPS: &[DeskGroup] = &[
     DeskGroup { name: "user", description: t("Users", "المستخدمون", "Benutzer") },
     DeskGroup { name: "server", description: t("Servers", "السيرفرات", "Server") },
     DeskGroup { name: "bot", description: t("Bots", "البوتات", "Bots") },
+    DeskGroup { name: "case", description: t("Reports", "البلاغات", "Meldungen") },
+    DeskGroup { name: "appeal", description: t("Appeals", "الطعون", "Einsprüche") },
 ];
 
 pub static ENTRIES: &[DeskCommand] = &[
@@ -586,4 +652,7 @@ pub static ENTRIES: &[DeskCommand] = &[
     read("lookup", "server", "view", t("Show a server", "عرض سيرفر", "Server zeigen"), &[id_opt("server")], Some(P::ServersRead), server_view),
     read("lookup", "bot", "find", t("Find bots", "البحث عن بوتات", "Bots suchen"), &[QUERY], Some(P::UsersRead), bot_find),
     read("lookup", "bot", "view", t("Show a bot", "عرض بوت", "Bot zeigen"), &[id_opt("bot")], Some(P::UsersRead), bot_view),
+    read("lookup", "case", "list", t("Report queue", "طابور البلاغات", "Meldungen"), &[CASE_STATUS], Some(P::ReportsRead), case_list),
+    read("lookup", "case", "view", t("Show a report", "عرض بلاغ", "Meldung zeigen"), &[id_opt("case")], Some(P::ReportsRead), case_view),
+    read("lookup", "appeal", "list", t("Appeal queue", "طابور الطعون", "Einsprüche"), &[APPEAL_STATUS], Some(P::ReportsRead), appeal_list),
 ];

@@ -132,19 +132,13 @@ fn note_reason(text: Option<&str>) -> Option<String> {
 /// # Report queue
 #[get("/safety/cases?<status>&<kind>&<category>&<priority>&<assignee>&<search>&<before>&<oldest>&<limit>")]
 #[allow(clippy::too_many_arguments)]
-pub async fn cases(
-    db: &State<Database>,
-    staff: StaffContext,
-    status: Option<&str>,
-    kind: Option<&str>,
-    category: Option<&str>,
-    priority: Option<&str>,
-    assignee: Option<&str>,
-    search: Option<&str>,
-    before: Option<&str>,
-    oldest: Option<bool>,
-    limit: Option<usize>,
-) -> Result<Json<SafetyCasePage>> {
+pub async fn cases(db: &State<Database>, staff: StaffContext, status: Option<&str>, kind: Option<&str>, category: Option<&str>, priority: Option<&str>, assignee: Option<&str>, search: Option<&str>, before: Option<&str>, oldest: Option<bool>, limit: Option<usize>) -> Result<Json<SafetyCasePage>> {
+    cases_core(db, &staff, status, kind, category, priority, assignee, search, before, oldest, limit).await.map(Json)
+}
+
+/// The console's `cases`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn cases_core(db: &Database, staff: &StaffContext, status: Option<&str>, kind: Option<&str>, category: Option<&str>, priority: Option<&str>, assignee: Option<&str>, search: Option<&str>, before: Option<&str>, oldest: Option<bool>, limit: Option<usize>) -> Result<SafetyCasePage> {
     staff.require(db, StaffPermission::ReportsRead).await?;
     let filter = SafetyQueueFilter {
         status: status.map(str::to_string),
@@ -159,7 +153,6 @@ pub async fn cases(
     };
     queue_as(db, &staff.user, &bridged(&staff), filter)
         .await
-        .map(Json)
         .map_err(|e| translate(&staff, e))
 }
 
@@ -168,13 +161,18 @@ pub async fn cases(
 /// Shows evidence (the reported content), so opening a case is recorded.
 #[get("/safety/cases/<id>")]
 pub async fn case(db: &State<Database>, staff: StaffContext, id: &str) -> Result<Json<SafetyCaseDetails>> {
+    case_core(db, &staff, id).await.map(Json)
+}
+
+/// The console's `case`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn case_core(db: &Database, staff: &StaffContext, id: &str) -> Result<SafetyCaseDetails> {
     staff.require(db, StaffPermission::ReportsRead).await?;
     // the case must exist before we log looking at it
     db.fetch_safety_case(id).await?;
     let record = case_record(&staff, "staff.safety.case.view", StaffPermission::ReportsRead, id);
     audited(db, &staff, record, case_as(db, &staff.user, &bridged(&staff), id))
         .await
-        .map(Json)
 }
 
 /// # Change case status
@@ -311,15 +309,15 @@ pub async fn revoke(
 
 /// # Appeal queue
 #[get("/safety/appeals?<status>&<before>&<limit>")]
-pub async fn appeals(
-    db: &State<Database>,
-    staff: StaffContext,
-    status: Option<&str>,
-    before: Option<&str>,
-    limit: Option<usize>,
-) -> Result<Json<Vec<SafetyAppeal>>> {
+pub async fn appeals(db: &State<Database>, staff: StaffContext, status: Option<&str>, before: Option<&str>, limit: Option<usize>) -> Result<Json<Vec<SafetyAppeal>>> {
+    appeals_core(db, &staff, status, before, limit).await.map(Json)
+}
+
+/// The console's `appeals`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn appeals_core(db: &Database, staff: &StaffContext, status: Option<&str>, before: Option<&str>, limit: Option<usize>) -> Result<Vec<SafetyAppeal>> {
     staff.require(db, StaffPermission::ReportsRead).await?;
-    appeals_of(db, status, before, limit).await.map(Json)
+    appeals_of(db, status, before, limit).await
 }
 
 /// # Decide appeal
