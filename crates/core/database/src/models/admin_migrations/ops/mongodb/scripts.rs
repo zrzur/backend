@@ -26,7 +26,7 @@ struct MigrationInfo {
     revision: i32,
 }
 
-pub const LATEST_REVISION: i32 = 93; // MUST BE +1 to last migration
+pub const LATEST_REVISION: i32 = 98; // MUST BE +1 to last migration
 // Number given only in the release after the one above, once no old delta runs:
 // a session an old delta wrote during the rollout has no date and never expires.
 const PENDING_SESSION_EXPIRY_FILL: i32 = -1;
@@ -62,16 +62,16 @@ const PENDING_SERVER_EVENT_ANSWERS: i32 = 91;
 // Stream team-volunteers: the coordinator gives the number at merge; -1 never runs
 const PENDING_TEAM_VOLUNTEER_INDEXES: i32 = 92;
 // Stream rich-presence: the coordinator gives the number at merge; -1 never runs
-const PENDING_ACTIVITY_BLOCKS_INDEX: i32 = -1;
+const PENDING_ACTIVITY_BLOCKS_INDEX: i32 = 93;
 // Stream badge-phase1: the coordinator gives the number at merge; -1 never runs
-const PENDING_OFFICIAL_BOT_FLAGS: i32 = -1;
+const PENDING_OFFICIAL_BOT_FLAGS: i32 = 95;
 // Stream badge-phase0: the coordinator gives the number at merge; -1 never runs
-const PENDING_BADGE_GATE_INDEXES: i32 = -1;
+const PENDING_BADGE_GATE_INDEXES: i32 = 94;
 // Stream badge-phase3: the coordinator gives the number at merge; -1 never runs
-const PENDING_COMMUNITY_BADGE_INDEXES: i32 = -1;
+const PENDING_COMMUNITY_BADGE_INDEXES: i32 = 96;
 /// Badge program applications, evidence, reviews and weekly server activity
 /// (number given by the coordinator at merge)
-const PENDING_BADGE_PROGRAM_INDEXES: i32 = -1;
+const PENDING_BADGE_PROGRAM_INDEXES: i32 = 97;
 
 /// The earliest day a session from before expiry can expire. At least 30
 /// days out, also with expiry switched off (0), for the day it is switched on.

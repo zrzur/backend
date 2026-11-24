@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 26.3.0-beta.7 (2026-11-24)
+
 ### Badges: Content Creator and the switch for applying (2026-11-24, badge plan phase 5)
 
 - **`[features.badge_applications] enabled`** (default off, reported as `badge_applications` in `GET /`): off, every applicant route under `/badges/programs/*` and `/badges/applications*` answers `FeatureDisabled`; the team still reviews and decides existing applications in the admin console.
