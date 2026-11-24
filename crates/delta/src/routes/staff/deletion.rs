@@ -271,9 +271,14 @@ pub(super) async fn delete_request_core(
         plan.servers.len(),
         plan.bots.len()
     ));
-    super::audited::audited(db, record, account.schedule_deletion(db)).await?;
+    super::audited::audited(
+        db,
+        record,
+        account.schedule_deletion_for(db, Some(staff.user.id.clone())),
+    )
+    .await?;
     let (after, date) = match &account.deletion {
-        Some(DeletionInfo::Scheduled { after }) => {
+        Some(DeletionInfo::Scheduled { after, .. }) => {
             (millis(after), after.to_string().chars().take(10).collect())
         }
         _ => (0, String::new()),
@@ -292,8 +297,9 @@ pub(super) async fn delete_request_core(
 /// # Cancel a staff deletion request
 ///
 /// During the grace period: the deletion is called off and the account
-/// enabled again (unless staff banned it). Only a deletion staff asked for;
-/// a person's own deletion is theirs. The Owner role,
+/// goes back to exactly the state it had before the request: enabled only
+/// if it was enabled then and is not suspended, banned or marked as spam
+/// now. Only a deletion staff asked for; a person's own deletion is theirs. The Owner role,
 /// `platform.users.delete.request` and a fresh step-up; the person is told.
 #[post("/users/<id>/delete-request/cancel", data = "<data>")]
 pub async fn cancel_delete_request(
@@ -307,21 +313,28 @@ pub async fn cancel_delete_request(
         .map(Json)
 }
 
-/// Whether the account's scheduled deletion was asked for by staff: the
-/// newest request or cancel record about it is a request
-pub(super) async fn requested_by_staff(db: &Database, id: &str) -> Result<bool> {
-    let records = db
-        .fetch_platform_audit(revolt_database::PlatformAuditQuery {
-            target_id: Some(id.to_string()),
-            action_prefix: Some("staff.user.delete_request".to_string()),
-            limit: 50,
-            ..Default::default()
-        })
-        .await?;
-    Ok(records
-        .iter()
-        .find(|e| (e.action == REQUEST || e.action == CANCEL) && e.outcome == AuditOutcome::Success)
-        .is_some_and(|e| e.action == REQUEST))
+/// What cancelling the account's scheduled deletion would leave: `None`
+/// if there is no deletion staff asked for (a person's own deletion is
+/// theirs), else whether the account stays disabled: it was disabled
+/// before the request, or it is suspended, banned or marked as spam now
+pub(super) fn cancel_outcome(
+    account: &revolt_database::Account,
+    user: &revolt_database::User,
+) -> Option<bool> {
+    match &account.deletion {
+        Some(DeletionInfo::Scheduled {
+            requested_by: Some(_),
+            disabled_before,
+            ..
+        }) => {
+            use revolt_models::v0::UserFlags;
+            let held = UserFlags::SuspendedUntil as i32
+                | UserFlags::Banned as i32
+                | UserFlags::Spam as i32;
+            Some(*disabled_before || user.flags.unwrap_or_default() & held != 0)
+        }
+        _ => None,
+    }
 }
 
 /// See [`cancel_delete_request`]; shared with Zrzur Desk
@@ -351,7 +364,7 @@ pub(super) async fn cancel_delete_request_core(
     if !matches!(account.deletion, Some(DeletionInfo::Scheduled { .. })) {
         return Err(create_error!(NoEffect));
     }
-    if !requested_by_staff(db, &user.id).await? {
+    let Some(stays_disabled) = cancel_outcome(&account, &user) else {
         return Err(refused(
             db,
             record,
@@ -359,21 +372,18 @@ pub(super) async fn cancel_delete_request_core(
             create_error!(InvalidOperation),
         )
         .await?);
-    }
+    };
     record.reason = Some(why.clone());
-    let banned = staff_deletion::is_banned(&user);
     record.summary = Some(
-        if banned {
-            "cancelled; stays disabled (banned)"
+        if stays_disabled {
+            "cancelled; stays disabled as before"
         } else {
-            "cancelled"
+            "cancelled; enabled again"
         }
         .to_string(),
     );
     account.deletion = None;
-    if !banned {
-        account.disabled = false;
-    }
+    account.disabled = stays_disabled;
     super::audited::audited(db, record, account.save(db)).await?;
     tell(db, &user, &account.email, Notice::Cancelled, &why).await;
     Ok(ScheduledDeletion {
@@ -492,7 +502,7 @@ pub(super) async fn deletions_core(
     let mut out: Vec<ScheduledDeletion> = accounts
         .iter()
         .filter_map(|account| match &account.deletion {
-            Some(DeletionInfo::Scheduled { after }) => Some(ScheduledDeletion {
+            Some(DeletionInfo::Scheduled { after, .. }) => Some(ScheduledDeletion {
                 user_id: account.id.clone(),
                 username: users
                     .iter()

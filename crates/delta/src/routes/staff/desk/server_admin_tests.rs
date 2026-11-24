@@ -665,6 +665,15 @@ async fn desk_delete_request_shows_what_goes_and_can_be_cancelled() {
     )
     .await;
     assert!(cancel.danger());
+    // the card says what the account is left with
+    assert!(
+        cancel.view["content"]
+            .as_str()
+            .unwrap()
+            .contains("enabled again"),
+        "{}",
+        cancel.view
+    );
     let (_, body) = confirm(&s, &owner, &cancel).await;
     assert_eq!(error_type(&body), "NotElevated", "{body}");
     step_up(&s, &owner, 1).await;

@@ -563,3 +563,118 @@ async fn desk_admin_refused_without_permission() {
         );
     }
 }
+
+// ---- review fixes ----
+
+/// A refund card without an amount pins what was left when it was made:
+/// the confirmation refunds exactly that, even if the order changed since
+#[rocket::async_test]
+async fn desk_refund_pins_the_cards_amount() {
+    let s = stage().await;
+    all_areas(&s);
+    let owner = s.person(vec![StaffRole::Owner]).await;
+    s.sign_in(&owner, -1).await;
+    let command = command(&s, "desk-billing").await;
+    let (_, _, buyer) = s.harness.new_user().await;
+    let order = paid_order(&s, &buyer.id, 400).await;
+    let refund = card(
+        &s,
+        &owner,
+        &command,
+        "billing",
+        "refund",
+        json!([text("order", &order), text("reason", "Charged twice")]),
+    )
+    .await;
+    assert!(
+        refund.view["content"]
+            .as_str()
+            .unwrap()
+            .contains("6.00 EUR")
+    );
+    // the earlier partial refund is undone after the card: 10.00 would be
+    // left now, the card said 6.00
+    s.harness
+        .db
+        .update_order(
+            &order,
+            &revolt_database::OrderChanges {
+                amount_refunded: Some(0),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let changed = s.harness.db.fetch_order(&order).await.unwrap();
+    assert_eq!(changed.amount_refunded, 0);
+    step_up(&s, &owner, 0).await;
+    let (status, body) = confirm(&s, &owner, &refund).await;
+    assert_eq!(status, Status::Ok, "{body}");
+    let after = s.harness.db.fetch_order(&order).await.unwrap();
+    assert_eq!(after.amount_refunded, 600);
+}
+
+/// Roles are not changed on a disabled grant from the desk (that would
+/// switch access on as a side effect); an end date the change removes is
+/// on the card
+#[rocket::async_test]
+async fn desk_roles_card_is_clear_about_access() {
+    let s = stage().await;
+    all_areas(&s);
+    let owner = s.person(vec![StaffRole::Owner]).await;
+    let away = s.person(vec![StaffRole::Support]).await;
+    let temporary = s.person(vec![StaffRole::Support]).await;
+    s.sign_in(&owner, -1).await;
+    let command = command(&s, "desk-staff").await;
+    set_grant(&s.harness, &away.user.id, vec![StaffRole::Support], true).await;
+    let error = refused(
+        &s,
+        &owner,
+        &command,
+        "staff",
+        "roles",
+        json!([
+            user_opt(&away.user.id),
+            text("roles", "billing"),
+            text("reason", "Back from leave")
+        ]),
+    )
+    .await;
+    assert_eq!(error, "FailedValidation");
+
+    let mut grant = s
+        .harness
+        .db
+        .fetch_staff_grant(&temporary.user.id)
+        .await
+        .unwrap()
+        .unwrap();
+    let version = grant.version;
+    grant.expires_at = Some(revolt_database::staff_now() + 7 * 86_400_000);
+    grant.version += 1;
+    assert!(
+        s.harness
+            .db
+            .save_staff_grant(&grant, Some(version))
+            .await
+            .unwrap()
+    );
+    let c = card(
+        &s,
+        &owner,
+        &command,
+        "staff",
+        "roles",
+        json!([
+            user_opt(&temporary.user.id),
+            text("roles", "support"),
+            text("reason", "Stays on")
+        ]),
+    )
+    .await;
+    assert!(
+        c.view["content"].as_str().unwrap().contains("end date"),
+        "{}",
+        c.view
+    );
+}

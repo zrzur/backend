@@ -1050,3 +1050,55 @@ async fn staff_delete_request_schedules_and_cancels() {
         assert!(count(&actions, action, outcome) >= 1, "{action} {outcome}");
     }
 }
+
+/// A cancelled staff request restores exactly the state before it: an
+/// account that was disabled already stays disabled, a suspended one is
+/// never enabled; the request records who asked
+#[rocket::async_test]
+async fn cancelling_a_staff_request_restores_the_state_before() {
+    use revolt_database::DeletionInfo;
+    let harness = TestHarness::new().await;
+    let (owner, token) = stepped_up_owner(&harness).await;
+    let body = json!({ "reason": "Asked by email to delete" });
+
+    // disabled before the request
+    let (mut quiet_account, _, quiet) = harness.new_user().await;
+    quiet_account.disabled = true;
+    quiet_account.save(&harness.db).await.unwrap();
+    // suspended after the request
+    let (_, _, suspended) = harness.new_user().await;
+    // enabled before
+    let (_, _, plain) = harness.new_user().await;
+
+    for user in [&quiet, &suspended, &plain] {
+        let path = format!("/staff/users/{}/delete-request", user.id);
+        let (status, answer) = send(&harness, &owner, &token, Post, &path, body.clone()).await;
+        assert_eq!(status, Status::Ok, "{answer}");
+        let account = harness.db.fetch_account(&user.id).await.unwrap();
+        let Some(DeletionInfo::Scheduled { requested_by, .. }) = account.deletion else {
+            panic!("not scheduled");
+        };
+        assert_eq!(requested_by.as_deref(), Some(owner.user.id.as_str()));
+    }
+    harness
+        .db
+        .update_user(
+            &suspended.id,
+            &PartialUser {
+                flags: Some(revolt_models::v0::UserFlags::SuspendedUntil as i32),
+                ..Default::default()
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
+
+    for (user, disabled) in [(&quiet, true), (&suspended, true), (&plain, false)] {
+        let path = format!("/staff/users/{}/delete-request/cancel", user.id);
+        let (status, answer) = send(&harness, &owner, &token, Post, &path, body.clone()).await;
+        assert_eq!(status, Status::Ok, "{answer}");
+        let account = harness.db.fetch_account(&user.id).await.unwrap();
+        assert!(account.deletion.is_none());
+        assert_eq!(account.disabled, disabled, "{}", user.id);
+    }
+}

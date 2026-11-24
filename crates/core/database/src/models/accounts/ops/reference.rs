@@ -83,7 +83,7 @@ impl AbstractAccounts for ReferenceDb {
         Ok(accounts
             .values()
             .filter(|account| {
-                if let Some(DeletionInfo::Scheduled { after }) = &account.deletion {
+                if let Some(DeletionInfo::Scheduled { after, .. }) = &account.deletion {
                     after <= &now
                 } else {
                     false
@@ -98,7 +98,7 @@ impl AbstractAccounts for ReferenceDb {
         let mut scheduled: Vec<(Timestamp, Account)> = accounts
             .values()
             .filter_map(|account| match &account.deletion {
-                Some(DeletionInfo::Scheduled { after }) => Some((*after, account.clone())),
+                Some(DeletionInfo::Scheduled { after, .. }) => Some((*after, account.clone())),
                 _ => None,
             })
             .collect();

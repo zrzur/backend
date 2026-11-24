@@ -225,7 +225,12 @@ pub(super) async fn refund_core(
         .require_step_up(db, StaffPermission::BillingManage)
         .await?;
     let data = validated(data)?;
-    db.fetch_order(id).await?;
+    let before = db.fetch_order(id).await?;
+    // what this refund gives back: the amount asked for, or all that was
+    // left (never the order's whole amount after an earlier partial refund)
+    let given = data
+        .amount
+        .unwrap_or(before.amount.saturating_sub(before.amount_refunded));
     let mut record = order_record(&staff, "staff.billing.refund", id);
     record.reason = Some(data.reason.trim().chars().take(500).collect());
     record.summary = Some(match data.amount {
@@ -245,8 +250,11 @@ pub(super) async fn refund_core(
         ),
     )
     .await?;
-    let minor = data.amount.map(|a| a as f64).unwrap_or(order.amount as f64);
-    let amount = format!("{:.2} {}", minor / 100.0, order.currency.to_uppercase());
+    let amount = format!(
+        "{:.2} {}",
+        given as f64 / 100.0,
+        order.currency.to_uppercase()
+    );
     crate::util::official::refunded(db, &order.user_id, &amount, &data.reason).await;
     Ok(std::convert::identity(order.into()))
 }

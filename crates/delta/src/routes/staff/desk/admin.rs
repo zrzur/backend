@@ -50,6 +50,9 @@ const fn show(key: &'static str, label: Text) -> Show {
 
 /// The staff grant version the card read
 const VERSION: &str = "_version";
+/// The refund amount the card showed (all that was left, when none was
+/// typed): the confirmation refunds exactly that
+const AMOUNT: &str = "_amount";
 
 mod w {
     use super::{Text, t};
@@ -211,6 +214,12 @@ mod w {
         "لا شيء (دون صلاحية)",
         "keine (kein Zugang)",
     );
+    pub const END_REMOVED: Text = t(
+        "Their access end date ({when}) is removed: access no longer ends by itself.",
+        "يُزال تاريخ انتهاء صلاحيته ({when}): فلا تنتهي الصلاحية من تلقاء نفسها بعد الآن.",
+        "Das Enddatum des Zugangs ({when}) wird entfernt: der Zugang endet nicht mehr von selbst.",
+    );
+    pub const DISABLED_GRANT: &str = "this staff access is disabled: switch it on again in the console first, then change the roles";
     pub const DISABLE: Text = t(
         "Disables staff access of {user} ({roles}): roles stay on record, their staff sessions end now.",
         "يعطّل صلاحية {user} في الإدارة ({roles}): تبقى الأدوار مسجّلة، وتنتهي جلساته في الإدارة الآن.",
@@ -410,12 +419,24 @@ async fn refund_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Resu
     );
     lines.push(w::PERSON_TOLD.get(lang).to_string());
     lines.push(reason_line(input)?);
-    Ok(prepared("order", &id, w::T_REFUND, lang, lines))
+    let mut card = prepared("order", &id, w::T_REFUND, lang, lines);
+    card.stored = vec![InteractionDataOption {
+        name: AMOUNT.to_string(),
+        kind: CommandOptionType::Integer,
+        value: Some(InteractionOptionValue::Integer(amount as i64)),
+        options: None,
+    }];
+    Ok(card)
 }
 
 async fn refund_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
     let data = v0::DataRefundOrder {
-        amount: input.integer("amount").map(|a| a as u32),
+        // the amount on the card, never "whatever is left" at the press
+        amount: Some(
+            input
+                .integer(AMOUNT)
+                .ok_or_else(|| create_error!(InvalidOperation))? as u32,
+        ),
         reason: required(input, "reason")?,
         revoke: input.boolean("revoke"),
     };
@@ -816,6 +837,13 @@ async fn roles_card(db: &Database, staff: &StaffContext, input: &DeskInput) -> R
         .as_ref()
         .map(|g| g.roles.clone())
         .unwrap_or_default();
+    // setting roles switches a disabled grant on again: never as a side
+    // effect from the desk
+    if current.as_ref().is_some_and(|g| g.disabled) {
+        return Err(create_error!(FailedValidation {
+            error: w::DISABLED_GRANT.to_string()
+        }));
+    }
     // the console's rules, with its Denied record: not yourself, never the
     // Owner role, only roles whose permissions you hold
     if let Err(refusal) = check_staff_change(
@@ -871,6 +899,12 @@ async fn roles_card(db: &Database, staff: &StaffContext, input: &DeskInput) -> R
             reason_line(input)?,
         ],
     );
+    // the console's change also removes an end date
+    if let Some(end) = current.as_ref().and_then(|g| g.expires_at) {
+        let line = w::END_REMOVED.fill(lang, &[("when", &super::registry::when(end))]);
+        let last = card.lines.len() - 1;
+        card.lines.insert(last, line);
+    }
     // the grant as read: changed since, the console refuses
     card.stored = vec![InteractionDataOption {
         name: VERSION.to_string(),

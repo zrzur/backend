@@ -20,8 +20,8 @@ use serde_json::Value;
 use super::super::StaffContext;
 use super::super::bots::{DataDeleteBot, delete_core as delete_bot_core};
 use super::super::deletion::{
-    DataDeleteOwned, DataDeletionRequest, cancel_delete_request_core, delete_owned_core,
-    delete_request_check, delete_request_core, deletions_core, requested_by_staff,
+    DataDeleteOwned, DataDeletionRequest, cancel_delete_request_core, cancel_outcome,
+    delete_owned_core, delete_request_check, delete_request_core, deletions_core,
 };
 use super::super::servers::{DataServerAction, act_core};
 use super::lookup::{Show, fields, paged};
@@ -141,9 +141,19 @@ mod w {
         "Kontolöschung absagen",
     );
     pub const DELETE_CANCEL: Text = t(
-        "Cancels the scheduled deletion of {user}: the account is enabled again (it stays disabled if staff banned it) and the person is told.",
-        "يلغي الحذف المجدول للحساب {user}: يُفعَّل الحساب من جديد (ويبقى معطّلًا إن كانت الإدارة قد حظرته)، ويُبلَّغ صاحبه.",
-        "Sagt die geplante Löschung von {user} ab: das Konto wird wieder aktiviert (bleibt deaktiviert, wenn das Team es gesperrt hat), und die Person wird informiert.",
+        "Cancels the scheduled deletion of {user}; the person is told.",
+        "يلغي الحذف المجدول للحساب {user}؛ ويُبلَّغ صاحبه.",
+        "Sagt die geplante Löschung von {user} ab; die Person wird informiert.",
+    );
+    pub const CANCEL_ENABLED: Text = t(
+        "The account is enabled again, as it was before the request.",
+        "يُفعَّل الحساب من جديد كما كان قبل الطلب.",
+        "Das Konto wird wieder aktiviert, wie vor der Anfrage.",
+    );
+    pub const CANCEL_STAYS: Text = t(
+        "The account stays disabled: it was disabled before the request, or it is suspended or banned.",
+        "يبقى الحساب معطّلًا: فقد كان معطّلًا قبل الطلب، أو هو موقوف أو محظور.",
+        "Das Konto bleibt deaktiviert: es war vor der Anfrage deaktiviert, oder es ist gesperrt oder gebannt.",
     );
     pub const REASON: Text = t("Reason: {reason}", "السبب: {reason}", "Grund: {reason}");
     pub const OWNER_READS: Text = t(
@@ -888,9 +898,9 @@ async fn delete_cancel_card(
         return Err(create_error!(NoEffect));
     }
     // a person's own deletion is theirs
-    if !requested_by_staff(db, &user.id).await? {
+    let Some(stays_disabled) = cancel_outcome(&account, &user) else {
         return Err(create_error!(InvalidOperation));
-    }
+    };
     Ok(prepared(
         "user",
         &id,
@@ -901,6 +911,13 @@ async fn delete_cancel_card(
                 lang,
                 &[("user", &format!("{} ({})", handle(&user), user.id))],
             ),
+            if stays_disabled {
+                w::CANCEL_STAYS
+            } else {
+                w::CANCEL_ENABLED
+            }
+            .get(lang)
+            .to_string(),
             w::REASON.fill(lang, &[("reason", &required(input, "reason")?)]),
         ],
     ))
