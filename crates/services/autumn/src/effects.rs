@@ -19,6 +19,7 @@ use image::{
     imageops::{self, FilterType},
 };
 use revolt_database::CommunityImageInfo;
+use revolt_models::v0::{PROFILE_FRAME_FILE_SIZE, PROFILE_FRAME_TEMPLATE};
 
 /// Where a file is tested: the grid for the largest size it is ever shown at.
 /// The limit itself is the same everywhere, 21,824 CSS px: a smaller stage has
@@ -74,6 +75,8 @@ pub enum EffectRefusal {
     TooSolid,
     /// Nothing can be seen
     Blank,
+    /// A profile frame draws over the card's content
+    CoversContent,
 }
 
 impl EffectRefusal {
@@ -84,6 +87,7 @@ impl EffectRefusal {
             EffectRefusal::Flashing => "flashing",
             EffectRefusal::TooSolid => "too_solid",
             EffectRefusal::Blank => "blank",
+            EffectRefusal::CoversContent => "covers_content",
         }
     }
 }
@@ -513,11 +517,59 @@ pub fn check_upload(
 /// check; an animated one that can't be read is refused like an effect. These
 /// are meant to fill their picture, so solid and blank files pass.
 pub fn check_design(bytes: &[u8], info: &CommunityImageInfo) -> Result<(), EffectRefusal> {
+    if is_profile_frame(info) {
+        check_frame_safe_area(bytes)?;
+    }
     if info.frames < 2 {
         return Ok(());
     }
     if measure(bytes, info, design_stage)?.flashing >= FLASH_AREA_PX {
         return Err(EffectRefusal::Flashing);
+    }
+    Ok(())
+}
+
+/// A file of a profile frame's size. Decorations are square and nameplates
+/// wide, so the shape alone says it is a frame.
+fn is_profile_frame(info: &CommunityImageInfo) -> bool {
+    let (width, height) = PROFILE_FRAME_FILE_SIZE;
+    (info.width as usize, info.height as usize) == (width, height)
+}
+
+/// Least alpha that counts as drawn: anti-aliasing at the edge of the band
+/// may spill a hair inside
+const FRAME_ALPHA_LIMIT: u8 = 16;
+
+/// A profile frame is laid over the card as it is, so the card's content
+/// area must be transparent: only the crest window over the middle of the
+/// banner may be drawn on. Every frame of the file counts (delta takes only
+/// still frames; this keeps the rule true for any file of this shape).
+pub fn check_frame_safe_area(bytes: &[u8]) -> Result<(), EffectRefusal> {
+    let t = PROFILE_FRAME_TEMPLATE;
+    let scale = PROFILE_FRAME_FILE_SIZE.0 as u32 / t.width;
+    let inside = |(l, t, r, b): (u32, u32, u32, u32), x: u32, y: u32| {
+        x >= l * scale && x < r * scale && y >= t * scale && y < b * scale
+    };
+    let clear = |image: &RgbaImage| {
+        image.enumerate_pixels().all(|(x, y, pixel)| {
+            pixel[3] <= FRAME_ALPHA_LIMIT || !inside(t.safe, x, y) || inside(t.crest, x, y)
+        })
+    };
+    let mut checked = false;
+    if let Some(frames) = frames_of(bytes) {
+        for frame in frames {
+            let (buffer, _) = frame.map_err(|_| EffectRefusal::Unreadable)?;
+            if !clear(&buffer) {
+                return Err(EffectRefusal::CoversContent);
+            }
+            checked = true;
+        }
+    }
+    if !checked {
+        let still = image::load_from_memory(bytes).map_err(|_| EffectRefusal::Unreadable)?;
+        if !clear(&still.to_rgba8()) {
+            return Err(EffectRefusal::CoversContent);
+        }
     }
     Ok(())
 }
@@ -686,6 +738,62 @@ mod tests {
 
     fn design(bytes: &[u8]) -> Result<(), EffectRefusal> {
         check_design(bytes, &seen(bytes))
+    }
+
+    /// A frame of the template's size: a band 6 px wide around the card, and
+    /// optionally one pixel set somewhere else
+    fn frame_png(extra: Option<(u32, u32)>) -> Vec<u8> {
+        let (w, h) = PROFILE_FRAME_FILE_SIZE;
+        let mut image = RgbaImage::new(w as u32, h as u32);
+        let t = PROFILE_FRAME_TEMPLATE;
+        let (l, top, r, b) = (t.card.0 * 2, t.card.1 * 2, t.card.2 * 2, t.card.3 * 2);
+        for (x, y, pixel) in image.enumerate_pixels_mut() {
+            let near = |a: u32, edge: u32| a + 6 > edge && a < edge + 6;
+            let on_band = (near(x, l) || near(x, r)) && y + 6 > top && y < b + 6
+                || (near(y, top) || near(y, b)) && x + 6 > l && x < r + 6;
+            if on_band {
+                *pixel = Rgba([255, 214, 107, 255]);
+            }
+        }
+        if let Some((x, y)) = extra {
+            image.put_pixel(x, y, Rgba([255, 255, 255, 255]));
+        }
+        let mut out = vec![];
+        DynamicImage::ImageRgba8(image)
+            .write_to(&mut Cursor::new(&mut out), image::ImageFormat::Png)
+            .unwrap();
+        out
+    }
+
+    #[test]
+    fn a_profile_frame_keeps_the_card_content_clear() {
+        let t = PROFILE_FRAME_TEMPLATE;
+        // a band on the card's edge, a crest over the banner, a part above
+        assert_eq!(design(&frame_png(None)), Ok(()));
+        assert_eq!(design(&frame_png(Some((t.width, t.crest.1 * 2 + 4)))), Ok(()));
+        assert_eq!(design(&frame_png(Some((t.width, 20)))), Ok(()));
+        // over the name, the text, the corner buttons, the message field
+        for (x, y) in [
+            (t.safe.0 * 2 + 40, t.safe.1 * 2 + 200),
+            (t.width, t.height),
+            ((t.safe.2 - 30) * 2, t.safe.1 * 2 + 10),
+            (t.width, t.safe.3 * 2 - 4),
+        ] {
+            assert_eq!(design(&frame_png(Some((x, y)))), Err(EffectRefusal::CoversContent), "{x},{y}");
+        }
+        assert_eq!(EffectRefusal::CoversContent.code(), "covers_content");
+    }
+
+    #[test]
+    fn only_a_frame_sized_file_gets_the_frame_rule() {
+        // a square decoration with a pixel in the middle is fine
+        let mut image = RgbaImage::new(128, 128);
+        image.put_pixel(64, 64, Rgba([255, 255, 255, 255]));
+        let mut out = vec![];
+        DynamicImage::ImageRgba8(image)
+            .write_to(&mut Cursor::new(&mut out), image::ImageFormat::Png)
+            .unwrap();
+        assert_eq!(design(&out), Ok(()));
     }
 
     fn effect(bytes: &[u8]) -> Result<(), EffectRefusal> {

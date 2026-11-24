@@ -91,6 +91,3 @@ revolt-database = { workspace = true, features = ["test-utils"] }
 # staff tests generate TOTP codes
 base32 = { workspace = true }
 totp-lite = { workspace = true }
-
-[build-dependencies]
-vergen = { workspace = true }

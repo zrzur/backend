@@ -177,7 +177,8 @@ impl StaffPermission {
         }
     }
 
-    /// Permissions whose actions always need a fresh TOTP (step-up)
+    /// Permissions whose actions always need a fresh TOTP (step-up). The
+    /// single list: `StaffContext::require` enforces it for every route.
     pub fn needs_step_up(&self) -> bool {
         matches!(
             self,
@@ -186,6 +187,9 @@ impl StaffPermission {
                 | StaffPermission::BillingManage
                 | StaffPermission::StaffManage
                 | StaffPermission::SettingsManage
+                | StaffPermission::UsersSessionsRevoke
+                | StaffPermission::UsersSuspend
+                | StaffPermission::SecurityRespond
         )
     }
 }

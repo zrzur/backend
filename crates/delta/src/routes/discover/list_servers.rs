@@ -239,6 +239,8 @@ mod test {
                         channel: channels[0].id().to_string(),
                         claimed_at: iso8601_timestamp::Timestamp::now_utc(),
                         below_level_since: None,
+                        via: None,
+                        notice_sent_at: None,
                     }),
                     ..Default::default()
                 },

@@ -231,7 +231,7 @@ async fn identity_needs_step_up_and_is_logged() {
     assert_eq!(body["type"], "NotElevated");
     assert!(!audit_actions(&harness).await.iter().any(|(a, _)| a == "team.identity.view"));
     // the missing step-up is logged
-    assert!(audit_actions(&harness).await.contains(&("team.step_up.missing".into(), "Denied".into())));
+    assert!(audit_actions(&harness).await.contains(&("staff.step_up.missing".into(), "Denied".into())));
 
     step_up(&harness, &owner, &token).await;
     let (status, body) = send(&harness, &owner, &token, Post, &path, json!({})).await;

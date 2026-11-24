@@ -393,7 +393,11 @@ pub async fn billing_worker(db: Database) {
             if let Err(error) = crate::process_waitlist(&db).await {
                 log::error!("discover waitlist: {error:?}");
             }
-            if let Err(error) = crate::sync_vanity_invites(&db, iso8601_timestamp::Timestamp::now_utc()).await {
+            // the Wings timeline (7 days, then paused) runs by the minute;
+            // crond's daily check sends the notices and recounts activity
+            if let Err(error) =
+                crate::sync_vanity_invites(&db, iso8601_timestamp::Timestamp::now_utc(), false).await
+            {
                 log::error!("vanity links: {error:?}");
             }
             if round % 5 == 0 {
@@ -406,10 +410,9 @@ pub async fn billing_worker(db: Database) {
                 }
             }
         } else if let Err(error) = reconcile_supercharge_levels(&db).await {
-            // levels drop to 0 when billing is switched off
+            // levels drop to 0 when billing is switched off; custom links
+            // then follow the member and activity rule, checked daily by crond
             log::error!("billing reconcile: {error:?}");
-        } else if let Err(error) = crate::sync_vanity_invites(&db, iso8601_timestamp::Timestamp::now_utc()).await {
-            log::error!("vanity links: {error:?}");
         }
         round += 1;
         tokio::time::sleep(std::time::Duration::from_secs(60)).await;

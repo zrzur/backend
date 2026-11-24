@@ -447,6 +447,7 @@ pub async fn user_action(
                 public_reason: reason.clone(),
                 internal_note: data.internal_note.clone(),
                 duration_days: data.duration_days,
+                activity_value: None,
                 reporter_note: None,
                 version: case.version,
             },

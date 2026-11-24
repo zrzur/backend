@@ -42,6 +42,17 @@ pub mod interaction_limits {
     /// Characters of a partially typed autocomplete value
     pub const MAX_FOCUSED_VALUE: usize = 100;
     pub const MAX_AUTOCOMPLETE_CHOICES: usize = 25;
+    /// Characters of a start payload (`?start=` of a bot link)
+    pub const START_PAYLOAD_LENGTH: usize = 64;
+}
+
+/// A start payload is 1-64 characters of `A-Z`, `a-z`, `0-9`, `_` and `-`
+pub fn valid_start_payload(payload: &str) -> bool {
+    !payload.is_empty()
+        && payload.len() <= interaction_limits::START_PAYLOAD_LENGTH
+        && payload
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
 }
 
 interaction_derived!(
@@ -56,6 +67,8 @@ interaction_derived!(
         ModalSubmit,
         /// The user is typing into an option with `autocomplete`
         Autocomplete,
+        /// The user pressed Start in their direct message with the bot
+        Start,
     }
 
     /// Value a user gave for an option
@@ -139,6 +152,13 @@ interaction_derived!(
         pub resolved: Option<InteractionResolved>,
     }
 
+    /// The user started the bot in their direct message with it
+    pub struct InteractionStartData {
+        /// `?start=` of the bot link the user opened, if any
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub payload: Option<String>,
+    }
+
     /// Interaction as delivered to the bot
     pub struct Interaction {
         #[cfg_attr(feature = "serde", serde(rename = "_id"))]
@@ -183,6 +203,9 @@ interaction_derived!(
         pub component: Option<InteractionComponentData>,
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
         pub modal: Option<InteractionModalData>,
+        /// Start only
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub start: Option<InteractionStartData>,
         /// The bot must call back before this time
         pub respond_by: Timestamp,
         /// The token stops working at this time
@@ -225,6 +248,9 @@ interaction_derived!(
         /// Modal submits: field values
         #[cfg_attr(feature = "serde", serde(default))]
         pub fields: Option<Vec<ModalFieldValue>>,
+        /// Start: `?start=` of the bot link the user opened, if any
+        #[cfg_attr(feature = "serde", serde(default))]
+        pub payload: Option<String>,
         /// Client-generated, unique per user; a retry with the same nonce
         /// returns the first interaction instead of creating a second one
         pub nonce: String,
@@ -362,6 +388,7 @@ impl Interaction {
         for user in std::iter::once(&mut self.user).chain(picked) {
             user.online = false;
             user.status = None;
+            user.activities.clear();
         }
     }
 }

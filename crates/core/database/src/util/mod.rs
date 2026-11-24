@@ -1,8 +1,10 @@
 pub mod acker;
+pub mod activity;
 pub mod automod;
 pub mod age;
 pub mod arabic_fold;
 pub mod bridge;
+pub mod bot_dms;
 pub mod bulk_permissions;
 pub mod captcha;
 pub mod category_view;

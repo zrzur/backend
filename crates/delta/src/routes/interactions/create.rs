@@ -2,13 +2,13 @@ use std::collections::HashSet;
 
 use revolt_database::{
     events::client::EventV1, util::permissions::DatabasePermissionQuery, Bot, Channel, Database,
-    Interaction, InteractionSource, Member, Server, User, AMQP,
+    Interaction, InteractionSource, Member, Server, Session, User, AMQP,
 };
 use revolt_models::v0::{
     self, find_component, interaction_limits, ApplicationCommandType, CommandOptionType,
     Component, DataCreateInteraction, InteractionAccepted, InteractionCommandData,
-    InteractionComponentData, InteractionModalData, InteractionType, ModalFieldValue,
-    INTERACTION_VERSION,
+    InteractionComponentData, InteractionModalData, InteractionStartData, InteractionType,
+    ModalFieldValue, INTERACTION_VERSION,
 };
 use revolt_permissions::{
     calculate_channel_permissions, calculate_server_permissions, ChannelPermission,
@@ -64,6 +64,21 @@ async fn scope(
         }
         _ => return Err(invalid("interactions are only available in server channels")),
     };
+
+    // a bot the person stopped (blocked) gets nothing from them in their DM
+    if server_id.is_none() {
+        let blocked = user.relations.iter().flatten().any(|relation| {
+            relation.id == application_id
+                && matches!(
+                    relation.status,
+                    revolt_database::RelationshipStatus::Blocked
+                        | revolt_database::RelationshipStatus::BlockedOther
+                )
+        });
+        if blocked {
+            return Err(create_error!(Blocked));
+        }
+    }
 
     // A staff account's override is for Zrzur's own tools: a bot sees what
     // the person holds through the server, like anyone else
@@ -168,6 +183,7 @@ async fn payload(
         message_ephemeral: false,
         component: None,
         modal: None,
+        start: None,
         respond_by: interaction.respond_by,
         expires_at: interaction.expires_at,
     }
@@ -285,10 +301,14 @@ async fn command(
     }
     // the badge bot's `/badge` keeps what the person chose for a later route:
     // there the version the person saw is required, not only checked when sent
-    let keeps = !autocomplete && crate::routes::badges::command::keeps_options(&scope.bot.id, &command.name).await;
+    let keeps_badge = !autocomplete && crate::routes::badges::command::keeps_options(&scope.bot.id, &command.name).await;
+    // the staff desk bot's `/desk` keeps its sub-command for `/staff/desk`,
+    // which reads only the sub-command's name (no version needed there)
+    let keeps = keeps_badge
+        || (!autocomplete && crate::routes::staff::desk_keeps_options(&scope.bot.id, &command.name).await);
     let version_differs = match data.command_version.as_ref() {
         Some(version) => version != &command.version,
-        None => keeps,
+        None => keeps_badge,
     };
     if version_differs {
         return Err(invalid("this command changed, reload and try again"));
@@ -364,7 +384,8 @@ async fn command(
     interaction.command_name = Some(command.name.clone());
     interaction.autocomplete_type = context.focused_type;
     // kept only for `/badge` of the configured badge bot, whose route acts
-    // on what the person chose (`/badges/command`); no other bot's options
+    // on what the person chose (`/badges/command`), and `/desk` of the
+    // configured staff desk bot (`/staff/desk`); no other bot's options
     // are stored, and an autocomplete's half-typed text never is
     if keeps {
         interaction.command_options = options.clone();
@@ -856,6 +877,17 @@ async fn modal_submit(
         }
         None => {}
     }
+    // the staff desk's forms carry a TOTP code: it stays on the stored
+    // interaction for `/staff/desk` (which then forgets it) and never
+    // reaches the bot
+    let fields = if crate::routes::staff::desk_hides_field_from_bot(&scope.bot.id, &modal.custom_id).await {
+        fields
+            .into_iter()
+            .filter(|field| field.custom_id != crate::routes::staff::DESK_CODE_FIELD)
+            .collect()
+    } else {
+        fields
+    };
     let resolved = context.resolved;
     payload.modal = Some(InteractionModalData {
         custom_id: modal.custom_id,
@@ -865,6 +897,55 @@ async fn modal_submit(
             || !resolved.channels.is_empty()
             || !resolved.attachments.is_empty())
         .then_some(resolved),
+    });
+    Ok((interaction, payload))
+}
+
+/// The person pressed Start in their DM with the bot, maybe from a bot link
+/// with `?start=`. From then on the bot may write to them.
+async fn start(
+    db: &Database,
+    user: &User,
+    data: DataCreateInteraction,
+) -> Result<(Interaction, v0::Interaction)> {
+    if !revolt_config::config().await.features.bot_dms_enabled {
+        return Err(create_error!(FeatureDisabled {
+            feature: "bot_dms".to_string()
+        }));
+    }
+    let application_id = data
+        .application_id
+        .as_deref()
+        .ok_or_else(|| invalid("application_id is required"))?;
+    let payload_text = match data.payload.as_deref() {
+        None | Some("") => None,
+        Some(text) if v0::valid_start_payload(text) => Some(text.to_string()),
+        Some(_) => {
+            return Err(invalid(
+                "payload must be 1-64 characters of A-Z, a-z, 0-9, _ and -",
+            ))
+        }
+    };
+    // only in the person's DM with this bot, and only while they may write
+    // there: a blocked bot is never started
+    let scope = scope(db, user, &data.channel_id, application_id, true, true).await?;
+    if scope.server.is_some() {
+        return Err(invalid("start is only available in a direct message with the bot"));
+    }
+
+    let (interaction, token) = Interaction::new(
+        InteractionType::Start,
+        scope.bot.id.clone(),
+        user.id.clone(),
+        None,
+        scope.channel.id().to_string(),
+        data.nonce,
+    );
+    revolt_database::util::bot_dms::note_started(db, &scope.channel, user).await?;
+
+    let mut payload = payload(db, user, &scope, &interaction, token, data.locale).await;
+    payload.start = Some(InteractionStartData {
+        payload: payload_text,
     });
     Ok((interaction, payload))
 }
@@ -912,8 +993,10 @@ fn check_nonce(data: &DataCreateInteraction) -> Result<()> {
 
 /// # Create Interaction
 ///
-/// Use an application command, a component on a bot's message, or submit a
-/// form the bot opened. The server checks every value and permission, then
+/// Use an application command, a component on a bot's message, submit a
+/// form the bot opened, or start a bot in your direct message with it
+/// (`Start`, with the optional `payload` of a bot link). The server checks
+/// every value and permission, then
 /// sends the interaction to the bot only. The answer arrives as
 /// `InteractionStateUpdate` plus a channel message, a message update,
 /// `EphemeralMessageCreate` or `InteractionModal`, for this user.
@@ -925,6 +1008,7 @@ pub async fn create_interaction(
     db: &State<Database>,
     amqp: &State<AMQP>,
     user: User,
+    session: Option<Session>,
     data: Json<DataCreateInteraction>,
 ) -> Result<Json<InteractionAccepted>> {
     let data = data.into_inner();
@@ -945,8 +1029,12 @@ pub async fn create_interaction(
         InteractionType::Command => command(db, &user, data).await?,
         InteractionType::Component => component(db, &user, data).await?,
         InteractionType::ModalSubmit => modal_submit(db, &user, data).await?,
+        InteractionType::Start => start(db, &user, data).await?,
         InteractionType::Autocomplete => return Err(create_error!(InvalidOperation)),
     };
+    // the sign-in the person used, never shown to the bot
+    let mut interaction = interaction;
+    interaction.session_id = session.map(|session| session.id);
     dispatch(db, amqp, interaction, payload).await.map(Json)
 }
 

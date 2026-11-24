@@ -185,6 +185,7 @@ pub async fn edit(
         style.decoration_file = None;
         style.nameplate_file = None;
         style.effect_file = None;
+        style.profile_frame_file = None;
         for (value, file, kind) in [
             (
                 style.decoration.clone(),
@@ -201,15 +202,21 @@ pub async fn edit(
                 &mut style.effect_file,
                 CommunityItemKind::Effect,
             ),
+            (
+                style.profile_frame.clone(),
+                &mut style.profile_frame_file,
+                CommunityItemKind::Frame,
+            ),
         ] {
             if let Some(id) = value.as_deref().and_then(v0::community_item_ref) {
                 let item = db.fetch_community_item(id).await?;
                 if item.kind != kind {
                     return Err(create_error!(InvalidOperation));
                 }
-                if kind == CommunityItemKind::Effect
-                    && !revolt_config::config().await.features.community.effects_enabled
-                {
+                if !crate::routes::community::kind_open(
+                    &kind,
+                    &revolt_config::config().await.features.community,
+                ) {
                     return Err(create_error!(InvalidOperation));
                 }
                 // what the user wears now, so saving other fields keeps it
@@ -222,6 +229,9 @@ pub async fn edit(
                     }
                     (Some(s), CommunityItemKind::Effect) => {
                         (s.effect.clone(), s.effect_file.clone())
+                    }
+                    (Some(s), CommunityItemKind::Frame) => {
+                        (s.profile_frame.clone(), s.profile_frame_file.clone())
                     }
                     (None, _) => (None, None),
                 };
@@ -335,8 +345,27 @@ pub async fn edit(
         partial.profile = Some(new_profile);
     }
 
+    let invisible = |user: &User| {
+        matches!(
+            user.status,
+            Some(revolt_database::UserStatus {
+                presence: Some(revolt_database::Presence::Invisible),
+                ..
+            })
+        )
+    };
+    let was_invisible = invisible(&user);
     user.update(db, partial, remove.into_iter().map(Into::into).collect())
     .await?;
+
+    // going invisible hides what you are doing from others, coming back
+    // shows it again (rich presence; nothing when there is none)
+    if was_invisible != invisible(&user)
+        && revolt_database::util::activity::enabled().await
+        && !revolt_database::util::activity::list(&user.id).await.is_empty()
+    {
+        revolt_database::util::activity::publish(db, &user).await;
+    }
 
     Ok(Json(user.into_self(false).await))
 }

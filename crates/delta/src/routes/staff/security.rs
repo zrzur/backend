@@ -14,6 +14,7 @@ use revolt_result::{create_error, Result};
 use rocket::{serde::json::Json, State};
 use serde::{Deserialize, Serialize};
 
+use super::audited::audited;
 use super::{reason, StaffContext};
 
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
@@ -129,13 +130,20 @@ pub async fn lock(db: &State<Database>, staff: StaffContext, id: &str, data: Jso
         // signing yourself out is the sign-out button
         return Err(create_error!(InvalidOperation));
     }
-    if db.fetch_staff_grant(id).await?.is_none() {
+    let Some(target) = db.fetch_staff_grant(id).await? else {
         return Err(create_error!(NotFound));
-    }
+    };
     let mut record = staff.record("staff.security.lock", Some(StaffPermission::SecurityRespond));
     record.target_kind = Some("user".to_string());
     record.target_id = Some(id.to_string());
     record.reason = Some(why);
-    record_platform_audit(db, record, AuditOutcome::Success).await?;
-    Ok(Json(db.revoke_staff_sessions_for_user(id, staff.now).await?))
+    // only an Owner ends an Owner's staff sessions
+    if target.is_owner(staff.now) && !staff.grant.is_owner(staff.now) {
+        record.summary = Some("owner target".to_string());
+        record_platform_audit(db, record, AuditOutcome::Denied).await?;
+        return Err(create_error!(NotPrivileged));
+    }
+    Ok(Json(
+        audited(db, record, db.revoke_staff_sessions_for_user(id, staff.now)).await?,
+    ))
 }

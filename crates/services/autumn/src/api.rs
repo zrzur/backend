@@ -35,7 +35,10 @@ use utoipa::ToSchema;
 
 use crate::{
     AppState,
-    cache::{PRIVATE_CACHE_CONTROL, file_cache_control, seal_response},
+    cache::{
+        PRIVATE_CACHE_CONTROL, file_cache_control, if_range_allows, not_modified,
+        not_modified_response, preview_variant, public_etag, seal_response,
+    },
     effects::{check_upload, still_of, strip_hidden_data},
     webm::{WebmLimits, convert_webm, is_webm},
     exif::strip_metadata, metadata::generate_metadata, mime_type::determine_mime_type,
@@ -873,6 +876,7 @@ async fn fetch_preview(
     viewer: Option<User>,
     Path((tag, file_id)): Path<(Tag, String)>,
     Query(query): Query<PreviewQuery>,
+    headers: HeaderMap,
 ) -> Result<Response> {
     let small = query.small();
     let tag_str: &'static str = tag.clone().into();
@@ -931,6 +935,18 @@ async fn fetch_preview(
         );
     }
 
+    let cache_control =
+        file_cache_control(tag_str, private, config().await.files.purge.configured());
+    // Same file and tag, same preview: a browser that holds it gets a 304.
+    // Private files are never stored, so they get no validator.
+    let size = config().await.files.preview.get(tag_str).copied();
+    let etag = public_etag(private, &hash.id, &preview_variant(small, tag_str, size));
+    if let Some(etag) = &etag {
+        if not_modified(&headers, etag) {
+            return Ok(not_modified_response(etag, cache_control));
+        }
+    }
+
     // Same file and tag, same preview: cached by content
     let preview = PREVIEWS
         .get_or_render(preview_key(tag_str, &hash.id, small), || async {
@@ -951,10 +967,8 @@ async fn fetch_preview(
         })
         .await?;
     let data = preview.as_ref().clone();
-    let cache_control =
-        file_cache_control(tag_str, private, config().await.files.purge.configured());
 
-    Ok((
+    let mut response = (
         [
             (header::CONTENT_TYPE, "image/webp"),
             (header::CONTENT_DISPOSITION, "inline"),
@@ -965,7 +979,13 @@ async fn fetch_preview(
         ],
         data,
     )
-        .into_response())
+        .into_response();
+    if let Some(etag) = etag {
+        response
+            .headers_mut()
+            .insert(header::ETAG, etag.parse().expect("an ETag is ASCII"));
+    }
+    Ok(response)
 }
 
 /// Fetch original file
@@ -1043,15 +1063,29 @@ async fn fetch_file(
         }
         return Ok(match voice_copies(&db).served(&hash).await {
             Ok((copy, data)) => {
-                original_file_response(data, copy.content_type, cache_control, &headers)
+                original_file_response(data, copy.content_type, cache_control, &headers, None)
             }
             Err(refusal) if refusal.try_later() => try_later_response(),
             Err(_) => return Err(create_error!(NotFound)),
         });
     }
 
+    // a browser that holds this file gets a 304, before the file is read
+    let etag = public_etag(private, &hash.id, "o");
+    if let Some(etag) = &etag {
+        if not_modified(&headers, etag) {
+            return Ok(not_modified_response(etag, cache_control));
+        }
+    }
     let data = retrieve_file_by_hash(&hash).await?;
-    Ok(original_file_response(data, hash.content_type, cache_control, &headers))
+    let mut response =
+        original_file_response(data, hash.content_type, cache_control, &headers, etag.as_deref());
+    if let Some(etag) = etag {
+        response
+            .headers_mut()
+            .insert(header::ETAG, etag.parse().expect("an ETag is ASCII"));
+    }
+    Ok(response)
 }
 
 lazy_static! {
@@ -1150,15 +1184,17 @@ fn original_file_response(
     content_type: String,
     cache_control: &str,
     headers: &HeaderMap,
+    etag: Option<&str>,
 ) -> Response {
     use crate::byte_range::{ByteRange, parse_range};
     use axum::http::StatusCode;
     let size = data.len();
-    // No entity validator is advertised, so If-Range requests receive the complete entity.
-    let range = if headers.contains_key(header::IF_RANGE) {
-        None
-    } else {
+    // An If-Range that names this file's validator keeps the range; a date or
+    // another validator gets the complete entity (always correct)
+    let range = if if_range_allows(headers, etag) {
         headers.get(header::RANGE).and_then(|v| v.to_str().ok())
+    } else {
+        None
     };
     let (status, body, content_range) = match parse_range(range, size) {
         ByteRange::Full => (StatusCode::OK, data, None),

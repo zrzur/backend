@@ -24,6 +24,13 @@ pub static ONLINE_SET: &str = "online";
 
 pub static FLAG_BITS: u32 = 0b1;
 
+/// Redis hash holding what a user is doing right now, one field per
+/// source (see `revolt_database::util::activity`). It lives only while the
+/// user has a session: the last one going removes it.
+pub fn activity_key(user_id: &str) -> String {
+    format!("activity:{user_id}")
+}
+
 /// Create a new presence session, returns the ID of this session
 pub async fn create_session(user_id: &str, flags: u8) -> (bool, u32) {
     info!("Creating a presence session for {user_id} with flags {flags}");
@@ -74,6 +81,8 @@ async fn delete_session_internal(user_id: &str, session_id: u32, skip_region: bo
         let is_empty = __get_set_size(&mut conn, &format!("sessions:{user_id}")).await == 0;
         if is_empty {
             __remove_from_set_string(&mut conn, ONLINE_SET, user_id).await;
+            // nothing of what they were doing outlives their last session
+            let _: Option<()> = conn.del(activity_key(user_id)).await.ok();
             info!("User ID {} just went offline.", &user_id);
         }
 
@@ -194,6 +203,8 @@ pub async fn clear_region(region_id: Option<&str>) {
 
 #[cfg(test)]
 mod tests {
+    use redis_kiss::AsyncCommands;
+
     use crate::{clear_region, create_session, delete_session, filter_online, is_online};
     use rand::Rng;
 
@@ -235,14 +246,33 @@ mod tests {
         assert!(user_ids.contains(&user_id));
         assert!(user_ids.contains(&other_id));
 
+        // An activity goes with the last session, not before
+        {
+            let mut conn = redis_kiss::get_connection().await.unwrap();
+            let _: () = conn
+                .hset(crate::activity_key(&user_id), "Desktop", "{}")
+                .await
+                .unwrap();
+        }
+
         // Remove sessions
         delete_session(&user_id, session_id).await;
+        {
+            let mut conn = redis_kiss::get_connection().await.unwrap();
+            let kept: bool = conn.exists(crate::activity_key(&user_id)).await.unwrap();
+            assert!(kept, "another session is still open");
+        }
         delete_session(&other_id, other_session_id).await;
         assert!(!is_online(&other_id).await);
 
         // Check if we can wipe everything too
         clear_region(None).await;
         assert!(!is_online(&user_id).await);
+        {
+            let mut conn = redis_kiss::get_connection().await.unwrap();
+            let kept: bool = conn.exists(crate::activity_key(&user_id)).await.unwrap();
+            assert!(!kept, "the last session took the activity with it");
+        }
 
         let user_ids = filter_online(&[user_id.to_string(), other_id.to_string()]).await;
         assert!(user_ids.is_empty())

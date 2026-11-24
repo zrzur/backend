@@ -1,3 +1,4 @@
+use iso8601_timestamp::Timestamp;
 use revolt_result::Result;
 
 use revolt_models::v0::EphemeralMessage;
@@ -130,6 +131,47 @@ impl AbstractInteractions for MongoDb {
             .await
             .map_err(|_| create_database_error!("update_one", COL))?;
         Ok(result.modified_count == 1)
+    }
+
+    async fn clear_interaction_modal_fields(&self, id: &str) -> Result<()> {
+        self.col::<Interaction>(COL)
+            .update_one(doc! { "_id": id }, doc! { "$unset": { "modal_fields": 1 } })
+            .await
+            .map_err(|_| create_database_error!("update_one", COL))?;
+        Ok(())
+    }
+
+    async fn clear_stale_desk_modal_fields(&self, expires_before: Timestamp) -> Result<u64> {
+        // the few desk forms still holding fields are read and their time is
+        // compared here, not in the query: no dependence on how the stored
+        // timestamp and the query value are encoded
+        let holding: Vec<Interaction> = self
+            .find(
+                COL,
+                doc! {
+                    "custom_id": { "$regex": "^zd:" },
+                    "modal_fields.0": { "$exists": true },
+                },
+            )
+            .await
+            .map_err(|_| create_database_error!("find", COL))?;
+        let stale: Vec<String> = holding
+            .into_iter()
+            .filter(|interaction| interaction.expires_at <= expires_before)
+            .map(|interaction| interaction.id)
+            .collect();
+        if stale.is_empty() {
+            return Ok(0);
+        }
+        let result = self
+            .col::<Interaction>(COL)
+            .update_many(
+                doc! { "_id": { "$in": stale }, "modal_fields.0": { "$exists": true } },
+                doc! { "$unset": { "modal_fields": 1 } },
+            )
+            .await
+            .map_err(|_| create_database_error!("update_many", COL))?;
+        Ok(result.modified_count)
     }
 
     async fn push_interaction_followup(

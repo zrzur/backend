@@ -1,3 +1,4 @@
+use iso8601_timestamp::Timestamp;
 use revolt_result::Result;
 
 use revolt_models::v0::EphemeralMessage;
@@ -175,5 +176,29 @@ impl AbstractInteractions for ReferenceDb {
             }
             _ => Ok(false),
         }
+    }
+
+    async fn clear_stale_desk_modal_fields(&self, expires_before: Timestamp) -> Result<u64> {
+        let mut cleared = 0;
+        for interaction in self.interactions.lock().await.values_mut() {
+            if interaction
+                .custom_id
+                .as_deref()
+                .is_some_and(|id| id.starts_with("zd:"))
+                && !interaction.modal_fields.is_empty()
+                && interaction.expires_at <= expires_before
+            {
+                interaction.modal_fields.clear();
+                cleared += 1;
+            }
+        }
+        Ok(cleared)
+    }
+
+    async fn clear_interaction_modal_fields(&self, id: &str) -> Result<()> {
+        if let Some(interaction) = self.interactions.lock().await.get_mut(id) {
+            interaction.modal_fields.clear();
+        }
+        Ok(())
     }
 }

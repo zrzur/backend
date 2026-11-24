@@ -17,6 +17,7 @@ use rocket::{serde::json::Json, State};
 use serde::Serialize;
 use ulid::Ulid;
 
+use super::audited::audited;
 use super::{reason, DataReason, StaffContext};
 
 static STARTED_AT: OnceLock<i64> = OnceLock::new();
@@ -119,6 +120,12 @@ async fn window(db: &Database, what: StaffCounted, now: i64) -> Result<CountWind
 /// # Platform statistics
 #[get("/stats")]
 pub async fn stats(db: &State<Database>, staff: StaffContext) -> Result<Json<PlatformStats>> {
+    stats_core(db, &staff).await.map(Json)
+}
+
+/// The overview numbers, with the permission check, for any caller that
+/// holds a [`StaffContext`]: the console route and the desk's overview
+pub(crate) async fn stats_core(db: &Database, staff: &StaffContext) -> Result<PlatformStats> {
     staff.require(db, StaffPermission::DashboardRead).await?;
     let now = staff_now();
     let channels_by_type: Vec<KindCount> = db
@@ -127,7 +134,7 @@ pub async fn stats(db: &State<Database>, staff: StaffContext) -> Result<Json<Pla
         .into_iter()
         .map(|(kind, count)| KindCount { kind, count })
         .collect();
-    Ok(Json(PlatformStats {
+    Ok(PlatformStats {
         generated_at: now,
         users: window(db, StaffCounted::Users, now).await?,
         online_users: online_users().await,
@@ -141,7 +148,7 @@ pub async fn stats(db: &State<Database>, staff: StaffContext) -> Result<Json<Pla
         } else {
             None
         },
-    }))
+    })
 }
 
 #[derive(Serialize)]
@@ -371,10 +378,13 @@ pub async fn revoke_user_sessions(
     let count = db.fetch_sessions(&user.id).await.map(|s| s.len()).unwrap_or(0);
     // fail closed: the record comes first
     record.summary = Some(format!("{count} sessions"));
-    record_platform_audit(db, record, AuditOutcome::Success).await?;
-    let account = db.fetch_account(&user.id).await?;
-    account.delete_all_sessions(db, None).await?;
-    db.revoke_staff_sessions_for_user(&user.id, staff.now).await?;
+    audited(db, record, async {
+        let account = db.fetch_account(&user.id).await?;
+        account.delete_all_sessions(db, None).await?;
+        db.revoke_staff_sessions_for_user(&user.id, staff.now).await?;
+        Ok(())
+    })
+    .await?;
     crate::util::official::sessions_ended(db, &user.id, &reason).await;
     Ok(Json(count))
 }

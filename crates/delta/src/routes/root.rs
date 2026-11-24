@@ -76,6 +76,9 @@ pub struct RevoltFeatures {
     pub webhooks: bool,
     /// Whether profile effects are open
     pub community_effects: bool,
+    /// Whether creators' profile frames are open (uploads, the gallery,
+    /// wearing one). Zrzur's built-in frames do not depend on it
+    pub community_frames: bool,
     /// Whether plugins are open on this server. Off, every plugin route
     /// answers `PluginsDisabled` and clients load no plugin
     pub plugins: bool,
@@ -88,6 +91,9 @@ pub struct RevoltFeatures {
     /// Whether an invite link can make an account that enters the server at
     /// once (`POST /auth/account/join`)
     pub join_by_link: bool,
+    /// Whether anyone may write to a public bot and press Start in its
+    /// direct message (`Start` interactions, bot links with `?start=`)
+    pub bot_dms: bool,
     /// Whether a server can be built from a Discord server template
     pub server_import: bool,
     /// Whether such a template can be read by its link (else its text is pasted)
@@ -95,6 +101,14 @@ pub struct RevoltFeatures {
     /// Whether people can save messages to a private list and set
     /// reminders on messages
     pub saved_reminders: bool,
+    /// Rich presence: whether people can show what they are doing right
+    /// now (`SetActivity`, `activities` on users)
+    #[serde(default)]
+    pub rich_presence: bool,
+    /// Whether a linked Steam account's "now playing" can be shared as an
+    /// activity
+    #[serde(default)]
+    pub rich_presence_steam: bool,
     /// Voice on a weak connection: whether the app steps down, and when
     pub voice_weak_network: VoiceWeakNetworkFeature,
     /// Whether voice clips are on
@@ -262,16 +276,22 @@ pub async fn root() -> Result<Json<RevoltConfig>> {
             invite_only: config.api.registration.invite_only,
             webhooks: config.features.webhooks_enabled,
             community_effects: config.features.community.effects_enabled,
+            community_frames: config.features.community.frames_enabled,
             plugins: config.features.plugins_enabled,
             forwarding: config.features.message_forwarding_enabled,
             polls: config.features.polls_enabled,
             server_events: config.features.server_events_enabled,
             join_by_link: config.features.join_by_link_enabled
                 && !config.api.smtp.host.is_empty(),
+            bot_dms: config.features.bot_dms_enabled,
             server_import: config.features.server_import.enabled,
             server_import_link: config.features.server_import.enabled
                 && config.features.server_import.link_fetch,
             saved_reminders: config.features.saved_reminders.enabled,
+            rich_presence: config.features.rich_presence.enabled,
+            rich_presence_steam: config.features.rich_presence.enabled
+                && config.features.rich_presence.steam_enabled
+                && config.api.connections.steam.enabled(),
             voice_weak_network: VoiceWeakNetworkFeature {
                 enabled: config.features.voice_weak_network_enabled,
                 weak_loss_percent: config.features.voice_weak_network.weak_loss_percent,

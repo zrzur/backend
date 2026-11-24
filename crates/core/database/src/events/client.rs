@@ -85,6 +85,19 @@ pub enum EventV1 {
         data: Error,
     },
 
+    /// A `SetActivity` was refused. Not an error of the connection: the
+    /// session goes on, and the app should not send the same activity again.
+    ActivityRefused {
+        source: revolt_models::v0::ActivitySource,
+        error: Error,
+    },
+
+    /// Your own privacy settings changed (from any of your sessions); only
+    /// ever sent to the person themselves
+    PrivacyUpdate {
+        privacy: revolt_models::v0::UserPrivacy,
+    },
+
     /// Successfully authenticated
     Authenticated,
     /// Logged out

@@ -179,6 +179,25 @@ impl AbstractChannels for ReferenceDb {
             Err(create_error!(InvalidOperation))
         }
     }
+    async fn set_bot_started(&self, channel_id: &str, user_id: &str, started: bool) -> Result<()> {
+        let mut channels = self.channels.lock().await;
+        if let Some(Channel::DirectMessage {
+            started_by,
+            stopped_by,
+            ..
+        }) = channels.get_mut(channel_id)
+        {
+            started_by.retain(|id| id != user_id);
+            stopped_by.retain(|id| id != user_id);
+            if started {
+                started_by.push(user_id.to_string());
+            } else {
+                stopped_by.push(user_id.to_string());
+            }
+        }
+        Ok(())
+    }
+
     /// Insert channel role permissions
     async fn set_channel_role_permission(
         &self,

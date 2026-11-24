@@ -95,6 +95,10 @@ pub async fn send_inner(
     // Mature channels are for adults only
     revolt_database::util::age::assert_can_view_channel(db, &user, &channel).await?;
 
+    // writing to a bot starts it, like Start: before the message, so the
+    // bot's sessions follow the conversation when the message arrives
+    revolt_database::util::bot_dms::note_started(db, &channel, &user).await?;
+
     // The server's verification level (members without a role), then AutoMod
     if let Some(server_id) = channel.server() {
         let server = db.fetch_server(server_id).await?;

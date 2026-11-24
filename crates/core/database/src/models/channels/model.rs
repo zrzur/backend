@@ -41,6 +41,16 @@ auto_derived!(
             /// Id of the last message sent in this channel
             #[serde(skip_serializing_if = "Option::is_none")]
             last_message_id: Option<String>,
+            /// People who pressed Start in their conversation with a bot: from
+            /// then on the bot may write to them, as if they had written first
+            #[serde(default, skip_serializing_if = "Vec::is_empty")]
+            started_by: Vec<String>,
+            /// People who stopped (blocked) the bot of this conversation
+            /// since they last started it: what they wrote before no longer
+            /// counts as consent. Without an entry in either list (a
+            /// conversation from before bots in DMs), their messages do.
+            #[serde(default, skip_serializing_if = "Vec::is_empty")]
+            stopped_by: Vec<String>,
         },
         /// Group channel between 1 or more participants
         Group {
@@ -537,14 +547,26 @@ impl Channel {
                     active: true, // show by default
                     recipients: vec![user_a.id.clone(), user_b.id.clone()],
                     last_message_id: None,
+                    started_by: vec![],
+                    stopped_by: vec![],
                 }
             };
 
             db.insert_channel(&channel).await?;
 
             if let Channel::DirectMessage { .. } = &channel {
+                // a person opening a conversation with a bot: the bot hears
+                // of it only when they start it (util::bot_dms)
+                let quiet_bot = user_a.bot.is_none()
+                    && user_b.bot.is_some()
+                    && crate::util::bot_dms::enabled().await;
+                let told = if quiet_bot {
+                    vec![user_a.id.clone()]
+                } else {
+                    vec![user_a.id.clone(), user_b.id.clone()]
+                };
                 EventV1::ChannelCreate(channel.clone().into())
-                    .p_broadcast(vec![user_a.id.clone(), user_b.id.clone()])
+                    .p_broadcast(told)
                     .await;
             };
 

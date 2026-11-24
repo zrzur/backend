@@ -1,4 +1,5 @@
 mod accounts;
+mod activities;
 mod applications;
 mod audit_logs;
 mod badges;
@@ -40,6 +41,7 @@ mod user_settings;
 mod users;
 
 pub use accounts::*;
+pub use activities::*;
 pub use applications::*;
 pub use audit_logs::*;
 pub use badges::*;

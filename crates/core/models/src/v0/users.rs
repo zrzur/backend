@@ -4,7 +4,7 @@ use iso8601_timestamp::Timestamp;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
-use super::{File, ProfileConnection, ProfileGames};
+use super::{File, ProfileConnection, ProfileGames, UserActivity};
 
 #[cfg(feature = "validator")]
 use validator::Validate;
@@ -102,6 +102,14 @@ auto_derived_partial!(
         pub relationship: RelationshipStatus,
         /// Whether this user is currently online
         pub online: bool,
+        /// What they are doing right now, the main activity first. Only
+        /// while they are online and visible, share their activity and the
+        /// server has the feature on; never stored.
+        #[cfg_attr(
+            feature = "serde",
+            serde(skip_serializing_if = "Vec::is_empty", default)
+        )]
+        pub activities: Vec<UserActivity>,
     },
     "PartialUser"
 );
@@ -392,12 +400,16 @@ auto_derived!(
         /// Font for the display name, one of [USER_STYLE_FONTS]
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
         pub name_font: Option<String>,
-        /// Name colour: one colour (solid) or two (gradient), #rrggbb
+        /// Name colour, #rrggbb: one (solid), two (gradient) or three to
+        /// five (spectrum)
         #[cfg_attr(
             feature = "serde",
             serde(skip_serializing_if = "Vec::is_empty", default)
         )]
         pub name_colour: Vec<String>,
+        /// Effect drawn on the display name, one of [USER_STYLE_NAME_EFFECTS]
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub name_effect: Option<String>,
         /// Avatar decoration: one of [USER_STYLE_DECORATIONS], or c:<id>
         /// for a community decoration
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
@@ -420,6 +432,13 @@ auto_derived!(
         /// File of a community effect (set by the server, read-only)
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
         pub effect_file: Option<String>,
+        /// Frame drawn around the whole profile card: one of
+        /// [USER_STYLE_PROFILE_FRAMES], or c:<id> for a community frame
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub profile_frame: Option<String>,
+        /// Image of a community frame (set by the server, read-only)
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub profile_frame_file: Option<String>,
     }
 
     /// Who can start a direct message with a user
@@ -458,6 +477,23 @@ auto_derived!(
         /// Who can add this user to group chats
         #[cfg_attr(feature = "serde", serde(default))]
         pub group_invites: GroupInvitePrivacy,
+        /// Others may see what this user is doing right now. Unset means
+        /// off (for everyone, until the person turns it on). Answers always
+        /// carry the value in force.
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub share_activity: Option<bool>,
+        /// Only friends see this user's activity: they are under 18, have
+        /// not given their age, or their age could not be read. Set by the
+        /// server in answers; ignored when sent.
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "crate::if_false", default))]
+        pub activity_friends_only: bool,
+        /// The one-time activity intro card was answered (either button)
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "crate::if_false", default))]
+        pub activity_intro_seen: bool,
+        /// The linked Steam account's "now playing" counts as an activity
+        /// (only while `share_activity` is on). Off unless chosen.
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "crate::if_false", default))]
+        pub share_steam_activity: bool,
     }
 
     /// Change privacy settings; fields left out stay the same
@@ -469,6 +505,15 @@ auto_derived!(
         /// Who can add this user to group chats
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
         pub group_invites: Option<GroupInvitePrivacy>,
+        /// Share what you are doing right now
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub share_activity: Option<bool>,
+        /// Share your Steam "now playing"
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub share_steam_activity: Option<bool>,
+        /// The activity intro card was answered
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub activity_intro_seen: Option<bool>,
     }
 
     /// User flag reponse
@@ -594,6 +639,12 @@ pub const USER_STYLE_FONTS: &[&str] = &[
     "default", "bold", "serif", "mono", "script", "pixel", "wide", "rounded", "geo", "modern",
     "elegant", "strong", "clear", "soft", "slab", "classic", "comic", "typewriter", "code", "kufi",
 ];
+
+/// Effects a display name can wear (the client draws each one)
+pub const USER_STYLE_NAME_EFFECTS: &[&str] = &["halo", "edge", "lifted", "sheen"];
+
+/// Most colours in a display name (a spectrum)
+pub const USER_STYLE_NAME_MAX_COLOURS: usize = 5;
 
 /// Profile sections a person can order or hide, in their default order.
 /// Roles, mutual servers and the message box depend on who is looking, so
@@ -721,6 +772,39 @@ pub const USER_STYLE_NAMEPLATES: &[&str] = &[
     "midnight-pulse", "pulse-wave", "pixel-zrzur-home",
 ];
 
+/// Built-in profile frames (drawn by the client). Hand-made pixel art, added
+/// one at a time after the owner has seen each on a real card.
+pub const USER_STYLE_PROFILE_FRAMES: &[&str] = &["crystal"];
+
+/// Size of a community frame file, in pixels: twice the template the client
+/// lays over the card (see [PROFILE_FRAME_TEMPLATE])
+pub const PROFILE_FRAME_FILE_SIZE: (usize, usize) = (800, 1020);
+
+/// Where a community frame may be drawn. It is a 400 x 510 template (CSS px)
+/// laid over the card, which is the rectangle `card`: the frame may reach
+/// 30 px past its sides, 70 px above it and 40 px below it. Rectangles are
+/// left, top, right, bottom.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProfileFrameTemplate {
+    pub width: u32,
+    pub height: u32,
+    /// The card inside the template
+    pub card: (u32, u32, u32, u32),
+    /// Must stay transparent: it lies over the card's content
+    pub safe: (u32, u32, u32, u32),
+    /// May be drawn on although inside `safe`: the crest over the middle of
+    /// the banner
+    pub crest: (u32, u32, u32, u32),
+}
+
+pub const PROFILE_FRAME_TEMPLATE: ProfileFrameTemplate = ProfileFrameTemplate {
+    width: 400,
+    height: 510,
+    card: (30, 70, 370, 470),
+    safe: (40, 80, 360, 460),
+    crest: (120, 80, 280, 110),
+};
+
 /// Decorations that are no longer offered. Saved profiles may still hold one:
 /// clients show nothing for it, and a save that sends it back must not fail.
 const USER_STYLE_RETIRED_DECORATIONS: &[&str] = &[
@@ -752,8 +836,15 @@ impl UserStyle {
         if !colours_ok(&self.theme) {
             return Err("theme must be one or two #rrggbb colours");
         }
-        if !colours_ok(&self.name_colour) {
-            return Err("name_colour must be one or two #rrggbb colours");
+        if self.name_colour.len() > USER_STYLE_NAME_MAX_COLOURS
+            || !self.name_colour.iter().all(|c| RE_HEX_COLOUR.is_match(c))
+        {
+            return Err("name_colour must be one to five #rrggbb colours");
+        }
+        if let Some(effect) = &self.name_effect {
+            if !USER_STYLE_NAME_EFFECTS.contains(&effect.as_str()) {
+                return Err("unknown name_effect");
+            }
         }
         if let Some(font) = &self.name_font {
             if !USER_STYLE_FONTS.contains(&font.as_str()) {
@@ -783,6 +874,13 @@ impl UserStyle {
                 return Err("unknown nameplate");
             }
         }
+        if let Some(frame) = &self.profile_frame {
+            if !USER_STYLE_PROFILE_FRAMES.contains(&frame.as_str())
+                && community_item_ref(frame).is_none()
+            {
+                return Err("unknown profile_frame");
+            }
+        }
         Ok(())
     }
 
@@ -791,9 +889,11 @@ impl UserStyle {
         self.theme.is_empty()
             && self.name_font.is_none()
             && self.name_colour.is_empty()
+            && self.name_effect.is_none()
             && self.decoration.is_none()
             && self.nameplate.is_none()
             && self.effect.is_none()
+            && self.profile_frame.is_none()
     }
 }
 
@@ -830,7 +930,19 @@ mod style_tests {
         assert!(s.validate_style().is_err());
 
         let mut s = style();
-        s.name_colour = vec!["#000000".into(), "#111111".into(), "#222222".into()];
+        s.name_colour = vec!["#000000".into(); 6];
+        assert!(s.validate_style().is_err());
+
+        let mut s = style();
+        s.name_colour = vec!["#000000".into(), "red".into(), "#222222".into()];
+        assert!(s.validate_style().is_err());
+
+        let mut s = style();
+        s.name_effect = Some("glow; color: red".into());
+        assert!(s.validate_style().is_err());
+
+        let mut s = style();
+        s.name_effect = Some("snow".into());
         assert!(s.validate_style().is_err());
 
         let mut s = style();
@@ -844,6 +956,25 @@ mod style_tests {
         let mut s = style();
         s.nameplate = Some("c:not-an-id".into());
         assert!(s.validate_style().is_err());
+    }
+
+    #[test]
+    fn accepts_spectrum_and_name_effects() {
+        for count in 1..=5 {
+            let mut s = style();
+            s.name_colour = vec!["#ff5c8a".into(); count];
+            assert!(s.validate_style().is_ok(), "{count} colours");
+        }
+        for effect in super::USER_STYLE_NAME_EFFECTS {
+            let mut s = style();
+            s.name_effect = Some((*effect).into());
+            assert!(s.validate_style().is_ok(), "{effect}");
+        }
+        let only_effect = UserStyle {
+            name_effect: Some("halo".into()),
+            ..Default::default()
+        };
+        assert!(!only_effect.is_empty());
     }
 
     #[test]
@@ -879,12 +1010,52 @@ mod style_tests {
             super::USER_STYLE_DECORATIONS,
             super::USER_STYLE_NAMEPLATES,
             super::USER_STYLE_EFFECTS,
+            super::USER_STYLE_PROFILE_FRAMES,
         ] {
             let mut seen = std::collections::HashSet::new();
             for id in list {
                 assert!(seen.insert(*id), "{id} is listed twice");
             }
         }
+    }
+
+    #[test]
+    fn profile_frames_are_checked() {
+        for id in super::USER_STYLE_PROFILE_FRAMES {
+            let mut s = style();
+            s.profile_frame = Some((*id).into());
+            assert!(s.validate_style().is_ok(), "{id}");
+        }
+        let mut s = style();
+        s.profile_frame = Some("c:01M5TGZFE80SKMC8JVGJKBHS2A".into());
+        assert!(s.validate_style().is_ok());
+        for bad in ["gold", "c:not-an-id", "crystal; x", "khatam", ""] {
+            let mut s = style();
+            s.profile_frame = Some(bad.into());
+            assert!(s.validate_style().is_err(), "{bad}");
+        }
+        let s = super::UserStyle {
+            profile_frame: Some("crystal".into()),
+            ..Default::default()
+        };
+        assert!(!s.is_empty());
+    }
+
+    #[test]
+    fn the_frame_template_keeps_the_card_clear() {
+        let t = super::PROFILE_FRAME_TEMPLATE;
+        let (fw, fh) = super::PROFILE_FRAME_FILE_SIZE;
+        assert_eq!((fw as u32, fh as u32), (t.width * 2, t.height * 2));
+        // the safe area is the card less 10 px on every side
+        assert_eq!(
+            t.safe,
+            (t.card.0 + 10, t.card.1 + 10, t.card.2 - 10, t.card.3 - 10)
+        );
+        // the crest starts at the top of the safe area and stays clear of
+        // the corner buttons (12 px in, two of 32 px with 8 between)
+        assert!(t.crest.0 >= t.safe.0 && t.crest.2 <= t.safe.2 && t.crest.1 == t.safe.1);
+        assert!(t.crest.2 <= t.card.2 - 12 - 72);
+        assert!(t.crest.0 >= t.card.0 + 12 + 72);
     }
 
     #[test]

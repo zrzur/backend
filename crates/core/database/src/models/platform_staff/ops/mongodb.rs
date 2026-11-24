@@ -134,6 +134,51 @@ impl AbstractPlatformStaff for MongoDb {
             .map_err(|_| create_database_error!("update_many", SESSIONS))
     }
 
+    async fn delete_staff_sessions_for_user(&self, user_id: &str) -> Result<usize> {
+        self.col::<StaffSession>(SESSIONS)
+            .delete_many(doc! { "user_id": user_id })
+            .await
+            .map(|result| result.deleted_count as usize)
+            .map_err(|_| create_database_error!("delete_many", SESSIONS))
+    }
+
+    async fn fetch_desk_session(
+        &self,
+        user_id: &str,
+        bot_id: &str,
+        now: i64,
+    ) -> Result<Option<StaffSession>> {
+        let mut found: Vec<StaffSession> = self
+            .find_with_options(
+                SESSIONS,
+                doc! {
+                    "user_id": user_id,
+                    "kind": "desk",
+                    "bot_id": bot_id,
+                    "revoked_at": { "$exists": false },
+                    "expires_at": { "$gt": now },
+                },
+                FindOptions::builder()
+                    .sort(doc! { "created_at": -1 })
+                    .limit(1)
+                    .build(),
+            )
+            .await
+            .map_err(|_| create_database_error!("find", SESSIONS))?;
+        Ok(found.pop())
+    }
+
+    async fn revoke_desk_sessions_for_user(&self, user_id: &str, at: i64) -> Result<usize> {
+        self.col::<StaffSession>(SESSIONS)
+            .update_many(
+                doc! { "user_id": user_id, "kind": "desk", "revoked_at": { "$exists": false } },
+                doc! { "$set": { "revoked_at": at } },
+            )
+            .await
+            .map(|result| result.modified_count as usize)
+            .map_err(|_| create_database_error!("update_many", SESSIONS))
+    }
+
     async fn fetch_staff_sessions_for_user(
         &self,
         user_id: &str,

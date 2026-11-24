@@ -15,6 +15,7 @@ mod content;
 mod creators;
 mod bots;
 mod deletion;
+mod desk;
 mod discover;
 mod metrics;
 mod official;
@@ -27,16 +28,24 @@ mod servers;
 mod support;
 mod team;
 mod words;
+mod audited;
 #[cfg(test)]
 mod test;
 
 pub use guard::StaffContext;
+pub(crate) use desk::{
+    hides_field_from_bot as desk_hides_field_from_bot, keeps_options as desk_keeps_options,
+    CODE_FIELD as DESK_CODE_FIELD,
+};
+#[cfg(test)]
+pub(crate) use desk::test_settings as desk_test_settings;
 pub use metrics::Metrics;
 
 use revolt_database::{
     check_staff_change, new_staff_token, record_platform_audit, staff_now, staff_token_hash,
     verify_audit_chain, verify_staff_totp, AuditOutcome, AuditRecord, Database, PlatformAuditEntry,
-    PlatformAuditQuery, Session, StaffGrant, StaffPermission, StaffRole, StaffSession, Totp, User,
+    PlatformAuditQuery, Session, StaffGrant, StaffPermission, StaffRole, StaffSession,
+    StaffSessionKind, Totp, User,
     STAFF_SESSION_IDLE_MS, STAFF_SESSION_MAX_MS, STAFF_STEP_UP_MS,
 };
 use revolt_result::{create_error, Result};
@@ -46,7 +55,7 @@ use ulid::Ulid;
 
 pub fn routes() -> Vec<Route> {
     platform::mark_started();
-    routes![
+    let mut all = routes![
         words::list,
         words::add,
         words::remove,
@@ -155,7 +164,10 @@ pub fn routes() -> Vec<Route> {
         revoke_member_sessions,
         audit,
         verify_audit
-    ]
+    ];
+    // Zrzur Desk, called only by the configured bot (`/staff/desk/...`)
+    all.extend(desk::routes());
+    all
 }
 
 // ---- request and response bodies ----
@@ -220,9 +232,35 @@ pub struct StaffMember {
     pub active: bool,
     pub expires_at: Option<i64>,
     pub open_sessions: usize,
+    /// The open sessions themselves (never their token hashes)
+    pub sessions: Vec<MemberSession>,
     pub version: i64,
     pub updated_at: i64,
     pub updated_by: String,
+}
+
+/// One open staff session of a member, as the members list shows it
+#[derive(Serialize)]
+pub struct MemberSession {
+    pub id: String,
+    /// `console` or `desk`
+    pub kind: StaffSessionKind,
+    /// The desk bot, for a desk session
+    pub bot_id: Option<String>,
+    pub created_at: i64,
+    pub last_seen_at: i64,
+}
+
+impl From<StaffSession> for MemberSession {
+    fn from(session: StaffSession) -> Self {
+        MemberSession {
+            id: session.id,
+            kind: session.kind,
+            bot_id: session.bot_id,
+            created_at: session.created_at,
+            last_seen_at: session.last_seen_at,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -267,15 +305,18 @@ const CODE_FAILURE_WINDOW_MS: i64 = 15 * 60 * 1000;
 /// Whether this account sent too many wrong staff codes lately. The
 /// request limit counts per address only, so someone holding a stolen
 /// session could spread guesses over many addresses; this counts per
-/// account, from the denied records already in the audit log.
-async fn too_many_code_failures(db: &Database, user_id: &str) -> Result<bool> {
+/// account, from the denied records already in the audit log. Only the
+/// sign-in records (`staff.session.*`, console and desk alike) are read, so
+/// other records (refused requests, missing step-ups) can never push wrong
+/// codes out of the window.
+pub(crate) async fn too_many_code_failures(db: &Database, user_id: &str) -> Result<bool> {
     let since = staff_now() - CODE_FAILURE_WINDOW_MS;
     let recent = db
         .fetch_platform_audit(PlatformAuditQuery {
             before_seq: None,
             actor_id: Some(user_id.to_string()),
             target_id: None,
-            action_prefix: None,
+            action_prefix: Some("staff.session.".to_string()),
             limit: 50,
         })
         .await?;
@@ -294,7 +335,7 @@ async fn too_many_code_failures(db: &Database, user_id: &str) -> Result<bool> {
 }
 
 /// Check a TOTP code for a staff member and use it up
-async fn check_code(db: &Database, grant: &StaffGrant, code: &str) -> Result<()> {
+pub(crate) async fn check_code(db: &Database, grant: &StaffGrant, code: &str) -> Result<()> {
     if too_many_code_failures(db, &grant.id).await? {
         return Err(create_error!(LockedOut));
     }
@@ -387,6 +428,8 @@ async fn open_session(
         step_up_until: None,
         revoked_at: None,
         user_agent: client.user_agent,
+        kind: Default::default(),
+        bot_id: None,
     };
     db.insert_staff_session(&staff).await?;
     let mut record = base;
@@ -479,10 +522,12 @@ async fn members(db: &State<Database>, staff: StaffContext) -> Result<Json<Vec<S
     let users = db.fetch_users(&ids).await.unwrap_or_default();
     let mut out = Vec::with_capacity(grants.len());
     for grant in grants {
-        let open_sessions = db
+        let sessions: Vec<MemberSession> = db
             .fetch_staff_sessions_for_user(&grant.id, staff.now)
             .await?
-            .len();
+            .into_iter()
+            .map(MemberSession::from)
+            .collect();
         out.push(StaffMember {
             username: users
                 .iter()
@@ -493,7 +538,8 @@ async fn members(db: &State<Database>, staff: StaffContext) -> Result<Json<Vec<S
             roles: grant.roles,
             disabled: grant.disabled,
             expires_at: grant.expires_at,
-            open_sessions,
+            open_sessions: sessions.len(),
+            sessions,
             version: grant.version,
             updated_at: grant.updated_at,
             updated_by: grant.updated_by,
@@ -612,6 +658,7 @@ async fn set_member(
         disabled: false,
         expires_at: None,
         open_sessions: 0,
+        sessions: vec![],
         version: grant.version,
         updated_at: grant.updated_at,
         updated_by: grant.updated_by,
@@ -664,7 +711,8 @@ async fn disable_member(
 /// # End a staff member's sessions
 ///
 /// For a lost device or a suspected compromise. Protective, so no step-up;
-/// works on anyone, including yourself.
+/// works on anyone, including yourself. An Owner's sessions are ended only
+/// by an Owner, with a step-up.
 #[post("/members/<id>/revoke-sessions", data = "<data>")]
 async fn revoke_member_sessions(
     db: &State<Database>,
@@ -672,11 +720,24 @@ async fn revoke_member_sessions(
     id: &str,
     data: Json<DataReason>,
 ) -> Result<Json<usize>> {
-    staff.require(db, StaffPermission::StaffManage).await?;
+    staff.require_protective(db, StaffPermission::StaffManage).await?;
     let mut record = staff.record("staff.sessions.revoke", Some(StaffPermission::StaffManage));
     record.target_kind = Some("user".to_string());
     record.target_id = Some(id.to_string());
     record.reason = Some(reason(&data.reason)?);
+    let target_is_owner = db
+        .fetch_staff_grant(id)
+        .await?
+        .is_some_and(|g| g.is_owner(staff.now));
+    if target_is_owner {
+        if !staff.grant.is_owner(staff.now) {
+            record.summary = Some("owner target".to_string());
+            record_platform_audit(db, record, AuditOutcome::Denied).await?;
+            return Err(create_error!(NotPrivileged));
+        }
+        // not "stop the harm now" on an Owner: the full check
+        staff.require(db, StaffPermission::StaffManage).await?;
+    }
     record_platform_audit(db, record, AuditOutcome::Success).await?;
     Ok(Json(db.revoke_staff_sessions_for_user(id, staff.now).await?))
 }
