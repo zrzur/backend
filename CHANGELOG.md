@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Badges: Content Creator and the switch for applying (2026-11-24, badge plan phase 5)
+
+- **`[features.badge_applications] enabled`** (default off, reported as `badge_applications` in `GET /`): off, every applicant route under `/badges/programs/*` and `/badges/applications*` answers `FeatureDisabled`; the team still reviews and decides existing applications in the admin console.
+- **Content Creator** (`content_creator`, bit 268435456, program `content_creator`): for established creators of original content on any platform, no platform branding. The applicant names one channel or profile (platform in plain text, address, kind of content, links to works or a livestream schedule) and places a profile code in its description or a pinned post. Zrzur never calls the platform: a reviewer opens the channel, types the code they saw (compared with its SHA-256 hash, `POST /staff/badges/applications/<id>/creator/ownership`) and records the follower figure with its day, days active, works counted and the seven quality criteria (`…/creator/figures`). Approval needs every line settled: 100,000 followers on one platform seen within 30 days, 90 days active, 5 works in 90 days or a schedule, all seven criteria; then two people (the first approval opens the badge request through the gate). Reason codes per criterion; a refusal for missing information only has no reapply wait. A person taking the badge away in the console ends the application (`badge_removed`). Thresholds in `[api.badge_programs]` (`creator_*`).
+- «صانع محتوى» is Content Creator's alone; a test checks that no two active badges share a name in any language.
+
 ### Badges: applications for Partner, Verified Server and Verified Bot Developer (2026-11-24, badge plan phase 4)
 
 - **Applications** (`badge_applications`, `badge_evidence`, `badge_reviews`): draft → sent → in review → approved, refused or more information asked; withdrawn by the applicant; ended when the mark or badge ends. One open application per program and target, at most three open per person. Routes: `GET /badges/programs/targets`, `GET /badges/programs/<program>/eligibility?target=`, `GET /badges/applications/@me`, `POST /badges/applications`, `PATCH /badges/applications/<id>`, `POST .../evidence`, `.../ownership`, `.../ownership/verify`, `.../submit`, `.../withdraw`, `.../appeal`.
