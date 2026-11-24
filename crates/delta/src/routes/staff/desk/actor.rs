@@ -54,6 +54,9 @@ pub enum Expect<'a> {
     Modal(&'a str),
     /// A button whose custom id starts with this (`zd:confirm:`)
     ButtonPrefix(&'a str),
+    /// Any `/desk` command, or a button whose custom id starts with this
+    /// (`/staff/desk/run`: a command or one of its page buttons)
+    CommandOrButton(&'a str),
 }
 
 impl Expect<'_> {
@@ -78,6 +81,9 @@ impl Expect<'_> {
                         .custom_id
                         .as_deref()
                         .is_some_and(|id| id.starts_with(prefix) && id.len() > prefix.len())
+            }
+            Expect::CommandOrButton(prefix) => {
+                Expect::AnyCommand.matches(interaction) || Expect::ButtonPrefix(prefix).matches(interaction)
             }
             Expect::Button(id) => {
                 interaction.kind == InteractionType::Component

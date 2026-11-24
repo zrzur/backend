@@ -14,6 +14,7 @@
 //! [`StaffContext`]: super::StaffContext
 
 mod actor;
+mod lookup;
 mod overview;
 pub(crate) mod registry;
 mod run;

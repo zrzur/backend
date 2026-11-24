@@ -900,6 +900,8 @@ async fn desk_confirm_audit_failure_changes_nothing() {
         areas: vec!["overview".to_string()],
         lang: Lang::En,
         pending: Some(id.clone()),
+        page: 1,
+        origin: String::new(),
     };
     let record = staff_context.record("staff.desk.test.change", None);
     let result = execute(&s.harness.db, &staff_context, entry, &pending, &input, record, |_, change| async move {

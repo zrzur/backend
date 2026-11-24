@@ -151,6 +151,11 @@ pub struct DeskInput {
     pub lang: Lang,
     /// The pending action being confirmed (none for a reading command)
     pub pending: Option<String>,
+    /// The page of a list, from 1 (a `zd:page:` press asks for another)
+    pub page: u32,
+    /// The `/desk` command interaction this answer belongs to (page
+    /// buttons name it)
+    pub origin: String,
 }
 
 impl DeskInput {
@@ -352,11 +357,17 @@ fn test_commands() -> (&'static [DeskCommand], &'static [DeskGroup]) {
 
 /// Every registered command, in tree order
 pub fn entries() -> impl Iterator<Item = &'static DeskCommand> {
-    ENTRIES.iter().chain(test_commands().0.iter())
+    ENTRIES
+        .iter()
+        .chain(super::lookup::ENTRIES.iter())
+        .chain(test_commands().0.iter())
 }
 
 fn groups() -> impl Iterator<Item = &'static DeskGroup> {
-    GROUPS.iter().chain(test_commands().1.iter())
+    GROUPS
+        .iter()
+        .chain(super::lookup::GROUPS.iter())
+        .chain(test_commands().1.iter())
 }
 
 /// The command `/desk [group] name`

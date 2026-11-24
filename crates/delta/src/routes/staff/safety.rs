@@ -346,14 +346,16 @@ pub async fn decide(
 ///
 /// Actions, appeals and reports concerning one account.
 #[get("/safety/users/<id>")]
-pub async fn user_history(
-    db: &State<Database>,
-    staff: StaffContext,
-    id: &str,
-) -> Result<Json<SafetyUserHistory>> {
+pub async fn user_history(db: &State<Database>, staff: StaffContext, id: &str) -> Result<Json<SafetyUserHistory>> {
+    user_history_core(db, &staff, id).await.map(Json)
+}
+
+/// The console's `user_history`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn user_history_core(db: &Database, staff: &StaffContext, id: &str) -> Result<SafetyUserHistory> {
     staff.require(db, StaffPermission::ReportsRead).await?;
     db.fetch_user(id).await?;
-    user_history_of(db, id).await.map(Json)
+    user_history_of(db, id).await
 }
 
 /// Action taken from the user page

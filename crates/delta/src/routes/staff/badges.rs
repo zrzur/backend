@@ -40,8 +40,14 @@ pub async fn badge_catalogue(db: &State<Database>, staff: StaffContext) -> Resul
 /// Grants, badge history and which badges you may give them now.
 #[get("/users/<id>/badges")]
 pub async fn user_badges(db: &State<Database>, staff: StaffContext, id: &str) -> Result<Json<AdminUserBadges>> {
+    user_badges_core(db, &staff, id).await.map(Json)
+}
+
+/// The console's `user_badges`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn user_badges_core(db: &Database, staff: &StaffContext, id: &str) -> Result<AdminUserBadges> {
     staff.require(db, StaffPermission::UsersRead).await?;
-    user_record(db, &staff.user.id, rights(&staff), id).await.map(Json)
+    user_record(db, &staff.user.id, rights(&staff), id).await
 }
 
 #[derive(Deserialize)]

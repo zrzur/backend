@@ -32,13 +32,14 @@ use revolt_database::{
     record_platform_audit, staff_now, AuditOutcome, AuditRecord, Database, DeskPending, Interaction,
     InteractionSource, User,
 };
-use revolt_models::v0::{ButtonStyle, Component, ComponentBlock};
+use revolt_models::v0::{ButtonStyle, Component, ComponentBlock, InteractionType};
 use revolt_result::{create_error, ErrorType, Result};
 use rocket::{serde::json::Json, State};
 use ulid::Ulid;
 
 use super::super::{audited::audited, StaffContext};
 use super::actor::{desk_actor, DataDeskInteraction, Expect};
+use super::lookup::PAGE_PREFIX;
 use super::registry::{self, texts, DeskCommand, DeskCommandTree, DeskInput, Lang};
 use super::view::{DeskButton, DeskButtonStyle, DeskView};
 
@@ -58,14 +59,64 @@ pub async fn commands(user: User) -> Result<Json<DeskCommandTree>> {
     Ok(Json(registry::desk_tree(&settings)))
 }
 
+/// The command a page press belongs to, and the page it asks for. The
+/// press must name a `/desk` command of the same person and the desk bot,
+/// and be made on an answer of that command or of an earlier page press of
+/// it. The page number is bounded; anything else is refused.
+async fn page_origin(db: &Database, settings: &FeaturesStaffDesk, pressed: &Interaction) -> Result<(Interaction, u32)> {
+    let refuse = || create_error!(InvalidOperation);
+    let rest = pressed
+        .custom_id
+        .as_deref()
+        .and_then(|custom| custom.strip_prefix(PAGE_PREFIX))
+        .ok_or_else(refuse)?;
+    let (origin_id, page) = rest.rsplit_once(':').ok_or_else(refuse)?;
+    let page: u32 = page.parse().ok().filter(|p| (1..=1000).contains(p)).ok_or_else(refuse)?;
+    let origin = db
+        .fetch_interaction(origin_id)
+        .await
+        .map_err(|_| create_error!(InteractionExpired))?;
+    if origin.is_expired() {
+        return Err(create_error!(InteractionExpired));
+    }
+    if origin.kind != InteractionType::Command
+        || origin.command_name.as_deref() != Some(super::COMMAND)
+        || origin.application_id != settings.bot
+        || origin.user_id != pressed.user_id
+    {
+        return Err(refuse());
+    }
+    let Some(InteractionSource::Ephemeral { interaction_id, .. }) = &pressed.source else {
+        return Err(refuse());
+    };
+    if interaction_id != &origin.id {
+        let parent = db.fetch_interaction(interaction_id).await.map_err(|_| refuse())?;
+        let of_origin = format!("{PAGE_PREFIX}{}:", origin.id);
+        let same = parent.user_id == pressed.user_id
+            && parent.application_id == settings.bot
+            && parent.custom_id.as_deref().is_some_and(|custom| custom.starts_with(&of_origin));
+        if !same {
+            return Err(refuse());
+        }
+    }
+    Ok((origin, page))
+}
+
 /// # Desk: run a command
 ///
-/// From any `/desk` command of the registry. Reading commands answer with
+/// From any `/desk` command of the registry, or a page button of a list it
+/// answered (`zd:page:<command>:<page>`). Reading commands answer with
 /// their view; changing ones with a confirmation card.
 #[post("/desk/run", data = "<data>")]
 pub async fn run(db: &State<Database>, user: User, data: Json<DataDeskInteraction>) -> Result<Json<DeskView>> {
-    let (staff, interaction) = desk_actor(db, &user, &data, Expect::AnyCommand, PATH_RUN).await?;
+    let (staff, pressed) = desk_actor(db, &user, &data, Expect::CommandOrButton(PAGE_PREFIX), PATH_RUN).await?;
     let settings = super::settings(&user).await?;
+    // a page press stands for its command: every check below is on that
+    let (interaction, page) = if pressed.kind == InteractionType::Component {
+        page_origin(db, &settings, &pressed).await?
+    } else {
+        (pressed, 1)
+    };
     if !registry::registered_as_offered(db, &settings, &interaction).await {
         let mut record = staff.record("staff.desk.command", None);
         record.summary = Some("desk: command not as offered".to_string());
@@ -83,8 +134,14 @@ pub async fn run(db: &State<Database>, user: User, data: Json<DataDeskInteractio
         areas: settings.areas.clone(),
         lang: Lang::from_locale(interaction.locale.as_deref()),
         pending: None,
+        page,
+        origin: interaction.id.clone(),
     };
     if entry.changes {
+        // a changing command has no pages: its card is made once
+        if page != 1 {
+            return Err(create_error!(InvalidOperation));
+        }
         return propose(db, &staff, &settings, &interaction, entry, input).await.map(Json);
     }
     registry::dispatch(db, &staff, entry, &input).await.map(|view| Json(view.finish()))
@@ -331,6 +388,8 @@ pub async fn confirm(db: &State<Database>, user: User, data: Json<DataDeskIntera
         areas: settings.areas.clone(),
         lang: Lang::from_locale(pending.locale.as_deref()),
         pending: Some(pending.id.clone()),
+        page: 1,
+        origin: pending.card_interaction.clone(),
     };
     let mut record = base();
     record.summary = Some(format!("desk: confirmed {}", pending.action));

@@ -244,13 +244,13 @@ fn limit(limit: Option<usize>) -> usize {
 /// Newest first (`before` is a user id cursor), or a search by id, username
 /// or display name. Emails only with `platform.users.pii.read`.
 #[get("/users?<q>&<before>&<limit>")]
-pub async fn users(
-    db: &State<Database>,
-    staff: StaffContext,
-    q: Option<&str>,
-    before: Option<&str>,
-    limit: Option<usize>,
-) -> Result<Json<Vec<UserRow>>> {
+pub async fn users(db: &State<Database>, staff: StaffContext, q: Option<&str>, before: Option<&str>, limit: Option<usize>) -> Result<Json<Vec<UserRow>>> {
+    users_core(db, &staff, q, before, limit).await.map(Json)
+}
+
+/// The console's `users`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn users_core(db: &Database, staff: &StaffContext, q: Option<&str>, before: Option<&str>, limit: Option<usize>) -> Result<Vec<UserRow>> {
     staff.require(db, StaffPermission::UsersRead).await?;
     let limit = self::limit(limit);
     let found = match q.map(str::trim).filter(|q| !q.is_empty()) {
@@ -279,7 +279,7 @@ pub async fn users(
         record.summary = Some(format!("{} users with email", rows.len()));
         record_platform_audit(db, record, AuditOutcome::Success).await?;
     }
-    Ok(Json(rows))
+    Ok(rows)
 }
 
 #[derive(Serialize)]
@@ -306,6 +306,12 @@ pub struct UserDetail {
 /// # One user
 #[get("/users/<id>")]
 pub async fn user(db: &State<Database>, staff: StaffContext, id: &str) -> Result<Json<UserDetail>> {
+    user_core(db, &staff, id).await.map(Json)
+}
+
+/// The console's `user`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn user_core(db: &Database, staff: &StaffContext, id: &str) -> Result<UserDetail> {
     staff.require(db, StaffPermission::UsersRead).await?;
     let user = db.fetch_user(id).await?;
     let mut row = user_row(&user);
@@ -323,7 +329,7 @@ pub async fn user(db: &State<Database>, staff: StaffContext, id: &str) -> Result
             record_platform_audit(db, record, AuditOutcome::Success).await?;
         }
     }
-    Ok(Json(UserDetail {
+    Ok(UserDetail {
         online: revolt_presence::is_online(&user.id).await,
         servers: db.fetch_server_count(&user.id).await.unwrap_or(0),
         sessions: db.fetch_sessions(&user.id).await.map(|s| s.len()).unwrap_or(0),
@@ -340,7 +346,7 @@ pub async fn user(db: &State<Database>, staff: StaffContext, id: &str) -> Result
             .unwrap_or(0),
         suspended_until: user.suspended_until.map(|t| t.format().to_string()),
         user: row,
-    }))
+    })
 }
 
 /// # Sign a user out everywhere
