@@ -295,7 +295,7 @@ async fn used(s: &Stage, id: &str) -> bool {
 }
 
 /// The presser's own context, as the desk builds it
-async fn context_of(s: &Stage, who: &Person) -> StaffContext {
+pub(super) async fn context_of(s: &Stage, who: &Person) -> StaffContext {
     let user = s.harness.db.fetch_user(&who.user.id).await.unwrap();
     let session = s.desk_sessions(who).await.remove(0);
     let grant = s

@@ -93,7 +93,7 @@ pub struct OfficialOverview {
     pub requests: Vec<OfficialRequestView>,
 }
 
-fn status_of(request: &OfficialMarkRequest, now: i64) -> &'static str {
+pub(super) fn status_of(request: &OfficialMarkRequest, now: i64) -> &'static str {
     match request.status {
         OfficialMarkStatus::Pending if now >= request.expires_at => "Expired",
         OfficialMarkStatus::Pending => "Pending",

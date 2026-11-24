@@ -336,6 +336,11 @@ pub(super) async fn plugin_decide_core(
     id: &str,
     data: DataStaffPluginDecision,
 ) -> Result<serde_json::Value> {
+    // the plugin switch, like the console route's guard: a caller without
+    // the guard (Zrzur Desk's confirmation) is refused here
+    if !revolt_config::config().await.features.plugins_enabled {
+        return Err(create_error!(PluginsDisabled));
+    }
     staff
         .require_step_up(db, StaffPermission::ReportsResolve)
         .await?;

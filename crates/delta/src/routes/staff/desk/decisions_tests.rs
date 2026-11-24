@@ -109,12 +109,6 @@ async fn desk_reviews_run_the_consoles_actions() {
             "staff.bot.verification",
         ),
         (
-            "bot",
-            "unverify",
-            json!([text("bot", &bot.id), text("reason", "Verified by mistake")]),
-            "staff.bot.unverify",
-        ),
-        (
             "creator",
             "change",
             json!([
@@ -143,16 +137,6 @@ async fn desk_reviews_run_the_consoles_actions() {
                 text("reason", "Official partner")
             ]),
             "staff.badge.grant",
-        ),
-        (
-            "badge",
-            "remove",
-            json!([
-                user_opt(&someone.id),
-                text("badge", "partner"),
-                text("reason", "Partnership ended")
-            ]),
-            "staff.badge.revoke",
         ),
     ] {
         let c = card(&s, &owner, &command, group, name, options).await;
@@ -198,7 +182,7 @@ async fn desk_reviews_run_the_consoles_actions() {
         .into_iter()
         .find(|w| w.pattern == "badword")
         .unwrap();
-    let c = card(
+    let word_card = card(
         &s,
         &owner,
         &command,
@@ -207,8 +191,28 @@ async fn desk_reviews_run_the_consoles_actions() {
         json!([text("word", &word.id), text("reason", "Too broad")]),
     )
     .await;
-    assert_eq!(confirm(&s, &owner, &c).await.0, Status::Ok);
-    recorded(&s, &owner, "platform.words.remove").await;
+    let unverify = card(
+        &s,
+        &owner,
+        &command,
+        "bot",
+        "unverify",
+        json!([text("bot", &bot.id), text("reason", "Verified by mistake")]),
+    )
+    .await;
+    let badge_remove = card(
+        &s,
+        &owner,
+        &command,
+        "badge",
+        "remove",
+        json!([
+            user_opt(&someone.id),
+            text("badge", "partner"),
+            text("reason", "Partnership ended")
+        ]),
+    )
+    .await;
 
     // nobody decides on their own design
     let own = design(&s, &owner.user.id).await;
@@ -289,7 +293,16 @@ async fn desk_reviews_run_the_consoles_actions() {
         ]),
     )
     .await;
-    for c in [&design_card, &remove, &revoke, &staff_badge, &propose] {
+    for c in [
+        &design_card,
+        &remove,
+        &revoke,
+        &staff_badge,
+        &propose,
+        &word_card,
+        &unverify,
+        &badge_remove,
+    ] {
         assert!(c.danger(), "{}", c.view);
         let (_, body) = confirm(&s, &owner, c).await;
         assert_eq!(error_type(&body), "NotElevated", "{body}");
@@ -301,6 +314,9 @@ async fn desk_reviews_run_the_consoles_actions() {
         (&revoke, "staff.creator.change"),
         (&staff_badge, "staff.badge.grant"),
         (&propose, "staff.official.propose"),
+        (&word_card, "platform.words.remove"),
+        (&unverify, "staff.bot.unverify"),
+        (&badge_remove, "staff.badge.revoke"),
     ] {
         let (status, body) = confirm(&s, &owner, c).await;
         assert_eq!(status, Status::Ok, "{record}: {body}");
@@ -390,4 +406,483 @@ async fn desk_plugin_review_follows_the_switch() {
     let command = register_review(&s).await;
     let offered = command.options.iter().any(|o| o.name == "plugin");
     assert_eq!(offered, super::registry::plugins_on().await);
+}
+
+// ---- review fixes ----
+
+fn flag(name: &str, value: bool) -> Value {
+    json!({ "type": "Boolean", "name": name, "value": value })
+}
+
+/// The card is refused at `/run`; gives the error
+async fn refused_card(
+    s: &Stage,
+    who: &super::tests::Person,
+    command: &ApplicationCommand,
+    group: &str,
+    name: &str,
+    options: Value,
+) -> String {
+    let pressed = press(s, who, command, group, name, options).await;
+    let (status, body) = s.hand("run", &pressed).await;
+    assert_ne!(status, Status::Ok, "{group} {name}: {body}");
+    error_type(&body).to_string()
+}
+
+/// Ask for a Discover listing of `server` as its owner
+async fn list_on_discover(s: &Stage, session: &str, server: &str) {
+    let response = s
+        .harness
+        .client
+        .put(format!("/servers/{server}/discover"))
+        .header(Header::new("x-session-token", session.to_string()))
+        .header(ContentType::JSON)
+        .body(r##"{"tags":["Gaming"],"category":"gaming","language":"ar"}"##)
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Ok);
+}
+
+/// A plugin card names the release, its plugin, publisher and risk; an
+/// unknown id is refused at the card (plugins are on in the test config)
+#[rocket::async_test]
+async fn desk_plugin_card_reads_the_target() {
+    let s = stage().await;
+    assert!(super::registry::plugins_on().await);
+    all_areas(&s);
+    let owner = s.person(vec![StaffRole::Owner]).await;
+    s.sign_in(&owner, -1).await;
+    let command = register_review(&s).await;
+    let (_, _, publisher) = s.harness.new_user().await;
+    let plugin_id = format!(
+        "dev.example.p{}",
+        ulid::Ulid::new().to_string().to_lowercase()
+    );
+    let release_id = ulid::Ulid::new().to_string();
+    let plugin: revolt_database::Plugin = serde_json::from_value(json!({
+        "_id": plugin_id, "publisher_id": publisher.id, "name": "Focus Timer",
+        "summary": "A timer", "category": "productivity", "status": "Draft",
+        "created_at": 1, "updated_at": 1
+    }))
+    .unwrap();
+    s.harness.db.insert_plugin(&plugin).await.unwrap();
+    let release: revolt_database::PluginRelease = serde_json::from_value(json!({
+        "_id": release_id, "plugin_id": plugin_id, "version": "1.2.0", "manifest": "{}",
+        "package_sha256": "00", "size": 2, "permissions": [], "risk": "High",
+        "entrypoint": "declarative", "platforms": ["web"], "min_app_version": "1.0.0",
+        "status": "PendingReview", "submitted_by": publisher.id, "submitted_at": 1
+    }))
+    .unwrap();
+    s.harness.db.insert_plugin_release(&release).await.unwrap();
+
+    let unknown = refused_card(
+        &s,
+        &owner,
+        &command,
+        "plugin",
+        "review",
+        json!([text("id", "01UNKNOWN"), text("action", "approve")]),
+    )
+    .await;
+    assert_eq!(unknown, "NotFound");
+    let c = card(
+        &s,
+        &owner,
+        &command,
+        "plugin",
+        "review",
+        json!([
+            text("id", &release_id),
+            text("action", "reject"),
+            text("reason", "Unsafe code")
+        ]),
+    )
+    .await;
+    let content = c.view["content"].as_str().unwrap().to_string();
+    for part in [
+        "Focus Timer",
+        "1.2.0",
+        publisher.username.as_str(),
+        "risk high",
+    ] {
+        assert!(content.contains(part), "{part}: {content}");
+    }
+    step_up(&s, &owner, 0).await;
+    let (status, body) = confirm(&s, &owner, &c).await;
+    assert_eq!(status, Status::Ok, "{body}");
+    recorded(&s, &owner, "staff.plugin.review").await;
+}
+
+/// Plugins switched off after a card was made: the confirmation runs the
+/// core, and the core itself refuses. The test config can be overwritten
+/// only once per process, so the switch is off from the start and the
+/// confirmation's core is called as the desk calls it.
+#[rocket::async_test]
+async fn desk_plugin_core_checks_the_switch_itself() {
+    revolt_config::overwrite_config(|config| {
+        config.features.plugins_enabled = false;
+    })
+    .await;
+    let s = stage().await;
+    all_areas(&s);
+    let owner = s.person(vec![StaffRole::Owner]).await;
+    s.sign_in(&owner, -1).await;
+    step_up(&s, &owner, 0).await;
+    let staff = super::framework_tests::context_of(&s, &owner).await;
+    let result = super::super::review::plugin_decide_core(
+        &s.harness.db,
+        &staff,
+        "01UNKNOWN",
+        super::super::review::DataStaffPluginDecision {
+            action: "reject".to_string(),
+            reason: Some("Unsafe code".to_string()),
+            verify_publisher: false,
+            acknowledge_high_risk: false,
+        },
+    )
+    .await;
+    let error = result.err().expect("refused while plugins are off");
+    assert_eq!(format!("{:?}", error.error_type), "PluginsDisabled");
+}
+
+/// Verification: a decided request and a denial without a note are
+/// refused at the card; the card names the privileged intents and their
+/// approval needs a fresh code
+#[rocket::async_test]
+async fn desk_verification_card_checks_like_the_console() {
+    let s = stage().await;
+    all_areas(&s);
+    let owner = s.person(vec![StaffRole::Owner]).await;
+    s.sign_in(&owner, -1).await;
+    let command = register_review(&s).await;
+    let (_, bot_owner_session, bot_owner) = s.harness.new_user().await;
+    let (bot, _) = s.harness.new_bot(&bot_owner).await;
+    let applied = as_user(
+        &s,
+        &bot_owner_session.token,
+        &format!("/bots/{}/verification", bot.id),
+        json!({ "statement": "Moderation helper used in 40 Arabic communities.", "website": "https://example.org", "privacy_policy_url": "https://example.org/privacy", "terms_of_service_url": "https://example.org/terms", "intents": 1024 }),
+    )
+    .await;
+    let request = applied["request"]["_id"].as_str().unwrap().to_string();
+
+    let denied = refused_card(
+        &s,
+        &owner,
+        &command,
+        "verification",
+        "decide",
+        json!([text("request", &request), text("decision", "deny")]),
+    )
+    .await;
+    assert_eq!(denied, "FailedValidation");
+    let c = card(
+        &s,
+        &owner,
+        &command,
+        "verification",
+        "decide",
+        json!([text("request", &request), text("decision", "approve")]),
+    )
+    .await;
+    assert!(
+        c.view["content"]
+            .as_str()
+            .unwrap()
+            .contains("message content"),
+        "{}",
+        c.view
+    );
+    assert!(c.danger());
+    let (_, body) = confirm(&s, &owner, &c).await;
+    assert_eq!(error_type(&body), "NotElevated", "{body}");
+    step_up(&s, &owner, 0).await;
+    let (status, body) = confirm(&s, &owner, &c).await;
+    assert_eq!(status, Status::Ok, "{body}");
+    // decided: no second card
+    let again = refused_card(
+        &s,
+        &owner,
+        &command,
+        "verification",
+        "decide",
+        json!([text("request", &request), text("decision", "approve")]),
+    )
+    .await;
+    assert_eq!(again, "InvalidOperation");
+}
+
+/// Zrzur Desk's own rule: no decision about yourself (creator, badges,
+/// your own Discover listing), at the card and again at the confirmation
+#[rocket::async_test]
+async fn desk_refuses_decisions_about_yourself() {
+    let s = stage().await;
+    all_areas(&s);
+    let owner = s.person(vec![StaffRole::Owner]).await;
+    s.sign_in(&owner, -1).await;
+    let command = register_review(&s).await;
+    let me = owner.user.id.clone();
+    let (own, _) = s.harness.new_server(&owner.user).await;
+    list_on_discover(&s, &owner.session.token, &own.id).await;
+    for (group, name, options) in [
+        (
+            "creator",
+            "change",
+            json!([
+                user_opt(&me),
+                text("action", "grant"),
+                text("reason", "Makes effects")
+            ]),
+        ),
+        (
+            "badge",
+            "give",
+            json!([
+                user_opt(&me),
+                text("badge", "partner"),
+                text("reason", "Partner")
+            ]),
+        ),
+        (
+            "discover",
+            "decide",
+            json!([
+                text("kind", "server"),
+                text("id", &own.id),
+                text("decision", "Approve")
+            ]),
+        ),
+    ] {
+        let error = refused_card(&s, &owner, &command, group, name, options).await;
+        assert_eq!(error, "NotPrivileged", "{group} {name}");
+    }
+
+    // a listing that became yours after the card
+    let (_, session, someone) = s.harness.new_user().await;
+    let (theirs, _) = s.harness.new_server(&someone).await;
+    list_on_discover(&s, &session.token, &theirs.id).await;
+    let c = card(
+        &s,
+        &owner,
+        &command,
+        "discover",
+        "decide",
+        json!([
+            text("kind", "server"),
+            text("id", &theirs.id),
+            text("decision", "Approve")
+        ]),
+    )
+    .await;
+    let mut server = s.harness.db.fetch_server(&theirs.id).await.unwrap();
+    server
+        .update(
+            &s.harness.db,
+            revolt_database::PartialServer {
+                owner: Some(me.clone()),
+                ..Default::default()
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
+    let (_, body) = confirm(&s, &owner, &c).await;
+    assert_eq!(error_type(&body), "InvalidOperation", "{body}");
+    let (action, outcome, _) = s.records(&owner).await.pop().unwrap();
+    assert_eq!(
+        (action.as_str(), outcome.as_str()),
+        ("staff.desk.discover.decide", "Denied")
+    );
+}
+
+/// Refusals at the card write the console's own Denied records; the
+/// cores' cheap checks answer at the card
+#[rocket::async_test]
+async fn desk_card_refusals_match_the_console() {
+    let s = stage().await;
+    all_areas(&s);
+    let owner = s.person(vec![StaffRole::Owner]).await;
+    let senior = s.person(vec![StaffRole::SeniorSupport]).await;
+    s.sign_in(&owner, -1).await;
+    s.sign_in(&senior, -1).await;
+    let command = register_review(&s).await;
+    let (_, _, someone) = s.harness.new_user().await;
+
+    // a privileged badge by someone without the Owner role
+    let error = refused_card(
+        &s,
+        &senior,
+        &command,
+        "badge",
+        "give",
+        json!([
+            user_opt(&someone.id),
+            text("badge", "staff"),
+            text("reason", "Joined the team")
+        ]),
+    )
+    .await;
+    assert_eq!(error, "NotPrivileged");
+    assert_eq!(
+        s.records(&senior).await.pop().unwrap(),
+        (
+            "staff.badge.grant".to_string(),
+            "Denied".to_string(),
+            "staff (owner only)".to_string()
+        )
+    );
+
+    // your own proposal: refused and recorded like the console
+    let c = card(
+        &s,
+        &owner,
+        &command,
+        "official",
+        "propose",
+        json!([
+            user_opt(&someone.id),
+            text("action", "give"),
+            text("reason", "A partner account")
+        ]),
+    )
+    .await;
+    step_up(&s, &owner, 0).await;
+    assert_eq!(confirm(&s, &owner, &c).await.0, Status::Ok);
+    let requests = s.harness.db.fetch_official_mark_requests().await.unwrap();
+    let request = requests.iter().find(|r| r.user_id == someone.id).unwrap();
+    let error = refused_card(
+        &s,
+        &owner,
+        &command,
+        "official",
+        "confirm",
+        json!([text("request", &request.id)]),
+    )
+    .await;
+    assert_eq!(error, "NotPrivileged");
+    let (action, outcome, _) = s.records(&owner).await.pop().unwrap();
+    assert_eq!(
+        (action.as_str(), outcome.as_str()),
+        ("staff.official.confirm", "Denied")
+    );
+
+    // the propose checks: already open, no effect, a bot
+    let (_, _, plain) = s.harness.new_user().await;
+    let (_, bot_user) = s.harness.new_bot(&plain).await;
+    for (user, action, expected) in [
+        (&someone.id, "give", "InvalidOperation"),
+        (&plain.id, "remove", "NoEffect"),
+        (&bot_user.id, "give", "IsBot"),
+    ] {
+        let error = refused_card(
+            &s,
+            &owner,
+            &command,
+            "official",
+            "propose",
+            json!([
+                user_opt(user),
+                text("action", action),
+                text("reason", "A partner account")
+            ]),
+        )
+        .await;
+        assert_eq!(error, expected, "{action}");
+    }
+
+    // Discover: no such request; a denial needs a reason
+    let (_, session, lister) = s.harness.new_user().await;
+    let (listed, _) = s.harness.new_server(&lister).await;
+    let error = refused_card(
+        &s,
+        &owner,
+        &command,
+        "discover",
+        "decide",
+        json!([
+            text("kind", "server"),
+            text("id", &listed.id),
+            text("decision", "Approve")
+        ]),
+    )
+    .await;
+    assert_eq!(error, "NotFound");
+    list_on_discover(&s, &session.token, &listed.id).await;
+    let error = refused_card(
+        &s,
+        &owner,
+        &command,
+        "discover",
+        "decide",
+        json!([
+            text("kind", "server"),
+            text("id", &listed.id),
+            text("decision", "Deny"),
+            text("reason", "no")
+        ]),
+    )
+    .await;
+    assert_eq!(error, "FailedValidation");
+
+    // "featured" only with an approval; the design's kind in words
+    let deny = card(
+        &s,
+        &owner,
+        &command,
+        "discover",
+        "decide",
+        json!([
+            text("kind", "server"),
+            text("id", &listed.id),
+            text("decision", "Deny"),
+            flag("featured", true),
+            text("reason", "Not a gaming server")
+        ]),
+    )
+    .await;
+    assert!(
+        !deny.view["content"].as_str().unwrap().contains("Featured"),
+        "{}",
+        deny.view
+    );
+    let approve = card(
+        &s,
+        &owner,
+        &command,
+        "discover",
+        "decide",
+        json!([
+            text("kind", "server"),
+            text("id", &listed.id),
+            text("decision", "Approve"),
+            flag("featured", true)
+        ]),
+    )
+    .await;
+    assert!(
+        approve.view["content"]
+            .as_str()
+            .unwrap()
+            .contains("Featured: yes"),
+        "{}",
+        approve.view
+    );
+    let design_id = design(&s, &someone.id).await;
+    let c = card(
+        &s,
+        &owner,
+        &command,
+        "design",
+        "review",
+        json!([text("design", &design_id), text("action", "approve")]),
+    )
+    .await;
+    assert!(
+        c.view["content"]
+            .as_str()
+            .unwrap()
+            .contains("profile effect"),
+        "{}",
+        c.view
+    );
 }

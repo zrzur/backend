@@ -11,10 +11,13 @@
 //! review card shows the design's name, kind and creator instead.
 
 use futures::future::BoxFuture;
-use revolt_database::{BadgeGrantRule, Database, StaffPermission, User, badge_definition};
+use revolt_database::{
+    AuditOutcome, BadgeGrantRule, BotVerificationStatus, Database, DiscoverRequestType, PluginRisk,
+    StaffPermission, User, badge_definition, is_seeded_official, record_platform_audit,
+};
 use revolt_models::v0::{
-    CommandOptionType, DataDiscoverDecision, DataPlatformWord, InteractionDataOption,
-    InteractionOptionValue,
+    CommandOptionType, DataDiscoverDecision, DataPlatformWord, GatewayIntents,
+    InteractionDataOption, InteractionOptionValue,
 };
 use revolt_result::{Result, create_error};
 use serde::de::DeserializeOwned;
@@ -27,7 +30,7 @@ use super::super::bots::{
 use super::super::creators::{DataCreatorChange, change_core};
 use super::super::discover::decide_core;
 use super::super::official::{
-    DataOfficialProposal, DataOfficialRefusal, confirm_core, propose_core, refuse_core,
+    DataOfficialProposal, DataOfficialRefusal, confirm_core, propose_core, refuse_core, status_of,
 };
 use super::super::review::{
     DataStaffDesignDecision, DataStaffPluginDecision, design_decide_core, plugin_decide_core,
@@ -142,11 +145,42 @@ mod w {
         "يقرأ المبدع: {reason}",
         "Die Creator lesen: {reason}",
     );
-    pub const PLUGIN: Text = t(
-        "Decides {target} ({id}): {decision}.",
-        "يبت في {target} ({id}): {decision}.",
-        "Entscheidet {target} ({id}): {decision}.",
+    pub const PLUGIN_RELEASE: Text = t(
+        "Decides the release {version} ({id}) of the plugin {name} by {publisher}, risk {risk}: {decision}.",
+        "يبت في النسخة {version} ({id}) من الإضافة {name} للناشر {publisher}، والخطورة {risk}: {decision}.",
+        "Entscheidet die Version {version} ({id}) des Plugins {name} von {publisher}, Risiko {risk}: {decision}.",
     );
+    pub const PLUGIN_PLUGIN: Text = t(
+        "Decides the plugin {name} ({id}), version {version}, by {publisher}: {decision}.",
+        "يبت في الإضافة {name} ({id})، النسخة {version}، للناشر {publisher}: {decision}.",
+        "Entscheidet das Plugin {name} ({id}), Version {version}, von {publisher}: {decision}.",
+    );
+    pub const PLUGIN_PUBLISHER: Text = t(
+        "Decides the publisher {publisher}: {decision}.",
+        "يبت في الناشر {publisher}: {decision}.",
+        "Entscheidet über die Herausgeber {publisher}: {decision}.",
+    );
+    pub const RISK_LOW: Text = t("low", "منخفضة", "niedrig");
+    pub const RISK_MEDIUM: Text = t("medium", "متوسطة", "mittel");
+    pub const RISK_HIGH: Text = t("high", "عالية", "hoch");
+    pub const INTENTS: Text = t(
+        "It asks for the privileged intents {intents}; approving grants them.",
+        "يطلب صلاحيات البوابة المميّزة: {intents}؛ والقبول يمنحها.",
+        "Er fragt nach den privilegierten Intents {intents}; die Annahme gewährt sie.",
+    );
+    pub const MESSAGE_CONTENT: Text = t("message content", "محتوى الرسائل", "Nachrichteninhalte");
+    pub const SERVER_MEMBERS: Text = t("server members", "أعضاء السيرفرات", "Servermitglieder");
+    pub const PRESENCE: Text = t("presence", "حالة الاتصال", "Online-Status");
+    pub const DECORATION: Text = t(
+        "avatar decoration",
+        "زخرفة الصورة الرمزية",
+        "Avatar-Dekoration",
+    );
+    pub const NAMEPLATE: Text = t("nameplate", "لوحة الاسم", "Namensschild");
+    pub const EFFECT: Text = t("profile effect", "تأثير الملف الشخصي", "Profileffekt");
+    pub const FRAME: Text = t("profile frame", "إطار الملف الشخصي", "Profilrahmen");
+    /// Zrzur Desk's own rule, stricter than the console
+    pub const ABOUT_YOURSELF: &str = "a decision about yourself";
     pub const REASON: Text = t("Reason: {reason}", "السبب: {reason}", "Grund: {reason}");
     pub const HIGH_RISK: Text = t(
         "A high-risk release is approved knowingly.",
@@ -327,11 +361,40 @@ const CREATOR_DONE: &[Show] = &[show("/user/username", w::USER), show("/creator"
 
 // ---- Discover ----
 
-async fn discover_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Result<Prepared> {
+/// Zrzur Desk's own rule (the console has none): nobody decides about
+/// their own server's or bot's listing
+async fn own_listing(db: &Database, staff: &StaffContext, kind: &str, id: &str) -> bool {
+    let owner = match kind {
+        "server" => db.fetch_server(id).await.map(|s| s.owner).ok(),
+        "bot" => db.fetch_bot(id).await.map(|b| b.owner).ok(),
+        _ => None,
+    };
+    owner.as_deref() == Some(staff.user.id.as_str())
+}
+
+async fn discover_card(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<Prepared> {
     let lang = input.lang;
     let kind = required(input, "kind")?;
     let id = required(input, "id")?;
     let decision = required(input, "decision")?;
+    let request_type = match kind.as_str() {
+        "server" => DiscoverRequestType::Server,
+        "bot" => DiscoverRequestType::Bot,
+        _ => return Err(create_error!(InvalidOperation)),
+    };
+    // the console core's own checks, before a card is made
+    if matches!(decision.as_str(), "Deny" | "Remove")
+        && optional(input, "reason").is_none_or(|r| r.chars().count() < 3)
+    {
+        return Err(revolt_result::failed_validation(vec![
+            revolt_result::ValidationProblem::length("reason", 3, 512),
+        ]));
+    }
+    db.fetch_discover_request_by_item_id(request_type, &id)
+        .await?;
+    if own_listing(db, staff, &kind, &id).await {
+        return Err(create_error!(NotPrivileged));
+    }
     let name = match kind.as_str() {
         "server" => db
             .fetch_server(&id)
@@ -353,7 +416,8 @@ async fn discover_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Re
             ("decision", &named(&DECISION, &decision, lang)),
         ],
     )];
-    if let Some(featured) = input.boolean("featured") {
+    // featured goes with an approval only
+    if let Some(featured) = input.boolean("featured").filter(|_| decision == "Approve") {
         lines.push(w::FEATURED.fill(lang, &[("on", yes_no(featured, lang))]));
     }
     if let Some(reason) = optional(input, "reason") {
@@ -366,16 +430,42 @@ async fn discover_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Re
 }
 
 async fn discover_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
+    let decision = required(input, "decision")?;
     let data = DataDiscoverDecision {
-        decision: Some(parse(&required(input, "decision")?)?),
+        featured: input.boolean("featured").filter(|_| decision == "Approve"),
+        decision: Some(parse(&decision)?),
         reason: optional(input, "reason"),
-        featured: input.boolean("featured"),
     };
     let id = required(input, "id")?;
     decide_core(db, staff, &required(input, "kind")?, &id, data).await?;
     Ok(DeskView::new(w::DONE.get(input.lang)).field(w::ID.get(input.lang), id))
 }
+async fn discover_self(
+    db: &Database,
+    staff: &StaffContext,
+    input: &DeskInput,
+) -> Result<Option<&'static str>> {
+    let (kind, id) = (required(input, "kind")?, required(input, "id")?);
+    Ok(own_listing(db, staff, &kind, &id)
+        .await
+        .then_some(w::ABOUT_YOURSELF))
+}
+
+/// Zrzur Desk's own rule: no change about yourself (creator, badges)
+async fn user_self(
+    _: &Database,
+    staff: &StaffContext,
+    input: &DeskInput,
+) -> Result<Option<&'static str>> {
+    Ok(
+        (input.user("user").as_deref() == Some(staff.user.id.as_str()))
+            .then_some(w::ABOUT_YOURSELF),
+    )
+}
+
 boxed!(discover_decide_card, discover_card, Prepared);
+boxed!(discover_decide_verify, discover_self, Option<&'static str>);
+boxed!(about_yourself_verify, user_self, Option<&'static str>);
 boxed!(discover_decide, discover_run, DeskView);
 
 // ---- bot verification ----
@@ -394,13 +484,22 @@ async fn verify_card(db: &Database, staff: &StaffContext, input: &DeskInput) -> 
     let lang = input.lang;
     let id = required(input, "request")?;
     let request = db.fetch_bot_verification(&id).await?;
+    let decision = required(input, "decision")?;
+    // the console core's own checks, before a card is made
+    if request.status != BotVerificationStatus::Pending {
+        return Err(create_error!(InvalidOperation));
+    }
+    if decision != "approve" && optional(input, "note").is_none() {
+        return Err(revolt_result::failed_validation(vec![
+            revolt_result::ValidationProblem::new("note", "required"),
+        ]));
+    }
     let bot = db.fetch_bot(&request.bot_id).await?;
     // nobody verifies their own bot
     if bot.owner == staff.user.id {
         return Err(create_error!(NotPrivileged));
     }
     let (name, owner) = bot_names(db, &bot.id).await?;
-    let decision = required(input, "decision")?;
     let mut lines = vec![w::VERIFY.fill(
         lang,
         &[
@@ -411,10 +510,31 @@ async fn verify_card(db: &Database, staff: &StaffContext, input: &DeskInput) -> 
             ("decision", &named(&VERIFY_DECISION, &decision, lang)),
         ],
     )];
+    let privileged = request.intents as u64 & GatewayIntents::PRIVILEGED;
+    if privileged != 0 {
+        lines.push(w::INTENTS.fill(lang, &[("intents", &intent_names(privileged, lang))]));
+    }
     if let Some(note) = optional(input, "note") {
         lines.push(w::OWNER_READS.fill(lang, &[("reason", &note)]));
     }
-    Ok(prepared("bot", &bot.id, w::T_VERIFY, lang, lines))
+    let mut prepared = prepared("bot", &bot.id, w::T_VERIFY, lang, lines);
+    // granting privileged intents needs a fresh code
+    prepared.irreversible = decision == "approve" && privileged != 0;
+    Ok(prepared)
+}
+
+/// The privileged intents among `bits`, by name in `lang`
+fn intent_names(bits: u64, lang: Lang) -> String {
+    [
+        (GatewayIntents::MESSAGE_CONTENT, w::MESSAGE_CONTENT),
+        (GatewayIntents::SERVER_MEMBERS, w::SERVER_MEMBERS),
+        (GatewayIntents::PRESENCE, w::PRESENCE),
+    ]
+    .into_iter()
+    .filter(|(bit, _)| bits & bit != 0)
+    .map(|(_, name)| name.get(lang))
+    .collect::<Vec<_>>()
+    .join(", ")
 }
 
 async fn verify_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
@@ -472,7 +592,13 @@ async fn design_card(db: &Database, staff: &StaffContext, input: &DeskInput) -> 
         return Err(create_error!(NotPrivileged));
     }
     let action = required(input, "action")?;
-    let kind = json(&item.kind).as_str().unwrap_or_default().to_string();
+    let kind = match json(&item.kind).as_str().unwrap_or_default() {
+        "Decoration" => w::DECORATION.get(lang).to_string(),
+        "Nameplate" => w::NAMEPLATE.get(lang).to_string(),
+        "Effect" => w::EFFECT.get(lang).to_string(),
+        "Frame" => w::FRAME.get(lang).to_string(),
+        other => other.to_string(),
+    };
     let mut lines = vec![w::DESIGN.fill(
         lang,
         &[
@@ -513,19 +639,59 @@ async fn design_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> R
 boxed!(design_review_card, design_card, Prepared);
 boxed!(design_review, design_run, DeskView);
 
-async fn plugin_card(_: &Database, _: &StaffContext, input: &DeskInput) -> Result<Prepared> {
+async fn plugin_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Result<Prepared> {
     let lang = input.lang;
     let id = required(input, "id")?;
     let action = required(input, "action")?;
-    let target = named(&PLUGIN_TARGET, plugin_target(&action), lang);
-    let mut lines = vec![w::PLUGIN.fill(
-        lang,
-        &[
-            ("target", &target),
-            ("id", &id),
-            ("decision", &named(&PLUGIN_ACTION, &action, lang)),
-        ],
-    )];
+    let decision = named(&PLUGIN_ACTION, &action, lang);
+    let target_kind = plugin_target(&action)?;
+    // what the core acts on, read now: an unknown id is refused here
+    let line = match target_kind {
+        "plugin_release" => {
+            let release = db.fetch_plugin_release(&id).await?;
+            let plugin = db.fetch_plugin(&release.plugin_id).await?;
+            let risk = match release.risk {
+                PluginRisk::Low => w::RISK_LOW,
+                PluginRisk::Medium => w::RISK_MEDIUM,
+                PluginRisk::High => w::RISK_HIGH,
+            };
+            w::PLUGIN_RELEASE.fill(
+                lang,
+                &[
+                    ("version", &release.version),
+                    ("id", &id),
+                    ("name", &plugin.name),
+                    ("publisher", &person(db, &plugin.publisher_id).await),
+                    ("risk", risk.get(lang)),
+                    ("decision", &decision),
+                ],
+            )
+        }
+        "plugin" => {
+            let plugin = db.fetch_plugin(&id).await?;
+            w::PLUGIN_PLUGIN.fill(
+                lang,
+                &[
+                    ("name", &plugin.name),
+                    ("id", &id),
+                    ("version", plugin.latest_version.as_deref().unwrap_or("-")),
+                    ("publisher", &person(db, &plugin.publisher_id).await),
+                    ("decision", &decision),
+                ],
+            )
+        }
+        _ => {
+            let user = db.fetch_user(&id).await?;
+            w::PLUGIN_PUBLISHER.fill(
+                lang,
+                &[
+                    ("publisher", &format!("{} ({})", handle(&user), user.id)),
+                    ("decision", &decision),
+                ],
+            )
+        }
+    };
+    let mut lines = vec![line];
     if let Some(reason) = optional(input, "reason") {
         lines.push(w::REASON.fill(lang, &[("reason", &reason)]));
     }
@@ -535,16 +701,18 @@ async fn plugin_card(_: &Database, _: &StaffContext, input: &DeskInput) -> Resul
     if input.boolean("verify_publisher") == Some(true) {
         lines.push(w::VERIFY_PUBLISHER.get(lang).to_string());
     }
-    Ok(prepared("plugin", &id, w::T_PLUGIN, lang, lines))
+    Ok(prepared(target_kind, &id, w::T_PLUGIN, lang, lines))
 }
 
-/// What a plugin action is about: a release, a plugin or a publisher
-fn plugin_target(action: &str) -> &'static str {
-    match action {
-        "approve" | "reject" | "revoke" => "release",
+/// What a plugin action is about, as the console core records it: a
+/// release, a plugin or a publisher
+fn plugin_target(action: &str) -> Result<&'static str> {
+    Ok(match action {
+        "approve" | "reject" | "revoke" => "plugin_release",
         "suspend" | "reinstate" | "remove" => "plugin",
-        _ => "publisher",
-    }
+        "verify" | "suspend_publisher" | "reinstate_publisher" => "user",
+        _ => return Err(create_error!(InvalidOperation)),
+    })
 }
 
 async fn plugin_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
@@ -563,9 +731,13 @@ boxed!(plugin_review, plugin_run, DeskView);
 
 // ---- creators and words ----
 
-async fn creator_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Result<Prepared> {
+async fn creator_card(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<Prepared> {
     let lang = input.lang;
     let user = required_user(input, "user")?;
+    // Zrzur Desk's own rule: not about yourself
+    if user == staff.user.id {
+        return Err(create_error!(NotPrivileged));
+    }
     let action = required(input, "action")?;
     let reason = required(input, "reason")?;
     let mut prepared = prepared(
@@ -582,8 +754,8 @@ async fn creator_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Res
             ],
         )],
     );
-    // revoking a creator needs a fresh code
-    prepared.irreversible = action == "revoke";
+    // revoking or suspending a creator needs a fresh code
+    prepared.irreversible = matches!(action.as_str(), "revoke" | "suspend");
     Ok(prepared)
 }
 
@@ -721,11 +893,22 @@ fn badge_name(id: &str, lang: Lang) -> String {
 }
 
 /// The console's rule for the Staff badge and old official badges: an
-/// Owner only, with a fresh code
-fn privileged(staff: &StaffContext, badge: &str) -> Result<bool> {
+/// Owner only, with a fresh code; refused with the console's Denied record
+async fn privileged(
+    db: &Database,
+    staff: &StaffContext,
+    action: &str,
+    user: &str,
+    badge: &str,
+) -> Result<bool> {
     let definition = badge_definition(badge).ok_or_else(|| create_error!(NotFound))?;
     let privileged = definition.rule == BadgeGrantRule::Privileged;
     if privileged && !staff.grant.is_owner(staff.now) {
+        let mut record = staff.record(action, Some(StaffPermission::BadgesManage));
+        record.target_kind = Some("user".to_string());
+        record.target_id = Some(user.to_string());
+        record.summary = Some(format!("{badge} (owner only)"));
+        record_platform_audit(db, record, AuditOutcome::Denied).await?;
         return Err(create_error!(NotPrivileged));
     }
     Ok(privileged)
@@ -740,7 +923,16 @@ async fn badge_card(
     let lang = input.lang;
     let user = required_user(input, "user")?;
     let badge = required(input, "badge")?;
-    let privileged = privileged(staff, &badge)?;
+    // Zrzur Desk's own rule: not about yourself
+    if user == staff.user.id {
+        return Err(create_error!(NotPrivileged));
+    }
+    let action = if give {
+        "staff.badge.grant"
+    } else {
+        "staff.badge.revoke"
+    };
+    let privileged = privileged(db, staff, action, &user, &badge).await?;
     let who = person(db, &user).await;
     let (title, text) = if give {
         (w::T_BADGE_GIVE, w::BADGE_GIVE)
@@ -759,7 +951,8 @@ async fn badge_card(
     }
     lines.push(w::REASON.fill(lang, &[("reason", &required(input, "reason")?)]));
     let mut prepared = prepared("user", &user, title, lang, lines);
-    prepared.irreversible = privileged;
+    // a privileged badge, or taking any badge away: a fresh code
+    prepared.irreversible = privileged || !give;
     // the end of a timed badge, as the card says it
     if let Some(days) = input.integer("days").filter(|_| give) {
         prepared.stored = vec![InteractionDataOption {
@@ -817,10 +1010,28 @@ boxed!(badge_remove, remove_badge_run, DeskView);
 async fn propose_card(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<Prepared> {
     let lang = input.lang;
     let user = required_user(input, "user")?;
+    let give = required(input, "action")? == "give";
+    // the console core's own checks, before a card is made
+    let subject = db.fetch_user(&user).await?;
+    if subject.bot.is_some() {
+        return Err(create_error!(IsBot));
+    }
     if user == staff.user.id {
         return Err(create_error!(CannotReportYourself));
     }
-    let give = required(input, "action")? == "give";
+    if subject.official == give {
+        return Err(create_error!(NoEffect));
+    }
+    if !give && is_seeded_official(&user) {
+        return Err(create_error!(InvalidOperation));
+    }
+    let open = db.fetch_official_mark_requests().await?;
+    if open
+        .iter()
+        .any(|r| r.user_id == user && status_of(r, staff.now) == "Pending")
+    {
+        return Err(create_error!(InvalidOperation));
+    }
     let text = if give {
         w::PROPOSE_GIVE
     } else {
@@ -853,9 +1064,27 @@ async fn confirm_card(db: &Database, staff: &StaffContext, input: &DeskInput) ->
     let lang = input.lang;
     let id = required(input, "request")?;
     let request = db.fetch_official_mark_request(&id).await?;
-    // the two-person rule: never your own proposal, never about you
+    // the two-person rule: never your own proposal, never about you;
+    // refused with the console's Denied record
     if request.requested_by == staff.user.id || request.user_id == staff.user.id {
+        let mut record = staff.record(
+            "staff.official.confirm",
+            Some(StaffPermission::OfficialManage),
+        );
+        record.target_kind = Some("user".to_string());
+        record.target_id = Some(request.user_id.clone());
+        record.reason = Some(request.reason.clone());
+        record.summary = Some(format!(
+            "{} {} proposed by {}",
+            if request.grant { "give" } else { "remove" },
+            request.id,
+            request.requested_by
+        ));
+        record_platform_audit(db, record, AuditOutcome::Denied).await?;
         return Err(create_error!(NotPrivileged));
+    }
+    if status_of(&request, staff.now) != "Pending" {
+        return Err(create_error!(InvalidOperation));
     }
     let text = if request.grant {
         w::CONFIRM_GIVE
@@ -1101,19 +1330,6 @@ const PLUGIN_ACTION: DeskOption = DeskOption {
         t("Decision", "القرار", "Entscheidung"),
     )
 };
-const PLUGIN_TARGET: DeskOption = DeskOption {
-    choices: &[
-        choice("release", "the release", "النسخة", "die Version"),
-        choice("plugin", "the plugin", "الإضافة", "das Plugin"),
-        choice("publisher", "the publisher", "الناشر", "die Herausgeber"),
-    ],
-    ..opt(
-        "target",
-        CommandOptionType::String,
-        false,
-        t("Target", "الهدف", "Ziel"),
-    )
-};
 const CREATOR_ACTION: DeskOption = DeskOption {
     choices: &[
         choice(
@@ -1202,6 +1418,16 @@ const fn entry(
     }
 }
 
+impl DeskCommand {
+    /// With a check right before the confirmed change
+    const fn checked(self, verify: super::registry::Verify) -> DeskCommand {
+        DeskCommand {
+            verify: Some(verify),
+            ..self
+        }
+    }
+}
+
 use StaffPermission as P;
 
 pub static GROUPS: &[DeskGroup] = &[
@@ -1265,7 +1491,8 @@ pub static ENTRIES: &[DeskCommand] = &[
         false,
         Some(discover_decide_card),
         discover_decide,
-    ),
+    )
+    .checked(discover_decide_verify),
     entry(
         "verification",
         "decide",
@@ -1303,7 +1530,7 @@ pub static ENTRIES: &[DeskCommand] = &[
         ),
         &[id("bot"), REASON],
         P::ServersRestrict,
-        false,
+        true,
         Some(bot_unverify_card),
         bot_unverify,
     ),
@@ -1366,7 +1593,8 @@ pub static ENTRIES: &[DeskCommand] = &[
         false,
         Some(creator_change_card),
         creator_change,
-    ),
+    )
+    .checked(about_yourself_verify),
     entry(
         "words",
         "add",
@@ -1399,7 +1627,7 @@ pub static ENTRIES: &[DeskCommand] = &[
         t("Remove a word", "حذف كلمة", "Wort entfernen"),
         &[id("word"), REASON],
         P::ReportsResolve,
-        false,
+        true,
         Some(words_remove_card),
         words_remove,
     ),
@@ -1436,17 +1664,19 @@ pub static ENTRIES: &[DeskCommand] = &[
         false,
         Some(badge_give_card),
         badge_give,
-    ),
+    )
+    .checked(about_yourself_verify),
     entry(
         "badge",
         "remove",
         t("Take a badge away", "سحب شارة", "Abzeichen entziehen"),
         &[USER, id("badge"), REASON],
         P::BadgesManage,
-        false,
+        true,
         Some(badge_remove_card),
         badge_remove,
-    ),
+    )
+    .checked(about_yourself_verify),
     // the console asks for a step-up on every change of the official mark
     entry(
         "official",
