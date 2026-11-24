@@ -93,6 +93,16 @@ impl AbstractAccounts for ReferenceDb {
             .collect())
     }
 
+    async fn fetch_accounts_scheduled_for_deletion(&self, limit: i64) -> Result<Vec<Account>> {
+        let accounts = self.accounts.lock().await;
+        Ok(accounts
+            .values()
+            .filter(|account| matches!(account.deletion, Some(DeletionInfo::Scheduled { .. })))
+            .take(limit.max(0) as usize)
+            .cloned()
+            .collect())
+    }
+
     async fn fetch_provisional_accounts_before(&self, before: Timestamp) -> Result<Vec<Account>> {
         let accounts = self.accounts.lock().await;
         Ok(accounts

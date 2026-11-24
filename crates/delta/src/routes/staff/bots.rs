@@ -604,11 +604,25 @@ pub async fn delete(
     id: &str,
     data: Json<DataDeleteBot>,
 ) -> Result<Json<DeletedBot>> {
-    super::deletion::require_delete_gate(db, &staff, "staff.bot.delete", "bot", id).await?;
+    delete_core(db, voice_client, &staff, id, data.into_inner())
+        .await
+        .map(Json)
+}
+
+/// The console's `delete`, for any caller holding a [`StaffContext`] (the
+/// console route and Zrzur Desk): the same checks and records
+pub(super) async fn delete_core(
+    db: &Database,
+    voice_client: &revolt_database::voice::VoiceClient,
+    staff: &StaffContext,
+    id: &str,
+    data: DataDeleteBot,
+) -> Result<DeletedBot> {
+    super::deletion::require_delete_gate(db, staff, "staff.bot.delete", "bot", id).await?;
     let why = reason(&data.reason)?;
     let bot = db.fetch_bot(id).await?;
     let username = db.fetch_user(&bot.id).await.ok().map(|u| u.username);
-    super::deletion::delete_bot(db, voice_client, &staff, &bot, &why).await?;
+    super::deletion::delete_bot(db, voice_client, staff, &bot, &why).await?;
     crate::util::official::bot(
         db,
         &bot.owner,
@@ -617,10 +631,10 @@ pub async fn delete(
         Some(&why),
     )
     .await;
-    Ok(Json(DeletedBot {
+    Ok(DeletedBot {
         id: bot.id,
         username,
         owner_id: bot.owner,
         deleted: true,
-    }))
+    })
 }
