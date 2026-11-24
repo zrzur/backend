@@ -100,6 +100,12 @@ pub struct ApiMetrics {
 /// # API metrics
 #[get("/operations/metrics")]
 pub async fn metrics(db: &State<Database>, staff: StaffContext) -> Result<Json<ApiMetrics>> {
+    metrics_core(db, &staff).await.map(Json)
+}
+
+/// The console's `metrics`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn metrics_core(db: &Database, staff: &StaffContext) -> Result<ApiMetrics> {
     staff.require(db, StaffPermission::OperationsRead).await?;
     let snapshot: Vec<(String, Counter)> = COUNTERS
         .lock()
@@ -117,11 +123,11 @@ pub async fn metrics(db: &State<Database>, staff: StaffContext) -> Result<Json<A
         })
         .collect();
     routes.sort_by(|a, b| b.requests.cmp(&a.requests).then(a.route.cmp(&b.route)));
-    Ok(Json(ApiMetrics {
+    Ok(ApiMetrics {
         since: *STARTED,
         requests: routes.iter().map(|r| r.requests).sum(),
         client_errors: routes.iter().map(|r| r.client_errors).sum(),
         server_errors: routes.iter().map(|r| r.server_errors).sum(),
         routes,
-    }))
+    })
 }

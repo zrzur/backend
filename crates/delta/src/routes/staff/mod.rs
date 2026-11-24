@@ -517,6 +517,12 @@ async fn roles(db: &State<Database>, staff: StaffContext) -> Result<Json<Vec<Rol
 /// # Staff members
 #[get("/members")]
 async fn members(db: &State<Database>, staff: StaffContext) -> Result<Json<Vec<StaffMember>>> {
+    members_core(db, &staff).await.map(Json)
+}
+
+/// The console's `members`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+async fn members_core(db: &Database, staff: &StaffContext) -> Result<Vec<StaffMember>> {
     staff.require(db, StaffPermission::StaffRead).await?;
     let grants = db.fetch_staff_grants().await?;
     let ids: Vec<String> = grants.iter().map(|g| g.id.clone()).collect();
@@ -546,7 +552,7 @@ async fn members(db: &State<Database>, staff: StaffContext) -> Result<Json<Vec<S
             updated_by: grant.updated_by,
         });
     }
-    Ok(Json(out))
+    Ok(out)
 }
 
 fn role_names(roles: &[StaffRole]) -> String {
@@ -749,16 +755,15 @@ async fn revoke_member_sessions(
 ///
 /// Newest first; `before` is a `seq` cursor.
 #[get("/audit?<before>&<actor>&<target>&<limit>")]
-async fn audit(
-    db: &State<Database>,
-    staff: StaffContext,
-    before: Option<i64>,
-    actor: Option<String>,
-    target: Option<String>,
-    limit: Option<usize>,
-) -> Result<Json<Vec<PlatformAuditEntry>>> {
+async fn audit(db: &State<Database>, staff: StaffContext, before: Option<i64>, actor: Option<String>, target: Option<String>, limit: Option<usize>) -> Result<Json<Vec<PlatformAuditEntry>>> {
+    audit_core(db, &staff, before, actor, target, limit).await.map(Json)
+}
+
+/// The console's `audit`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+async fn audit_core(db: &Database, staff: &StaffContext, before: Option<i64>, actor: Option<String>, target: Option<String>, limit: Option<usize>) -> Result<Vec<PlatformAuditEntry>> {
     staff.require(db, StaffPermission::AuditRead).await?;
-    Ok(Json(
+    Ok(
         db.fetch_platform_audit(PlatformAuditQuery {
             before_seq: before,
             actor_id: actor.filter(|a| !a.is_empty() && a.len() <= 64),
@@ -767,19 +772,20 @@ async fn audit(
             limit: limit.unwrap_or(50).clamp(1, 200),
         })
         .await?,
-    ))
+    )
 }
 
 /// # Check the audit chain
 ///
 /// Recomputes hashes from `from` (default: the last 1000 records).
 #[get("/audit/verify?<from>&<limit>")]
-async fn verify_audit(
-    db: &State<Database>,
-    staff: StaffContext,
-    from: Option<i64>,
-    limit: Option<usize>,
-) -> Result<Json<AuditCheck>> {
+async fn verify_audit(db: &State<Database>, staff: StaffContext, from: Option<i64>, limit: Option<usize>) -> Result<Json<AuditCheck>> {
+    verify_audit_core(db, &staff, from, limit).await.map(Json)
+}
+
+/// The console's `verify_audit`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+async fn verify_audit_core(db: &Database, staff: &StaffContext, from: Option<i64>, limit: Option<usize>) -> Result<AuditCheck> {
     staff.require(db, StaffPermission::AuditRead).await?;
     let limit = limit.unwrap_or(1000).clamp(1, 5000);
     let last = db.fetch_last_platform_audit().await?.map(|e| e.seq).unwrap_or(0);
@@ -794,10 +800,10 @@ async fn verify_audit(
         None
     };
     let result = verify_audit_chain(before.as_ref(), &entries);
-    Ok(Json(AuditCheck {
+    Ok(AuditCheck {
         checked: entries.len(),
         from_seq: from,
         ok: result.is_ok(),
         first_bad_seq: result.err(),
-    }))
+    })
 }

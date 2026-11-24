@@ -14,8 +14,8 @@ use revolt_result::{create_error, Result};
 use serde::Serialize;
 use serde_json::Value;
 
-use super::super::{badges, bots, platform, review, safety, support};
-use super::super::StaffContext;
+use super::super::{badges, bots, metrics, platform, review, safety, security, support};
+use super::super::{audit_core, members_core, verify_audit_core, StaffContext};
 use super::registry::{when, DeskChoice, DeskCommand, DeskGroup, DeskInput, DeskOption, Lang, Text};
 use super::view::{DeskButton, DeskButtonStyle, DeskView};
 
@@ -626,6 +626,108 @@ async fn bug_view_view(db: &Database, staff: &StaffContext, input: &DeskInput) -
 }
 handler!(bug_view, bug_view_view);
 
+// ---- audit, security, system ----
+
+pub const AUDIT_ROW: &[Show] = &[
+    show("/seq", w::ID),
+    show("/action", w::KIND),
+    show("/outcome", w::STATUS),
+    show("/actor_id", w::USER),
+    show("/target_id", w::TARGET),
+    show("/created_at", w::CREATED),
+];
+
+pub const VERIFY_VIEW: &[Show] = &[
+    show("/ok", w::OK),
+    show("/checked", w::CHECKED),
+    show("/from_seq", w::FROM),
+    show("/first_bad_seq", w::FIRST_BAD),
+];
+
+async fn audit_search_view(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
+    let list = audit_core(db, staff, None, input.user("actor"), input.text("target"), Some(FETCH)).await?;
+    Ok(paged(DeskView::new(w::T_AUDIT.get(input.lang)), &items(json(&list)), AUDIT_ROW, input))
+}
+handler!(audit_search, audit_search_view);
+
+async fn audit_verify_view(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
+    let check = verify_audit_core(db, staff, None, None).await?;
+    Ok(fields(DeskView::new(w::T_VERIFY.get(input.lang)), &json(&check), VERIFY_VIEW, input.lang))
+}
+handler!(audit_verify, audit_verify_view);
+
+pub const SECURITY_VIEW: &[Show] = &[
+    show("/day/denied", w::DENIED_DAY),
+    show("/day/failed", w::FAILED_DAY),
+    show("/day/failed_sign_ins", w::SIGN_INS_DAY),
+    show("/day/failed_step_ups", w::STEP_UPS_DAY),
+    show("/day/sessions_revoked", w::REVOKED_DAY),
+    show("/week/denied", w::DENIED_WEEK),
+    show("/week/failed", w::FAILED_WEEK),
+    show("/scanned", w::SCANNED),
+];
+
+pub const ACTOR_ROW: &[Show] = &[show("/actor_id", w::USER), show("/count", w::COUNT)];
+
+async fn security_summary_view(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
+    let overview = json(&security::overview_core(db, staff).await?);
+    let view = fields(DeskView::new(w::T_SECURITY.get(input.lang)), &overview, SECURITY_VIEW, input.lang);
+    Ok(paged(view, &items(overview["top_denied"].clone()), ACTOR_ROW, input))
+}
+handler!(security_summary, security_summary_view);
+
+pub const HEALTH_VIEW: &[Show] = &[
+    show("/api_version", w::API_VERSION),
+    show("/started_at", w::STARTED),
+    show("/database/ok", w::DATABASE_OK),
+    show("/database/latency_ms", w::DATABASE_MS),
+    show("/presence/ok", w::PRESENCE_OK),
+    show("/presence/latency_ms", w::PRESENCE_MS),
+    show("/online_users", w::ONLINE_USERS),
+];
+
+async fn system_health_view(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
+    let health = platform::health_core(db, staff).await?;
+    Ok(fields(DeskView::new(w::T_HEALTH.get(input.lang)), &json(&health), HEALTH_VIEW, input.lang))
+}
+handler!(system_health, system_health_view);
+
+pub const METRICS_VIEW: &[Show] = &[
+    show("/since", w::SINCE),
+    show("/requests", w::REQUESTS),
+    show("/client_errors", w::CLIENT_ERRORS),
+    show("/server_errors", w::SERVER_ERRORS),
+];
+
+pub const ROUTE_ROW: &[Show] = &[
+    show("/route", w::NAME),
+    show("/requests", w::REQUESTS),
+    show("/client_errors", w::CLIENT_ERRORS),
+    show("/server_errors", w::SERVER_ERRORS),
+];
+
+async fn system_metrics_view(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
+    let metrics = json(&metrics::metrics_core(db, staff).await?);
+    let view = fields(DeskView::new(w::T_METRICS.get(input.lang)), &metrics, METRICS_VIEW, input.lang);
+    Ok(paged(view, &items(metrics["routes"].clone()), ROUTE_ROW, input))
+}
+handler!(system_metrics, system_metrics_view);
+
+pub const STAFF_ROW: &[Show] = &[
+    show("/username", w::USER),
+    show("/roles", w::ROLES),
+    show("/active", w::ACTIVE),
+    show("/disabled", w::DISABLED),
+    show("/open_sessions", w::OPEN_SESSIONS),
+    show("/user_id", w::ID),
+];
+
+async fn staff_list_view(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
+    let members = members_core(db, staff).await?;
+    Ok(paged(DeskView::new(w::T_STAFF.get(input.lang)), &items(json(&members)), STAFF_ROW, input))
+}
+handler!(staff_list, staff_list_view);
+
 // ---- the registry entries ----
 
 const fn opt(name: &'static str, kind: CommandOptionType, required: bool, description: Text) -> DeskOption {
@@ -719,6 +821,10 @@ pub static GROUPS: &[DeskGroup] = &[
     DeskGroup { name: "appeal", description: t("Appeals", "الطعون", "Einsprüche") },
     DeskGroup { name: "ticket", description: t("Support tickets", "تذاكر الدعم", "Support-Tickets") },
     DeskGroup { name: "bug", description: t("Bug reports", "بلاغات الأخطاء", "Fehlerberichte") },
+    DeskGroup { name: "system", description: t("System", "النظام", "System") },
+    DeskGroup { name: "staff", description: t("Staff", "فريق الإدارة", "Team") },
+    DeskGroup { name: "audit", description: t("Audit log", "سجل التدقيق", "Prüfprotokoll") },
+    DeskGroup { name: "security", description: t("Security", "الأمان", "Sicherheit") },
 ];
 
 pub static ENTRIES: &[DeskCommand] = &[
@@ -746,4 +852,21 @@ pub static ENTRIES: &[DeskCommand] = &[
         bug_list,
     ),
     read("lookup", "bug", "view", t("Show a bug report", "عرض بلاغ خطأ", "Fehlerbericht zeigen"), &[id_opt("bug")], None, bug_view),
+    read("lookup", "system", "health", t("System health", "حالة النظام", "Systemzustand"), &[], Some(P::OperationsRead), system_health),
+    read("lookup", "system", "metrics", t("API metrics", "مقاييس الواجهة", "API-Kennzahlen"), &[], Some(P::OperationsRead), system_metrics),
+    read("lookup", "staff", "list", t("Staff members", "أعضاء الإدارة", "Teammitglieder"), &[], Some(P::StaffRead), staff_list),
+    read(
+        "audit",
+        "audit",
+        "search",
+        t("Search the audit log", "البحث في سجل التدقيق", "Protokoll durchsuchen"),
+        &[
+            opt("actor", CommandOptionType::User, false, t("Who acted", "من نفّذ", "Wer handelte")),
+            DeskOption { max_length: Some(64), ..opt("target", CommandOptionType::String, false, t("Target ID", "معرّف الهدف", "Ziel-ID")) },
+        ],
+        Some(P::AuditRead),
+        audit_search,
+    ),
+    read("audit", "audit", "verify", t("Check the audit chain", "فحص سلسلة التدقيق", "Kette prüfen"), &[], Some(P::AuditRead), audit_verify),
+    read("audit", "security", "summary", t("Security summary", "ملخص الأمان", "Sicherheitsübersicht"), &[], Some(P::SecurityRead), security_summary),
 ];

@@ -69,6 +69,12 @@ fn count(window: &mut Window, e: &PlatformAuditEntry) {
 /// # Security overview
 #[get("/security")]
 pub async fn overview(db: &State<Database>, staff: StaffContext) -> Result<Json<SecurityOverview>> {
+    overview_core(db, &staff).await.map(Json)
+}
+
+/// The console's `overview`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn overview_core(db: &Database, staff: &StaffContext) -> Result<SecurityOverview> {
     staff.require(db, StaffPermission::SecurityRead).await?;
     let entries = db
         .fetch_platform_audit(PlatformAuditQuery {
@@ -104,13 +110,13 @@ pub async fn overview(db: &State<Database>, staff: StaffContext) -> Result<Json<
         .collect();
     top_denied.sort_by(|a, b| b.count.cmp(&a.count).then(a.actor_id.cmp(&b.actor_id)));
     top_denied.truncate(5);
-    Ok(Json(SecurityOverview {
+    Ok(SecurityOverview {
         day,
         week,
         top_denied,
         recent,
         scanned: entries.len(),
-    }))
+    })
 }
 
 #[derive(Deserialize)]

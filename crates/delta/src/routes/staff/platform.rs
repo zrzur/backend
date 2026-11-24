@@ -534,6 +534,12 @@ pub struct SystemHealth {
 /// configuration values.
 #[get("/health")]
 pub async fn health(db: &State<Database>, staff: StaffContext) -> Result<Json<SystemHealth>> {
+    health_core(db, &staff).await.map(Json)
+}
+
+/// The console's `health`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn health_core(db: &Database, staff: &StaffContext) -> Result<SystemHealth> {
     staff.require(db, StaffPermission::OperationsRead).await?;
     let start = Instant::now();
     let stats = db.staff_db_stats().await.ok();
@@ -541,7 +547,7 @@ pub async fn health(db: &State<Database>, staff: StaffContext) -> Result<Json<Sy
     let start = Instant::now();
     let online = online_users().await;
     let redis_ms = start.elapsed().as_millis() as u64;
-    Ok(Json(SystemHealth {
+    Ok(SystemHealth {
         generated_at: staff_now(),
         api_version: env!("CARGO_PKG_VERSION"),
         started_at: STARTED_AT.get().copied(),
@@ -555,5 +561,5 @@ pub async fn health(db: &State<Database>, staff: StaffContext) -> Result<Json<Sy
             latency_ms: online.is_some().then_some(redis_ms),
         },
         online_users: online,
-    }))
+    })
 }
