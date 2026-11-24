@@ -2,8 +2,9 @@
 //!
 //! `users.badges` stays the bitfield clients read (no extra query per
 //! profile or message); it is a cache of the user's held `badge_grants`
-//! and is only ever written by [`sync_user_badges`]. Plus and Early Adopter
-//! stay computed in [`User::get_badges`] from trusted state.
+//! and is only ever written by [`sync_user_badges`]. Plus, Early Adopter and
+//! the time-on-Zrzur badges stay computed in [`User::get_badges`] from
+//! trusted state.
 
 use std::collections::HashSet;
 
@@ -41,6 +42,10 @@ pub enum BadgeGrantRule {
     /// Follows an official appointment (`staff_appointments`, written by
     /// `zrzur-staff appoint` with two people); no badge permission gives it
     Appointment,
+    /// Retired for good: no path gives it again. People who hold it keep it
+    /// (shown as a retired badge); taking one away is an Owner change with a
+    /// step-up and a second person, and the bit is never used again.
+    Historical,
 }
 
 /// One badge in the catalogue
@@ -104,13 +109,14 @@ pub static BADGE_CATALOGUE: &[BadgeDefinition] = &[
     def("early_adopter", UserBadges::EarlyAdopter as u32, Dynamic, "history", 0, 80),
     def("verified_server_owner", UserBadges::VerifiedServerOwner as u32, Automatic, "community", 1, 46),
     def("verified_bot_developer", UserBadges::VerifiedBotDeveloper as u32, Automatic, "community", 1, 47),
-    // no record proves a win yet, so staff give it until the games bot has one
-    def("saha_champion", UserBadges::SahaChampion as u32, Staff, "community", 1, 48),
     def("community_helper", UserBadges::CommunityHelper as u32, Staff, "contribution", 1, 52),
     def("big_community", UserBadges::BigCommunity as u32, Automatic, "community", 1, 57),
     def("community_builder", UserBadges::CommunityBuilder as u32, Automatic, "community", 0, 58),
-    def("three_years", UserBadges::ThreeYears as u32, Automatic, "history", 1, 82),
-    def("one_year", UserBadges::OneYear as u32, Automatic, "history", 0, 83),
+    // computed from the account's creation time in full calendar years (UTC);
+    // apps show the highest year reached (2 and 4 to 10 have no bit of their
+    // own: they are drawn from the same `one_year` bit and the account id)
+    def("three_years", UserBadges::ThreeYears as u32, Dynamic, "history", 1, 82),
+    def("one_year", UserBadges::OneYear as u32, Dynamic, "history", 0, 83),
     // older Revolt bits: kept so nobody loses them, not given out any more
     BadgeDefinition {
         retired: true,
@@ -124,9 +130,15 @@ pub static BADGE_CATALOGUE: &[BadgeDefinition] = &[
         retired: true,
         ..def("supporter", UserBadges::ActiveSupporter as u32, Staff, "history", 0, 92)
     },
+    // retired for good (owner, 2026-11-24): never given on any path, the bit
+    // stays reserved; nobody held Saha Champion when it was retired
     BadgeDefinition {
         retired: true,
-        ..def("paw", UserBadges::Paw as u32, Privileged, "history", 0, 93)
+        ..def("saha_champion", UserBadges::SahaChampion as u32, Historical, "community", 1, 48)
+    },
+    BadgeDefinition {
+        retired: true,
+        ..def("paw", UserBadges::Paw as u32, Historical, "history", 0, 93)
     },
     BadgeDefinition {
         retired: true,

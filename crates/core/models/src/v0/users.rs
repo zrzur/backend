@@ -263,9 +263,10 @@ auto_derived!(
         PlatformModeration = 32,
         /// Active monetary supporter
         ActiveSupporter = 64,
-        /// 🦊🦝
+        /// Retired for good: never given, never shown; the bit stays reserved
         Paw = 128,
-        /// Joined as one of the first 1000 users in 2021
+        /// Account made before `[api.users] early_adopter_cutoff` (computed;
+        /// follows the "Member since" profile section)
         EarlyAdopter = 256,
         /// Amogus
         ReservedRelevantJokeBadge1 = 512,
@@ -289,9 +290,11 @@ auto_derived!(
         Staff = 262144,
         /// Approved Zrzur partner
         Partner = 524288,
-        /// One year on Zrzur
+        /// At least one full calendar year on Zrzur (computed; follows the
+        /// "Member since" profile section). Apps draw the highest year reached,
+        /// up to ten, from this bit and the account id
         OneYear = 1048576,
-        /// Three years on Zrzur
+        /// At least three full calendar years on Zrzur (computed, like `OneYear`)
         ThreeYears = 2097152,
         /// Owns a server that reached 100 members
         CommunityBuilder = 4194304,
@@ -301,7 +304,8 @@ auto_derived!(
         VerifiedServerOwner = 16777216,
         /// Owns a verified bot
         VerifiedBotDeveloper = 33554432,
-        /// Won a tournament, or first place in the games bot
+        /// Saha Champion: retired for good (2026-11-24), never given again;
+        /// the bit stays reserved and is never reused
         SahaChampion = 67108864,
         /// Helped people with support, chosen by staff
         CommunityHelper = 134217728,

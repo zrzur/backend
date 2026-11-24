@@ -183,6 +183,13 @@ min_username_length = 2
 # watches and confirms; delta writes `config.founder_id` to the platform
 # audit log at the next start ("founder_id changed").
 # founder_id = ""
+# Early Adopter: accounts made strictly before this moment (UTC milliseconds
+# since 1970) get the badge, computed on every read; bots, official/system
+# accounts and people who hide "Member since" never show it. Zrzur's value,
+# set at deploy time in /etc/zrzur/Revolt.toml (not here):
+#   early_adopter_cutoff = 1803859200000   # 2027-03-01T00:00:00Z
+# Publish the date once and never move it after it was announced.
+# early_adopter_cutoff = 1803859200000
 
 [pushd]
 # this changes the names of the queues to not overlap 

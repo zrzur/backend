@@ -237,6 +237,9 @@ pub struct LiveKitNode {
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct ApiUsers {
+    /// Early Adopter: accounts made strictly before this moment (UTC
+    /// milliseconds) show the badge. Unset: nobody does. Zrzur's value
+    /// (2027-03-01T00:00:00Z = 1803859200000) is a deploy-time setting.
     pub early_adopter_cutoff: Option<u64>,
     pub min_username_length: usize,
     /// The one account that shows the Zrzur Founder badge. No API, bot,

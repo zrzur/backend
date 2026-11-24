@@ -814,14 +814,17 @@ async fn platform_permissions_are_guarded() {
 
 mod automatic_badges {
     use revolt_database::{
-        grant_time_badge, held_badges, sync_server_size_badges, sync_verified_bot_developer,
-        sync_verified_server_owner, PartialBot, PartialServer,
+        account_age_badges, held_badges, retire_stored_time_badges, sync_server_size_badges,
+        sync_verified_bot_developer, sync_verified_server_owner, PartialBot, PartialServer,
+        PartialUser, Session, User, TIME_BADGE_RETIRED_REASON,
     };
-    use revolt_models::v0::{BotFlags, UserBadges};
+    use revolt_models::v0::{self, BotFlags, UserBadges, UserFlags};
+    use rocket::http::{ContentType, Header, Status};
 
     use crate::util::test::TestHarness;
 
-    const YEAR_MS: i64 = 365 * 24 * 60 * 60 * 1000;
+    const DAY_MS: i64 = 24 * 60 * 60 * 1000;
+    const YEAR_MS: i64 = 365 * DAY_MS;
 
     fn now_ms() -> i64 {
         std::time::SystemTime::now()
@@ -916,24 +919,212 @@ mod automatic_badges {
         }
     }
 
+    /// An account made at `ms` (UTC milliseconds)
+    fn made_at(ms: u64) -> User {
+        User {
+            id: ulid::Ulid::from_parts(ms, 7).to_string(),
+            username: "someone".to_string(),
+            ..Default::default()
+        }
+    }
+
+    const CUTOFF: u64 = 1_803_859_200_000; // 2027-03-01T00:00:00Z
+
+    #[test]
+    fn early_adopter_ends_exactly_at_the_cutoff_in_utc() {
+        let now = CUTOFF as i64 + 1;
+        let early = UserBadges::EarlyAdopter as u32;
+        assert_eq!(account_age_badges(&made_at(CUTOFF - 1), Some(CUTOFF), now) & early, early);
+        assert_eq!(account_age_badges(&made_at(CUTOFF), Some(CUTOFF), now) & early, 0);
+        assert_eq!(account_age_badges(&made_at(CUTOFF + 1), Some(CUTOFF), now) & early, 0);
+        // unset: nobody has it
+        assert_eq!(account_age_badges(&made_at(CUTOFF - 1), None, now) & early, 0);
+    }
+
+    #[test]
+    fn bots_official_system_and_removed_accounts_get_no_time_badges() {
+        let now = CUTOFF as i64 + 5 * YEAR_MS;
+        let old = || made_at(CUTOFF - 2 * YEAR_MS as u64);
+        assert_ne!(account_age_badges(&old(), Some(CUTOFF), now), 0);
+
+        let mut bot = old();
+        bot.bot = Some(revolt_database::BotInformation {
+            owner: "someone".to_string(),
+            verified: false,
+        });
+        let mut official = old();
+        official.official = true;
+        // the official accounts were made with a zero time
+        let system = User {
+            id: "0000000000000000000000ZRZR".to_string(),
+            ..Default::default()
+        };
+        let mut deleted = old();
+        deleted.flags = Some(UserFlags::Deleted as i32);
+        let mut banned = old();
+        banned.flags = Some(UserFlags::Banned as i32);
+        for user in [bot, official, system, deleted, banned] {
+            assert_eq!(account_age_badges(&user, Some(CUTOFF), now), 0, "{}", user.id);
+        }
+    }
+
+    #[test]
+    fn one_and_three_years_follow_full_calendar_years() {
+        let made = CUTOFF; // 2027-03-01, before 29 February 2028
+        let one = UserBadges::OneYear as u32;
+        let three = UserBadges::ThreeYears as u32;
+        let year_one = 1_835_481_600_000; // 2028-03-01T00:00:00Z
+        let year_three = 1_898_553_600_000; // 2030-03-01T00:00:00Z
+        let badges = |now: i64| account_age_badges(&made_at(made), None, now);
+        // 365 days later is still 29 February 2028: not a full year
+        assert_eq!(badges(made as i64 + 365 * DAY_MS) & one, 0);
+        assert_eq!(badges(year_one - 1) & one, 0);
+        assert_eq!(badges(year_one), one);
+        assert_eq!(badges(year_three - 1), one);
+        assert_eq!(badges(year_three), one | three);
+    }
+
     #[rocket::async_test]
-    async fn time_badges_go_to_accounts_old_enough_and_only_once() {
+    async fn time_badges_are_computed_and_follow_member_since() {
+        // before the harness: the first config read is kept
+        revolt_config::overwrite_config(|config| {
+            config.api.users.early_adopter_cutoff = Some(CUTOFF);
+        })
+        .await;
+        let harness = TestHarness::new().await;
+        let (_, own_session, user) = harness.new_user().await;
+        let early = UserBadges::EarlyAdopter as u32;
+
+        // a new account, made before the cutoff
+        let fetched = harness.db.fetch_user(&user.id).await.unwrap();
+        assert_eq!(fetched.get_badges().await & early, early);
+        let shown = |session: &Session| {
+            let path = format!("/users/{}", user.id);
+            let token = session.token.clone();
+            let client = &harness.client;
+            async move {
+                let res = client
+                    .get(path)
+                    .header(Header::new("x-session-token", token))
+                    .dispatch()
+                    .await;
+                assert_eq!(res.status(), Status::Ok);
+                res.into_json::<v0::User>().await.unwrap().badges
+            }
+        };
+        assert_eq!(shown(&own_session).await & early, early);
+
+        // hiding "Member since" hides them for everyone, in the API too
+        let res = harness
+            .client
+            .patch("/users/@me")
+            .header(ContentType::JSON)
+            .header(Header::new("x-session-token", own_session.token.clone()))
+            .body(serde_json::json!({ "profile": { "hidden_sections": ["member_since"] } }).to_string())
+            .dispatch()
+            .await;
+        assert_eq!(res.status(), Status::Ok);
+        let own = res.into_json::<v0::User>().await.unwrap();
+        assert_eq!(own.badges & early, 0);
+        assert_eq!(shown(&own_session).await & early, 0);
+        let fetched = harness.db.fetch_user(&user.id).await.unwrap();
+        assert!(fetched.hides_member_since());
+        assert_eq!(fetched.get_badges().await & early, 0);
+
+        // a stored bit is never shown on its own
+        harness
+            .db
+            .update_user(
+                &user.id,
+                &PartialUser {
+                    badges: Some((UserBadges::OneYear as u32 | UserBadges::ThreeYears as u32) as i32),
+                    ..Default::default()
+                },
+                vec![],
+            )
+            .await
+            .unwrap();
+        let fetched = harness.db.fetch_user(&user.id).await.unwrap();
+        assert_eq!(fetched.get_badges().await & revolt_database::ACCOUNT_AGE_BADGES, 0);
+    }
+
+    #[rocket::async_test]
+    async fn stored_time_grants_end_once_with_a_record() {
         let harness = TestHarness::new().await;
         let (_, _, user) = harness.new_user().await;
-        let (_, _, owner) = harness.new_user().await;
-        let (_, bot_user) = harness.new_bot(&owner).await;
-        let bit = UserBadges::OneYear as u32;
+        // what the old worker gave (an official account had them too)
+        let official = revolt_database::official_account(
+            &harness.db,
+            revolt_database::OfficialAccount::Zrzur,
+        )
+        .await
+        .unwrap();
+        for (id, badge) in [
+            (&user.id, "one_year"),
+            (&official.id, "one_year"),
+            (&official.id, "three_years"),
+        ] {
+            harness
+                .db
+                .insert_badge_grant(&revolt_database::BadgeGrant {
+                    id: format!("{id}:{badge}"),
+                    user_id: id.clone(),
+                    badge: badge.to_string(),
+                    source: revolt_database::BadgeSource::System,
+                    source_ref: Some("time".to_string()),
+                    granted_by: revolt_database::BADGE_SYSTEM_ACTOR.to_string(),
+                    granted_at: now_ms(),
+                    reason: None,
+                    expires_at: None,
+                    revoked_at: None,
+                    revoked_by: None,
+                    revoke_reason: None,
+                    hidden: false,
+                })
+                .await
+                .unwrap();
+        }
+        harness
+            .db
+            .update_user(
+                &official.id,
+                &PartialUser {
+                    badges: Some((UserBadges::OneYear as u32 | UserBadges::ThreeYears as u32) as i32),
+                    ..Default::default()
+                },
+                vec![],
+            )
+            .await
+            .unwrap();
 
-        // a new account has a while to go
-        grant_time_badge(&harness.db, "one_year", bit, 1, now_ms(), None).await.unwrap();
-        assert!(!held_badges(&harness.db, &user.id).await.unwrap().contains("one_year"));
+        assert_eq!(retire_stored_time_badges(&harness.db).await.unwrap(), 3);
+        // twice changes nothing
+        assert_eq!(retire_stored_time_badges(&harness.db).await.unwrap(), 0);
 
-        // a year later it has, and a second walk finds nothing to do
-        let later = now_ms() + YEAR_MS + 60_000;
-        let next = grant_time_badge(&harness.db, "one_year", bit, 1, later, None).await.unwrap();
-        assert!(next.is_none());
-        assert!(held_badges(&harness.db, &user.id).await.unwrap().contains("one_year"));
-        assert!(held_badges(&harness.db, &bot_user.id).await.unwrap().is_empty());
-        grant_time_badge(&harness.db, "one_year", bit, 1, later, None).await.unwrap();
+        for id in [&user.id, &official.id] {
+            assert!(held_badges(&harness.db, id).await.unwrap().is_empty());
+            // the records stay as history, with the reason
+            let grants = harness.db.fetch_badge_grants(id).await.unwrap();
+            assert!(!grants.is_empty());
+            assert!(grants.iter().all(|g| g.revoke_reason.as_deref() == Some(TIME_BADGE_RETIRED_REASON)));
+            let log = harness.db.fetch_badge_logs(id).await.unwrap();
+            assert!(log.iter().any(|e| matches!(e.action, revolt_database::BadgeAction::Revoke)));
+        }
+        let stored = harness.db.fetch_user(&official.id).await.unwrap();
+        assert_eq!(stored.badges.unwrap_or_default() as u32 & revolt_database::ACCOUNT_AGE_BADGES, 0);
+        assert_eq!(stored.get_badges().await & revolt_database::ACCOUNT_AGE_BADGES, 0);
+
+        // one platform audit record per ended grant, none the second time
+        let audit = harness
+            .db
+            .fetch_platform_audit(revolt_database::PlatformAuditQuery {
+                limit: 100,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let ended: Vec<_> = audit.iter().filter(|e| e.action == "badge.system.revoke").collect();
+        assert_eq!(ended.len(), 3);
+        assert!(ended.iter().any(|e| e.summary.as_deref() == Some("three_years stored grant ended (official or system account)")));
     }
 }

@@ -6,8 +6,8 @@
 //! rights ([`BadgeActor`]). The rules, in order:
 //!
 //! 1. the badge exists; Founder is `Locked` (no path changes it), Staff and
-//!    Platform Moderator follow appointments only, a retired badge is never
-//!    given again, and badges that follow a record are never changed by hand;
+//!    Platform Moderator follow appointments only, a retired (or
+//!    `Historical`) badge is never given again, and badges that follow a record are never changed by hand;
 //! 2. the person is not a bot, not deleted, and not the one asking;
 //! 3. the asker holds the right: `platform.badges.manage` for `Staff`-rule
 //!    badges, a staff Owner with a fresh step-up for `Privileged` ones;
@@ -231,12 +231,15 @@ pub enum BadgeDecision {
 }
 
 /// Sensitive changes that need two people: giving Partner or Elite Bug
-/// Hunter, and taking away any `Privileged` badge. (Founder, Staff and
+/// Hunter, and taking away any `Privileged` or `Historical` badge. (Founder, Staff and
 /// Platform Moderator never get here: they are refused before.)
 pub fn needs_second_person(definition: &BadgeDefinition, change: BadgeChange) -> bool {
     match change {
         BadgeChange::Grant => matches!(definition.id, "partner" | "elite_bug_hunter"),
-        BadgeChange::Revoke => definition.rule == BadgeGrantRule::Privileged,
+        BadgeChange::Revoke => matches!(
+            definition.rule,
+            BadgeGrantRule::Privileged | BadgeGrantRule::Historical
+        ),
     }
 }
 
@@ -255,7 +258,8 @@ pub fn badge_rule_check(
         BadgeGrantRule::Locked => return Err(BadgeDenial::Locked),
         BadgeGrantRule::Appointment => return Err(BadgeDenial::Appointment),
         BadgeGrantRule::Dynamic | BadgeGrantRule::Automatic => return Err(BadgeDenial::FollowsRecord),
-        BadgeGrantRule::Staff | BadgeGrantRule::Privileged => {}
+        BadgeGrantRule::Historical if change == BadgeChange::Grant => return Err(BadgeDenial::Retired),
+        BadgeGrantRule::Staff | BadgeGrantRule::Privileged | BadgeGrantRule::Historical => {}
     }
     if change == BadgeChange::Grant && definition.retired {
         return Err(BadgeDenial::Retired);
@@ -271,8 +275,12 @@ pub fn badge_rule_check(
     }
     match definition.rule {
         BadgeGrantRule::Staff if !actor.staff => return Err(BadgeDenial::NoPermission),
-        BadgeGrantRule::Privileged if !actor.owner => return Err(BadgeDenial::OwnerOnly),
-        BadgeGrantRule::Privileged if !actor.step_up => return Err(BadgeDenial::StepUpRequired),
+        BadgeGrantRule::Privileged | BadgeGrantRule::Historical if !actor.owner => {
+            return Err(BadgeDenial::OwnerOnly)
+        }
+        BadgeGrantRule::Privileged | BadgeGrantRule::Historical if !actor.step_up => {
+            return Err(BadgeDenial::StepUpRequired)
+        }
         _ => {}
     }
     Ok(if needs_second_person(definition, change) {

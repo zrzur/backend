@@ -253,15 +253,64 @@ async fn retired_badges_are_never_given_again() {
     let (_, _, actor) = harness.new_user().await;
     let (_, _, target) = harness.new_user().await;
     for path in PATHS {
-        for badge in ["translator", "responsible_disclosure", "supporter", "paw", "reserved_1", "reserved_2"] {
+        for badge in [
+            "translator",
+            "responsible_disclosure",
+            "supporter",
+            "paw",
+            "reserved_1",
+            "reserved_2",
+            "saha_champion",
+        ] {
             let result = try_change(&harness, &strongest(&actor, path), &target, badge, BadgeChange::Grant).await;
             assert!(result.is_err(), "{path:?} {badge}");
         }
     }
     assert!(held_badges(&harness.db, &target.id).await.unwrap().is_empty());
     let records = audit(&harness, &target).await;
-    assert_eq!(denied(&records, "retired"), 24);
-    assert_eq!(denied(&records, "route_retired"), 6);
+    assert_eq!(denied(&records, "retired"), 28);
+    assert_eq!(denied(&records, "route_retired"), 7);
+}
+
+#[rocket::async_test]
+async fn saha_champion_is_historical_a_holder_keeps_it_and_history_stays() {
+    let harness = TestHarness::new().await;
+    let (_, _, actor) = harness.new_user().await;
+    let (_, _, second) = harness.new_user().await;
+    let (_, _, holder) = harness.new_user().await;
+    let definition = revolt_database::badge_definition("saha_champion").unwrap();
+    assert_eq!(definition.rule, revolt_database::BadgeGrantRule::Historical);
+    assert!(definition.retired);
+    assert_eq!(definition.bit, UserBadges::SahaChampion as u32);
+    let paw = revolt_database::badge_definition("paw").unwrap();
+    assert_eq!(paw.rule, revolt_database::BadgeGrantRule::Historical);
+
+    // someone who held it before keeps it, and it still shows
+    grant_badge(&harness.db, &holder.id, "saha_champion", BadgeSource::Admin, None, &actor.id, Some("tournament".into()), None)
+        .await
+        .unwrap();
+    let bits = harness.db.fetch_user(&holder.id).await.unwrap().get_badges().await;
+    assert_ne!(bits & UserBadges::SahaChampion as u32, 0);
+
+    // taking it away is an Owner change with a step-up and a second person
+    let staff_only = BadgeActor { owner: false, ..strongest(&actor, BadgePath::StaffConsole) };
+    assert_eq!(
+        try_change(&harness, &staff_only, &holder, "saha_champion", BadgeChange::Revoke).await.map(|_| ()),
+        Err("NotPrivileged".to_string())
+    );
+    let pending = try_change(&harness, &strongest(&actor, BadgePath::StaffConsole), &holder, "saha_champion", BadgeChange::Revoke)
+        .await
+        .unwrap();
+    let BadgeOutcome::Pending(request) = pending else {
+        panic!("a second person must approve");
+    };
+    approve_badge_request(&harness.db, &strongest(&second, BadgePath::StaffConsole), &request.id).await.unwrap();
+    assert!(!held_badges(&harness.db, &holder.id).await.unwrap().contains("saha_champion"));
+    // the grant record and the badge log stay as history
+    let grants = harness.db.fetch_badge_grants(&holder.id).await.unwrap();
+    assert!(grants.iter().any(|g| g.badge == "saha_champion" && g.revoked_at.is_some()));
+    let log = harness.db.fetch_badge_logs(&holder.id).await.unwrap();
+    assert_eq!(log.iter().filter(|e| e.badge == "saha_champion").count(), 2);
 }
 
 #[rocket::async_test]

@@ -69,6 +69,7 @@ fn rule_name(rule: BadgeGrantRule) -> &'static str {
         BadgeGrantRule::Privileged => "privileged",
         BadgeGrantRule::Locked => "locked",
         BadgeGrantRule::Appointment => "appointment",
+        BadgeGrantRule::Historical => "historical",
     }
 }
 
@@ -229,6 +230,9 @@ pub async fn user_badges(
             .into_iter()
             .filter(|g| g.held(now) && !g.hidden)
             .filter(|g| g.badge != "founder" || founder_shown)
+            // computed badges (time on Zrzur) are in `User.badges` only: an
+            // old stored grant of one is history
+            .filter(|g| badge_definition(&g.badge).is_some_and(|b| b.rule != BadgeGrantRule::Dynamic))
             .map(|g| v0::PublicBadge {
                 badge: g.badge,
                 granted_at: g.granted_at,

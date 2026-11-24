@@ -16,7 +16,11 @@ auto_derived!(
         pub tier: u8,
         /// Lower is shown first
         pub priority: u16,
-        /// dynamic, automatic, staff or privileged
+        /// How it is given: `dynamic` (computed on every read), `automatic`
+        /// (from a record), `staff`, `privileged` (an Owner with a step-up),
+        /// `locked` (Founder: no path changes it), `appointment` (Staff,
+        /// Platform Moderator: an official appointment) or `historical`
+        /// (retired for good: never given again)
         pub rule: String,
         /// No longer given out
         pub retired: bool,

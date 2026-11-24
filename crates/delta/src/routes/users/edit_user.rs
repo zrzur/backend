@@ -355,8 +355,14 @@ pub async fn edit(
         )
     };
     let was_invisible = invisible(&user);
+    let hid_member_since = user.hides_member_since();
     user.update(db, partial, remove.into_iter().map(Into::into).collect())
     .await?;
+
+    // the account-age badges follow "Member since": tell everyone at once
+    if hid_member_since != user.hides_member_since() {
+        revolt_database::publish_badges(&user).await;
+    }
 
     // going invisible hides what you are doing from others, coming back
     // shows it again (rich presence; nothing when there is none)
