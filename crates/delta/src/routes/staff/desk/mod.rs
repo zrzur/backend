@@ -19,6 +19,9 @@ mod framework_tests;
 mod lookup;
 #[cfg(test)]
 mod lookup_tests;
+mod moderation;
+#[cfg(test)]
+mod moderation_tests;
 mod overview;
 pub(crate) mod registry;
 mod run;
@@ -141,5 +144,5 @@ pub(crate) async fn hides_field_from_bot(bot: &str, form: &str) -> bool {
 /// (`/interactions` refuses it without one), and the version is stored
 /// with the options for the registered-as-offered check.
 pub(crate) async fn keeps_options(bot: &str, command_name: &str) -> bool {
-    command_name == COMMAND && current(bot).await.is_some_and(|s| s.bot == bot)
+    registry::is_desk_command(command_name) && current(bot).await.is_some_and(|s| s.bot == bot)
 }

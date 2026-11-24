@@ -54,7 +54,7 @@ pub const CONFIRM_PREFIX: &str = "zd:confirm:";
 /// sub-commands and those of the enabled areas. 404 when the desk is off
 /// or the caller is not its bot.
 #[get("/desk/commands")]
-pub async fn commands(user: User) -> Result<Json<DeskCommandTree>> {
+pub async fn commands(user: User) -> Result<Json<Vec<DeskCommandTree>>> {
     let settings = super::settings(&user).await?;
     Ok(Json(registry::desk_tree(&settings)))
 }
@@ -88,7 +88,10 @@ async fn page_origin(
         return Err(create_error!(InteractionExpired));
     }
     if origin.kind != InteractionType::Command
-        || origin.command_name.as_deref() != Some(super::COMMAND)
+        || !origin
+            .command_name
+            .as_deref()
+            .is_some_and(registry::is_desk_command)
         || origin.application_id != settings.bot
         || origin.user_id != pressed.user_id
     {
@@ -151,7 +154,12 @@ pub async fn run(
     // `login`, `logout` and `stepup` have their own routes
     let (group, name, options) =
         registry::chosen(&interaction).ok_or_else(|| create_error!(InvalidOperation))?;
-    let entry = registry::find(group, name).ok_or_else(|| create_error!(InvalidOperation))?;
+    let entry = registry::find(
+        interaction.command_name.as_deref().unwrap_or_default(),
+        group,
+        name,
+    )
+    .ok_or_else(|| create_error!(InvalidOperation))?;
     if !entry.offered(&settings) {
         return Err(create_error!(NotFound));
     }
@@ -218,8 +226,9 @@ async fn propose(
         .prepare
         .ok_or_else(|| create_error!(InvalidOperation))?;
     let prepared = prepare(db, staff, &input).await?;
+    let irreversible = entry.irreversible || prepared.irreversible;
     let mut lines = prepared.lines;
-    if entry.irreversible {
+    if irreversible {
         lines.push(texts::IRREVERSIBLE.get(input.lang).to_string());
     }
     lines.push(texts::WITHIN.get(input.lang).to_string());
@@ -231,7 +240,7 @@ async fn propose(
         action: entry.key(),
         target_kind: prepared.target_kind,
         target: prepared.target,
-        options: input.options,
+        options: input.options.into_iter().chain(prepared.stored).collect(),
         card_interaction: interaction.id.clone(),
         card_message: None,
         title: prepared.title,
@@ -240,9 +249,10 @@ async fn propose(
         created_at: staff_now(),
         expires_at: DeskPending::expiry_from_now(),
         used: false,
+        irreversible,
     };
     db.insert_desk_pending(&pending).await?;
-    Ok(card(&pending, entry.irreversible))
+    Ok(card(&pending, pending.irreversible))
 }
 
 /// Whether the button was pressed on the card the server made for this
@@ -410,7 +420,8 @@ pub async fn confirm(
         record_platform_audit(db, deny("action no longer offered"), AuditOutcome::Denied).await?;
         return Err(create_error!(InvalidOperation));
     };
-    if !on_the_card(db, &settings, &interaction, &pending, entry.irreversible).await? {
+    let irreversible = entry.irreversible || pending.irreversible;
+    if !on_the_card(db, &settings, &interaction, &pending, irreversible).await? {
         record_platform_audit(
             db,
             deny("not pressed on the card the server made"),
@@ -426,7 +437,7 @@ pub async fn confirm(
     staff.require(db, permission).await?;
     // irreversible: a step-up made after the card was made; the pending
     // action stays usable
-    if entry.irreversible {
+    if irreversible {
         let fresh = staff
             .session
             .step_up_until
@@ -434,7 +445,7 @@ pub async fn confirm(
             && staff
                 .session
                 .step_up_at
-                .is_some_and(|at| at >= pending.created_at);
+                .is_some_and(|at| at > pending.created_at);
         if !fresh {
             let mut record = staff.record("staff.step_up.missing", Some(permission));
             record.summary = Some(staff.path.clone());

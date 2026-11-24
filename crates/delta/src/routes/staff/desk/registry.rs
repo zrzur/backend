@@ -212,6 +212,12 @@ pub struct Prepared {
     pub title: String,
     /// The exact consequences, one per line
     pub lines: Vec<String>,
+    /// Values the server read when the card was made (a case's version),
+    /// stored with the options and given to the handler on confirmation
+    pub stored: Vec<InteractionDataOption>,
+    /// This card cannot be undone (a suspension among case actions), even
+    /// if the command can be
+    pub irreversible: bool,
 }
 
 /// A command's handler. It runs as the presser and must call the
@@ -253,6 +259,11 @@ impl DeskCommand {
             Some(group) => format!("{group}.{}", self.name),
             None => self.name.to_string(),
         }
+    }
+
+    /// The top-level command it is under (`desk`, `desk-mod`, ...)
+    pub fn command(&self) -> &'static str {
+        command_of(self.area)
     }
 
     /// Offered while its area is on
@@ -362,6 +373,7 @@ pub fn entries() -> impl Iterator<Item = &'static DeskCommand> {
     ENTRIES
         .iter()
         .chain(super::lookup::ENTRIES.iter())
+        .chain(super::moderation::ENTRIES.iter())
         .chain(test_commands().0.iter())
 }
 
@@ -369,12 +381,41 @@ fn groups() -> impl Iterator<Item = &'static DeskGroup> {
     GROUPS
         .iter()
         .chain(super::lookup::GROUPS.iter())
+        .chain(super::moderation::GROUPS.iter())
         .chain(test_commands().1.iter())
 }
 
-/// The command `/desk [group] name`
-pub fn find(group: Option<&str>, name: &str) -> Option<&'static DeskCommand> {
-    entries().find(|e| e.group == group && e.name == name)
+/// Areas with a top-level command of their own. The platform allows a
+/// command 25 options and 8000 characters of names, descriptions and
+/// choices; one command for every area would not fit. The reading areas
+/// stay in `/desk`.
+const AREA_COMMANDS: &[(&str, &str, Text)] = &[(
+    "moderation",
+    "desk-mod",
+    Text {
+        en: "Zrzur Desk: moderation",
+        ar: "مكتب زرزور: الإشراف",
+        de: "Zrzur Desk: Moderation",
+    },
+)];
+
+/// The top-level command an area's commands are under
+pub fn command_of(area: Option<&str>) -> &'static str {
+    AREA_COMMANDS
+        .iter()
+        .find(|(a, _, _)| Some(*a) == area)
+        .map(|(_, command, _)| *command)
+        .unwrap_or(COMMAND)
+}
+
+/// Whether `name` is one of the desk's top-level commands
+pub fn is_desk_command(name: &str) -> bool {
+    name == COMMAND || AREA_COMMANDS.iter().any(|(_, command, _)| *command == name)
+}
+
+/// The command `/<command> [group] name`
+pub fn find(command: &str, group: Option<&str>, name: &str) -> Option<&'static DeskCommand> {
+    entries().find(|e| e.command() == command && e.group == group && e.name == name)
 }
 
 /// The command with this action key
@@ -497,10 +538,11 @@ fn place(options: &mut Vec<ApplicationCommandOption>, entry: &DeskCommand) {
     options.push(made);
 }
 
-/// The `/desk` tree for the enabled areas: the commands without an area
-/// (`me`), the session sub-commands, then each enabled area's commands in
-/// registry order
-pub fn desk_tree(settings: &FeaturesStaffDesk) -> DeskCommandTree {
+/// The commands for the enabled areas. `/desk` always: the commands
+/// without an area (`me`), the session sub-commands, then each enabled
+/// reading area's commands in registry order. Then one command per
+/// enabled area that has its own (`/desk-mod`), when it offers anything.
+pub fn desk_tree(settings: &FeaturesStaffDesk) -> Vec<DeskCommandTree> {
     let mut options = Vec::new();
     for entry in entries().filter(|e| e.area.is_none()) {
         place(&mut options, entry);
@@ -508,16 +550,34 @@ pub fn desk_tree(settings: &FeaturesStaffDesk) -> DeskCommandTree {
     for (name, description) in SESSION_SUBS {
         options.push(sub_command(name, *description, vec![]));
     }
-    for entry in entries().filter(|e| e.area.is_some() && e.offered(settings)) {
+    for entry in
+        entries().filter(|e| e.area.is_some() && e.command() == COMMAND && e.offered(settings))
+    {
         place(&mut options, entry);
     }
-    DeskCommandTree {
+    let mut trees = vec![DeskCommandTree {
         kind: ApplicationCommandType::ChatInput,
         name: COMMAND.to_string(),
         description: DESK_DESCRIPTION.en.to_string(),
         description_localizations: DESK_DESCRIPTION.localizations(),
         options,
+    }];
+    for (_, command, description) in AREA_COMMANDS {
+        let mut options = Vec::new();
+        for entry in entries().filter(|e| e.command() == *command && e.offered(settings)) {
+            place(&mut options, entry);
+        }
+        if !options.is_empty() {
+            trees.push(DeskCommandTree {
+                kind: ApplicationCommandType::ChatInput,
+                name: command.to_string(),
+                description: description.en.to_string(),
+                description_localizations: description.localizations(),
+                options,
+            });
+        }
     }
+    trees
 }
 
 /// Empty lists and maps count as absent, so a bot that sends `[]` or `{}`
@@ -564,7 +624,12 @@ pub async fn registered_as_offered(
     let Ok(command) = db.fetch_application_command(id).await else {
         return false;
     };
-    let offered = desk_tree(settings);
+    let Some(offered) = desk_tree(settings)
+        .into_iter()
+        .find(|tree| Some(tree.name.as_str()) == interaction.command_name.as_deref())
+    else {
+        return false;
+    };
     command.application_id == settings.bot
         && interaction.application_id == settings.bot
         && command.kind == ApplicationCommandType::ChatInput
@@ -835,7 +900,11 @@ fn me<'a>(
                 .is_some_and(|area| areas.iter().any(|a| a == area))
                 && entry.visible_to(staff);
             if usable {
-                view = view.line(format!("/{COMMAND} {}", entry.key().replace('.', " ")));
+                view = view.line(format!(
+                    "/{} {}",
+                    entry.command(),
+                    entry.key().replace('.', " ")
+                ));
             }
         }
         Ok(view)
@@ -1039,6 +1108,7 @@ pub(crate) mod test_entries {
                 target: Some(user.clone()),
                 title: TITLE.get(input.lang).to_string(),
                 lines: vec![WRITES.fill(input.lang, &[("note", &note), ("user", &user)])],
+                ..Default::default()
             })
         })
     }
@@ -1164,9 +1234,11 @@ mod unit_tests {
     /// The tree passes the server's own command validation
     #[test]
     fn desk_tree_is_a_valid_command() {
-        let tree = desk_tree(&all_on());
-        let data: DataApplicationCommand =
-            serde_json::from_value(serde_json::to_value(&tree).unwrap()).unwrap();
-        data.validate_command().unwrap();
+        for tree in desk_tree(&all_on()) {
+            let data: DataApplicationCommand =
+                serde_json::from_value(serde_json::to_value(&tree).unwrap()).unwrap();
+            data.validate_command()
+                .unwrap_or_else(|e| panic!("{}: {e}", tree.name));
+        }
     }
 }

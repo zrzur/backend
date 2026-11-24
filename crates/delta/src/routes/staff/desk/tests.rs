@@ -1280,3 +1280,32 @@ async fn account_deletion_removes_staff_sessions() {
         );
     }
 }
+
+/// The bot registers every command the server serves, unchanged; gives
+/// them by name
+pub(super) async fn register_served(
+    s: &Stage,
+) -> std::collections::HashMap<String, revolt_models::v0::ApplicationCommand> {
+    let response = s
+        .harness
+        .client
+        .get("/staff/desk/commands")
+        .header(Header::new("x-bot-token", s.bot.token.clone()))
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Ok);
+    let served: Value = response.into_json().await.unwrap();
+    let mut out = std::collections::HashMap::new();
+    for tree in served.as_array().unwrap() {
+        let command = revolt_database::create_application_command(
+            &s.harness.db,
+            &s.bot.id,
+            None,
+            serde_json::from_value(tree.clone()).unwrap(),
+        )
+        .await
+        .unwrap();
+        out.insert(command.name.clone(), command);
+    }
+    out
+}

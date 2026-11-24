@@ -32,7 +32,13 @@ async fn tree(s: &Stage, token: &str) -> (Status, Value) {
         .dispatch()
         .await;
     let status = response.status();
-    (status, response.into_json().await.unwrap_or(Value::Null))
+    let served: Value = response.into_json().await.unwrap_or(Value::Null);
+    // the `/desk` command of the served list
+    let desk = served
+        .as_array()
+        .and_then(|all| all.iter().find(|t| t["name"] == json!("desk")).cloned())
+        .unwrap_or(served);
+    (status, desk)
 }
 
 /// The bot registers `tree` as its `/desk`
@@ -49,9 +55,10 @@ async fn register(s: &Stage, tree: Value) -> ApplicationCommand {
 
 /// The bot registers exactly what the server offers
 async fn register_offered(s: &Stage) -> ApplicationCommand {
-    let (status, offered) = tree(s, &s.bot.token).await;
-    assert_eq!(status, Status::Ok, "{offered}");
-    register(s, offered).await
+    super::tests::register_served(s)
+        .await
+        .remove("desk")
+        .unwrap()
 }
 
 /// A `/desk` press on `command` as `/interactions` stores it (options, the
@@ -565,7 +572,7 @@ async fn desk_run_calls_stats_for_dashboard_read() {
     let mut without = context_of(&s, &staff).await;
     without.permissions.remove(&StaffPermission::DashboardRead);
     let session = without.session.id.clone();
-    let entry = registry::find(None, "stats").unwrap();
+    let entry = registry::find("desk", None, "stats").unwrap();
     let error = registry::dispatch(&s.harness.db, &without, entry, &DeskInput::default())
         .await
         .unwrap_err();
@@ -581,7 +588,7 @@ async fn desk_run_calls_stats_for_dashboard_read() {
     assert_eq!(last.2.as_deref(), Some(session.as_str()));
 
     // a changing command never runs through dispatch
-    let change = registry::find(Some("test"), "change").unwrap();
+    let change = registry::find("desk", Some("test"), "change").unwrap();
     let full = context_of(&s, &staff).await;
     let error = registry::dispatch(&s.harness.db, &full, change, &DeskInput::default())
         .await

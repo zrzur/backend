@@ -224,8 +224,20 @@ pub async fn disable(
     id: &str,
     data: Json<DataDisableBot>,
 ) -> Result<Json<SafetyAction>> {
+    disable_core(db, &staff, id, data.into_inner())
+        .await
+        .map(Json)
+}
+
+/// The console's `disable`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn disable_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataDisableBot,
+) -> Result<SafetyAction> {
     staff.require(db, StaffPermission::ReportsResolve).await?;
-    let data = data.into_inner();
     let public_reason = reason(&data.public_reason)?;
     let bot = db.fetch_bot(id).await?;
     let bot_user = db.fetch_user(&bot.id).await?;
@@ -284,7 +296,7 @@ pub async fn disable(
         );
         let _ = record_platform_audit(db, failed, AuditOutcome::Failed).await;
     }
-    result.map(Json)
+    result
 }
 
 #[derive(Serialize)]

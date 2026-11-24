@@ -29,23 +29,10 @@ fn all_areas(s: &Stage) {
 }
 
 async fn register_offered(s: &Stage) -> ApplicationCommand {
-    let response = s
-        .harness
-        .client
-        .get("/staff/desk/commands")
-        .header(Header::new("x-bot-token", s.bot.token.clone()))
-        .dispatch()
-        .await;
-    assert_eq!(response.status(), Status::Ok);
-    let tree: Value = response.into_json().await.unwrap();
-    revolt_database::create_application_command(
-        &s.harness.db,
-        &s.bot.id,
-        None,
-        serde_json::from_value(tree).unwrap(),
-    )
-    .await
-    .unwrap()
+    super::tests::register_served(s)
+        .await
+        .remove("desk")
+        .unwrap()
 }
 
 /// `/desk <group> <name> [options]` as `/interactions` stores it
@@ -504,7 +491,7 @@ async fn desk_lookups_match_the_console() {
     for case in &cases {
         let what = format!("{} {}", case.group, case.name);
         assert!(
-            find(Some(case.group), case.name).is_some(),
+            find("desk", Some(case.group), case.name).is_some(),
             "{what} is not registered"
         );
 

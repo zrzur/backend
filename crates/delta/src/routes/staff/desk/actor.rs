@@ -73,7 +73,10 @@ impl Expect<'_> {
             }
             Expect::AnyCommand => {
                 interaction.kind == InteractionType::Command
-                    && interaction.command_name.as_deref() == Some(COMMAND)
+                    && interaction
+                        .command_name
+                        .as_deref()
+                        .is_some_and(super::registry::is_desk_command)
             }
             Expect::ButtonPrefix(prefix) => {
                 interaction.kind == InteractionType::Component

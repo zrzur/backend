@@ -380,6 +380,19 @@ pub async fn revoke_user_sessions(
     id: &str,
     data: Json<DataReason>,
 ) -> Result<Json<usize>> {
+    revoke_user_sessions_core(db, &staff, id, data.into_inner())
+        .await
+        .map(Json)
+}
+
+/// The console's `revoke_user_sessions`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn revoke_user_sessions_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataReason,
+) -> Result<usize> {
     staff
         .require(db, StaffPermission::UsersSessionsRevoke)
         .await?;
@@ -420,7 +433,7 @@ pub async fn revoke_user_sessions(
     })
     .await?;
     crate::util::official::sessions_ended(db, &user.id, &reason).await;
-    Ok(Json(count))
+    Ok(count)
 }
 
 // ---- servers ----

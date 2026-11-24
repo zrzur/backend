@@ -54,6 +54,10 @@ pub struct DeskPending {
     /// Executed (once)
     #[serde(default)]
     pub used: bool,
+    /// This action cannot be undone: its confirmation needs a fresh step-up
+    /// and a Danger button, whatever the command
+    #[serde(default)]
+    pub irreversible: bool,
 }
 
 impl DeskPending {
@@ -93,6 +97,7 @@ mod tests {
             created_at: 1,
             expires_at,
             used: false,
+            irreversible: false,
         }
     }
 
