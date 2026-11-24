@@ -1090,6 +1090,7 @@ const fn change(
         permission: Some(permission),
         changes: true,
         irreversible,
+        plugins: false,
         prepare: Some(prepare),
         handler,
     }

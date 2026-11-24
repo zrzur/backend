@@ -95,12 +95,14 @@ fn invisible(c: char) -> bool {
 }
 
 /// `text` with every markdown and mention character escaped, invisible
-/// controls dropped, and line breaks turned into spaces: shown as written,
-/// on one line
+/// controls dropped, and line breaks (also U+2028, U+2029 and U+0085)
+/// turned into spaces: shown as written, on one line. The marks that set
+/// the direction of one word (U+200E, U+200F, U+061C) stay: Arabic names
+/// need them.
 pub fn escape_markdown(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {
-        if c == '\n' || c == '\r' {
+        if matches!(c, '\n' | '\r' | '\u{2028}' | '\u{2029}' | '\u{0085}') {
             out.push(' ');
             continue;
         }
@@ -202,6 +204,15 @@ Note \*\*bold\*\* \<\@01ABC\> \[x\]\(https://e.x\) \$x^2\$ next"
         let line = "safe\u{202E}gnp.exe\u{2066}x\u{2069}\u{200B}\u{200C}\u{200D}\u{2060}\u{FEFF}y"
             .to_string();
         assert_eq!(canonical_render("T", &[], &[line]), "**T**\nsafegnp.exexy");
+        // other line breaks are spaces: one value never starts a new line
+        let breaks = "a\u{2028}b\u{2029}c\u{0085}d".to_string();
+        assert_eq!(canonical_render("T", &[], &[breaks]), "**T**\na b c d");
+        // direction marks of one word stay
+        let marks = "\u{200E}x\u{200F}y\u{061C}z".to_string();
+        assert_eq!(
+            canonical_render("T", &[], &[marks.clone()]),
+            format!("**T**\n{marks}")
+        );
     }
 
     /// A card with a huge value still fits the message limit, keeps the

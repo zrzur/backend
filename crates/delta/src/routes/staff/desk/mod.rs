@@ -137,6 +137,29 @@ pub(crate) async fn hides_field_from_bot(bot: &str, form: &str) -> bool {
     config().await.features.staff_desk.bot.trim() == bot
 }
 
+/// Whether every answer to `interaction` must be private: a desk command,
+/// or a `zd:` button or form, of the configured desk bot (also while the
+/// desk is off). Staff data never goes to a channel.
+pub(crate) async fn answers_privately(interaction: &revolt_database::Interaction) -> bool {
+    let bot = interaction.application_id.trim();
+    let desk = interaction
+        .command_name
+        .as_deref()
+        .is_some_and(registry::is_desk_command)
+        || interaction
+            .custom_id
+            .as_deref()
+            .is_some_and(|id| id.starts_with(FORM_PREFIX));
+    if !desk || bot.is_empty() {
+        return false;
+    }
+    #[cfg(test)]
+    if let Some(settings) = test_settings::get(bot) {
+        return settings.bot.trim() == bot;
+    }
+    config().await.features.staff_desk.bot.trim() == bot
+}
+
 /// Whether a new command interaction keeps its options: only `/desk` of
 /// the configured desk bot, so the desk routes can read the sub-command
 /// and options the server itself checked; no other bot's options are ever

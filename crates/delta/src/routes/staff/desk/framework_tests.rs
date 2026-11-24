@@ -1265,3 +1265,44 @@ async fn desk_interaction_keeps_options_and_version() {
     }];
     assert_eq!(stored.command_options, expected);
 }
+
+/// The desk bot answers a desk command only in private: a channel answer,
+/// or deferring one, is refused before anything is posted; a private
+/// answer works
+#[rocket::async_test]
+async fn desk_answers_are_private() {
+    let s = stage().await;
+    let staff = s.person(vec![StaffRole::Owner]).await;
+    let command = register_offered(&s).await;
+    let callback = |pressed: &(String, String), body: Value| {
+        s.harness
+            .client
+            .post(format!(
+                "/interactions/{}/{}/callback",
+                pressed.0, pressed.1
+            ))
+            .header(ContentType::JSON)
+            .body(body.to_string())
+    };
+
+    let pressed = desk_press(&s, &staff, &command, sub("me")).await;
+    let response = callback(
+        &pressed,
+        json!({ "type": "Message", "data": { "content": "for everyone", "ephemeral": false } }),
+    )
+    .dispatch()
+    .await;
+    assert_eq!(response.status(), Status::BadRequest);
+    let response = callback(&pressed, json!({ "type": "DeferredMessage" }))
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::BadRequest);
+    // nothing was claimed: the private answer still goes through
+    let response = callback(
+        &pressed,
+        json!({ "type": "Message", "data": { "content": "only you", "ephemeral": true } }),
+    )
+    .dispatch()
+    .await;
+    assert_eq!(response.status(), Status::NoContent);
+}

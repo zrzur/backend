@@ -35,8 +35,8 @@ mod words;
 #[cfg(test)]
 pub(crate) use desk::test_settings as desk_test_settings;
 pub(crate) use desk::{
-    CODE_FIELD as DESK_CODE_FIELD, hides_field_from_bot as desk_hides_field_from_bot,
-    keeps_options as desk_keeps_options,
+    CODE_FIELD as DESK_CODE_FIELD, answers_privately as desk_answers_privately,
+    hides_field_from_bot as desk_hides_field_from_bot, keeps_options as desk_keeps_options,
 };
 pub use guard::StaffContext;
 pub use metrics::Metrics;

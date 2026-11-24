@@ -56,37 +56,36 @@ pub const CONFIRM_PREFIX: &str = "zd:confirm:";
 #[get("/desk/commands")]
 pub async fn commands(user: User) -> Result<Json<Vec<DeskCommandTree>>> {
     let settings = super::settings(&user).await?;
-    Ok(Json(registry::desk_tree(&settings)))
+    Ok(Json(registry::desk_tree(
+        &settings,
+        registry::plugins_on().await,
+    )))
 }
 
 /// The command a page press belongs to, and the page it asks for. The
-/// press must name a `/desk` command of the same person and the desk bot,
-/// and be made on an answer of that command or of an earlier page press of
-/// it. The page number is bounded; anything else is refused.
+/// press must name a `/desk` command of the same person and the desk bot
+/// (checked before anything else is said about it), be made on an answer
+/// of that command or of an earlier page press of it, and ask for a page
+/// from 1 to 1000. A refusal gives the reason for the record.
 async fn page_origin(
     db: &Database,
     settings: &FeaturesStaffDesk,
     pressed: &Interaction,
-) -> Result<(Interaction, u32)> {
-    let refuse = || create_error!(InvalidOperation);
+) -> std::result::Result<(Interaction, u32), (&'static str, revolt_result::Error)> {
+    let refuse = |why: &'static str| (why, create_error!(InvalidOperation));
     let rest = pressed
         .custom_id
         .as_deref()
         .and_then(|custom| custom.strip_prefix(PAGE_PREFIX))
-        .ok_or_else(refuse)?;
-    let (origin_id, page) = rest.rsplit_once(':').ok_or_else(refuse)?;
-    let page: u32 = page
-        .parse()
-        .ok()
-        .filter(|p| (1..=1000).contains(p))
-        .ok_or_else(refuse)?;
+        .ok_or_else(|| refuse("not a page button"))?;
+    let (origin_id, page) = rest
+        .rsplit_once(':')
+        .ok_or_else(|| refuse("not a page button"))?;
+    // whose command it is comes first: a stranger learns nothing about it
     let origin = db
         .fetch_interaction(origin_id)
         .await
-        .map_err(|_| create_error!(InteractionExpired))?;
-    if origin.is_expired() {
-        return Err(create_error!(InteractionExpired));
-    }
+        .map_err(|_| refuse("not a command of the presser"))?;
     if origin.kind != InteractionType::Command
         || !origin
             .command_name
@@ -95,16 +94,16 @@ async fn page_origin(
         || origin.application_id != settings.bot
         || origin.user_id != pressed.user_id
     {
-        return Err(refuse());
+        return Err(refuse("not a command of the presser"));
     }
     let Some(InteractionSource::Ephemeral { interaction_id, .. }) = &pressed.source else {
-        return Err(refuse());
+        return Err(refuse("not pressed on a private answer"));
     };
     if interaction_id != &origin.id {
         let parent = db
             .fetch_interaction(interaction_id)
             .await
-            .map_err(|_| refuse())?;
+            .map_err(|_| refuse("not pressed on an answer of that command"))?;
         let of_origin = format!("{PAGE_PREFIX}{}:", origin.id);
         let same = parent.user_id == pressed.user_id
             && parent.application_id == settings.bot
@@ -113,8 +112,16 @@ async fn page_origin(
                 .as_deref()
                 .is_some_and(|custom| custom.starts_with(&of_origin));
         if !same {
-            return Err(refuse());
+            return Err(refuse("not pressed on an answer of that command"));
         }
+    }
+    let page: u32 = page
+        .parse()
+        .ok()
+        .filter(|p| (1..=1000).contains(p))
+        .ok_or_else(|| refuse("page out of range"))?;
+    if origin.is_expired() {
+        return Err(("command expired", create_error!(InteractionExpired)));
     }
     Ok((origin, page))
 }
@@ -140,8 +147,17 @@ pub async fn run(
     .await?;
     let settings = super::settings(&user).await?;
     // a page press stands for its command: every check below is on that
-    let (interaction, page) = if pressed.kind == InteractionType::Component {
-        page_origin(db, &settings, &pressed).await?
+    let paging = pressed.kind == InteractionType::Component;
+    let (interaction, page) = if paging {
+        match page_origin(db, &settings, &pressed).await {
+            Ok(found) => found,
+            Err((why, error)) => {
+                let mut record = staff.record("staff.desk.page", None);
+                record.summary = Some(format!("desk: {why}"));
+                record_platform_audit(db, record, AuditOutcome::Denied).await?;
+                return Err(error);
+            }
+        }
     } else {
         (pressed, 1)
     };
@@ -172,8 +188,12 @@ pub async fn run(
         origin: interaction.id.clone(),
     };
     if entry.changes {
-        // a changing command has no pages: its card is made once
-        if page != 1 {
+        // a changing command has no pages: its card is made once, from
+        // the command itself, never from a button
+        if paging {
+            let mut record = staff.record("staff.desk.page", None);
+            record.summary = Some("desk: a changing command has no pages".to_string());
+            record_platform_audit(db, record, AuditOutcome::Denied).await?;
             return Err(create_error!(InvalidOperation));
         }
         return propose(db, &staff, &settings, &interaction, entry, input)

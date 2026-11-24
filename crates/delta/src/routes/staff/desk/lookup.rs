@@ -26,7 +26,7 @@ use super::view::{DeskButton, DeskButtonStyle, DeskView};
 
 /// Rows on one page of a list
 pub const PAGE_SIZE: usize = 8;
-/// Most rows a list fetches (the console's own page size)
+/// Most rows the console's list routes give (their own page size)
 const FETCH: usize = 50;
 /// Custom id prefix of a page button: `zd:page:<command interaction>:<page>`
 pub const PAGE_PREFIX: &str = "zd:page:";
@@ -62,6 +62,7 @@ mod w {
     );
     pub const ID: Text = t("ID", "المعرّف", "ID");
     pub const USER: Text = t("User", "المستخدم", "Benutzer");
+    pub const USER_ID: Text = t("User ID", "معرّف المستخدم", "Benutzer-ID");
     pub const NAME: Text = t("Name", "الاسم", "Name");
     pub const DISPLAY_NAME: Text = t("Display name", "الاسم الظاهر", "Anzeigename");
     pub const EMAIL: Text = t("Email", "البريد الإلكتروني", "E-Mail");
@@ -337,8 +338,16 @@ pub fn line(item: &Value, shows: &[Show], lang: Lang) -> String {
         .join(" · ")
 }
 
-/// A list, one page of it, with page buttons that come back to `/run`
-pub fn paged(mut view: DeskView, items: &[Value], shows: &[Show], input: &DeskInput) -> DeskView {
+/// A list, one page of it, with page buttons that come back to `/run`.
+/// `limit` is the most the core gives: only a full list says there may be
+/// more. The page line is part of the text, so it fits the message limit.
+pub fn paged(
+    mut view: DeskView,
+    items: &[Value],
+    shows: &[Show],
+    input: &DeskInput,
+    limit: Option<usize>,
+) -> DeskView {
     let lang = input.lang;
     let pages = items.len().div_ceil(PAGE_SIZE).max(1);
     let page = (input.page.max(1) as usize).min(pages);
@@ -348,10 +357,11 @@ pub fn paged(mut view: DeskView, items: &[Value], shows: &[Show], input: &DeskIn
     for item in items.iter().skip((page - 1) * PAGE_SIZE).take(PAGE_SIZE) {
         view = view.line(line(item, shows, lang));
     }
-    if items.len() >= FETCH {
-        view = view.line(w::MORE.fill(lang, &[("n", &FETCH.to_string())]));
+    if let Some(limit) = limit.filter(|limit| items.len() == *limit) {
+        view = view.line(w::MORE.fill(lang, &[("n", &limit.to_string())]));
     }
     if pages > 1 {
+        view = view.line(format!("{page}/{pages}"));
         view.page = Some(page as u32);
         view.pages = Some(pages as u32);
         let button = |label: Text, to: usize| DeskButton {
@@ -450,6 +460,7 @@ async fn user_find_view(
         &items(json(&rows)),
         USER_ROW,
         input,
+        Some(FETCH),
     ))
 }
 handler!(user_find, user_find_view);
@@ -495,6 +506,7 @@ async fn user_badges_view(
         &items(record["grants"].clone()),
         BADGE_ROW,
         input,
+        None,
     ))
 }
 handler!(user_badges, user_badges_view);
@@ -528,6 +540,7 @@ async fn user_history_view(
         &items(history["actions"].clone()),
         ACTION_ROW,
         input,
+        None,
     ))
 }
 handler!(user_history, user_history_view);
@@ -568,6 +581,7 @@ async fn server_find_view(
         &items(json(&rows)),
         SERVER_ROW,
         input,
+        Some(FETCH),
     ))
 }
 handler!(server_find, server_find_view);
@@ -622,6 +636,7 @@ async fn bot_find_view(db: &Database, staff: &StaffContext, input: &DeskInput) -
         &items(json(&rows)),
         BOT_ROW,
         input,
+        Some(FETCH),
     ))
 }
 handler!(bot_find, bot_find_view);
@@ -694,6 +709,7 @@ async fn case_list_view(
         &items(all["cases"].clone()),
         CASE_ROW,
         input,
+        Some(FETCH),
     ))
 }
 handler!(case_list, case_list_view);
@@ -744,6 +760,7 @@ async fn appeal_list_view(
         &items(json(&list)),
         APPEAL_ROW,
         input,
+        Some(FETCH),
     ))
 }
 handler!(appeal_list, appeal_list_view);
@@ -766,7 +783,7 @@ pub const TICKET_VIEW: &[Show] = &[
     show("/status", w::STATUS),
     show("/category", w::CATEGORY),
     show("/user", w::USER),
-    show("/user_id", w::ID),
+    show("/user_id", w::USER_ID),
     show("/assignee", w::ASSIGNEE),
     show("/created_at", w::CREATED),
     show("/updated_at", w::UPDATED),
@@ -787,6 +804,7 @@ async fn ticket_list_view(
         &items(json(&list)),
         TICKET_ROW,
         input,
+        Some(FETCH),
     ))
 }
 handler!(ticket_list, ticket_list_view);
@@ -832,6 +850,7 @@ async fn bug_list_view(db: &Database, staff: &StaffContext, input: &DeskInput) -
         &items(json(&list)),
         BUG_ROW,
         input,
+        None,
     ))
 }
 handler!(bug_list, bug_list_view);
@@ -895,6 +914,7 @@ async fn audit_search_view(
         &items(json(&list)),
         AUDIT_ROW,
         input,
+        Some(FETCH),
     ))
 }
 handler!(audit_search, audit_search_view);
@@ -944,6 +964,7 @@ async fn security_summary_view(
         &items(overview["top_denied"].clone()),
         ACTOR_ROW,
         input,
+        None,
     ))
 }
 handler!(security_summary, security_summary_view);
@@ -1004,6 +1025,7 @@ async fn system_metrics_view(
         &items(metrics["routes"].clone()),
         ROUTE_ROW,
         input,
+        None,
     ))
 }
 handler!(system_metrics, system_metrics_view);
@@ -1014,7 +1036,7 @@ pub const STAFF_ROW: &[Show] = &[
     show("/active", w::ACTIVE),
     show("/disabled", w::DISABLED),
     show("/open_sessions", w::OPEN_SESSIONS),
-    show("/user_id", w::ID),
+    show("/user_id", w::USER_ID),
 ];
 
 async fn staff_list_view(
@@ -1028,6 +1050,7 @@ async fn staff_list_view(
         &items(json(&members)),
         STAFF_ROW,
         input,
+        None,
     ))
 }
 handler!(staff_list, staff_list_view);
@@ -1051,6 +1074,7 @@ async fn queue_creators_view(
         &items(json(&list)),
         CREATOR_ROW,
         input,
+        None,
     ))
 }
 handler!(queue_creators, queue_creators_view);
@@ -1084,6 +1108,7 @@ async fn queue_designs_view(
         &items(queue["pending"].clone()),
         DESIGN_ROW,
         input,
+        Some(100),
     ))
 }
 handler!(queue_designs, queue_designs_view);
@@ -1101,16 +1126,13 @@ async fn queue_plugins_view(
     staff: &StaffContext,
     input: &DeskInput,
 ) -> Result<DeskView> {
-    // the console's guard on every plugin route
-    if !revolt_config::config().await.features.plugins_enabled {
-        return Err(create_error!(PluginsDisabled));
-    }
     let list = review::plugin_queue_core(db, staff).await?;
     Ok(paged(
         DeskView::new(w::T_PLUGINS.get(input.lang)),
         &items(json(&list)),
         PLUGIN_ROW,
         input,
+        Some(100),
     ))
 }
 handler!(queue_plugins, queue_plugins_view);
@@ -1134,6 +1156,7 @@ async fn queue_discover_view(
         &items(json(&list)),
         DISCOVER_ROW,
         input,
+        None,
     ))
 }
 handler!(queue_discover, queue_discover_view);
@@ -1157,6 +1180,7 @@ async fn queue_verifications_view(
         &items(json(&list)),
         VERIFICATION_ROW,
         input,
+        Some(FETCH),
     ))
 }
 handler!(queue_verifications, queue_verifications_view);
@@ -1179,6 +1203,7 @@ async fn words_list_view(
         &items(json(&list)),
         WORD_ROW,
         input,
+        None,
     ))
 }
 handler!(words_list, words_list_view);
@@ -1203,6 +1228,7 @@ async fn notices_list_view(
         &items(json(&list)),
         NOTICE_ROW,
         input,
+        Some(100),
     ))
 }
 handler!(notices_list, notices_list_view);
@@ -1243,6 +1269,7 @@ async fn billing_summary_view(
         &items(summary["orders_by_status"].clone()),
         ORDER_ROW,
         input,
+        None,
     ))
 }
 handler!(billing_summary, billing_summary_view);
@@ -1378,6 +1405,7 @@ const fn read(
         permission,
         changes: false,
         irreversible: false,
+        plugins: false,
         prepare: None,
         handler,
     }
@@ -1639,19 +1667,23 @@ pub static ENTRIES: &[DeskCommand] = &[
         Some(P::ReportsRead),
         queue_designs,
     ),
-    read(
-        "lookup",
-        "queue",
-        "plugins",
-        t(
-            "Plugins to review",
-            "إضافات للمراجعة",
-            "Plugins zur Prüfung",
-        ),
-        &[],
-        Some(P::ReportsRead),
-        queue_plugins,
-    ),
+    // only while plugins are on, like the console's plugin routes
+    DeskCommand {
+        plugins: true,
+        ..read(
+            "lookup",
+            "queue",
+            "plugins",
+            t(
+                "Plugins to review",
+                "إضافات للمراجعة",
+                "Plugins zur Prüfung",
+            ),
+            &[],
+            Some(P::ReportsRead),
+            queue_plugins,
+        )
+    },
     read(
         "lookup",
         "queue",

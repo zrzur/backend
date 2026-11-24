@@ -133,8 +133,9 @@ async fn as_user(s: &Stage, session: &str, path: &str, body: Value) -> Value {
 
 /// How the desk answer is compared with the console's
 enum Compare {
-    /// A view: every shown value equal to the console's
-    View(&'static [Show]),
+    /// A view: every shown value equal to the console's; every key found
+    /// in the console's answer except the `optional` ones
+    View(&'static [Show], &'static [&'static str]),
     /// A list at this pointer of the console's answer (empty: the answer)
     List(&'static str, &'static [Show]),
     /// Numbers that move between two calls (counters, latencies): the same
@@ -148,6 +149,8 @@ struct Case {
     options: Value,
     console: String,
     compare: Compare,
+    /// The seeded data must show: the console's list is not empty
+    non_empty: bool,
 }
 
 fn field_names(view: &Value) -> Vec<String> {
@@ -162,17 +165,20 @@ fn field_names(view: &Value) -> Vec<String> {
 fn check(case: &Case, desk: &Value, console: &Value) {
     let what = format!("{} {}", case.group, case.name);
     match &case.compare {
-        Compare::View(shows) => {
+        Compare::View(shows, optional) => {
+            for s in shows.iter() {
+                assert!(
+                    optional.contains(&s.key) || text_of(console, s.key, Lang::En).is_some(),
+                    "{what}: {} not found in {console}",
+                    s.key
+                );
+            }
             let expected: Vec<(String, String)> = shows
                 .iter()
                 .filter_map(|s| {
                     text_of(console, s.key, Lang::En).map(|v| (s.label.en.to_string(), v))
                 })
                 .collect();
-            assert!(
-                expected.len() >= 2,
-                "{what}: too few values found in {console}"
-            );
             let got: Vec<(String, String)> = desk["fields"]
                 .as_array()
                 .unwrap()
@@ -193,6 +199,10 @@ fn check(case: &Case, desk: &Value, console: &Value) {
                 console.pointer(pointer).cloned().unwrap_or(Value::Null)
             };
             let items = items.as_array().cloned().unwrap_or_default();
+            assert!(
+                !case.non_empty || !items.is_empty(),
+                "{what}: the seeded data is missing from {console}"
+            );
             let lines: Vec<String> = desk["lines"]
                 .as_array()
                 .unwrap()
@@ -211,10 +221,9 @@ fn check(case: &Case, desk: &Value, console: &Value) {
                     .map(|i| line(i, shows, Lang::En))
                     .collect();
                 assert!(
-                    lines.ends_with(&expected)
-                        || lines
-                            .windows(expected.len())
-                            .any(|w| w == expected.as_slice()),
+                    lines
+                        .windows(expected.len())
+                        .any(|w| w == expected.as_slice()),
                     "{what}: {lines:?} vs {expected:?}"
                 );
                 assert!(
@@ -236,6 +245,24 @@ fn check(case: &Case, desk: &Value, console: &Value) {
     }
 }
 
+/// The console as the same person
+async fn console_send(s: &Stage, who: &Person, token: &str, path: &str, body: Value) -> Value {
+    let response = s
+        .harness
+        .client
+        .post(path.to_string())
+        .header(Header::new("x-session-token", who.session.token.clone()))
+        .header(Header::new("x-staff-session", token.to_string()))
+        .header(ContentType::JSON)
+        .body(body.to_string())
+        .dispatch()
+        .await;
+    let status = response.status();
+    let body: Value = response.into_json().await.unwrap_or(Value::Null);
+    assert_eq!(status, Status::Ok, "{path}: {body}");
+    body
+}
+
 /// Every lookup: an Owner gets the console's data; an Analyst (no lookup
 /// permission) is refused as themselves, with a Denied record
 #[rocket::async_test]
@@ -251,10 +278,12 @@ async fn desk_lookups_match_the_console() {
     let token = console_token(&s, &owner, 0).await;
     let command = register_offered(&s).await;
 
-    // something to find: a user, a report, a bug report, a ticket, a bot
+    // something of every kind: a user, a report, a bug report, a ticket, a
+    // bot, a user action with an appeal, a notice, a word, a creator, a
+    // badge, a design, a Discover request and a bot verification request
     let (_, someone_session, someone) = s.harness.new_user().await;
     let server = s.harness.db.fetch_server(&s.server_id).await.unwrap();
-    let (_, _, author) = s.harness.new_user().await;
+    let (_, author_session, author) = s.harness.new_user().await;
     let (_, _, message) = s
         .harness
         .new_message(&author, &server, vec![s.place.clone()])
@@ -273,219 +302,417 @@ async fn desk_lookups_match_the_console() {
     )
     .await;
     let case_id = report["_id"].as_str().unwrap().to_string();
-    let bug = as_user(&s, &someone_session.token, "/bugs", json!({
-        "kind": "bug", "title": "Send button stuck", "description": "The send button stays grey", "platform": "web"
-    }))
+    let bug = as_user(
+        &s,
+        &someone_session.token,
+        "/bugs",
+        json!({
+            "kind": "bug", "title": "Send button stuck", "description": "The send button stays grey", "platform": "web"
+        }),
+    )
     .await;
     let bug_id = bug["_id"].as_str().unwrap().to_string();
-    let ticket = as_user(&s, &someone_session.token, "/support/tickets", json!({
-        "category": "billing", "subject": "Charged twice", "body": "I was charged twice this month."
-    }))
+    let ticket = as_user(
+        &s,
+        &someone_session.token,
+        "/support/tickets",
+        json!({
+            "category": "billing", "subject": "Charged twice", "body": "I was charged twice this month."
+        }),
+    )
     .await;
     let ticket_id = ticket["_id"].as_str().unwrap().to_string();
+    // the console's own actions; notices and creator grants need a step-up
+    let response = s
+        .harness
+        .client
+        .post("/staff/session/step-up")
+        .header(Header::new("x-session-token", owner.session.token.clone()))
+        .header(Header::new("x-staff-session", token.clone()))
+        .header(ContentType::JSON)
+        .body(json!({ "totp_code": super::tests::code(1) }).to_string())
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Ok);
+    let action = console_send(
+        &s,
+        &owner,
+        &token,
+        &format!("/staff/users/{}/actions", author.id),
+        json!({ "kind": "Warning", "category": "Harassment", "public_reason": "Insults are not allowed" }),
+    )
+    .await;
+    as_user(
+        &s,
+        &author_session.token,
+        &format!(
+            "/safety/standing/{}/appeal",
+            action["_id"].as_str().unwrap()
+        ),
+        json!({ "statement": "I was quoting someone else here." }),
+    )
+    .await;
+    console_send(
+        &s,
+        &owner,
+        &token,
+        "/staff/notices",
+        json!({
+            "user": someone.id,
+            "title": { "ar": "تحديث لحسابك", "en": "An update on your account", "de": "Neuigkeiten zu deinem Konto" },
+            "body": { "ar": "راجعنا طلبك.", "en": "We looked at your request.", "de": "Wir haben deine Anfrage geprüft." },
+            "tone": "info"
+        }),
+    )
+    .await;
+    console_send(
+        &s,
+        &owner,
+        &token,
+        "/staff/words",
+        json!({ "pattern": "badword", "category": "Spam", "allow": false, "reason": "Spam wave" }),
+    )
+    .await;
+    console_send(
+        &s,
+        &owner,
+        &token,
+        &format!("/staff/creators/{}", someone.id),
+        json!({ "action": "grant", "reason": "Makes good effects" }),
+    )
+    .await;
+    console_send(
+        &s,
+        &owner,
+        &token,
+        &format!("/staff/users/{}/badges/grant", someone.id),
+        json!({ "badge": "partner", "reason": "Official partner" }),
+    )
+    .await;
+    let design: revolt_database::CommunityItem = serde_json::from_value(json!({
+        "_id": ulid::Ulid::new().to_string(),
+        "kind": "Effect",
+        "name": "Snow",
+        "creator_id": someone.id,
+        "file": {
+            "_id": ulid::Ulid::new().to_string(),
+            "tag": "effects",
+            "filename": "snow.gif",
+            "metadata": { "type": "Image", "width": 576, "height": 1024 },
+            "content_type": "image/gif",
+            "size": 100
+        },
+        "status": "PendingReview",
+        "revision": 1,
+        "rights": { "terms_version": "test", "confirmed_at": 1 }
+    }))
+    .unwrap();
+    s.harness.db.insert_community_item(&design).await.unwrap();
+    let (_, listed_owner_session, listed_owner) = s.harness.new_user().await;
+    let (listed, _) = s.harness.new_server(&listed_owner).await;
+    let response = s
+        .harness
+        .client
+        .put(format!("/servers/{}/discover", listed.id))
+        .header(Header::new(
+            "x-session-token",
+            listed_owner_session.token.clone(),
+        ))
+        .header(ContentType::JSON)
+        .body(r##"{"tags":["Gaming"],"category":"gaming","language":"ar"}"##)
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Ok);
+    let (_, bot_owner_session, bot_owner) = s.harness.new_user().await;
+    let (verified_bot, _) = s.harness.new_bot(&bot_owner).await;
+    as_user(
+        &s,
+        &bot_owner_session.token,
+        &format!("/bots/{}/verification", verified_bot.id),
+        json!({ "statement": "Moderation helper used in 40 Arabic communities.", "website": "https://example.org", "privacy_policy_url": "https://example.org/privacy", "terms_of_service_url": "https://example.org/terms" }),
+    )
+    .await;
+
     let bot_id = s.bot.id.clone();
     let user_id = someone.id.clone();
     let server_id = s.server_id.clone();
     let owner_id = owner.user.id.clone();
 
     use Compare::*;
+    let list = |group: &'static str,
+                name: &'static str,
+                options: Value,
+                console: String,
+                pointer: &'static str,
+                shows: &'static [Show],
+                non_empty: bool| Case {
+        group,
+        name,
+        options,
+        console,
+        compare: List(pointer, shows),
+        non_empty,
+    };
+    let view = |group: &'static str,
+                name: &'static str,
+                options: Value,
+                console: String,
+                shows: &'static [Show],
+                optional: &'static [&'static str]| Case {
+        group,
+        name,
+        options,
+        console,
+        compare: View(shows, optional),
+        non_empty: false,
+    };
+    let labels =
+        |group: &'static str, name: &'static str, console: &str, shows: &'static [Show]| Case {
+            group,
+            name,
+            options: json!([]),
+            console: console.to_string(),
+            compare: Labels(shows),
+            non_empty: false,
+        };
+    let user = |id: &str| json!([{ "type": "User", "name": "user", "value": id }]);
+    let id = |name: &str, id: &str| json!([{ "type": "String", "name": name, "value": id }]);
     let cases = vec![
-        Case {
-            group: "user",
-            name: "find",
-            options: json!([{ "type": "String", "name": "query", "value": someone.username }]),
-            console: format!("/staff/users?q={}&limit=50", someone.username),
-            compare: List("", lookup::USER_ROW),
-        },
-        Case {
-            group: "user",
-            name: "view",
-            options: json!([{ "type": "User", "name": "user", "value": user_id }]),
-            console: format!("/staff/users/{user_id}"),
-            compare: View(lookup::USER_VIEW),
-        },
-        Case {
-            group: "user",
-            name: "badges",
-            options: json!([{ "type": "User", "name": "user", "value": user_id }]),
-            console: format!("/staff/users/{user_id}/badges"),
-            compare: List("/grants", lookup::BADGE_ROW),
-        },
-        Case {
-            group: "user",
-            name: "history",
-            options: json!([{ "type": "User", "name": "user", "value": author.id }]),
-            console: format!("/staff/safety/users/{}", author.id),
-            compare: List("/actions", lookup::ACTION_ROW),
-        },
-        Case {
-            group: "server",
-            name: "find",
-            options: json!([]),
-            console: "/staff/servers?limit=50".to_string(),
-            compare: List("", lookup::SERVER_ROW),
-        },
-        Case {
-            group: "server",
-            name: "view",
-            options: json!([{ "type": "String", "name": "server", "value": server_id }]),
-            console: format!("/staff/servers/{server_id}"),
-            compare: View(lookup::SERVER_VIEW),
-        },
-        Case {
-            group: "bot",
-            name: "find",
-            options: json!([]),
-            console: "/staff/bots?limit=50".to_string(),
-            compare: List("", lookup::BOT_ROW),
-        },
-        Case {
-            group: "bot",
-            name: "view",
-            options: json!([{ "type": "String", "name": "bot", "value": bot_id }]),
-            console: format!("/staff/bots/{bot_id}"),
-            compare: View(lookup::BOT_VIEW),
-        },
-        Case {
-            group: "case",
-            name: "list",
-            options: json!([]),
-            console: "/staff/safety/cases?limit=50".to_string(),
-            compare: List("/cases", lookup::CASE_ROW),
-        },
-        Case {
-            group: "case",
-            name: "view",
-            options: json!([{ "type": "String", "name": "case", "value": case_id }]),
-            console: format!("/staff/safety/cases/{case_id}"),
-            compare: View(lookup::CASE_VIEW),
-        },
-        Case {
-            group: "appeal",
-            name: "list",
-            options: json!([]),
-            console: "/staff/safety/appeals?limit=50".to_string(),
-            compare: List("", lookup::APPEAL_ROW),
-        },
-        Case {
-            group: "ticket",
-            name: "list",
-            options: json!([{ "type": "String", "name": "status", "value": "Open" }]),
-            console: "/staff/support/tickets?status=Open".to_string(),
-            compare: List("", lookup::TICKET_ROW),
-        },
-        Case {
-            group: "ticket",
-            name: "view",
-            options: json!([{ "type": "String", "name": "ticket", "value": ticket_id }]),
-            console: format!("/staff/support/tickets/{ticket_id}"),
-            compare: View(lookup::TICKET_VIEW),
-        },
-        Case {
-            group: "bug",
-            name: "list",
-            options: json!([]),
-            console: "/staff/bugs".to_string(),
-            compare: List("", lookup::BUG_ROW),
-        },
-        Case {
-            group: "bug",
-            name: "view",
-            options: json!([{ "type": "String", "name": "bug", "value": bug_id }]),
-            console: format!("/staff/bugs/{bug_id}"),
-            compare: View(lookup::BUG_VIEW),
-        },
-        Case {
-            group: "system",
-            name: "health",
-            options: json!([]),
-            console: "/staff/health".to_string(),
-            compare: Labels(lookup::HEALTH_VIEW),
-        },
-        Case {
-            group: "system",
-            name: "metrics",
-            options: json!([]),
-            console: "/staff/operations/metrics".to_string(),
-            compare: Labels(lookup::METRICS_VIEW),
-        },
-        Case {
-            group: "staff",
-            name: "list",
-            options: json!([]),
-            console: "/staff/members".to_string(),
-            compare: List("", lookup::STAFF_ROW),
-        },
-        Case {
-            group: "queue",
-            name: "creators",
-            options: json!([]),
-            console: "/staff/creators".to_string(),
-            compare: List("", lookup::CREATOR_ROW),
-        },
-        Case {
-            group: "queue",
-            name: "designs",
-            options: json!([]),
-            console: "/staff/designs/review".to_string(),
-            compare: List("/pending", lookup::DESIGN_ROW),
-        },
-        Case {
-            group: "queue",
-            name: "discover",
-            options: json!([]),
-            console: "/staff/discover/requests".to_string(),
-            compare: List("", lookup::DISCOVER_ROW),
-        },
-        Case {
-            group: "queue",
-            name: "verifications",
-            options: json!([]),
-            console: "/staff/bot-verifications".to_string(),
-            compare: List("", lookup::VERIFICATION_ROW),
-        },
-        Case {
-            group: "words",
-            name: "list",
-            options: json!([]),
-            console: "/staff/words".to_string(),
-            compare: List("", lookup::WORD_ROW),
-        },
-        Case {
-            group: "notices",
-            name: "list",
-            options: json!([]),
-            console: "/staff/notices".to_string(),
-            compare: List("", lookup::NOTICE_ROW),
-        },
-        Case {
-            group: "billing",
-            name: "summary",
-            options: json!([]),
-            console: "/staff/billing/summary".to_string(),
-            compare: List("/orders_by_status", lookup::ORDER_ROW),
-        },
-        Case {
-            group: "audit",
-            name: "search",
-            options: json!([{ "type": "User", "name": "actor", "value": owner_id }]),
-            console: format!("/staff/audit?actor={owner_id}&limit=50"),
-            compare: List("", lookup::AUDIT_ROW),
-        },
-        Case {
-            group: "audit",
-            name: "verify",
-            options: json!([]),
-            console: "/staff/audit/verify".to_string(),
-            compare: Labels(lookup::VERIFY_VIEW),
-        },
-        Case {
-            group: "security",
-            name: "summary",
-            options: json!([]),
-            console: "/staff/security".to_string(),
-            compare: Labels(lookup::SECURITY_VIEW),
-        },
+        list(
+            "user",
+            "find",
+            json!([{ "type": "String", "name": "query", "value": someone.username }]),
+            format!("/staff/users?q={}&limit=50", someone.username),
+            "",
+            lookup::USER_ROW,
+            true,
+        ),
+        view(
+            "user",
+            "view",
+            user(&user_id),
+            format!("/staff/users/{user_id}"),
+            lookup::USER_VIEW,
+            &["/display_name", "/suspended_until"],
+        ),
+        list(
+            "user",
+            "badges",
+            user(&user_id),
+            format!("/staff/users/{user_id}/badges"),
+            "/grants",
+            lookup::BADGE_ROW,
+            true,
+        ),
+        list(
+            "user",
+            "history",
+            user(&author.id),
+            format!("/staff/safety/users/{}", author.id),
+            "/actions",
+            lookup::ACTION_ROW,
+            true,
+        ),
+        list(
+            "server",
+            "find",
+            json!([]),
+            "/staff/servers?limit=50".to_string(),
+            "",
+            lookup::SERVER_ROW,
+            true,
+        ),
+        view(
+            "server",
+            "view",
+            id("server", &server_id),
+            format!("/staff/servers/{server_id}"),
+            lookup::SERVER_VIEW,
+            &["/description"],
+        ),
+        list(
+            "bot",
+            "find",
+            json!([]),
+            "/staff/bots?limit=50".to_string(),
+            "",
+            lookup::BOT_ROW,
+            true,
+        ),
+        view(
+            "bot",
+            "view",
+            id("bot", &bot_id),
+            format!("/staff/bots/{bot_id}"),
+            lookup::BOT_VIEW,
+            &[
+                "/interactions_url",
+                "/terms_of_service_url",
+                "/privacy_policy_url",
+                "/verifications",
+            ],
+        ),
+        list(
+            "case",
+            "list",
+            json!([]),
+            "/staff/safety/cases?limit=50".to_string(),
+            "/cases",
+            lookup::CASE_ROW,
+            true,
+        ),
+        view(
+            "case",
+            "view",
+            id("case", &case_id),
+            format!("/staff/safety/cases/{case_id}"),
+            lookup::CASE_VIEW,
+            &["/case/assignee_id", "/actions", "/appeals", "/related"],
+        ),
+        list(
+            "appeal",
+            "list",
+            json!([]),
+            "/staff/safety/appeals?limit=50".to_string(),
+            "",
+            lookup::APPEAL_ROW,
+            true,
+        ),
+        list(
+            "ticket",
+            "list",
+            json!([{ "type": "String", "name": "status", "value": "Open" }]),
+            "/staff/support/tickets?status=Open".to_string(),
+            "",
+            lookup::TICKET_ROW,
+            true,
+        ),
+        view(
+            "ticket",
+            "view",
+            id("ticket", &ticket_id),
+            format!("/staff/support/tickets/{ticket_id}"),
+            lookup::TICKET_VIEW,
+            &["/assignee", "/closed_at"],
+        ),
+        list(
+            "bug",
+            "list",
+            json!([]),
+            "/staff/bugs".to_string(),
+            "",
+            lookup::BUG_ROW,
+            true,
+        ),
+        view(
+            "bug",
+            "view",
+            id("bug", &bug_id),
+            format!("/staff/bugs/{bug_id}"),
+            lookup::BUG_VIEW,
+            &["/report/app_version", "/possible_duplicates"],
+        ),
+        labels("system", "health", "/staff/health", lookup::HEALTH_VIEW),
+        labels(
+            "system",
+            "metrics",
+            "/staff/operations/metrics",
+            lookup::METRICS_VIEW,
+        ),
+        list(
+            "staff",
+            "list",
+            json!([]),
+            "/staff/members".to_string(),
+            "",
+            lookup::STAFF_ROW,
+            true,
+        ),
+        list(
+            "queue",
+            "creators",
+            json!([]),
+            "/staff/creators".to_string(),
+            "",
+            lookup::CREATOR_ROW,
+            true,
+        ),
+        list(
+            "queue",
+            "designs",
+            json!([]),
+            "/staff/designs/review".to_string(),
+            "/pending",
+            lookup::DESIGN_ROW,
+            true,
+        ),
+        list(
+            "queue",
+            "discover",
+            json!([]),
+            "/staff/discover/requests".to_string(),
+            "",
+            lookup::DISCOVER_ROW,
+            true,
+        ),
+        list(
+            "queue",
+            "verifications",
+            json!([]),
+            "/staff/bot-verifications".to_string(),
+            "",
+            lookup::VERIFICATION_ROW,
+            true,
+        ),
+        list(
+            "words",
+            "list",
+            json!([]),
+            "/staff/words".to_string(),
+            "",
+            lookup::WORD_ROW,
+            true,
+        ),
+        list(
+            "notices",
+            "list",
+            json!([]),
+            "/staff/notices".to_string(),
+            "",
+            lookup::NOTICE_ROW,
+            true,
+        ),
+        // a test database has no orders
+        list(
+            "billing",
+            "summary",
+            json!([]),
+            "/staff/billing/summary".to_string(),
+            "/orders_by_status",
+            lookup::ORDER_ROW,
+            false,
+        ),
+        list(
+            "audit",
+            "search",
+            json!([{ "type": "User", "name": "actor", "value": owner_id }]),
+            format!("/staff/audit?actor={owner_id}&limit=50"),
+            "",
+            lookup::AUDIT_ROW,
+            true,
+        ),
+        labels(
+            "audit",
+            "verify",
+            "/staff/audit/verify",
+            lookup::VERIFY_VIEW,
+        ),
+        labels(
+            "security",
+            "summary",
+            "/staff/security",
+            lookup::SECURITY_VIEW,
+        ),
     ];
 
     for case in &cases {
@@ -552,7 +779,9 @@ async fn desk_lookups_match_the_console() {
     }
 }
 
-/// The plugin queue: the console's own plugin switch, then the console's data
+/// The plugin queue follows the console's plugin switch: while plugins are
+/// off it is not in the tree at all and a press on it is refused; while on,
+/// it gives the console's data
 #[rocket::async_test]
 async fn desk_plugin_queue_follows_the_console() {
     let s = stage().await;
@@ -561,22 +790,32 @@ async fn desk_plugin_queue_follows_the_console() {
     s.sign_in(&owner, -1).await;
     let token = console_token(&s, &owner, 0).await;
     let command = register_offered(&s).await;
+    let offered = command
+        .options
+        .iter()
+        .find(|o| o.name == "queue")
+        .and_then(|o| o.options.as_ref())
+        .is_some_and(|subs| subs.iter().any(|sub| sub.name == "plugins"));
 
     let pressed = press(&s, &owner, &command, "queue", "plugins", json!([]), None).await;
     let (status, desk) = s.hand("run", &pressed).await;
     let (console_status, from_console) = console(&s, &owner, &token, "/staff/plugins/review").await;
-    assert_eq!(status, console_status, "{desk} / {from_console}");
-    if status == Status::Ok {
+    if console_status == Status::Ok {
+        assert!(offered, "plugins are on: the queue is offered");
+        assert_eq!(status, Status::Ok, "{desk}");
         let case = Case {
             group: "queue",
             name: "plugins",
             options: json!([]),
             console: String::new(),
             compare: Compare::List("", lookup::PLUGIN_ROW),
+            non_empty: false,
         };
         check(&case, &desk, &from_console);
     } else {
-        assert_eq!(error_type(&desk), error_type(&from_console));
+        assert_eq!(error_type(&from_console), "PluginsDisabled");
+        assert!(!offered, "plugins are off: the queue is not in the tree");
+        assert_eq!(error_type(&desk), "InvalidOperation", "{desk}");
     }
 }
 
@@ -705,7 +944,10 @@ async fn desk_lists_page() {
     assert_eq!(page1["page"], json!(1));
     let pages = page1["pages"].as_u64().unwrap();
     assert!(pages >= 2, "{page1}");
-    assert_eq!(page1["lines"].as_array().unwrap().len(), PAGE_SIZE);
+    // the rows, then the page line (part of the text)
+    let lines = page1["lines"].as_array().unwrap();
+    assert_eq!(lines.len(), PAGE_SIZE + 1);
+    assert_eq!(lines[PAGE_SIZE], json!(format!("1/{pages}")));
     let next = page1["buttons"].as_array().unwrap().last().unwrap()["action_id"]
         .as_str()
         .unwrap()
@@ -742,4 +984,52 @@ async fn desk_lists_page() {
     let wild = page_press(&s, &owner, &format!("{PAGE_PREFIX}{}:0", first.0), &first.0).await;
     let (_, body) = s.hand("run", &wild).await;
     assert_eq!(error_type(&body), "InvalidOperation", "{body}");
+
+    // each refusal is recorded as the presser, with its reason
+    let denied = |records: Vec<(String, String, String)>| -> Vec<String> {
+        records
+            .into_iter()
+            .filter(|r| r.0 == "staff.desk.page" && r.1 == "Denied")
+            .map(|r| r.2)
+            .collect()
+    };
+    assert_eq!(
+        denied(s.records(&other).await),
+        vec!["desk: not a command of the presser".to_string()]
+    );
+    assert_eq!(
+        denied(s.records(&owner).await),
+        vec![
+            "desk: not pressed on an answer of that command".to_string(),
+            "desk: page out of range".to_string()
+        ]
+    );
+
+    // a changing command has no pages, not even page 1
+    let change = press(
+        &s,
+        &owner,
+        &command,
+        "test",
+        "change",
+        json!([
+            { "type": "User", "name": "user", "value": owner.user.id },
+            { "type": "String", "name": "note", "value": "n" }
+        ]),
+        None,
+    )
+    .await;
+    let paged = page_press(
+        &s,
+        &owner,
+        &format!("{PAGE_PREFIX}{}:1", change.0),
+        &change.0,
+    )
+    .await;
+    let (_, body) = s.hand("run", &paged).await;
+    assert_eq!(error_type(&body), "InvalidOperation", "{body}");
+    assert_eq!(
+        denied(s.records(&owner).await).last().map(String::as_str),
+        Some("desk: a changing command has no pages")
+    );
 }

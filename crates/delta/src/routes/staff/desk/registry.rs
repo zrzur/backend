@@ -246,6 +246,9 @@ pub struct DeskCommand {
     pub changes: bool,
     /// Cannot be undone: the confirmation always needs a step-up
     pub irreversible: bool,
+    /// Exists only while `features.plugins_enabled` is on (the console's
+    /// plugin routes answer `PluginsDisabled` otherwise)
+    pub plugins: bool,
     /// For changing commands: what the confirmation card says
     pub prepare: Option<Prepare>,
     pub handler: Handler,
@@ -266,7 +269,8 @@ impl DeskCommand {
         command_of(self.area)
     }
 
-    /// Offered while its area is on
+    /// Offered while its area is on (and, for a plugin command, while
+    /// plugins are on: see [`plugins_on`] and the tree)
     pub fn offered(&self, settings: &FeaturesStaffDesk) -> bool {
         self.area
             .is_none_or(|area| settings.areas.iter().any(|on| on == area))
@@ -334,6 +338,7 @@ static ENTRIES: &[DeskCommand] = &[
         permission: None,
         changes: false,
         irreversible: false,
+        plugins: false,
         prepare: None,
         handler: me,
     },
@@ -350,6 +355,7 @@ static ENTRIES: &[DeskCommand] = &[
         permission: Some(StaffPermission::DashboardRead),
         changes: false,
         irreversible: false,
+        plugins: false,
         prepare: None,
         handler: stats,
     },
@@ -383,6 +389,11 @@ fn groups() -> impl Iterator<Item = &'static DeskGroup> {
         .chain(super::lookup::GROUPS.iter())
         .chain(super::moderation::GROUPS.iter())
         .chain(test_commands().1.iter())
+}
+
+/// Whether plugins are switched on (`features.plugins_enabled`)
+pub async fn plugins_on() -> bool {
+    revolt_config::config().await.features.plugins_enabled
 }
 
 /// Areas with a top-level command of their own. The platform allows a
@@ -542,7 +553,8 @@ fn place(options: &mut Vec<ApplicationCommandOption>, entry: &DeskCommand) {
 /// without an area (`me`), the session sub-commands, then each enabled
 /// reading area's commands in registry order. Then one command per
 /// enabled area that has its own (`/desk-mod`), when it offers anything.
-pub fn desk_tree(settings: &FeaturesStaffDesk) -> Vec<DeskCommandTree> {
+pub fn desk_tree(settings: &FeaturesStaffDesk, plugins_on: bool) -> Vec<DeskCommandTree> {
+    let shown = |e: &&DeskCommand| plugins_on || !e.plugins;
     let mut options = Vec::new();
     for entry in entries().filter(|e| e.area.is_none()) {
         place(&mut options, entry);
@@ -550,8 +562,9 @@ pub fn desk_tree(settings: &FeaturesStaffDesk) -> Vec<DeskCommandTree> {
     for (name, description) in SESSION_SUBS {
         options.push(sub_command(name, *description, vec![]));
     }
-    for entry in
-        entries().filter(|e| e.area.is_some() && e.command() == COMMAND && e.offered(settings))
+    for entry in entries()
+        .filter(|e| e.area.is_some() && e.command() == COMMAND && e.offered(settings))
+        .filter(shown)
     {
         place(&mut options, entry);
     }
@@ -564,7 +577,10 @@ pub fn desk_tree(settings: &FeaturesStaffDesk) -> Vec<DeskCommandTree> {
     }];
     for (_, command, description) in AREA_COMMANDS {
         let mut options = Vec::new();
-        for entry in entries().filter(|e| e.command() == *command && e.offered(settings)) {
+        for entry in entries()
+            .filter(|e| e.command() == *command && e.offered(settings))
+            .filter(shown)
+        {
             place(&mut options, entry);
         }
         if !options.is_empty() {
@@ -624,7 +640,7 @@ pub async fn registered_as_offered(
     let Ok(command) = db.fetch_application_command(id).await else {
         return false;
     };
-    let Some(offered) = desk_tree(settings)
+    let Some(offered) = desk_tree(settings, plugins_on().await)
         .into_iter()
         .find(|tree| Some(tree.name.as_str()) == interaction.command_name.as_deref())
     else {
@@ -685,6 +701,10 @@ pub async fn dispatch(
 ) -> Result<DeskView> {
     if entry.changes {
         return Err(revolt_result::create_error!(InvalidOperation));
+    }
+    // the plugin switch answers first, like the console's plugin guard
+    if entry.plugins && !plugins_on().await {
+        return Err(revolt_result::create_error!(PluginsDisabled));
     }
     if let Some(permission) = entry.permission {
         staff.require_protective(db, permission).await?;
@@ -1014,6 +1034,7 @@ pub(crate) mod test_entries {
             permission: Some(StaffPermission::DashboardRead),
             changes: true,
             irreversible: true,
+            plugins: false,
             prepare: Some(prepare),
             handler: done,
         },
@@ -1031,6 +1052,7 @@ pub(crate) mod test_entries {
             permission: Some(StaffPermission::DashboardRead),
             changes: true,
             irreversible: false,
+            plugins: false,
             prepare: Some(prepare),
             handler: guarded,
         },
@@ -1048,6 +1070,7 @@ pub(crate) mod test_entries {
             permission: Some(StaffPermission::BillingRead),
             changes: false,
             irreversible: false,
+            plugins: false,
             prepare: None,
             handler: peek,
         },
@@ -1234,7 +1257,7 @@ mod unit_tests {
     /// The tree passes the server's own command validation
     #[test]
     fn desk_tree_is_a_valid_command() {
-        for tree in desk_tree(&all_on()) {
+        for tree in desk_tree(&all_on(), true) {
             let data: DataApplicationCommand =
                 serde_json::from_value(serde_json::to_value(&tree).unwrap()).unwrap();
             data.validate_command()
