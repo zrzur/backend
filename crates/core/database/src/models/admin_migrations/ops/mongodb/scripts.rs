@@ -63,6 +63,8 @@ const PENDING_SERVER_EVENT_ANSWERS: i32 = 91;
 const PENDING_TEAM_VOLUNTEER_INDEXES: i32 = 92;
 // Stream rich-presence: the coordinator gives the number at merge; -1 never runs
 const PENDING_ACTIVITY_BLOCKS_INDEX: i32 = -1;
+// Stream zrzur-desk-full: the coordinator gives the number at merge; -1 never runs
+const PENDING_DESK_PENDING_INDEXES: i32 = -1;
 
 /// The earliest day a session from before expiry can expire. At least 30
 /// days out, also with expiry switched off (0), for the day it is switched on.
@@ -2669,6 +2671,11 @@ pub async fn run_migrations(db: &MongoDb, revision: i32) -> i32 {
         create_activity_block_indexes(&db.db()).await;
     }
 
+    if revision <= PENDING_DESK_PENDING_INDEXES {
+        info!("Running migration [revision {PENDING_DESK_PENDING_INDEXES} / 24-11-2026]: Index for Zrzur Desk pending actions");
+        create_desk_pending_indexes(&db.db()).await;
+    }
+
     // Reminder to update LATEST_REVISION when adding new migrations.
     LATEST_REVISION.max(revision)
 }
@@ -2702,6 +2709,20 @@ pub async fn create_team_volunteer_indexes(db: &mongodb::Database) {
     })
     .await
     .expect("Failed to create the team identity index");
+}
+
+/// Zrzur Desk pending actions disappear ten minutes after they were made
+/// (TTL on `expires_at`, a date). Only an index, no data moves. Safe to run
+/// twice: creating an index that exists is a no-op.
+pub async fn create_desk_pending_indexes(db: &mongodb::Database) {
+    db.run_command(doc! {
+        "createIndexes": "desk_pending",
+        "indexes": [
+            { "key": { "expires_at": 1_i32 }, "name": "expires_at_ttl", "expireAfterSeconds": 0_i32 }
+        ]
+    })
+    .await
+    .expect("Failed to create the desk pending index");
 }
 
 /// Activity blocks (Trust & Safety) are looked up by value on every
@@ -3823,6 +3844,28 @@ mod statement_migration_tests {
                 .unwrap();
             assert_eq!(names.len(), wanted, "{collection}: {names:?}");
         }
+    }
+
+    /// MongoDB only: the desk pending index can be made twice
+    #[tokio::test]
+    async fn desk_pending_indexes_run_twice_on_mongodb() {
+        let db = crate::DatabaseInfo::Test("desk_pending_indexes".to_string())
+            .connect()
+            .await
+            .expect("Database connection failed.");
+        let crate::Database::MongoDb(mongo) = &db else {
+            return;
+        };
+        for _ in 0..2 {
+            super::create_desk_pending_indexes(&mongo.db()).await;
+        }
+        let names = mongo
+            .db()
+            .collection::<Document>("desk_pending")
+            .list_index_names()
+            .await
+            .unwrap();
+        assert_eq!(names.len(), 2, "{names:?}");
     }
 
     /// MongoDB only: the activity block indexes can be made twice
