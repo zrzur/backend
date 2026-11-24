@@ -296,35 +296,35 @@
     "body": ""
   },
   "badge_name.founder": {
-    "title": "Gründer",
+    "title": "Zrzur-Gründer",
     "body": ""
   },
   "badge_name.developer": {
-    "title": "Zrzur-Entwicklung",
+    "title": "Zrzur-Entwickler",
     "body": ""
   },
   "badge_name.platform_moderator": {
-    "title": "Plattform-Moderation",
+    "title": "Plattform-Moderator",
     "body": ""
   },
   "badge_name.partner": {
-    "title": "Partner",
+    "title": "Zrzur-Partner",
     "body": ""
   },
   "badge_name.super_creator": {
-    "title": "Super-Creator",
+    "title": "Top-Designer",
     "body": ""
   },
   "badge_name.creator": {
-    "title": "Creator",
+    "title": "Designer",
     "body": ""
   },
   "badge_name.elite_bug_hunter": {
-    "title": "Elite-Bugjäger",
+    "title": "Elite-Fehlerjäger",
     "body": ""
   },
   "badge_name.bug_hunter": {
-    "title": "Bugjäger",
+    "title": "Fehlerjäger",
     "body": ""
   },
   "badge_name.beta_tester": {
@@ -336,7 +336,7 @@
     "body": ""
   },
   "badge_name.plus": {
-    "title": "Feder",
+    "title": "Zrzur Feather",
     "body": ""
   },
   "badge_name.early_supporter": {
@@ -344,11 +344,11 @@
     "body": ""
   },
   "badge_name.early_adopter": {
-    "title": "Früh dabei",
+    "title": "Früher Nutzer",
     "body": ""
   },
   "badge_name.translator": {
-    "title": "Übersetzung",
+    "title": "Übersetzer",
     "body": ""
   },
   "badge_name.responsible_disclosure": {
@@ -364,11 +364,11 @@
     "body": ""
   },
   "badge_name.reserved_1": {
-    "title": "Reserviert 1",
+    "title": "Besonderes Abzeichen",
     "body": ""
   },
   "badge_name.reserved_2": {
-    "title": "Reserviert 2",
+    "title": "Besonderes Abzeichen",
     "body": ""
   },
   "signature": {
@@ -634,5 +634,201 @@
   "reporter.info_reply_app": {
     "title": "",
     "body": "Bitte antworte in Zrzur: Öffne Einstellungen → Feedback & Meldungen und antworte auf deine Meldung {reference}."
+  },
+  "program.name.partner": {
+    "title": "Zrzur-Partner",
+    "body": "Zrzur-Partner"
+  },
+  "program.name.verified_server": {
+    "title": "Verifizierter Server",
+    "body": "Verifizierter Server"
+  },
+  "program.name.verified_bot": {
+    "title": "Verifizierte Bot-Entwicklung",
+    "body": "Verifizierte Bot-Entwicklung"
+  },
+  "program.approved": {
+    "title": "Deine Bewerbung wurde angenommen",
+    "body": "Deine Bewerbung für {program} wurde angenommen.\n{reasons}\n{note}\n\nDas Abzeichen oder Kennzeichen bedeutet nur, was auf seiner Seite steht. Es kann ausgesetzt oder entfernt werden, wenn seine Bedingungen enden oder es durch Betrug erlangt wurde."
+  },
+  "program.refused": {
+    "title": "Deine Bewerbung wurde nicht angenommen",
+    "body": "Deine Bewerbung für {program} wurde nicht angenommen.\n\nGründe:\n{reasons}\n{note}\n\nDu kannst bis {appeal_until} (UTC) einmal unter Einstellungen → Abzeichen Einspruch einlegen oder dich ab {reapply_after} (UTC) erneut bewerben. Entschieden hat eine Person aus dem Team, keine automatische Prüfung."
+  },
+  "program.more_info": {
+    "title": "Deine Bewerbung braucht mehr Angaben",
+    "body": "Das Team braucht mehr Angaben zu deiner Bewerbung für {program}.\n{reasons}\n{note}\n\nÖffne Einstellungen → Abzeichen, ergänze das Fehlende und sende sie erneut."
+  },
+  "program.appeal_upheld": {
+    "title": "Dein Einspruch wurde angenommen",
+    "body": "Wir haben deinen Einspruch zu {program} erneut geprüft. Deine Bewerbung kommt zurück in die Warteschlange.\n{note}\n\nZrzur wird von Freiwilligen betrieben: Wir prüfen, sobald jemand Zeit hat, ohne versprochenes Datum."
+  },
+  "program.appeal_rejected": {
+    "title": "Dein Einspruch wurde nicht angenommen",
+    "body": "Wir haben deinen Einspruch zu {program} erneut geprüft; die Entscheidung bleibt.\n\nGründe:\n{reasons}\n{note}\n\nDu kannst dich ab {reapply_after} (UTC) erneut bewerben."
+  },
+  "program.recheck_kept": {
+    "title": "Deine Partnerschaft wurde geprüft",
+    "body": "Wir haben deine Partnerschaft bei {program} erneut geprüft. Sie besteht weiter; die nächste Prüfung ist etwa am {next_review} (UTC).\n{note}"
+  },
+  "program.recheck_warning": {
+    "title": "Deine Partnerschaft braucht Aufmerksamkeit",
+    "body": "Wir haben deine Partnerschaft bei {program} erneut geprüft und etwas zu verbessern gefunden.\n\nGründe:\n{reasons}\n{note}\n\nDu hast bis {improve_until} (UTC) Zeit; danach prüfen wir erneut."
+  },
+  "program.ended": {
+    "title": "Ein Abzeichen-Programm ist beendet",
+    "body": "{program} ist für dich beendet: {reason}\n{note}\n\nWenn die Bedingung wieder erfüllt ist, kannst du dich unter Einstellungen → Abzeichen erneut bewerben."
+  },
+  "program.reason.criteria_met": {
+    "title": "",
+    "body": "Die veröffentlichten Kriterien sind erfüllt."
+  },
+  "program.reason.more_information": {
+    "title": "",
+    "body": "Für eine Entscheidung fehlen Angaben."
+  },
+  "program.reason.purpose_unclear": {
+    "title": "",
+    "body": "Der Zweck des Servers ist aus dem Gesehenen nicht klar."
+  },
+  "program.reason.rules_missing": {
+    "title": "",
+    "body": "Der Server hat keine veröffentlichten Regeln, oder sie reichen nicht aus."
+  },
+  "program.reason.moderation": {
+    "title": "",
+    "body": "Wir haben keine aktive, verantwortliche Moderation gesehen."
+  },
+  "program.reason.security_measures": {
+    "title": "",
+    "body": "Schutz vor Spam und Raids oder Maßnahmen zur Kontosicherheit fehlen."
+  },
+  "program.reason.safety_violations": {
+    "title": "",
+    "body": "Es gibt offene schwere Sicherheitsverstöße."
+  },
+  "program.reason.fake_engagement": {
+    "title": "",
+    "body": "Wir haben Hinweise auf gekaufte Mitglieder oder gefälschte Aktivität gefunden."
+  },
+  "program.reason.metrics_not_met": {
+    "title": "",
+    "body": "Die Zahlen auf der Abzeichenseite sind nicht mehr erfüllt."
+  },
+  "program.reason.other": {
+    "title": "",
+    "body": "Ein anderer Grund, unten beschrieben."
+  },
+  "program.reason.ownership_not_proven": {
+    "title": "",
+    "body": "Die Kontrolle über die genannte Website, Domain oder das Konto wurde nicht nachgewiesen."
+  },
+  "program.reason.not_official": {
+    "title": "",
+    "body": "Wir konnten nicht bestätigen, dass der Server die Stelle offiziell vertritt."
+  },
+  "program.reason.branding": {
+    "title": "",
+    "body": "Name oder Branding gehören nicht zur Stelle selbst."
+  },
+  "program.reason.description_inaccurate": {
+    "title": "",
+    "body": "Die Beschreibung des Bots ist unklar oder nicht zutreffend."
+  },
+  "program.reason.no_working_feature": {
+    "title": "",
+    "body": "Wir konnten keine funktionierende Funktion des Bots nutzen."
+  },
+  "program.reason.privacy_policy": {
+    "title": "",
+    "body": "Der Bot verarbeitet Nutzerdaten, aber seine Datenschutzerklärung fehlt oder ist unklar."
+  },
+  "program.reason.permissions": {
+    "title": "",
+    "body": "Der Bot verlangt Berechtigungen, die er für seine Aufgabe nicht braucht."
+  },
+  "program.reason.malicious": {
+    "title": "",
+    "body": "Der Bot hat schädliche Befehle, sammelt unzulässig Daten oder täuscht Menschen."
+  },
+  "program.reason.inflated_installs": {
+    "title": "",
+    "body": "Die Server des Bots wurden mit Servern aufgebläht, die nicht zählen."
+  },
+  "program.end.ownership_transferred": {
+    "title": "",
+    "body": "Der Server oder Bot hat einen neuen Inhaber."
+  },
+  "program.end.server_deleted": {
+    "title": "",
+    "body": "Der Server wurde gelöscht."
+  },
+  "program.end.bot_deleted": {
+    "title": "",
+    "body": "Der Bot wurde gelöscht."
+  },
+  "program.end.bot_suspended": {
+    "title": "",
+    "body": "Der Bot wurde gesperrt."
+  },
+  "program.end.mark_removed": {
+    "title": "",
+    "body": "Das Team hat das Kennzeichen entfernt."
+  },
+  "program.end.recheck": {
+    "title": "",
+    "body": "Eine neue Prüfung hat ergeben, dass die Bedingungen nicht mehr erfüllt sind."
+  },
+  "badge_name.content_creator": {
+    "title": "Content Creator",
+    "body": ""
+  },
+  "program.name.content_creator": {
+    "title": "Content Creator",
+    "body": "Content Creator"
+  },
+  "program.reason.followers_not_met": {
+    "title": "",
+    "body": "Die Followerzahl, die wir auf dieser einen Plattform gesehen haben, liegt unter dem veröffentlichten Minimum."
+  },
+  "program.reason.activity_not_met": {
+    "title": "",
+    "body": "Der Kanal ist noch nicht lange genug aktiv."
+  },
+  "program.reason.works_not_met": {
+    "title": "",
+    "body": "Wir haben in den letzten 90 Tagen nicht genug substanzielle eigene Werke oder einen gleichwertigen regelmäßigen Livestream-Plan gefunden."
+  },
+  "program.reason.originality": {
+    "title": "",
+    "body": "Originalität: Die Inhalte sind überwiegend übernommen oder kopiert, ohne eigenen Beitrag."
+  },
+  "program.reason.effort": {
+    "title": "",
+    "body": "Aufwand: Die Werke zeigen wenig echten Aufwand, zum Beispiel wiederholte Inhalte, um Aufrufe zu sammeln."
+  },
+  "program.reason.consistency": {
+    "title": "",
+    "body": "Beständigkeit: Der Kanal beruht auf einem einzelnen viralen Upload statt auf regelmäßiger Arbeit."
+  },
+  "program.reason.authenticity": {
+    "title": "",
+    "body": "Echtheit: Unsere Prüfung hat Hinweise auf gekaufte Follower oder koordinierte Fake-Interaktion gefunden."
+  },
+  "program.reason.safety": {
+    "title": "",
+    "body": "Sicherheit und Rechtmäßigkeit: Die Inhalte verstoßen gegen Gesetze oder die Regeln von Zrzur."
+  },
+  "program.reason.honesty": {
+    "title": "",
+    "body": "Ehrlichkeit: systematisch irreführender Clickbait, Identitätsmissbrauch oder falsche Behauptungen."
+  },
+  "program.reason.rights": {
+    "title": "",
+    "body": "Rechte: wiederholte Rechtsverletzungen, gestohlene Inhalte oder nicht erlaubte Reuploads."
+  },
+  "program.end.badge_removed": {
+    "title": "",
+    "body": "das Team hat das Abzeichen entzogen."
   }
 }

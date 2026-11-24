@@ -99,8 +99,8 @@ pub fn parse_target(
 
 /// Only ever hands out addresses that may be reached, whatever the name says
 /// at this moment: this is what closes DNS rebinding.
-struct GuardedResolver {
-    allow_private: bool,
+pub(crate) struct GuardedResolver {
+    pub(crate) allow_private: bool,
 }
 
 impl Resolve for GuardedResolver {

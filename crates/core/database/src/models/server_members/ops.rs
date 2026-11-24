@@ -123,6 +123,11 @@ pub trait AbstractServerMembers: Sync + Send {
     /// Fetch member count of a server
     async fn fetch_member_count(&self, server_id: &str) -> Result<usize>;
 
+    /// Servers with at least `min` members of any kind, with that number
+    /// (members leaving in a timeout not counted). For the crond badge
+    /// count, which then looks at each one closely.
+    async fn fetch_server_member_totals(&self, min: usize) -> Result<Vec<(String, usize)>>;
+
     /// Fetch server count of a user
     async fn fetch_server_count(&self, user_id: &str) -> Result<usize>;
 

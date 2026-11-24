@@ -15,11 +15,11 @@
 
 use std::collections::BTreeMap;
 
-use revolt_models::v0::MessageAuthor;
+use revolt_models::v0::{BotFlags, MessageAuthor};
 use revolt_result::Result;
 use ulid::Ulid;
 
-use crate::{Bot, Channel, Database, Message, PartialChannel, PartialUser, User, AMQP};
+use crate::{Bot, Channel, Database, Message, PartialBot, PartialChannel, PartialUser, User, AMQP};
 
 /// The accounts every Zrzur has from the first start
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -184,7 +184,8 @@ pub async fn create_system_bot(db: &Database, username: &str, owner: &User) -> R
     };
     // 16 random letters and digits: usernames stop at 32 characters
     let plain = Ulid::new().to_string().split_off(10).to_lowercase();
-    let (bot, mut user) = Bot::create(db, format!("system{plain}"), owner, None).await?;
+    let (mut bot, mut user) = Bot::create(db, format!("system{plain}"), owner, None).await?;
+    bot.flags = Some(mark_official_bot(db, &bot.id, true).await?);
     let partial = PartialUser {
         username: Some(name.to_string()),
         discriminator: Some(User::find_discriminator(db, name, None).await?),
@@ -197,6 +198,34 @@ pub async fn create_system_bot(db: &Database, username: &str, owner: &User) -> R
     Ok((bot, user))
 }
 
+/// Set or clear `BotFlags::Official` on a bot: the one source of the
+/// official bot mark. `User::official_bot` mirrors it for profiles and
+/// messages and is only ever written together with it (here and in
+/// [`set_official_bot`]). Returns the bot's flags.
+async fn mark_official_bot(db: &Database, bot_id: &str, mark: bool) -> Result<i32> {
+    let mut bot = db.fetch_bot(bot_id).await?;
+    let flags = bot.flags.unwrap_or_default();
+    let official = BotFlags::Official as i32;
+    let next = if mark { flags | official } else { flags & !official };
+    if next != flags {
+        bot.update(
+            db,
+            PartialBot {
+                flags: Some(next),
+                ..Default::default()
+            },
+            vec![],
+        )
+        .await?;
+    }
+    Ok(next)
+}
+
+/// Whether a bot carries the official bot mark (`BotFlags::Official`)
+pub fn is_official_bot_flag(bot: &Bot) -> bool {
+    bot.flags.unwrap_or_default() & BotFlags::Official as i32 != 0
+}
+
 /// Give or remove the official bot mark of a bot on the allowlist
 pub async fn set_official_bot(db: &Database, user_id: &str, mark: bool) -> Result<User> {
     let mut user = db.fetch_user(user_id).await?;
@@ -206,6 +235,7 @@ pub async fn set_official_bot(db: &Database, user_id: &str, mark: bool) -> Resul
     if mark && !is_system_bot_name(&user.username) {
         return Err(create_error!(InvalidUsername));
     }
+    mark_official_bot(db, user_id, mark).await?;
     let partial = PartialUser {
         official_bot: Some(mark),
         ..Default::default()

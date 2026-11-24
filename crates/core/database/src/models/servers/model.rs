@@ -724,7 +724,11 @@ impl Server {
         db.delete_server_insights_of(&self.id).await?;
         // its events are called off and kept for their retention time
         crate::ServerEvent::close_all_of_server(db, &self.id).await?;
-        db.delete_server(&self.id).await
+        db.delete_server(&self.id).await?;
+        // its Partner and Verified Server programs end; the owner's Verified
+        // Server Owner badge follows (through the badge gate)
+        crate::server_programs_gone(db, &self.id, &self.owner).await;
+        Ok(())
     }
 
     /// Remove a field from Server

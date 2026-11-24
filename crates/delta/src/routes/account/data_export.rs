@@ -242,6 +242,7 @@ mod tests {
             "bots.json",
             "creations.json",
             "linked_accounts.json",
+            "badge_applications.json",
         ] {
             assert!(text.contains(name), "{name} missing");
         }

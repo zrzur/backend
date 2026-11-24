@@ -178,6 +178,17 @@ impl AbstractServerMembers for ReferenceDb {
             .count())
     }
 
+    async fn fetch_server_member_totals(&self, min: usize) -> Result<Vec<(String, usize)>> {
+        let server_members = self.server_members.lock().await;
+        let mut totals: std::collections::HashMap<String, usize> = Default::default();
+        for member in server_members.values() {
+            *totals.entry(member.id.server.clone()).or_default() += 1;
+        }
+        let mut totals: Vec<(String, usize)> = totals.into_iter().filter(|(_, n)| *n >= min).collect();
+        totals.sort();
+        Ok(totals)
+    }
+
     /// Fetch server count of a user
     async fn fetch_server_count(&self, user_id: &str) -> Result<usize> {
         let server_members = self.server_members.lock().await;

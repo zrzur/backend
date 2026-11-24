@@ -181,6 +181,9 @@ async fn enforce(
             }
             // drop the bot's open connections; its token stops working
             EventV1::Logout.p(id.clone()).await;
+            // a suspended bot's Verified Bot application ends, and the owner's
+            // Verified Bot Developer badge goes (through the badge gate)
+            revolt_database::bot_programs_ended(db, &id, &bot.owner, "bot_suspended").await;
             Ok((Some(bot.owner), None))
         }
         SafetyActionKind::RemoveDiscoverListing => {
