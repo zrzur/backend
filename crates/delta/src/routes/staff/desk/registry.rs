@@ -47,7 +47,51 @@ pub struct Text {
     pub de: &'static str,
 }
 
+/// The language of an answer, from the command's `locale`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Lang {
+    #[default]
+    En,
+    Ar,
+    De,
+}
+
+impl Lang {
+    /// `ar...` and `de...` locales, else English
+    pub fn from_locale(locale: Option<&str>) -> Lang {
+        let primary = locale
+            .unwrap_or_default()
+            .split(['-', '_'])
+            .next()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        match primary.as_str() {
+            "ar" => Lang::Ar,
+            "de" => Lang::De,
+            _ => Lang::En,
+        }
+    }
+}
+
 impl Text {
+    /// The text in `lang`
+    pub fn get(&self, lang: Lang) -> &'static str {
+        match lang {
+            Lang::En => self.en,
+            Lang::Ar => self.ar,
+            Lang::De => self.de,
+        }
+    }
+
+    /// The text in `lang` with `{name}` placeholders filled in
+    pub fn fill(&self, lang: Lang, values: &[(&str, &str)]) -> String {
+        let mut out = self.get(lang).to_string();
+        for (name, value) in values {
+            out = out.replace(&format!("{{{name}}}"), value);
+        }
+        out
+    }
+
     fn localizations(&self) -> Option<Localizations> {
         Some(
             [("ar", self.ar), ("de", self.de)]
@@ -83,6 +127,9 @@ pub struct DeskOption {
 pub struct DeskInput {
     pub options: Vec<InteractionDataOption>,
     pub areas: Vec<String>,
+    /// The language for the texts the server writes itself (titles, field
+    /// names, consequences); values (names, ids) stay as they are
+    pub lang: Lang,
 }
 
 impl DeskInput {
@@ -140,6 +187,10 @@ pub struct Prepared {
     pub lines: Vec<String>,
 }
 
+/// A command's handler. It runs as the presser and must call the
+/// console's own core, and every core must call `StaffContext::require`
+/// (with its permission and step-up rules) before any write: the desk's
+/// own checks are an extra layer, never the only one.
 pub type Handler =
     for<'a> fn(&'a Database, &'a StaffContext, &'a DeskInput) -> BoxFuture<'a, Result<DeskView>>;
 pub type Prepare =
@@ -498,9 +549,14 @@ pub fn chosen(interaction: &Interaction) -> Option<(Option<&str>, &str, Vec<Inte
     }
 }
 
-/// Runs a command for the presser: the command's own permission first (the
-/// console's check and Denied record), then its handler
+/// Runs a reading command for the presser: the command's own permission
+/// first (the console's check and Denied record), then its handler. A
+/// changing command never runs here, only through a confirmed pending
+/// action.
 pub async fn dispatch(db: &Database, staff: &StaffContext, entry: &DeskCommand, input: &DeskInput) -> Result<DeskView> {
+    if entry.changes {
+        return Err(revolt_result::create_error!(InvalidOperation));
+    }
     if let Some(permission) = entry.permission {
         staff.require_protective(db, permission).await?;
     }
@@ -514,6 +570,65 @@ pub fn when(ms: i64) -> String {
         .unwrap_or_else(|| "-".to_string())
 }
 
+// ---- texts the server writes itself ----
+
+/// The desk's own words, in the three languages (Arabic: Modern Standard)
+pub mod texts {
+    use super::Text;
+
+    pub const DESK: Text = Text { en: "Zrzur Desk", ar: "مكتب زرزور", de: "Zrzur Desk" };
+    pub const USER: Text = Text { en: "User", ar: "المستخدم", de: "Benutzer" };
+    pub const ROLES: Text = Text { en: "Roles", ar: "الأدوار", de: "Rollen" };
+    pub const PERMISSIONS: Text = Text { en: "Permissions", ar: "الصلاحيات", de: "Berechtigungen" };
+    pub const SESSION_ENDS: Text = Text { en: "Session ends", ar: "تنتهي الجلسة", de: "Sitzung endet" };
+    pub const IDLE: Text = Text { en: "Idle timeout", ar: "مهلة الخمول", de: "Zeitlimit bei Inaktivität" };
+    pub const MINUTES: Text = Text { en: "{n} min", ar: "{n} دقيقة", de: "{n} Min." };
+    pub const STEP_UP: Text = Text { en: "Step-up", ar: "التحقق الإضافي", de: "Zusätzliche Bestätigung" };
+    pub const UNTIL: Text = Text { en: "until {time}", ar: "حتى {time}", de: "bis {time}" };
+    pub const NOT_ACTIVE: Text = Text { en: "not active", ar: "غير مفعّل", de: "nicht aktiv" };
+    pub const ACCESS_ENDS: Text = Text { en: "Access ends", ar: "ينتهي الوصول", de: "Zugang endet" };
+    pub const AREAS: Text = Text { en: "Areas", ar: "المجالات", de: "Bereiche" };
+    pub const NONE: Text = Text { en: "none", ar: "لا شيء", de: "keine" };
+    pub const OVERVIEW: Text = Text {
+        en: "Platform overview",
+        ar: "نظرة عامة على المنصة",
+        de: "Übersicht der Plattform",
+    };
+    pub const USERS: Text = Text { en: "Users", ar: "المستخدمون", de: "Benutzer" };
+    pub const ONLINE: Text = Text { en: "Online now", ar: "المتصلون الآن", de: "Jetzt online" };
+    pub const SERVERS: Text = Text { en: "Servers", ar: "السيرفرات", de: "Server" };
+    pub const CHANNELS: Text = Text { en: "Channels", ar: "القنوات", de: "Kanäle" };
+    pub const MESSAGES_HOUR: Text = Text {
+        en: "Messages, last hour",
+        ar: "الرسائل في الساعة الأخيرة",
+        de: "Nachrichten, letzte Stunde",
+    };
+    pub const MESSAGES_DAY: Text = Text {
+        en: "Messages, last 24 hours",
+        ar: "الرسائل في آخر 24 ساعة",
+        de: "Nachrichten, letzte 24 Stunden",
+    };
+    pub const OPEN_REPORTS: Text = Text { en: "Open reports", ar: "البلاغات المفتوحة", de: "Offene Meldungen" };
+    pub const WINDOW: Text = Text {
+        en: "{total} (+{day} in 24 hours, +{week} in 7 days, +{month} in 30 days)",
+        ar: "{total} (+{day} خلال 24 ساعة، +{week} خلال 7 أيام، +{month} خلال 30 يومًا)",
+        de: "{total} (+{day} in 24 Stunden, +{week} in 7 Tagen, +{month} in 30 Tagen)",
+    };
+    pub const AS_OF: Text = Text { en: "As of {time}", ar: "بتاريخ {time}", de: "Stand: {time}" };
+    /// The confirmation button
+    pub const CONFIRM: Text = Text { en: "Confirm", ar: "تأكيد", de: "Bestätigen" };
+    pub const IRREVERSIBLE: Text = Text {
+        en: "This cannot be undone. You will be asked for a fresh code.",
+        ar: "لا يمكن التراجع عن هذا الإجراء. سيُطلب منك رمز جديد.",
+        de: "Das lässt sich nicht rückgängig machen. Du wirst nach einem neuen Code gefragt.",
+    };
+    pub const WITHIN: Text = Text {
+        en: "Press Confirm within 10 minutes.",
+        ar: "اضغط «تأكيد» خلال 10 دقائق.",
+        de: "Drücke innerhalb von 10 Minuten auf „Bestätigen“.",
+    };
+}
+
 // ---- handlers ----
 
 /// `/desk me`: who the presser is on the desk, their session, and the
@@ -524,30 +639,32 @@ fn me<'a>(db: &'a Database, staff: &'a StaffContext, input: &'a DeskInput) -> Bo
         record.summary = Some("desk me".to_string());
         record_platform_audit(db, record, AuditOutcome::Success).await?;
 
+        let lang = input.lang;
         let areas = usable_areas(&input.areas, staff);
         let roles: Vec<&str> = staff.grant.roles.iter().map(|r| r.name()).collect();
-        let mut view = DeskView::new("Zrzur Desk")
-            .field("User", format!("{}#{}", staff.user.username, staff.user.discriminator))
-            .field("Roles", roles.join(", "))
-            .field("Permissions", staff.permissions.len().to_string())
-            .field("Session ends", when(staff.session.expires_at))
-            .field("Idle timeout", format!("{} min", STAFF_SESSION_IDLE_MS / 60_000))
+        let minutes = (STAFF_SESSION_IDLE_MS / 60_000).to_string();
+        let mut view = DeskView::new(texts::DESK.get(lang))
+            .field(texts::USER.get(lang), format!("{}#{}", staff.user.username, staff.user.discriminator))
+            .field(texts::ROLES.get(lang), roles.join(", "))
+            .field(texts::PERMISSIONS.get(lang), staff.permissions.len().to_string())
+            .field(texts::SESSION_ENDS.get(lang), when(staff.session.expires_at))
+            .field(texts::IDLE.get(lang), texts::MINUTES.fill(lang, &[("n", &minutes)]))
             .field(
-                "Step-up",
+                texts::STEP_UP.get(lang),
                 staff
                     .session
                     .step_up_until
                     .filter(|until| *until > staff.now)
-                    .map(|until| format!("until {}", when(until)))
-                    .unwrap_or_else(|| "not active".to_string()),
+                    .map(|until| texts::UNTIL.fill(lang, &[("time", &when(until))]))
+                    .unwrap_or_else(|| texts::NOT_ACTIVE.get(lang).to_string()),
             );
         if let Some(end) = staff.grant.expires_at {
-            view = view.field("Access ends", when(end));
+            view = view.field(texts::ACCESS_ENDS.get(lang), when(end));
         }
         view = view.field(
-            "Areas",
+            texts::AREAS.get(lang),
             if areas.is_empty() {
-                "none".to_string()
+                texts::NONE.get(lang).to_string()
             } else {
                 areas.join(", ")
             },
@@ -563,26 +680,35 @@ fn me<'a>(db: &'a Database, staff: &'a StaffContext, input: &'a DeskInput) -> Bo
 }
 
 /// `/desk stats`: the console's platform statistics (`stats_core`)
-fn stats<'a>(db: &'a Database, staff: &'a StaffContext, _: &'a DeskInput) -> BoxFuture<'a, Result<DeskView>> {
+fn stats<'a>(db: &'a Database, staff: &'a StaffContext, input: &'a DeskInput) -> BoxFuture<'a, Result<DeskView>> {
     Box::pin(async move {
+        let lang = input.lang;
         let stats = stats_core(db, staff).await?;
         let window = |w: &super::super::platform::CountWindow| {
-            format!("{} (+{} 24h, +{} 7d, +{} 30d)", w.total, w.last_24h, w.last_7d, w.last_30d)
+            texts::WINDOW.fill(
+                lang,
+                &[
+                    ("total", &w.total.to_string()),
+                    ("day", &w.last_24h.to_string()),
+                    ("week", &w.last_7d.to_string()),
+                    ("month", &w.last_30d.to_string()),
+                ],
+            )
         };
-        let mut view = DeskView::new("Platform overview")
-            .field("Users", window(&stats.users))
+        let mut view = DeskView::new(texts::OVERVIEW.get(lang))
+            .field(texts::USERS.get(lang), window(&stats.users))
             .field(
-                "Online now",
+                texts::ONLINE.get(lang),
                 stats.online_users.map(|n| n.to_string()).unwrap_or_else(|| "-".to_string()),
             )
-            .field("Servers", window(&stats.servers))
-            .field("Channels", stats.channels_total.to_string())
-            .field("Messages, last hour", stats.messages_last_hour.to_string())
-            .field("Messages, last 24h", stats.messages_last_24h.to_string());
+            .field(texts::SERVERS.get(lang), window(&stats.servers))
+            .field(texts::CHANNELS.get(lang), stats.channels_total.to_string())
+            .field(texts::MESSAGES_HOUR.get(lang), stats.messages_last_hour.to_string())
+            .field(texts::MESSAGES_DAY.get(lang), stats.messages_last_24h.to_string());
         if let Some(open) = stats.open_reports {
-            view = view.field("Open reports", open.to_string());
+            view = view.field(texts::OPEN_REPORTS.get(lang), open.to_string());
         }
-        Ok(view.line(format!("As of {}", when(stats.generated_at))))
+        Ok(view.line(texts::AS_OF.fill(lang, &[("time", &when(stats.generated_at))])))
     })
 }
 
@@ -663,7 +789,40 @@ pub(crate) mod test_entries {
             prepare: Some(prepare),
             handler: guarded,
         },
+        // reading, behind a permission some roles lack (Support)
+        DeskCommand {
+            area: Some("overview"),
+            group: Some("test"),
+            name: "peek",
+            description: Text {
+                en: "A test reading for billing staff",
+                ar: "قراءة تجريبية لفريق الفوترة",
+                de: "Eine Testabfrage für das Abrechnungsteam",
+            },
+            options: &[],
+            permission: Some(StaffPermission::BillingRead),
+            changes: false,
+            irreversible: false,
+            prepare: None,
+            handler: peek,
+        },
     ];
+
+    fn peek<'a>(_: &'a Database, _: &'a StaffContext, input: &'a DeskInput) -> BoxFuture<'a, Result<DeskView>> {
+        Box::pin(async move { Ok(DeskView::new(TITLE.get(input.lang))) })
+    }
+
+    /// How many times a test change ran (each test is its own process)
+    pub static RUNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+    const TITLE: Text = Text { en: "Test change", ar: "تغيير تجريبي", de: "Teständerung" };
+    const WRITES: Text = Text {
+        en: "Writes the note \"{note}\" about {user}.",
+        ar: "يكتب الملاحظة «{note}» عن {user}.",
+        de: "Schreibt die Notiz „{note}“ über {user}.",
+    };
+    const DONE: Text = Text { en: "Test change done", ar: "تم التغيير التجريبي", de: "Teständerung erledigt" };
+    const NOTE: Text = Text { en: "Note", ar: "الملاحظة", de: "Notiz" };
 
     fn prepare<'a>(_: &'a Database, _: &'a StaffContext, input: &'a DeskInput) -> BoxFuture<'a, Result<Prepared>> {
         Box::pin(async move {
@@ -672,17 +831,23 @@ pub(crate) mod test_entries {
             Ok(Prepared {
                 target_kind: Some("user".to_string()),
                 target: Some(user.clone()),
-                title: "Test change".to_string(),
-                lines: vec![format!("Writes the note \"{note}\" about {user}.")],
+                title: TITLE.get(input.lang).to_string(),
+                lines: vec![WRITES.fill(input.lang, &[("note", &note), ("user", &user)])],
             })
         })
     }
 
     fn done<'a>(_: &'a Database, _: &'a StaffContext, input: &'a DeskInput) -> BoxFuture<'a, Result<DeskView>> {
         Box::pin(async move {
-            Ok(DeskView::new("Test change done")
-                .field("User", input.user("user").unwrap_or_default())
-                .field("Note", input.text("note").unwrap_or_default()))
+            let note = input.text("note").unwrap_or_default();
+            // a core that fails after the record was written
+            if note == "fail" {
+                return Err(revolt_result::create_error!(NotFound));
+            }
+            RUNS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(DeskView::new(DONE.get(input.lang))
+                .field(texts::USER.get(input.lang), input.user("user").unwrap_or_default())
+                .field(NOTE.get(input.lang), note))
         })
     }
 
@@ -719,12 +884,23 @@ mod unit_tests {
             keys.push(entry.key());
             assert!(entry.area.is_none_or(|a| AREAS.contains(&a)), "{}", entry.key());
             assert_eq!(entry.changes, entry.prepare.is_some(), "{}", entry.key());
-            assert!(!entry.irreversible || (entry.changes && entry.permission.is_some()), "{}", entry.key());
+            assert!(!entry.irreversible || entry.changes, "{}", entry.key());
+            // a change always names the permission the console needs for it
+            assert!(!entry.changes || entry.permission.is_some(), "{}", entry.key());
             assert!(SESSION_SUBS.iter().all(|(name, _)| *name != entry.name || entry.group.is_some()));
             if let Some(group) = entry.group {
                 assert!(groups().any(|g| g.name == group), "group {group} has no description");
             }
         }
+    }
+
+    #[test]
+    fn desk_lang_from_locale() {
+        assert_eq!(Lang::from_locale(Some("ar-SY")), Lang::Ar);
+        assert_eq!(Lang::from_locale(Some("de_AT")), Lang::De);
+        assert_eq!(Lang::from_locale(Some("fr")), Lang::En);
+        assert_eq!(Lang::from_locale(None), Lang::En);
+        assert_eq!(texts::UNTIL.fill(Lang::De, &[("time", "x")]), "bis x");
     }
 
     /// The tree passes the server's own command validation

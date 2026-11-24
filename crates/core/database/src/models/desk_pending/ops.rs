@@ -1,3 +1,4 @@
+use iso8601_timestamp::Timestamp;
 use revolt_result::Result;
 
 use crate::DeskPending;
@@ -19,8 +20,9 @@ pub trait AbstractDeskPending: Sync + Send {
     /// already bound to this message; `false` when bound to another one.
     async fn bind_desk_pending_card(&self, id: &str, message_id: &str) -> Result<bool>;
 
-    /// Mark as executed; `false` if it already was (or is gone)
-    async fn claim_desk_pending(&self, id: &str) -> Result<bool>;
+    /// Mark as executed; `false` if it already was, is gone, or has expired
+    /// by `now`
+    async fn claim_desk_pending(&self, id: &str, now: Timestamp) -> Result<bool>;
 
     /// Undo a claim when the action did not run (a step-up was missing)
     async fn release_desk_pending(&self, id: &str) -> Result<()>;

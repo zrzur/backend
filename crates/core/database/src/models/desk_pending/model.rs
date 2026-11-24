@@ -41,7 +41,12 @@ pub struct DeskPending {
     pub title: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lines: Vec<String>,
-    pub created_at: Timestamp,
+    /// The language of the card and the answer (the command's `locale`)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locale: Option<String>,
+    /// Milliseconds since the epoch: an irreversible action needs a step-up
+    /// made after this
+    pub created_at: i64,
     pub expires_at: Timestamp,
     /// Executed (once)
     #[serde(default)]
@@ -83,7 +88,8 @@ mod tests {
             card_message: None,
             title: "Title".into(),
             lines: vec!["Line".into()],
-            created_at: Timestamp::now_utc(),
+            locale: None,
+            created_at: 1,
             expires_at: DeskPending::expiry_from_now(),
             used: false,
         }
@@ -98,6 +104,7 @@ mod tests {
             assert!(db.insert_desk_pending(&pending(&id)).await.is_err());
             let stored = db.fetch_desk_pending(&id).await.unwrap().unwrap();
             assert_eq!(stored, pending(&id).clone_with(&stored));
+            let now = Timestamp::now_utc;
             assert!(!stored.is_expired());
 
             assert!(db.bind_desk_pending_card(&id, "m1").await.unwrap());
@@ -105,21 +112,29 @@ mod tests {
             assert!(!db.bind_desk_pending_card(&id, "m2").await.unwrap());
             assert!(!db.bind_desk_pending_card("missing", "m1").await.unwrap());
 
-            assert!(db.claim_desk_pending(&id).await.unwrap());
-            assert!(!db.claim_desk_pending(&id).await.unwrap());
+            assert!(db.claim_desk_pending(&id, now()).await.unwrap());
+            assert!(!db.claim_desk_pending(&id, now()).await.unwrap());
             db.release_desk_pending(&id).await.unwrap();
-            assert!(db.claim_desk_pending(&id).await.unwrap());
-            assert!(!db.claim_desk_pending("missing").await.unwrap());
+            assert!(db.claim_desk_pending(&id, now()).await.unwrap());
+            assert!(!db.claim_desk_pending("missing", now()).await.unwrap());
             let stored = db.fetch_desk_pending(&id).await.unwrap().unwrap();
             assert!(stored.used);
             assert_eq!(stored.card_message.as_deref(), Some("m1"));
+
+            // an expired one is never claimed, whatever its flag
+            let old = ulid::Ulid::new().to_string();
+            let mut expired = pending(&old);
+            expired.expires_at = Timestamp::now_utc()
+                .checked_add(Duration::seconds(-60))
+                .unwrap();
+            db.insert_desk_pending(&expired).await.unwrap();
+            assert!(!db.claim_desk_pending(&old, now()).await.unwrap());
         });
     }
 
     impl DeskPending {
-        /// This one with the stored times (they round-trip at millisecond precision)
+        /// This one with the stored expiry (it round-trips at millisecond precision)
         fn clone_with(mut self, stored: &DeskPending) -> DeskPending {
-            self.created_at = stored.created_at;
             self.expires_at = stored.expires_at;
             self
         }

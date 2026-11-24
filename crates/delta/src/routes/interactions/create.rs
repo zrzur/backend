@@ -390,6 +390,10 @@ async fn command(
     if keeps {
         interaction.command_options = options.clone();
         interaction.command_version = Some(command.version.clone());
+        interaction.locale = data
+            .locale
+            .clone()
+            .filter(|locale| locale.len() <= 16);
     }
 
     let mut payload = payload(db, user, &scope, &interaction, token, data.locale).await;

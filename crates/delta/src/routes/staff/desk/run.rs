@@ -4,43 +4,48 @@
 //! - `GET /staff/desk/commands`: the `/desk` tree for the enabled areas.
 //! - `POST /staff/desk/run`: a `/desk` press. Every Phase 0 check
 //!   (`desk_actor`), then the command must be registered exactly as
-//!   offered; group, sub-command and options come only from the stored
-//!   interaction. A reading command answers at once; a changing one only
-//!   stores a pending action and answers with its confirmation card.
+//!   offered; group, sub-command, options and language come only from the
+//!   stored interaction. A reading command answers at once; a changing one
+//!   only stores a pending action and answers with its confirmation card.
 //! - `POST /staff/desk/confirm`: a press on the card's Confirm button
 //!   (`zd:confirm:<pending id>`). Nothing but the id is taken from the
-//!   button; the action, target and options are the stored ones.
+//!   button; the action, target, options and language are the stored ones.
 //!
 //! The card check: the pending action names the command interaction whose
-//! private answer the card is (`card_interaction`, known to the server
-//! when it answers `/run`). A confirmation counts only when the button was
-//! pressed on a private message of exactly that interaction, by the same
-//! person, and that message still shows the server's title and every
-//! consequence line, with one row holding only the Confirm button. The
-//! first press binds the message (`card_message`); a later press (after a
-//! step-up) must come from the same message.
+//! first private answer the card is (`card_interaction`, known to the
+//! server when it answers `/run`). A confirmation counts only when the
+//! button was pressed on that first answer (never a follow-up), by the same
+//! person, and the answer's text is exactly the server's
+//! `canonical_render` of the card, with one row holding only the Confirm
+//! button (style Danger for an irreversible action). The first press binds
+//! the message (`card_message`); a later press (after a step-up) must come
+//! from the same message.
 
-use revolt_database::{
-    record_platform_audit, AuditOutcome, AuditRecord, Database, DeskPending, Interaction,
-    InteractionSource, User,
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
 };
-use revolt_models::v0::{Component, ComponentBlock};
+
+use futures::future::BoxFuture;
+use revolt_config::FeaturesStaffDesk;
+use revolt_database::{
+    record_platform_audit, staff_now, AuditOutcome, AuditRecord, Database, DeskPending, Interaction,
+    InteractionSource, User, STAFF_STEP_UP_MS,
+};
+use revolt_models::v0::{ButtonStyle, Component, ComponentBlock};
 use revolt_result::{create_error, ErrorType, Result};
 use rocket::{serde::json::Json, State};
 use ulid::Ulid;
 
-use super::super::StaffContext;
+use super::super::{audited::audited, StaffContext};
 use super::actor::{desk_actor, DataDeskInteraction, Expect};
-use super::registry::{self, DeskCommand, DeskCommandTree, DeskInput};
+use super::registry::{self, texts, DeskCommand, DeskCommandTree, DeskInput, Lang};
 use super::view::{DeskButton, DeskButtonStyle, DeskView};
-use revolt_config::FeaturesStaffDesk;
 
 const PATH_RUN: &str = "/staff/desk/run";
 const PATH_CONFIRM: &str = "/staff/desk/confirm";
 /// Custom id prefix of a confirmation button
 pub const CONFIRM_PREFIX: &str = "zd:confirm:";
-/// The confirmation button's label; the card must still carry it
-pub const CONFIRM_LABEL: &str = "Confirm";
 
 /// # Desk: command tree
 ///
@@ -76,11 +81,35 @@ pub async fn run(db: &State<Database>, user: User, data: Json<DataDeskInteractio
     let input = DeskInput {
         options,
         areas: settings.areas.clone(),
+        lang: Lang::from_locale(interaction.locale.as_deref()),
     };
     if entry.changes {
         return propose(db, &staff, &settings, &interaction, entry, input).await.map(Json);
     }
-    registry::dispatch(db, &staff, entry, &input).await.map(Json)
+    registry::dispatch(db, &staff, entry, &input).await.map(|view| Json(view.finish()))
+}
+
+/// The confirmation card of a pending action, as the bot must show it
+fn card(pending: &DeskPending, irreversible: bool) -> DeskView {
+    let lang = Lang::from_locale(pending.locale.as_deref());
+    DeskView {
+        content: String::new(),
+        title: pending.title.clone(),
+        fields: vec![],
+        lines: pending.lines.clone(),
+        page: None,
+        pages: None,
+        buttons: vec![DeskButton {
+            label: texts::CONFIRM.get(lang).to_string(),
+            action_id: format!("{CONFIRM_PREFIX}{}", pending.id),
+            style: if irreversible {
+                DeskButtonStyle::Danger
+            } else {
+                DeskButtonStyle::Primary
+            },
+        }],
+    }
+    .finish()
 }
 
 /// A changing command: checks the presser may do it, stores what was asked
@@ -101,9 +130,9 @@ async fn propose(
     let prepared = prepare(db, staff, &input).await?;
     let mut lines = prepared.lines;
     if entry.irreversible {
-        lines.push("This cannot be undone. You will be asked for a fresh code.".to_string());
+        lines.push(texts::IRREVERSIBLE.get(input.lang).to_string());
     }
-    lines.push("Press Confirm within 10 minutes.".to_string());
+    lines.push(texts::WITHIN.get(input.lang).to_string());
     let pending = DeskPending {
         id: Ulid::new().to_string(),
         actor: staff.user.id.clone(),
@@ -117,27 +146,13 @@ async fn propose(
         card_message: None,
         title: prepared.title,
         lines,
-        created_at: iso8601_timestamp::Timestamp::now_utc(),
+        locale: interaction.locale.clone(),
+        created_at: staff_now(),
         expires_at: DeskPending::expiry_from_now(),
         used: false,
     };
     db.insert_desk_pending(&pending).await?;
-    Ok(DeskView {
-        title: pending.title.clone(),
-        fields: vec![],
-        lines: pending.lines.clone(),
-        page: None,
-        pages: None,
-        buttons: vec![DeskButton {
-            label: CONFIRM_LABEL.to_string(),
-            action_id: format!("{CONFIRM_PREFIX}{}", pending.id),
-            style: if entry.irreversible {
-                DeskButtonStyle::Danger
-            } else {
-                DeskButtonStyle::Primary
-            },
-        }],
-    })
+    Ok(card(&pending, entry.irreversible))
 }
 
 /// Whether the button was pressed on the card the server made for this
@@ -148,6 +163,7 @@ async fn on_the_card(
     settings: &FeaturesStaffDesk,
     interaction: &Interaction,
     pending: &DeskPending,
+    irreversible: bool,
 ) -> Result<bool> {
     let Some(InteractionSource::Ephemeral {
         interaction_id,
@@ -165,22 +181,22 @@ async fn on_the_card(
     if parent.application_id != settings.bot || parent.user_id != interaction.user_id {
         return Ok(false);
     }
-    let Some(message) = parent.find_ephemeral(message_id) else {
+    // only the first answer: a follow-up is never the card
+    let Some(message) = parent.ephemeral_message.as_ref().filter(|m| &m.id == message_id) else {
         return Ok(false);
     };
-    let content = message.content.as_deref().unwrap_or_default();
-    if !message.embeds.is_empty()
-        || !content.contains(pending.title.as_str())
-        || pending.lines.iter().any(|line| !content.contains(line.as_str()))
-    {
+    let expected = card(pending, irreversible);
+    if !message.embeds.is_empty() || message.content.as_deref() != Some(expected.content.as_str()) {
         return Ok(false);
     }
-    let want = format!("{CONFIRM_PREFIX}{}", pending.id);
+    let want = &expected.buttons[0];
     let only_confirm = match message.components.as_slice() {
         [ComponentBlock::ActionRow { components }] => matches!(
             components.as_slice(),
-            [Component::Button { label: Some(label), custom_id: Some(custom_id), .. }]
-                if label == CONFIRM_LABEL && custom_id == &want
+            [Component::Button { style, label: Some(label), custom_id: Some(custom_id), .. }]
+                if label == &want.label
+                    && custom_id == &want.action_id
+                    && (!irreversible || *style == ButtonStyle::Danger)
         ),
         _ => false,
     };
@@ -190,12 +206,46 @@ async fn on_the_card(
     db.bind_desk_pending_card(&pending.id, message_id).await
 }
 
+/// Runs a claimed pending action's handler through `audit` (production:
+/// [`audited`], Success first, Failed on error). When the action did not
+/// run (the first record could not be written) or its core asked for a
+/// step-up, the claim is given back: the same card works again.
+pub(super) async fn execute<'a, A, AF>(
+    db: &'a Database,
+    staff: &'a StaffContext,
+    entry: &'a DeskCommand,
+    pending: &DeskPending,
+    input: &'a DeskInput,
+    record: AuditRecord,
+    audit: A,
+) -> Result<DeskView>
+where
+    A: FnOnce(AuditRecord, BoxFuture<'a, Result<DeskView>>) -> AF,
+    AF: std::future::Future<Output = Result<DeskView>>,
+{
+    let ran = Arc::new(AtomicBool::new(false));
+    let started = ran.clone();
+    let change: BoxFuture<'a, Result<DeskView>> = Box::pin(async move {
+        started.store(true, Ordering::SeqCst);
+        (entry.handler)(db, staff, input).await
+    });
+    match audit(record, change).await {
+        Ok(view) => Ok(view.finish()),
+        Err(error) => {
+            if !ran.load(Ordering::SeqCst) || matches!(error.error_type, ErrorType::NotElevated) {
+                db.release_desk_pending(&pending.id).await?;
+            }
+            Err(error)
+        }
+    }
+}
+
 /// # Desk: confirm a changing command
 ///
 /// From the Confirm button of a card `/run` made. Same person, same desk
 /// session, within ten minutes, once, on that card; irreversible actions
-/// need a step-up (then `NotElevated`, and the same card works again after
-/// it). Executes the stored action.
+/// need a step-up made after the card (else `NotElevated`, and the same
+/// card works after it). Executes the stored action.
 #[post("/desk/confirm", data = "<data>")]
 pub async fn confirm(db: &State<Database>, user: User, data: Json<DataDeskInteraction>) -> Result<Json<DeskView>> {
     let (staff, interaction) = desk_actor(db, &user, &data, Expect::ButtonPrefix(CONFIRM_PREFIX), PATH_CONFIRM).await?;
@@ -207,6 +257,7 @@ pub async fn confirm(db: &State<Database>, user: User, data: Json<DataDeskIntera
         .unwrap_or_default()
         .to_string();
 
+    // unknown and someone else's answer alike: nothing tells them apart
     let Some(pending) = db.fetch_desk_pending(&id).await? else {
         let mut record = staff.record("staff.desk.confirm", None);
         record.summary = Some("desk: no such pending action".to_string());
@@ -231,7 +282,7 @@ pub async fn confirm(db: &State<Database>, user: User, data: Json<DataDeskIntera
 
     if pending.actor != staff.user.id || pending.bot != settings.bot {
         record_platform_audit(db, deny("not the person who asked"), AuditOutcome::Denied).await?;
-        return Err(create_error!(NotPrivileged));
+        return Err(create_error!(InteractionExpired));
     }
     if pending.session != staff.session.id {
         record_platform_audit(db, deny("asked on another desk session"), AuditOutcome::Denied).await?;
@@ -245,25 +296,33 @@ pub async fn confirm(db: &State<Database>, user: User, data: Json<DataDeskIntera
         record_platform_audit(db, deny("already confirmed"), AuditOutcome::Denied).await?;
         return Err(create_error!(InteractionExpired));
     }
-    if !on_the_card(db, &settings, &interaction, &pending).await? {
-        record_platform_audit(db, deny("not pressed on the card the server made"), AuditOutcome::Denied).await?;
-        return Err(create_error!(InvalidOperation));
-    }
     let Some(entry) = entry.filter(|e| e.changes && e.offered(&settings)) else {
         record_platform_audit(db, deny("action no longer offered"), AuditOutcome::Denied).await?;
         return Err(create_error!(InvalidOperation));
     };
-    // the console's permission check, again, on this press
-    if let Some(permission) = entry.permission {
-        staff.require_protective(db, permission).await?;
+    if !on_the_card(db, &settings, &interaction, &pending, entry.irreversible).await? {
+        record_platform_audit(db, deny("not pressed on the card the server made"), AuditOutcome::Denied).await?;
+        return Err(create_error!(InvalidOperation));
     }
-    // irreversible: always a fresh code; the pending action stays usable
+    // the console's full check, again, on this press (step-up list included)
+    let permission = entry.permission.ok_or_else(|| create_error!(InvalidOperation))?;
+    staff.require(db, permission).await?;
+    // irreversible: a step-up made after the card was made; the pending
+    // action stays usable
     if entry.irreversible {
-        let permission = entry.permission.ok_or_else(|| create_error!(InvalidOperation))?;
-        staff.require_step_up(db, permission).await?;
+        let fresh = staff
+            .session
+            .step_up_until
+            .is_some_and(|until| until > staff.now && until - STAFF_STEP_UP_MS >= pending.created_at);
+        if !fresh {
+            let mut record = staff.record("staff.step_up.missing", Some(permission));
+            record.summary = Some(staff.path.clone());
+            record_platform_audit(db, record, AuditOutcome::Denied).await?;
+            return Err(create_error!(NotElevated));
+        }
     }
-    // once: a second press (or a race) finds it used
-    if !db.claim_desk_pending(&pending.id).await? {
+    // once, and only before it expires: a second press (or a race) finds it used
+    if !db.claim_desk_pending(&pending.id, iso8601_timestamp::Timestamp::now_utc()).await? {
         record_platform_audit(db, deny("already confirmed"), AuditOutcome::Denied).await?;
         return Err(create_error!(InteractionExpired));
     }
@@ -271,30 +330,14 @@ pub async fn confirm(db: &State<Database>, user: User, data: Json<DataDeskIntera
     let input = DeskInput {
         options: pending.options.clone(),
         areas: settings.areas.clone(),
+        lang: Lang::from_locale(pending.locale.as_deref()),
     };
-    match (entry.handler)(db, &staff, &input).await {
-        Ok(view) => {
-            let mut record = base();
-            record.summary = Some(format!("desk: confirmed {}", pending.action));
-            record_platform_audit(db, record, AuditOutcome::Success).await?;
-            Ok(Json(view))
-        }
-        // the core asked for a step-up (and recorded it): nothing ran, the
-        // card works again after the step-up
-        Err(error) if matches!(error.error_type, ErrorType::NotElevated) => {
-            db.release_desk_pending(&pending.id).await?;
-            Err(error)
-        }
-        Err(error) => {
-            let mut record = base();
-            record.summary = Some(
-                format!("desk: {} failed: {:?}", pending.action, error.error_type)
-                    .chars()
-                    .take(200)
-                    .collect(),
-            );
-            let _ = record_platform_audit(db, record, AuditOutcome::Failed).await;
-            Err(error)
-        }
-    }
+    let mut record = base();
+    record.summary = Some(format!("desk: confirmed {}", pending.action));
+    let db: &Database = db;
+    execute(db, &staff, entry, &pending, &input, record, |record, change| {
+        audited(db, record, change)
+    })
+    .await
+    .map(Json)
 }

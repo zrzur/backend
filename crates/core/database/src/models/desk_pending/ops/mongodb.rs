@@ -1,3 +1,4 @@
+use iso8601_timestamp::Timestamp;
 use revolt_result::Result;
 
 use crate::{DeskPending, MongoDb};
@@ -41,11 +42,13 @@ impl AbstractDeskPending for MongoDb {
         Ok(result.matched_count == 1)
     }
 
-    async fn claim_desk_pending(&self, id: &str) -> Result<bool> {
+    async fn claim_desk_pending(&self, id: &str, now: Timestamp) -> Result<bool> {
+        // `now` encoded the way `expires_at` is stored
+        let now = bson::to_bson(&now).map_err(|_| create_database_error!("to_bson", COL))?;
         let result = self
             .col::<DeskPending>(COL)
             .update_one(
-                doc! { "_id": id, "used": { "$ne": true } },
+                doc! { "_id": id, "used": { "$ne": true }, "expires_at": { "$gt": now } },
                 doc! { "$set": { "used": true } },
             )
             .await
