@@ -1,4 +1,3 @@
-use iso8601_timestamp::Timestamp;
 use revolt_result::Result;
 
 use crate::DeskPending;
@@ -22,7 +21,7 @@ pub trait AbstractDeskPending: Sync + Send {
 
     /// Mark as executed; `false` if it already was, is gone, or has expired
     /// by `now`
-    async fn claim_desk_pending(&self, id: &str, now: Timestamp) -> Result<bool>;
+    async fn claim_desk_pending(&self, id: &str, now: i64) -> Result<bool>;
 
     /// Undo a claim when the action did not run (a step-up was missing)
     async fn release_desk_pending(&self, id: &str) -> Result<()>;

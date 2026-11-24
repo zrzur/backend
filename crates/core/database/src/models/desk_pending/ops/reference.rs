@@ -1,4 +1,3 @@
-use iso8601_timestamp::Timestamp;
 use revolt_result::Result;
 
 use crate::{DeskPending, ReferenceDb};
@@ -34,7 +33,7 @@ impl AbstractDeskPending for ReferenceDb {
         }
     }
 
-    async fn claim_desk_pending(&self, id: &str, now: Timestamp) -> Result<bool> {
+    async fn claim_desk_pending(&self, id: &str, now: i64) -> Result<bool> {
         let mut all = self.desk_pending.lock().await;
         match all.get_mut(id) {
             Some(pending) if !pending.used && pending.expires_at > now => {

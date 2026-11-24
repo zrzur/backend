@@ -643,9 +643,7 @@ async fn desk_confirm_expired_refused() {
     let old = DeskPending {
         id: ulid::Ulid::new().to_string(),
         created_at: staff_now() - 11 * 60 * 1000,
-        expires_at: iso8601_timestamp::Timestamp::now_utc()
-            .checked_add(iso8601_timestamp::Duration::minutes(-1))
-            .unwrap(),
+        expires_at: staff_now() - 60 * 1000,
         ..fresh
     };
     s.harness.db.insert_desk_pending(&old).await.unwrap();
@@ -890,7 +888,7 @@ async fn desk_confirm_audit_failure_changes_nothing() {
     assert!(s
         .harness
         .db
-        .claim_desk_pending(&id, iso8601_timestamp::Timestamp::now_utc())
+        .claim_desk_pending(&id, staff_now())
         .await
         .unwrap());
 

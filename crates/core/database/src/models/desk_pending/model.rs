@@ -1,14 +1,16 @@
-use iso8601_timestamp::{Duration, Timestamp};
 use revolt_models::v0::InteractionDataOption;
 
-/// How long a pending desk action can be confirmed
-pub const DESK_PENDING_LIFETIME_SECS: i64 = 10 * 60;
+use crate::staff_now;
+
+/// How long a pending desk action can be confirmed, in milliseconds
+pub const DESK_PENDING_LIFETIME_MS: i64 = 10 * 60 * 1000;
 
 /// A changing desk command, stored until its Confirm button is pressed.
 ///
 /// Everything the action needs is here, written by the server when the
 /// command was used: the button press carries only this document's id.
-/// Documents disappear on their own through the TTL index on `expires_at`.
+/// On MongoDB each document also carries `purge_at`, a BSON date copy of
+/// `expires_at`, and disappears on its own through the TTL index on it.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct DeskPending {
     #[serde(rename = "_id")]
@@ -30,14 +32,14 @@ pub struct DeskPending {
     /// them on the command interaction
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub options: Vec<InteractionDataOption>,
-    /// The command interaction whose private answer is the card
+    /// The command interaction whose first private answer is the card
     pub card_interaction: String,
     /// The card's message, bound at the first press on it: later presses
     /// (after a step-up) must come from the same message
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub card_message: Option<String>,
     /// The card's title and consequence lines, as the server wrote them;
-    /// the card the person pressed on must still show them
+    /// the card the person pressed on must be exactly their rendering
     pub title: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lines: Vec<String>,
@@ -47,7 +49,8 @@ pub struct DeskPending {
     /// Milliseconds since the epoch: an irreversible action needs a step-up
     /// made after this
     pub created_at: i64,
-    pub expires_at: Timestamp,
+    /// Milliseconds since the epoch
+    pub expires_at: i64,
     /// Executed (once)
     #[serde(default)]
     pub used: bool,
@@ -55,14 +58,12 @@ pub struct DeskPending {
 
 impl DeskPending {
     /// The expiry of a pending action created now
-    pub fn expiry_from_now() -> Timestamp {
-        Timestamp::now_utc()
-            .checked_add(Duration::seconds(DESK_PENDING_LIFETIME_SECS))
-            .unwrap_or_else(Timestamp::now_utc)
+    pub fn expiry_from_now() -> i64 {
+        staff_now() + DESK_PENDING_LIFETIME_MS
     }
 
     pub fn is_expired(&self) -> bool {
-        Timestamp::now_utc() >= self.expires_at
+        staff_now() >= self.expires_at
     }
 }
 
@@ -74,7 +75,7 @@ mod tests {
     #[allow(unused_imports)]
     use crate::AbstractDeskPending;
 
-    fn pending(id: &str) -> DeskPending {
+    fn pending(id: &str, expires_at: i64) -> DeskPending {
         DeskPending {
             id: id.to_string(),
             actor: "actor".into(),
@@ -88,23 +89,24 @@ mod tests {
             card_message: None,
             title: "Title".into(),
             lines: vec!["Line".into()],
-            locale: None,
+            locale: Some("ar".into()),
             created_at: 1,
-            expires_at: DeskPending::expiry_from_now(),
+            expires_at,
             used: false,
         }
     }
 
-    /// The card binds once; a claim works once, again after a release
+    /// The card binds once; a claim works once, again after a release, and
+    /// never once expired
     #[tokio::test]
     async fn bind_claim_release() {
         database_test!(|db| async move {
             let id = ulid::Ulid::new().to_string();
-            db.insert_desk_pending(&pending(&id)).await.unwrap();
-            assert!(db.insert_desk_pending(&pending(&id)).await.is_err());
+            let expires_at = DeskPending::expiry_from_now();
+            db.insert_desk_pending(&pending(&id, expires_at)).await.unwrap();
+            assert!(db.insert_desk_pending(&pending(&id, expires_at)).await.is_err());
             let stored = db.fetch_desk_pending(&id).await.unwrap().unwrap();
-            assert_eq!(stored, pending(&id).clone_with(&stored));
-            let now = Timestamp::now_utc;
+            assert_eq!(stored, pending(&id, expires_at));
             assert!(!stored.is_expired());
 
             assert!(db.bind_desk_pending_card(&id, "m1").await.unwrap());
@@ -112,31 +114,19 @@ mod tests {
             assert!(!db.bind_desk_pending_card(&id, "m2").await.unwrap());
             assert!(!db.bind_desk_pending_card("missing", "m1").await.unwrap());
 
-            assert!(db.claim_desk_pending(&id, now()).await.unwrap());
-            assert!(!db.claim_desk_pending(&id, now()).await.unwrap());
+            assert!(db.claim_desk_pending(&id, staff_now()).await.unwrap());
+            assert!(!db.claim_desk_pending(&id, staff_now()).await.unwrap());
             db.release_desk_pending(&id).await.unwrap();
-            assert!(db.claim_desk_pending(&id, now()).await.unwrap());
-            assert!(!db.claim_desk_pending("missing", now()).await.unwrap());
+            assert!(db.claim_desk_pending(&id, staff_now()).await.unwrap());
+            assert!(!db.claim_desk_pending("missing", staff_now()).await.unwrap());
             let stored = db.fetch_desk_pending(&id).await.unwrap().unwrap();
             assert!(stored.used);
             assert_eq!(stored.card_message.as_deref(), Some("m1"));
 
             // an expired one is never claimed, whatever its flag
             let old = ulid::Ulid::new().to_string();
-            let mut expired = pending(&old);
-            expired.expires_at = Timestamp::now_utc()
-                .checked_add(Duration::seconds(-60))
-                .unwrap();
-            db.insert_desk_pending(&expired).await.unwrap();
-            assert!(!db.claim_desk_pending(&old, now()).await.unwrap());
+            db.insert_desk_pending(&pending(&old, staff_now() - 60_000)).await.unwrap();
+            assert!(!db.claim_desk_pending(&old, staff_now()).await.unwrap());
         });
-    }
-
-    impl DeskPending {
-        /// This one with the stored expiry (it round-trips at millisecond precision)
-        fn clone_with(mut self, stored: &DeskPending) -> DeskPending {
-            self.expires_at = stored.expires_at;
-            self
-        }
     }
 }

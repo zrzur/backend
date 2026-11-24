@@ -1,4 +1,3 @@
-use iso8601_timestamp::Timestamp;
 use revolt_result::Result;
 
 use crate::{DeskPending, MongoDb};
@@ -10,8 +9,13 @@ pub(crate) static COL: &str = "desk_pending";
 #[async_trait]
 impl AbstractDeskPending for MongoDb {
     async fn insert_desk_pending(&self, pending: &DeskPending) -> Result<()> {
-        self.col::<DeskPending>(COL)
-            .insert_one(pending)
+        // `purge_at`: a BSON date copy of `expires_at` for the TTL index
+        // (only a date expires; the model keeps milliseconds)
+        let mut document =
+            bson::to_document(pending).map_err(|_| create_database_error!("to_document", COL))?;
+        document.insert("purge_at", bson::DateTime::from_millis(pending.expires_at));
+        self.col::<bson::Document>(COL)
+            .insert_one(document)
             .await
             .map(|_| ())
             .map_err(|_| create_database_error!("insert_one", COL))
@@ -42,9 +46,7 @@ impl AbstractDeskPending for MongoDb {
         Ok(result.matched_count == 1)
     }
 
-    async fn claim_desk_pending(&self, id: &str, now: Timestamp) -> Result<bool> {
-        // `now` encoded the way `expires_at` is stored
-        let now = bson::to_bson(&now).map_err(|_| create_database_error!("to_bson", COL))?;
+    async fn claim_desk_pending(&self, id: &str, now: i64) -> Result<bool> {
         let result = self
             .col::<DeskPending>(COL)
             .update_one(

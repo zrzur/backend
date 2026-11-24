@@ -2712,13 +2712,13 @@ pub async fn create_team_volunteer_indexes(db: &mongodb::Database) {
 }
 
 /// Zrzur Desk pending actions disappear ten minutes after they were made
-/// (TTL on `expires_at`, a date). Only an index, no data moves. Safe to run
+/// (TTL on `purge_at`, a BSON date copy of `expires_at`). Only an index, no data moves. Safe to run
 /// twice: creating an index that exists is a no-op.
 pub async fn create_desk_pending_indexes(db: &mongodb::Database) {
     db.run_command(doc! {
         "createIndexes": "desk_pending",
         "indexes": [
-            { "key": { "expires_at": 1_i32 }, "name": "expires_at_ttl", "expireAfterSeconds": 0_i32 }
+            { "key": { "purge_at": 1_i32 }, "name": "purge_at_ttl", "expireAfterSeconds": 0_i32 }
         ]
     })
     .await
@@ -3865,7 +3865,8 @@ mod statement_migration_tests {
             .list_index_names()
             .await
             .unwrap();
-        assert_eq!(names.len(), 2, "{names:?}");
+        // the test database is kept between runs: count only this index
+        assert_eq!(names.iter().filter(|n| *n == "purge_at_ttl").count(), 1, "{names:?}");
     }
 
     /// MongoDB only: the activity block indexes can be made twice

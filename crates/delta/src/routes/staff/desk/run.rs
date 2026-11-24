@@ -322,7 +322,7 @@ pub async fn confirm(db: &State<Database>, user: User, data: Json<DataDeskIntera
         }
     }
     // once, and only before it expires: a second press (or a race) finds it used
-    if !db.claim_desk_pending(&pending.id, iso8601_timestamp::Timestamp::now_utc()).await? {
+    if !db.claim_desk_pending(&pending.id, staff_now()).await? {
         record_platform_audit(db, deny("already confirmed"), AuditOutcome::Denied).await?;
         return Err(create_error!(InteractionExpired));
     }
