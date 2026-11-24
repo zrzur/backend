@@ -1588,8 +1588,8 @@
     },
     {
       "path": "crates/core/database/src/models/admin_migrations/ops/mongodb/scripts.rs",
-      "sha256": "19e972000313c27ba0e54c646c671392256e3f61d66146af8870feec6d3aab9f",
-      "bytes": 182011,
+      "sha256": "839b11cc40ac04bbb0063469a717481287b9c973e36953d723b1c817de18266c",
+      "bytes": 182146,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -2008,26 +2008,26 @@
     },
     {
       "path": "crates/core/database/src/models/desk_pending/model.rs",
-      "sha256": "ad396ff6331baaa4d058c372a51d1614d9f05e087b45fd9b75e6614fc8a62230",
-      "bytes": 4992,
+      "sha256": "fb354fdb8c9ec6ffe2132c234404add5b7a5690961573b26156f91114c057d9e",
+      "bytes": 5398,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/database/src/models/desk_pending/ops.rs",
-      "sha256": "e46c880df4462b52e16165b324abd8fd0f09aa03ba4a854a096a6125430ec4a0",
-      "bytes": 1002,
+      "sha256": "2069f8afe2030227fe2adb5a3730e1f5217562474972edf4eb2f1474127d7524",
+      "bytes": 1041,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/database/src/models/desk_pending/ops/mongodb.rs",
-      "sha256": "5ad8bed16fc663f54cd4ac3e9ca5fac98886c9b4e0b4477d3fffda993953ff90",
-      "bytes": 2076,
+      "sha256": "025399d7961e6834f7b344509e6611e413007c088259f975a52bb60e57d08d9d",
+      "bytes": 2467,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/database/src/models/desk_pending/ops/reference.rs",
-      "sha256": "66e7f3633398a283708ed5d4fc9618bc7b75e088a95907f4bcb7c28b4650e6f1",
-      "bytes": 1665,
+      "sha256": "c05c70df602b2c5db068b12248b18c300e2856f4f087a004222e440ac11c19ef",
+      "bytes": 1703,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -2164,8 +2164,8 @@
     },
     {
       "path": "crates/core/database/src/models/interactions/model.rs",
-      "sha256": "da2604de2864359d5b15ee3d047802db3cb3865bd7d0f90615e4628f731d6060",
-      "bytes": 10722,
+      "sha256": "902bd9d96dede95723a860627bd02b43f5b4bfd3f4bb0547dd8f16c2b2f9054d",
+      "bytes": 10957,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -5428,8 +5428,8 @@
     },
     {
       "path": "crates/delta/src/routes/interactions/create.rs",
-      "sha256": "cfb8e7c3502487b727321ad88dbf0a35547d30d497b2b04cdcfb3369f1bc2874",
-      "bytes": 40953,
+      "sha256": "75071b733911b54af9f5424d5b2822102969238a5f450072c2b551d0ba384eba",
+      "bytes": 41078,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6244,8 +6244,8 @@
     },
     {
       "path": "crates/delta/src/routes/staff/desk/framework_tests.rs",
-      "sha256": "d3f4c9869f849d39edb0fe107f356c95f8659bc16e9a2e1520d8121e8d241744",
-      "bytes": 29245,
+      "sha256": "6c426484d2c13ed64f73d96af69fe4a0148327699b44878a2c8a0284859d7e31",
+      "bytes": 41961,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6262,14 +6262,14 @@
     },
     {
       "path": "crates/delta/src/routes/staff/desk/registry.rs",
-      "sha256": "c8bed43840a2cfb0398b315b43285aa18d674d3da05221aa47c2e7331349a06a",
-      "bytes": 26172,
+      "sha256": "922f3a1fd5b2a0094e4e1efd9425b0f52f51f29452b95223e910a4eba811b6e9",
+      "bytes": 34594,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/delta/src/routes/staff/desk/run.rs",
-      "sha256": "7331ef0618e728bd708f767122a2dd084f625bac1062aed8ce1b6edf5aca87a9",
-      "bytes": 12461,
+      "sha256": "9a885783ff78941e7752222f855e202249a7e97bf3e3aa75aea57894097eca12",
+      "bytes": 14163,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6286,8 +6286,8 @@
     },
     {
       "path": "crates/delta/src/routes/staff/desk/view.rs",
-      "sha256": "f7a8cf9a7d931337994d250a179d5f824f2a2043b7ce9115dee1de372281b397",
-      "bytes": 2083,
+      "sha256": "7af127d399548aa3d6476d9e94057c68fd569bf8000b3628f1cb6fd4bcd6c3b7",
+      "bytes": 4178,
       "category": "product-source-or-build-manifest"
     },
     {
