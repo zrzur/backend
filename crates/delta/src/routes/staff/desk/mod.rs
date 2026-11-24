@@ -14,6 +14,9 @@
 //! [`StaffContext`]: super::StaffContext
 
 mod actor;
+mod decisions;
+#[cfg(test)]
+mod decisions_tests;
 #[cfg(test)]
 mod framework_tests;
 mod lookup;

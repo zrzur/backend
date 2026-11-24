@@ -213,10 +213,22 @@ pub async fn design_decide(
     id: &str,
     data: Json<DataStaffDesignDecision>,
 ) -> Result<Json<v0::CommunityItem>> {
+    design_decide_core(db, &staff, id, data.into_inner())
+        .await
+        .map(Json)
+}
+
+/// The console's `design_decide`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn design_decide_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataStaffDesignDecision,
+) -> Result<v0::CommunityItem> {
     staff
         .require_step_up(db, StaffPermission::ReportsResolve)
         .await?;
-    let data = data.into_inner();
     let action = match data.action.as_str() {
         "approve" => CommunityReviewAction::Approve,
         "reject" => CommunityReviewAction::Reject,
@@ -258,7 +270,6 @@ pub async fn design_decide(
         crate::routes::community::decide_as(db, &staff.user, id, action, decision),
     )
     .await
-    .map(Json)
 }
 
 // ---- plugins ----
@@ -312,10 +323,22 @@ pub async fn plugin_decide(
     id: &str,
     data: Json<DataStaffPluginDecision>,
 ) -> Result<Json<serde_json::Value>> {
+    plugin_decide_core(db, &staff, id, data.into_inner())
+        .await
+        .map(Json)
+}
+
+/// The console's `plugin_decide`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn plugin_decide_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataStaffPluginDecision,
+) -> Result<serde_json::Value> {
     staff
         .require_step_up(db, StaffPermission::ReportsResolve)
         .await?;
-    let data = data.into_inner();
     let needs_reason = !matches!(
         data.action.as_str(),
         "approve" | "reinstate" | "verify" | "reinstate_publisher"
@@ -425,7 +448,7 @@ pub async fn plugin_decide(
             crate::util::official::send(db, id, key, &[("note", note.unwrap_or_default())]).await;
         }
     }
-    Ok(Json(out))
+    Ok(out)
 }
 
 // ---- bug reports ----

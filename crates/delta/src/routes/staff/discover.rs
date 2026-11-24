@@ -52,8 +52,19 @@ pub async fn decide(
     id: &str,
     data: Json<DataDiscoverDecision>,
 ) -> Result<()> {
+    decide_core(db, &staff, kind, id, data.into_inner()).await
+}
+
+/// The console's `decide`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn decide_core(
+    db: &Database,
+    staff: &StaffContext,
+    kind: &str,
+    id: &str,
+    data: DataDiscoverDecision,
+) -> Result<()> {
     staff.require(db, StaffPermission::ServersRestrict).await?;
-    let data = data.into_inner();
     let request_type = match kind {
         "server" => DiscoverRequestType::Server,
         "bot" => DiscoverRequestType::Bot,

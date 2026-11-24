@@ -53,8 +53,17 @@ pub async fn add(
     staff: StaffContext,
     data: Json<DataAddWord>,
 ) -> Result<Json<PlatformWord>> {
+    add_core(db, &staff, data.into_inner()).await.map(Json)
+}
+
+/// The console's `add`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn add_core(
+    db: &Database,
+    staff: &StaffContext,
+    data: DataAddWord,
+) -> Result<PlatformWord> {
     staff.require(db, StaffPermission::ReportsResolve).await?;
-    let data = data.into_inner();
     data.word
         .validate()
         .map_err(|error| revolt_database::util::validation::validation_failed(&error))?;
@@ -87,7 +96,7 @@ pub async fn add(
     record.reason = Some(reason(&data.reason)?);
     record.summary = Some(word.pattern.clone());
     audited(db, record, db.insert_platform_word(&word)).await?;
-    Ok(Json(word))
+    Ok(word)
 }
 
 /// # Remove a word
@@ -98,6 +107,18 @@ pub async fn remove(
     id: &str,
     data: Json<DataReason>,
 ) -> Result<rocket_empty::EmptyResponse> {
+    remove_core(db, &staff, id, data.into_inner()).await?;
+    Ok(rocket_empty::EmptyResponse)
+}
+
+/// The console's `remove`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn remove_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataReason,
+) -> Result<()> {
     staff.require(db, StaffPermission::ReportsResolve).await?;
     let mut record = staff.record(
         "platform.words.remove",
@@ -106,8 +127,7 @@ pub async fn remove(
     record.target_kind = Some("platform_word".to_string());
     record.target_id = Some(id.to_string());
     record.reason = Some(reason(&data.reason)?);
-    audited(db, record, db.delete_platform_word(id)).await?;
-    Ok(rocket_empty::EmptyResponse)
+    audited(db, record, db.delete_platform_word(id)).await
 }
 
 /// # Try a text against the list
@@ -117,8 +137,18 @@ pub async fn check(
     staff: StaffContext,
     data: Json<DataWordCheck>,
 ) -> Result<Json<WordCheck>> {
+    check_core(db, &staff, data.into_inner()).await.map(Json)
+}
+
+/// The console's `check`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn check_core(
+    db: &Database,
+    staff: &StaffContext,
+    data: DataWordCheck,
+) -> Result<WordCheck> {
     staff.require(db, StaffPermission::ReportsRead).await?;
-    Ok(Json(WordCheck {
+    Ok(WordCheck {
         category: revolt_database::check_platform_words(db, &data.text).await?,
-    }))
+    })
 }

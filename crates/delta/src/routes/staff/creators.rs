@@ -87,8 +87,20 @@ pub async fn change(
     id: &str,
     data: Json<DataCreatorChange>,
 ) -> Result<Json<CreatorRecord>> {
+    change_core(db, &staff, id, data.into_inner())
+        .await
+        .map(Json)
+}
+
+/// The console's `change`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn change_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataCreatorChange,
+) -> Result<CreatorRecord> {
     staff.require(db, StaffPermission::CreatorsManage).await?;
-    let data = data.into_inner();
     if !matches!(
         data.action.as_str(),
         "grant" | "suspend" | "revoke" | "reinstate"
@@ -130,5 +142,5 @@ pub async fn change(
     } else {
         crate::util::official::creator(db, id, &action, &why).await;
     }
-    result.map(Json)
+    result
 }

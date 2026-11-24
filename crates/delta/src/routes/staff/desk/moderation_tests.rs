@@ -23,9 +23,16 @@ pub(super) fn all_areas(s: &Stage) {
         bot: s.bot.id.clone(),
         places: vec![s.place.id().to_string()],
         allow_dms: false,
-        areas: ["overview", "lookup", "audit", "moderation", "support"]
-            .map(str::to_string)
-            .to_vec(),
+        areas: [
+            "overview",
+            "lookup",
+            "audit",
+            "moderation",
+            "support",
+            "review",
+        ]
+        .map(str::to_string)
+        .to_vec(),
     });
 }
 

@@ -134,7 +134,19 @@ pub async fn grant(
     id: &str,
     data: Json<DataBadgeChange>,
 ) -> Result<Json<AdminBadgeGrant>> {
-    let data = data.into_inner();
+    grant_core(db, &staff, id, data.into_inner())
+        .await
+        .map(Json)
+}
+
+/// The console's `grant`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn grant_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataBadgeChange,
+) -> Result<AdminBadgeGrant> {
     let record = check(db, &staff, "staff.badge.grant", id, &data).await?;
     let (badge, note) = (data.badge.clone(), data.reason.clone());
     let change = grant_with(
@@ -150,7 +162,7 @@ pub async fn grant(
     );
     let granted = finish(db, record, change).await?;
     crate::util::official::badge(db, id, true, &badge, &note).await;
-    Ok(Json(granted))
+    Ok(granted)
 }
 
 /// # Revoke a badge
@@ -161,7 +173,19 @@ pub async fn revoke(
     id: &str,
     data: Json<DataBadgeChange>,
 ) -> Result<Json<AdminBadgeGrant>> {
-    let data = data.into_inner();
+    revoke_core(db, &staff, id, data.into_inner())
+        .await
+        .map(Json)
+}
+
+/// The console's `revoke`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn revoke_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataBadgeChange,
+) -> Result<AdminBadgeGrant> {
     let record = check(db, &staff, "staff.badge.revoke", id, &data).await?;
     let (badge, note) = (data.badge.clone(), data.reason.clone());
     let change = revoke_with(
@@ -176,5 +200,5 @@ pub async fn revoke(
     );
     let revoked = finish(db, record, change).await?;
     crate::util::official::badge(db, id, false, &badge, &note).await;
-    Ok(Json(revoked))
+    Ok(revoked)
 }

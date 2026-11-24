@@ -413,8 +413,20 @@ pub async fn decide_verification(
     id: &str,
     data: Json<DataVerificationDecision>,
 ) -> Result<Json<VerificationView>> {
+    decide_verification_core(db, &staff, id, data.into_inner())
+        .await
+        .map(Json)
+}
+
+/// The console's `decide_verification`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn decide_verification_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataVerificationDecision,
+) -> Result<VerificationView> {
     staff.require(db, StaffPermission::ServersRestrict).await?;
-    let data = data.into_inner();
     let note = match data
         .note
         .as_deref()
@@ -502,7 +514,7 @@ pub async fn decide_verification(
         request.decision_note.as_deref(),
     )
     .await;
-    Ok(Json(view(request)))
+    Ok(view(request))
 }
 
 #[derive(Deserialize)]
@@ -517,6 +529,17 @@ pub async fn unverify(
     staff: StaffContext,
     id: &str,
     data: Json<DataUnverify>,
+) -> Result<()> {
+    unverify_core(db, &staff, id, data.into_inner()).await
+}
+
+/// The console's `unverify`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn unverify_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataUnverify,
 ) -> Result<()> {
     staff.require(db, StaffPermission::ServersRestrict).await?;
     let why = reason(&data.reason)?;
