@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Two-factor codes with spaces (2026-11-24, owner's report)
+
+- A time code at `POST /auth/session/login` and `PUT /auth/mfa/ticket` is checked without its white space: `123 456`, a leading or trailing space and a pasted line break are the code `123456`. Any other character still makes it wrong. Replay protection, three tries per ticket and the 15-minute pause after five wrong answers are unchanged; a wrong code with spaces counts like any other.
+
 ## 26.3.0-beta.7 (2026-11-24)
 
 ### Badges: Content Creator and the switch for applying (2026-11-24, badge plan phase 5)
