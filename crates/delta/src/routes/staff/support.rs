@@ -380,13 +380,19 @@ pub struct StaffNotice {
 /// Newest first; `user` limits it to one person's notices.
 #[get("/notices?<user>")]
 pub async fn notices(db: &State<Database>, staff: StaffContext, user: Option<&str>) -> Result<Json<Vec<StaffNotice>>> {
+    notices_core(db, &staff, user).await.map(Json)
+}
+
+/// The console's `notices`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn notices_core(db: &Database, staff: &StaffContext, user: Option<&str>) -> Result<Vec<StaffNotice>> {
     staff.require(db, StaffPermission::SupportRead).await?;
     if user.is_some_and(|u| u.len() > 64) {
         return Err(create_error!(InvalidOperation));
     }
     let list = db.fetch_platform_notices(user, 100).await?;
     let names = names(db, list.iter().filter_map(|n| n.user_id.clone()).collect()).await?;
-    Ok(Json(
+    Ok(
         list.into_iter()
             .map(|n| StaffNotice {
                 user: n.user_id.as_ref().and_then(|u| names.get(u).cloned()),
@@ -394,7 +400,7 @@ pub async fn notices(db: &State<Database>, staff: StaffContext, user: Option<&st
                 notice: n,
             })
             .collect(),
-    ))
+    )
 }
 
 #[derive(Deserialize)]

@@ -18,8 +18,14 @@ use super::{reason, DataReason, StaffContext};
 /// # The word list
 #[get("/words")]
 pub async fn list(db: &State<Database>, staff: StaffContext) -> Result<Json<Vec<PlatformWord>>> {
+    list_core(db, &staff).await.map(Json)
+}
+
+/// The console's `list`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn list_core(db: &Database, staff: &StaffContext) -> Result<Vec<PlatformWord>> {
     staff.require(db, StaffPermission::ReportsRead).await?;
-    Ok(Json(db.fetch_platform_words().await?))
+    Ok(db.fetch_platform_words().await?)
 }
 
 #[derive(Deserialize)]

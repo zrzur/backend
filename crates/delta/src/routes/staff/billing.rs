@@ -55,8 +55,14 @@ fn validated<T: Validate>(data: T) -> Result<T> {
 /// # Billing summary
 #[get("/billing/summary")]
 pub async fn summary(db: &State<Database>, staff: StaffContext) -> Result<Json<v0::BillingAdminSummary>> {
+    summary_core(db, &staff).await.map(Json)
+}
+
+/// The console's `summary`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn summary_core(db: &Database, staff: &StaffContext) -> Result<v0::BillingAdminSummary> {
     staff.require(db, StaffPermission::BillingRead).await?;
-    Ok(Json(admin_summary(db).await?))
+    Ok(admin_summary(db).await?)
 }
 
 /// # Orders

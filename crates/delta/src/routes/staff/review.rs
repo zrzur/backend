@@ -61,10 +61,13 @@ async fn audited<T>(
 /// New designs, new versions of published ones and reported ones, of every
 /// kind, oldest waiting first.
 #[get("/designs/review")]
-pub async fn design_queue(
-    db: &State<Database>,
-    staff: StaffContext,
-) -> Result<Json<v0::CommunityReviewQueue>> {
+pub async fn design_queue(db: &State<Database>, staff: StaffContext) -> Result<Json<v0::CommunityReviewQueue>> {
+    design_queue_core(db, &staff).await.map(Json)
+}
+
+/// The console's `design_queue`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn design_queue_core(db: &Database, staff: &StaffContext) -> Result<v0::CommunityReviewQueue> {
     staff.require(db, StaffPermission::ReportsRead).await?;
     let fetch = |statuses: Vec<CommunityItemStatus>, reported: bool, pending_revision: bool| {
         db.fetch_community_items(CommunityItemQuery {
@@ -96,12 +99,12 @@ pub async fn design_queue(
     let api = |list: Vec<revolt_database::CommunityItem>| {
         list.into_iter().map(|item| item.into_v0(true, false)).collect()
     };
-    Ok(Json(v0::CommunityReviewQueue {
+    Ok(v0::CommunityReviewQueue {
         pending: api(pending),
         revisions: api(revisions),
         reported: api(reported),
         creators,
-    }))
+    })
 }
 
 /// How long the console waits for the file service
@@ -237,8 +240,14 @@ pub async fn design_decide(
 /// # Plugin releases waiting for review
 #[get("/plugins/review")]
 pub async fn plugin_queue(_open: PluginsOpen, db: &State<Database>, staff: StaffContext) -> Result<Json<Vec<ReviewItem>>> {
+    plugin_queue_core(db, &staff).await.map(Json)
+}
+
+/// The console's `plugin_queue`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn plugin_queue_core(db: &Database, staff: &StaffContext) -> Result<Vec<ReviewItem>> {
     staff.require(db, StaffPermission::ReportsRead).await?;
-    queue_items(db).await.map(Json)
+    queue_items(db).await
 }
 
 #[derive(Deserialize)]

@@ -271,12 +271,13 @@ pub struct VerificationEntry {
 /// `status` is Pending (default), Approved, Denied, Revoked or all; oldest
 /// first.
 #[get("/bot-verifications?<status>&<after>")]
-pub async fn verifications(
-    db: &State<Database>,
-    staff: StaffContext,
-    status: Option<&str>,
-    after: Option<&str>,
-) -> Result<Json<Vec<VerificationEntry>>> {
+pub async fn verifications(db: &State<Database>, staff: StaffContext, status: Option<&str>, after: Option<&str>) -> Result<Json<Vec<VerificationEntry>>> {
+    verifications_core(db, &staff, status, after).await.map(Json)
+}
+
+/// The console's `verifications`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn verifications_core(db: &Database, staff: &StaffContext, status: Option<&str>, after: Option<&str>) -> Result<Vec<VerificationEntry>> {
     staff.require(db, StaffPermission::ServersRead).await?;
     let status = match status {
         None | Some("Pending") => Some(BotVerificationStatus::Pending),
@@ -302,7 +303,7 @@ pub async fn verifications(
             servers,
         });
     }
-    Ok(Json(entries))
+    Ok(entries)
 }
 
 /// Sets or clears the verified flag and the mark on the bot's profile;

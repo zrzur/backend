@@ -23,8 +23,14 @@ use crate::routes::discover::{decide::decide_request, queue::queue_entries};
 /// Requests waiting for a decision (pending or under review).
 #[get("/discover/requests")]
 pub async fn requests(db: &State<Database>, staff: StaffContext) -> Result<Json<Vec<DiscoverQueueEntry>>> {
+    requests_core(db, &staff).await.map(Json)
+}
+
+/// The console's `requests`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn requests_core(db: &Database, staff: &StaffContext) -> Result<Vec<DiscoverQueueEntry>> {
     staff.require(db, StaffPermission::ServersRead).await?;
-    queue_entries(db).await.map(Json)
+    queue_entries(db).await
 }
 
 /// # Decide a Discover request

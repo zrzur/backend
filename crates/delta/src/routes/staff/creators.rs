@@ -26,6 +26,12 @@ use crate::routes::community::admin::{creator_change, creator_list};
 /// it by name, with their standing (to find someone to make a creator).
 #[get("/creators?<q>")]
 pub async fn list(db: &State<Database>, staff: StaffContext, q: Option<&str>) -> Result<Json<Vec<CreatorRecord>>> {
+    list_core(db, &staff, q).await.map(Json)
+}
+
+/// The console's `list`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn list_core(db: &Database, staff: &StaffContext, q: Option<&str>) -> Result<Vec<CreatorRecord>> {
     staff.require(db, StaffPermission::UsersRead).await?;
     if q.is_some_and(|q| q.chars().count() > 64) {
         return Err(create_error!(FailedValidation {
@@ -38,7 +44,7 @@ pub async fn list(db: &State<Database>, staff: StaffContext, q: Option<&str>) ->
         // reviewers without a creator record aren't creators
         records.retain(|r| r.creator.is_some());
     }
-    Ok(Json(records))
+    Ok(records)
 }
 
 /// # A creator's history

@@ -23,6 +23,8 @@ pub(crate) mod view;
 #[cfg(test)]
 mod framework_tests;
 #[cfg(test)]
+mod lookup_tests;
+#[cfg(test)]
 mod tests;
 
 // for the desk routes of later phases

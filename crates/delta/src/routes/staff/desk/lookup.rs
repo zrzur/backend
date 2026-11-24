@@ -14,7 +14,7 @@ use revolt_result::{create_error, Result};
 use serde::Serialize;
 use serde_json::Value;
 
-use super::super::{badges, bots, metrics, platform, review, safety, security, support};
+use super::super::{badges, billing, bots, creators, discover, metrics, platform, review, safety, security, support, words};
 use super::super::{audit_core, members_core, verify_audit_core, StaffContext};
 use super::registry::{when, DeskChoice, DeskCommand, DeskGroup, DeskInput, DeskOption, Lang, Text};
 use super::view::{DeskButton, DeskButtonStyle, DeskView};
@@ -728,6 +728,136 @@ async fn staff_list_view(db: &Database, staff: &StaffContext, input: &DeskInput)
 }
 handler!(staff_list, staff_list_view);
 
+// ---- queues ----
+
+pub const CREATOR_ROW: &[Show] = &[
+    show("/user/username", w::USER),
+    show("/creator", w::STATUS),
+    show("/user/_id", w::ID),
+];
+
+async fn queue_creators_view(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
+    let list = creators::list_core(db, staff, query(input).as_deref()).await?;
+    Ok(paged(DeskView::new(w::T_CREATORS.get(input.lang)), &items(json(&list)), CREATOR_ROW, input))
+}
+handler!(queue_creators, queue_creators_view);
+
+pub const DESIGN_ROW: &[Show] = &[
+    show("/name", w::NAME),
+    show("/kind", w::KIND),
+    show("/status", w::STATUS),
+    show("/creator_id", w::USER),
+    show("@id", w::ID),
+];
+
+async fn queue_designs_view(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
+    let queue = json(&review::design_queue_core(db, staff).await?);
+    let view = fields(
+        DeskView::new(w::T_DESIGNS.get(input.lang)),
+        &queue,
+        &[show("/pending", w::PENDING), show("/revisions", w::REVISIONS), show("/reported", w::REPORTED)],
+        input.lang,
+    );
+    Ok(paged(view, &items(queue["pending"].clone()), DESIGN_ROW, input))
+}
+handler!(queue_designs, queue_designs_view);
+
+pub const PLUGIN_ROW: &[Show] = &[
+    show("/plugin/name", w::NAME),
+    show("/release/version", w::VERSION),
+    show("/release/risk", w::PRIORITY),
+    show("/plugin/status", w::STATUS),
+    show("/plugin/_id", w::ID),
+];
+
+async fn queue_plugins_view(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
+    // the console's guard on every plugin route
+    if !revolt_config::config().await.features.plugins_enabled {
+        return Err(create_error!(PluginsDisabled));
+    }
+    let list = review::plugin_queue_core(db, staff).await?;
+    Ok(paged(DeskView::new(w::T_PLUGINS.get(input.lang)), &items(json(&list)), PLUGIN_ROW, input))
+}
+handler!(queue_plugins, queue_plugins_view);
+
+pub const DISCOVER_ROW: &[Show] = &[
+    show("/name", w::NAME),
+    show("/request/request_type", w::KIND),
+    show("/request/status", w::STATUS),
+    show("/owner", w::OWNER),
+    show("/count", w::MEMBERS),
+];
+
+async fn queue_discover_view(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
+    let list = discover::requests_core(db, staff).await?;
+    Ok(paged(DeskView::new(w::T_DISCOVER.get(input.lang)), &items(json(&list)), DISCOVER_ROW, input))
+}
+handler!(queue_discover, queue_discover_view);
+
+pub const VERIFICATION_ROW: &[Show] = &[
+    show("/bot/username", w::T_BOT),
+    show("/status", w::STATUS),
+    show("/created_at", w::CREATED),
+    show("/servers", w::SERVERS),
+    show("@id", w::ID),
+];
+
+async fn queue_verifications_view(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
+    let list = bots::verifications_core(db, staff, None, None).await?;
+    Ok(paged(DeskView::new(w::T_VERIFICATIONS.get(input.lang)), &items(json(&list)), VERIFICATION_ROW, input))
+}
+handler!(queue_verifications, queue_verifications_view);
+
+pub const WORD_ROW: &[Show] = &[
+    show("/pattern", w::NAME),
+    show("/category", w::CATEGORY),
+    show("/allow", w::ALLOW),
+    show("@id", w::ID),
+];
+
+async fn words_list_view(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
+    let list = words::list_core(db, staff).await?;
+    Ok(paged(DeskView::new(w::T_WORDS.get(input.lang)), &items(json(&list)), WORD_ROW, input))
+}
+handler!(words_list, words_list_view);
+
+pub const NOTICE_ROW: &[Show] = &[
+    show("/notice/title/en", w::TITLE),
+    show("/notice/tone", w::KIND),
+    show("/user", w::USER),
+    show("/live", w::LIVE),
+    show("/notice/created_at", w::CREATED),
+    show("/notice/_id", w::ID),
+];
+
+async fn notices_list_view(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
+    let list = support::notices_core(db, staff, input.user("user").as_deref()).await?;
+    Ok(paged(DeskView::new(w::T_NOTICES.get(input.lang)), &items(json(&list)), NOTICE_ROW, input))
+}
+handler!(notices_list, notices_list_view);
+
+pub const BILLING_VIEW: &[Show] = &[
+    show("/mode", w::MODE),
+    show("/provider", w::PROVIDER),
+    show("/webhooks_failed", w::WEBHOOKS_FAILED),
+    show("/webhooks_pending", w::WEBHOOKS_PENDING),
+    show("/open_issues", w::OPEN_ISSUES),
+];
+
+pub const ORDER_ROW: &[Show] = &[show("/status", w::STATUS), show("/count", w::COUNT)];
+
+async fn billing_summary_view(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
+    let summary = json(&billing::summary_core(db, staff).await?);
+    let mut view = fields(DeskView::new(w::T_BILLING.get(input.lang)), &summary, BILLING_VIEW, input.lang);
+    for check in summary["live_gate"].as_array().into_iter().flatten() {
+        let name = check["name"].as_str().unwrap_or_default();
+        let passed = if check["passed"].as_bool() == Some(true) { w::PASSED } else { w::NOT_PASSED };
+        view = view.line(format!("{name}: {}", passed.get(input.lang)));
+    }
+    Ok(paged(view, &items(summary["orders_by_status"].clone()), ORDER_ROW, input))
+}
+handler!(billing_summary, billing_summary_view);
+
 // ---- the registry entries ----
 
 const fn opt(name: &'static str, kind: CommandOptionType, required: bool, description: Text) -> DeskOption {
@@ -823,6 +953,10 @@ pub static GROUPS: &[DeskGroup] = &[
     DeskGroup { name: "bug", description: t("Bug reports", "بلاغات الأخطاء", "Fehlerberichte") },
     DeskGroup { name: "system", description: t("System", "النظام", "System") },
     DeskGroup { name: "staff", description: t("Staff", "فريق الإدارة", "Team") },
+    DeskGroup { name: "queue", description: t("Review queues", "طوابير المراجعة", "Prüfwarteschlangen") },
+    DeskGroup { name: "words", description: t("Word list", "قائمة الكلمات", "Wortliste") },
+    DeskGroup { name: "notices", description: t("Notices", "الإشعارات", "Hinweise") },
+    DeskGroup { name: "billing", description: t("Billing", "الفوترة", "Abrechnung") },
     DeskGroup { name: "audit", description: t("Audit log", "سجل التدقيق", "Prüfprotokoll") },
     DeskGroup { name: "security", description: t("Security", "الأمان", "Sicherheit") },
 ];
@@ -855,6 +989,22 @@ pub static ENTRIES: &[DeskCommand] = &[
     read("lookup", "system", "health", t("System health", "حالة النظام", "Systemzustand"), &[], Some(P::OperationsRead), system_health),
     read("lookup", "system", "metrics", t("API metrics", "مقاييس الواجهة", "API-Kennzahlen"), &[], Some(P::OperationsRead), system_metrics),
     read("lookup", "staff", "list", t("Staff members", "أعضاء الإدارة", "Teammitglieder"), &[], Some(P::StaffRead), staff_list),
+    read("lookup", "queue", "creators", t("Creators", "المبدعون", "Creator"), &[QUERY], Some(P::UsersRead), queue_creators),
+    read("lookup", "queue", "designs", t("Designs to review", "تصاميم للمراجعة", "Designs zur Prüfung"), &[], Some(P::ReportsRead), queue_designs),
+    read("lookup", "queue", "plugins", t("Plugins to review", "إضافات للمراجعة", "Plugins zur Prüfung"), &[], Some(P::ReportsRead), queue_plugins),
+    read("lookup", "queue", "discover", t("Discover requests", "طلبات الاستكشاف", "Discover-Anfragen"), &[], Some(P::ServersRead), queue_discover),
+    read("lookup", "queue", "verifications", t("Bot verifications", "توثيق البوتات", "Bot-Verifizierungen"), &[], Some(P::ServersRead), queue_verifications),
+    read("lookup", "words", "list", t("Word list", "قائمة الكلمات", "Wortliste"), &[], Some(P::ReportsRead), words_list),
+    read(
+        "lookup",
+        "notices",
+        "list",
+        t("Sent notices", "الإشعارات المرسلة", "Gesendete Hinweise"),
+        &[opt("user", CommandOptionType::User, false, t("Only this user", "هذا المستخدم فقط", "Nur dieser Benutzer"))],
+        Some(P::SupportRead),
+        notices_list,
+    ),
+    read("lookup", "billing", "summary", t("Billing summary", "ملخص الفوترة", "Abrechnung"), &[], Some(P::BillingRead), billing_summary),
     read(
         "audit",
         "audit",
