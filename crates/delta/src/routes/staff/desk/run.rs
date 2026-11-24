@@ -30,7 +30,7 @@ use futures::future::BoxFuture;
 use revolt_config::FeaturesStaffDesk;
 use revolt_database::{
     record_platform_audit, staff_now, AuditOutcome, AuditRecord, Database, DeskPending, Interaction,
-    InteractionSource, User, STAFF_STEP_UP_MS,
+    InteractionSource, User,
 };
 use revolt_models::v0::{ButtonStyle, Component, ComponentBlock};
 use revolt_result::{create_error, ErrorType, Result};
@@ -82,6 +82,7 @@ pub async fn run(db: &State<Database>, user: User, data: Json<DataDeskInteractio
         options,
         areas: settings.areas.clone(),
         lang: Lang::from_locale(interaction.locale.as_deref()),
+        pending: None,
     };
     if entry.changes {
         return propose(db, &staff, &settings, &interaction, entry, input).await.map(Json);
@@ -310,10 +311,8 @@ pub async fn confirm(db: &State<Database>, user: User, data: Json<DataDeskIntera
     // irreversible: a step-up made after the card was made; the pending
     // action stays usable
     if entry.irreversible {
-        let fresh = staff
-            .session
-            .step_up_until
-            .is_some_and(|until| until > staff.now && until - STAFF_STEP_UP_MS >= pending.created_at);
+        let fresh = staff.session.step_up_until.is_some_and(|until| until > staff.now)
+            && staff.session.step_up_at.is_some_and(|at| at >= pending.created_at);
         if !fresh {
             let mut record = staff.record("staff.step_up.missing", Some(permission));
             record.summary = Some(staff.path.clone());
@@ -331,6 +330,7 @@ pub async fn confirm(db: &State<Database>, user: User, data: Json<DataDeskIntera
         options: pending.options.clone(),
         areas: settings.areas.clone(),
         lang: Lang::from_locale(pending.locale.as_deref()),
+        pending: Some(pending.id.clone()),
     };
     let mut record = base();
     record.summary = Some(format!("desk: confirmed {}", pending.action));

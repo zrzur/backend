@@ -1,8 +1,6 @@
 //! The generic desk: the command tree, `/run` and pending actions with
 //! `/confirm`. The bot hands back presses; the server decides everything.
 
-use std::sync::atomic::Ordering;
-
 use revolt_database::{
     staff_now, DeskPending, Interaction, InteractionSource, InteractionStatus, InteractionTransition,
     StaffPermission, StaffRole,
@@ -481,7 +479,7 @@ async fn desk_run_calls_stats_for_dashboard_read() {
         .await
         .unwrap_err();
     assert!(matches!(error.error_type, revolt_result::ErrorType::InvalidOperation));
-    assert_eq!(test_entries::RUNS.load(Ordering::SeqCst), 0);
+    assert_eq!(test_entries::runs(""), 0);
 }
 
 /// Over HTTP: a Support person (no BillingRead) runs `/desk test peek`;
@@ -541,7 +539,7 @@ async fn desk_options_only_from_stored_interaction() {
     assert!(view["lines"].as_array().unwrap().iter().any(|l| l.as_str().unwrap().contains("stored note")));
     // nothing was executed, nothing recorded as done
     assert!(s.records(&staff).await.iter().all(|r| r.0 != "staff.desk.test.change"));
-    assert_eq!(test_entries::RUNS.load(Ordering::SeqCst), 0);
+    assert_eq!(test_entries::runs(&id), 0);
 
     // confirmed after a fresh step-up: the stored note, whatever the bot adds
     step_up(&s, &staff, 0).await;
@@ -551,7 +549,7 @@ async fn desk_options_only_from_stored_interaction() {
     assert_eq!(status, Status::Ok, "{done}");
     let note = done["fields"].as_array().unwrap().iter().find(|f| f["name"] == json!("Note")).unwrap();
     assert_eq!(note["value"], json!("stored note"));
-    assert_eq!(test_entries::RUNS.load(Ordering::SeqCst), 1);
+    assert_eq!(test_entries::runs(&id), 1);
 }
 
 /// The card and the answer come in the language of the command
@@ -687,7 +685,7 @@ async fn desk_confirm_second_press_refused() {
     let (status, body) = confirm_on(&s, &staff, &view, &run, &message).await;
     assert_eq!(status, Status::Gone, "{body}");
     assert_eq!(denied_summaries(&s.records(&staff).await), vec!["desk: already confirmed".to_string()]);
-    assert_eq!(test_entries::RUNS.load(Ordering::SeqCst), 1);
+    assert_eq!(test_entries::runs(&id), 1);
 }
 
 /// A press that is not on the card exactly as the server made it is
@@ -767,7 +765,9 @@ async fn desk_confirm_wrong_card_refused() {
         denied_summaries(&s.records(&staff).await),
         vec!["desk: not pressed on the card the server made".to_string(); ids.len()]
     );
-    assert_eq!(test_entries::RUNS.load(Ordering::SeqCst), 0);
+    for id in &ids {
+        assert_eq!(test_entries::runs(id), 0);
+    }
 }
 
 /// An irreversible action needs a step-up made after its card: one made
@@ -800,7 +800,8 @@ async fn desk_confirm_step_up_then_works() {
     let (status, body) = confirm_on(&s, &staff, &view, &run, &message).await;
     assert_eq!(status, Status::Ok, "{body}");
     assert!(used(&s, &id).await);
-    assert_eq!(test_entries::RUNS.load(Ordering::SeqCst), 1);
+    assert_eq!(test_entries::runs(&id), 1);
+    assert_eq!(test_entries::runs(&pending_id(&view2)), 0);
 }
 
 /// A reversible action whose core asks for a step-up itself: the pending
@@ -898,6 +899,7 @@ async fn desk_confirm_audit_failure_changes_nothing() {
         options: pending.options.clone(),
         areas: vec!["overview".to_string()],
         lang: Lang::En,
+        pending: Some(id.clone()),
     };
     let record = staff_context.record("staff.desk.test.change", None);
     let result = execute(&s.harness.db, &staff_context, entry, &pending, &input, record, |_, change| async move {
@@ -907,7 +909,7 @@ async fn desk_confirm_audit_failure_changes_nothing() {
     })
     .await;
     assert!(result.is_err());
-    assert_eq!(test_entries::RUNS.load(Ordering::SeqCst), 0);
+    assert_eq!(test_entries::runs(&id), 0);
     assert!(!used(&s, &id).await, "the claim must be given back");
 }
 

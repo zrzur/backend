@@ -133,6 +133,10 @@ auto_derived!(
         /// Re-authenticated for high-risk actions until then
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub step_up_until: Option<i64>,
+        /// When the last step-up was made (`step_up_until` is capped at the
+        /// session's end, so it cannot tell)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub step_up_at: Option<i64>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub revoked_at: Option<i64>,
         #[serde(default, skip_serializing_if = "Option::is_none")]

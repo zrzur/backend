@@ -131,6 +131,7 @@ mod desk_session_tests {
             last_seen_at: 100,
             expires_at: 1_000,
             step_up_until: None,
+            step_up_at: None,
             revoked_at: None,
             user_agent: None,
             kind,

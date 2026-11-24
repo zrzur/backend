@@ -79,16 +79,30 @@ impl DeskView {
     }
 }
 
-/// Markdown and mention characters: no value can format, link or mention
-const MARKDOWN: &[char] = &['\\', '*', '_', '~', '`', '|', '[', ']', '(', ')', '<', '>', '#', '@', '-'];
+/// The longest text a bot may post (the platform's message limit for bots)
+pub const CONTENT_MAX: usize = 2000;
 
-/// `text` with every markdown and mention character escaped and line
-/// breaks turned into spaces: shown as written, on one line
+/// Markdown, maths and mention characters: no value can format, link or
+/// mention
+const MARKDOWN: &[char] = &['\\', '*', '_', '~', '`', '|', '[', ']', '(', ')', '<', '>', '#', '@', '-', '$'];
+
+/// Characters that are dropped: bidirectional controls (they can reorder
+/// what a reader sees) and zero-width characters (they can hide text)
+fn invisible(c: char) -> bool {
+    matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{200B}'..='\u{200D}' | '\u{2060}' | '\u{FEFF}')
+}
+
+/// `text` with every markdown and mention character escaped, invisible
+/// controls dropped, and line breaks turned into spaces: shown as written,
+/// on one line
 pub fn escape_markdown(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {
         if c == '\n' || c == '\r' {
             out.push(' ');
+            continue;
+        }
+        if invisible(c) {
             continue;
         }
         if MARKDOWN.contains(&c) {
@@ -99,17 +113,52 @@ pub fn escape_markdown(text: &str) -> String {
     out
 }
 
+/// Cuts `part` to `keep` characters and ends it with `…` (never right after
+/// an escaping backslash)
+fn cut(part: &str, keep: usize) -> String {
+    let mut out: String = part.chars().take(keep).collect();
+    while out.ends_with('\\') {
+        out.pop();
+    }
+    out.push('…');
+    out
+}
+
 /// The one text of a view: the title in bold, then `name: value` per field,
-/// then each line; everything escaped (values may come from people)
+/// then each line; everything escaped (values may come from people). Never
+/// longer than [`CONTENT_MAX`]: while it is, the longest field or line (the
+/// first of equals) is cut with `…`, so the same view always gives the same
+/// text and the card can always be posted.
 pub fn canonical_render(title: &str, fields: &[DeskField], lines: &[String]) -> String {
-    let mut out = vec![format!("**{}**", escape_markdown(title))];
-    for field in fields {
-        out.push(format!("{}: {}", escape_markdown(&field.name), escape_markdown(&field.value)));
+    let head = format!("**{}**", escape_markdown(&title.chars().take(200).collect::<String>()));
+    let mut parts: Vec<String> = fields
+        .iter()
+        .map(|field| format!("{}: {}", escape_markdown(&field.name), escape_markdown(&field.value)))
+        .chain(lines.iter().map(|line| escape_markdown(line)))
+        .collect();
+    let total = |parts: &[String]| head.chars().count() + parts.iter().map(|p| p.chars().count() + 1).sum::<usize>();
+    while total(&parts) > CONTENT_MAX {
+        let excess = total(&parts) - CONTENT_MAX;
+        let Some((index, longest)) = parts
+            .iter()
+            .enumerate()
+            .map(|(i, p)| (i, p.chars().count()))
+            .fold(None, |best: Option<(usize, usize)>, (i, n)| match best {
+                Some((_, m)) if m >= n => best,
+                _ => Some((i, n)),
+            })
+        else {
+            break;
+        };
+        // nothing left to cut (only reachable with thousands of lines)
+        if longest <= 2 {
+            break;
+        }
+        // one character more for the `…`
+        let keep = longest.saturating_sub(excess + 1).max(1);
+        parts[index] = cut(&parts[index], keep);
     }
-    for line in lines {
-        out.push(escape_markdown(line));
-    }
-    out.join("\n")
+    std::iter::once(head).chain(parts).collect::<Vec<_>>().join("\n")
 }
 
 #[cfg(test)]
@@ -118,7 +167,7 @@ mod tests {
 
     #[test]
     fn desk_render_escapes_people_text() {
-        let lines = vec!["Note **bold** <@01ABC> [x](https://e.x)\nnext".to_string()];
+        let lines = vec!["Note **bold** <@01ABC> [x](https://e.x) $x^2$\nnext".to_string()];
         let fields = vec![DeskField {
             name: "User".to_string(),
             value: "a_b".to_string(),
@@ -127,7 +176,34 @@ mod tests {
             canonical_render("Title", &fields, &lines),
             r"**Title**
 User: a\_b
-Note \*\*bold\*\* \<\@01ABC\> \[x\]\(https://e.x\) next"
+Note \*\*bold\*\* \<\@01ABC\> \[x\]\(https://e.x\) \$x^2\$ next"
         );
+    }
+
+    /// Bidirectional controls and zero-width characters never reach the card
+    #[test]
+    fn desk_render_drops_invisible_characters() {
+        let line = "safe\u{202E}gnp.exe\u{2066}x\u{2069}\u{200B}\u{200C}\u{200D}\u{2060}\u{FEFF}y".to_string();
+        assert_eq!(canonical_render("T", &[], &[line]), "**T**\nsafegnp.exexy");
+    }
+
+    /// A card with a huge value still fits the message limit, keeps the
+    /// server's own lines whole, and is the same text every time
+    #[test]
+    fn desk_render_fits_the_message_limit() {
+        let huge = format!("Writes the note \"{}\" about x.", "*".repeat(5000));
+        let lines = vec![
+            huge,
+            "This cannot be undone.".to_string(),
+            "Press Confirm within 10 minutes.".to_string(),
+        ];
+        let text = canonical_render("Test change", &[], &lines);
+        assert!(text.chars().count() <= CONTENT_MAX, "{}", text.chars().count());
+        assert!(text.ends_with("This cannot be undone.\nPress Confirm within 10 minutes."));
+        assert!(text.contains('…'));
+        assert!(!text.contains("\\…"));
+        assert_eq!(text, canonical_render("Test change", &[], &lines));
+        // short ones are untouched
+        assert_eq!(canonical_render("T", &[], &["a".to_string()]), "**T**\na");
     }
 }

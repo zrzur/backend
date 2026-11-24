@@ -426,6 +426,7 @@ async fn open_session(
         last_seen_at: now,
         expires_at: now + STAFF_SESSION_MAX_MS,
         step_up_until: None,
+        step_up_at: None,
         revoked_at: None,
         user_agent: client.user_agent,
         kind: Default::default(),
@@ -473,7 +474,7 @@ async fn step_up(
     let until = (staff.now + STAFF_STEP_UP_MS).min(staff.session.expires_at);
     record_platform_audit(db, staff.record("staff.session.step_up", None), AuditOutcome::Success)
         .await?;
-    db.set_staff_step_up(&staff.session.id, until).await?;
+    db.set_staff_step_up(&staff.session.id, staff.now, until).await?;
     Ok(Json(StepUp { step_up_until: until }))
 }
 

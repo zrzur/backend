@@ -104,9 +104,12 @@ impl AbstractPlatformStaff for MongoDb {
             .map_err(|_| create_database_error!("update_one", SESSIONS))
     }
 
-    async fn set_staff_step_up(&self, id: &str, until: i64) -> Result<()> {
+    async fn set_staff_step_up(&self, id: &str, at: i64, until: i64) -> Result<()> {
         self.col::<StaffSession>(SESSIONS)
-            .update_one(doc! { "_id": id }, doc! { "$set": { "step_up_until": until } })
+            .update_one(
+                doc! { "_id": id },
+                doc! { "$set": { "step_up_until": until, "step_up_at": at } },
+            )
             .await
             .map(|_| ())
             .map_err(|_| create_database_error!("update_one", SESSIONS))

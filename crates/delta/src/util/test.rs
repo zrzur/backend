@@ -139,6 +139,7 @@ impl TestHarness {
                     last_seen_at: now,
                     expires_at: now + revolt_database::STAFF_SESSION_MAX_MS,
                     step_up_until: None,
+                    step_up_at: None,
                     revoked_at: None,
                     user_agent: None,
                     kind: Default::default(),

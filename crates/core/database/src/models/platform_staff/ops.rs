@@ -39,7 +39,8 @@ pub trait AbstractPlatformStaff: Sync + Send {
     async fn insert_staff_session(&self, session: &StaffSession) -> Result<()>;
     async fn fetch_staff_session_by_hash(&self, token_hash: &str) -> Result<Option<StaffSession>>;
     async fn touch_staff_session(&self, id: &str, at: i64) -> Result<()>;
-    async fn set_staff_step_up(&self, id: &str, until: i64) -> Result<()>;
+    /// A step-up made `at`, valid until `until`
+    async fn set_staff_step_up(&self, id: &str, at: i64, until: i64) -> Result<()>;
     async fn revoke_staff_session(&self, id: &str, at: i64) -> Result<()>;
     /// Revoke every open staff session of a user; returns how many
     async fn revoke_staff_sessions_for_user(&self, user_id: &str, at: i64) -> Result<usize>;

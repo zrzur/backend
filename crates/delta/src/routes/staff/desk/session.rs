@@ -96,6 +96,7 @@ pub async fn open(
         last_seen_at: now,
         expires_at: now + STAFF_SESSION_MAX_MS,
         step_up_until: None,
+        step_up_at: None,
         revoked_at: None,
         user_agent: None,
         kind: StaffSessionKind::Desk,
@@ -171,7 +172,7 @@ pub async fn step_up(
     let mut record = staff.record("staff.session.step_up", None);
     record.summary = Some("desk step-up".to_string());
     record_platform_audit(db, record, AuditOutcome::Success).await?;
-    db.set_staff_step_up(&staff.session.id, until).await?;
+    db.set_staff_step_up(&staff.session.id, staff.now, until).await?;
     Ok(Json(StepUp { step_up_until: until }))
 }
 

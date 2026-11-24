@@ -83,12 +83,31 @@ impl Text {
         }
     }
 
-    /// The text in `lang` with `{name}` placeholders filled in
+    /// The text in `lang` with `{name}` placeholders filled in, in one pass:
+    /// a value that itself contains `{other}` stays as it is
     pub fn fill(&self, lang: Lang, values: &[(&str, &str)]) -> String {
-        let mut out = self.get(lang).to_string();
-        for (name, value) in values {
-            out = out.replace(&format!("{{{name}}}"), value);
+        let template = self.get(lang);
+        let mut out = String::with_capacity(template.len());
+        let mut rest = template;
+        while let Some(open) = rest.find('{') {
+            out.push_str(&rest[..open]);
+            let after = &rest[open + 1..];
+            match after.find('}') {
+                Some(close) => {
+                    let name = &after[..close];
+                    match values.iter().find(|(key, _)| *key == name) {
+                        Some((_, value)) => out.push_str(value),
+                        None => out.push_str(&rest[open..open + close + 2]),
+                    }
+                    rest = &after[close + 1..];
+                }
+                None => {
+                    out.push_str(&rest[open..]);
+                    rest = "";
+                }
+            }
         }
+        out.push_str(rest);
         out
     }
 
@@ -130,6 +149,8 @@ pub struct DeskInput {
     /// The language for the texts the server writes itself (titles, field
     /// names, consequences); values (names, ids) stay as they are
     pub lang: Lang,
+    /// The pending action being confirmed (none for a reading command)
+    pub pending: Option<String>,
 }
 
 impl DeskInput {
@@ -813,7 +834,12 @@ pub(crate) mod test_entries {
     }
 
     /// How many times a test change ran (each test is its own process)
-    pub static RUNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    static RUNS: std::sync::Mutex<Option<std::collections::HashMap<String, usize>>> = std::sync::Mutex::new(None);
+
+    /// How many times the test change ran for this pending action
+    pub fn runs(pending: &str) -> usize {
+        RUNS.lock().unwrap().as_ref().and_then(|all| all.get(pending).copied()).unwrap_or(0)
+    }
 
     const TITLE: Text = Text { en: "Test change", ar: "تغيير تجريبي", de: "Teständerung" };
     const WRITES: Text = Text {
@@ -844,7 +870,8 @@ pub(crate) mod test_entries {
             if note == "fail" {
                 return Err(revolt_result::create_error!(NotFound));
             }
-            RUNS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let key = input.pending.clone().unwrap_or_default();
+            *RUNS.lock().unwrap().get_or_insert_with(Default::default).entry(key).or_insert(0) += 1;
             Ok(DeskView::new(DONE.get(input.lang))
                 .field(texts::USER.get(input.lang), input.user("user").unwrap_or_default())
                 .field(NOTE.get(input.lang), note))
@@ -901,6 +928,13 @@ mod unit_tests {
         assert_eq!(Lang::from_locale(Some("fr")), Lang::En);
         assert_eq!(Lang::from_locale(None), Lang::En);
         assert_eq!(texts::UNTIL.fill(Lang::De, &[("time", "x")]), "bis x");
+        // one pass: a value holding a placeholder stays as it is
+        assert_eq!(texts::UNTIL.fill(Lang::En, &[("time", "{time}")]), "until {time}");
+        assert_eq!(texts::WINDOW.fill(Lang::En, &[("total", "{day}"), ("day", "1")])
+            .starts_with("{day} (+1 in 24 hours"), true);
+        // an unknown or unclosed placeholder is kept
+        let text = Text { en: "a {x} b {", ar: "", de: "" };
+        assert_eq!(text.fill(Lang::En, &[]), "a {x} b {");
     }
 
     /// The tree passes the server's own command validation
