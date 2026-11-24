@@ -105,8 +105,8 @@ async fn rows(db: &Database, bots: Vec<revolt_database::Bot>) -> Result<Vec<BotR
         .map(|bot| {
             let flags = bot.flags.unwrap_or_default();
             let user = find(&bot.id);
-            // the flag, or the official-bot mark of `zrzur-staff official-bot`
-            let official = revolt_database::staff_deletion::is_official_bot(&bot, user);
+            // the Official flag, set by `zrzur-staff official-bot`
+            let official = revolt_database::staff_deletion::is_official_bot(&bot);
             BotRow {
                 username: user.map(|u| u.username.clone()),
                 discriminator: user.map(|u| u.discriminator.clone()),

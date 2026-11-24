@@ -71,7 +71,7 @@ pub async fn edit_bot(
     }
 
     let mut user = db.fetch_user(&bot.id).await?;
-    if data.name.is_some() && user.official_bot {
+    if data.name.is_some() && revolt_database::is_official_bot_flag(&bot) {
         // a system bot keeps the name it was given on the server
         return Err(create_error!(OfficialAccount));
     }

@@ -63,6 +63,8 @@ const PENDING_SERVER_EVENT_ANSWERS: i32 = 91;
 const PENDING_TEAM_VOLUNTEER_INDEXES: i32 = 92;
 // Stream rich-presence: the coordinator gives the number at merge; -1 never runs
 const PENDING_ACTIVITY_BLOCKS_INDEX: i32 = -1;
+// Stream badge-phase1: the coordinator gives the number at merge; -1 never runs
+const PENDING_OFFICIAL_BOT_FLAGS: i32 = -1;
 
 /// The earliest day a session from before expiry can expire. At least 30
 /// days out, also with expiry switched off (0), for the day it is switched on.
@@ -2669,6 +2671,11 @@ pub async fn run_migrations(db: &MongoDb, revision: i32) -> i32 {
         create_activity_block_indexes(&db.db()).await;
     }
 
+    if revision <= PENDING_OFFICIAL_BOT_FLAGS {
+        info!("Running migration [revision {PENDING_OFFICIAL_BOT_FLAGS} / 24-11-2026]: The official bot mark moves to the bot's Official flag");
+        fill_official_bot_flags(&db.db()).await;
+    }
+
     // Reminder to update LATEST_REVISION when adding new migrations.
     LATEST_REVISION.max(revision)
 }
@@ -2702,6 +2709,34 @@ pub async fn create_team_volunteer_indexes(db: &mongodb::Database) {
     })
     .await
     .expect("Failed to create the team identity index");
+}
+
+/// `BotFlags::Official` becomes the one source of the official bot mark.
+/// Until now `zrzur-staff official-bot` wrote only the account's
+/// `official_bot`; every bot whose account has it gets the flag (Discover,
+/// deletion protection and bot edits read the flag). Other flags stay. Safe
+/// to run twice: OR-ing a set bit changes nothing.
+pub async fn fill_official_bot_flags(db: &mongodb::Database) {
+    let official = revolt_models::v0::BotFlags::Official as i32;
+    let mut marked = db
+        .collection::<Document>("users")
+        .find(doc! { "official_bot": true, "bot": { "$exists": true } })
+        .projection(doc! { "_id": 1_i32 })
+        .await
+        .expect("Failed to read official bot accounts");
+    let mut ids = vec![];
+    while let Some(user) = marked.next().await {
+        let user = user.expect("Failed to read an official bot account");
+        if let Ok(id) = user.get_str("_id") {
+            ids.push(id.to_string());
+        }
+    }
+    let bots = db.collection::<Document>("bots");
+    for id in ids {
+        bots.update_one(doc! { "_id": &id }, doc! { "$bit": { "flags": { "or": official } } })
+            .await
+            .expect("Failed to set the Official flag");
+    }
 }
 
 /// Activity blocks (Trust & Safety) are looked up by value on every
@@ -3823,6 +3858,46 @@ mod statement_migration_tests {
                 .unwrap();
             assert_eq!(names.len(), wanted, "{collection}: {names:?}");
         }
+    }
+
+    /// MongoDB only: every bot whose account has `official_bot` gets the
+    /// Official flag, other flags stay, other bots are left alone, twice
+    #[tokio::test]
+    async fn official_bot_flags_fill_twice_on_mongodb() {
+        let db = crate::DatabaseInfo::Test(format!("official_bot_flags_{}", ulid::Ulid::new()))
+            .connect()
+            .await
+            .expect("Database connection failed.");
+        let crate::Database::MongoDb(mongo) = &db else {
+            return;
+        };
+        let users = mongo.db().collection::<Document>("users");
+        let bots = mongo.db().collection::<Document>("bots");
+        users
+            .insert_many([
+                doc! { "_id": "A", "username": "a", "official_bot": true, "bot": { "owner": "O" } },
+                doc! { "_id": "B", "username": "b", "official_bot": true, "bot": { "owner": "O" } },
+                doc! { "_id": "C", "username": "c", "bot": { "owner": "O" } },
+                doc! { "_id": "P", "username": "p", "official_bot": true },
+            ])
+            .await
+            .unwrap();
+        bots.insert_many([
+            doc! { "_id": "A", "owner": "O" },
+            doc! { "_id": "B", "owner": "O", "flags": 1_i32 },
+            doc! { "_id": "C", "owner": "O", "flags": 1_i32 },
+        ])
+        .await
+        .unwrap();
+        for _ in 0..2 {
+            super::fill_official_bot_flags(&mongo.db()).await;
+        }
+        let flags = |bot: Document| bot.get_i32("flags").ok();
+        let find = |id: &'static str| bots.find_one(doc! { "_id": id });
+        assert_eq!(flags(find("A").await.unwrap().unwrap()), Some(2));
+        assert_eq!(flags(find("B").await.unwrap().unwrap()), Some(3));
+        assert_eq!(flags(find("C").await.unwrap().unwrap()), Some(1));
+        assert!(find("P").await.unwrap().is_none());
     }
 
     /// MongoDB only: the activity block indexes can be made twice
