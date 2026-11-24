@@ -187,7 +187,7 @@ fn handle(user: &User) -> String {
 
 async fn person(db: &Database, id: &str) -> String {
     match db.fetch_user(id).await {
-        Ok(user) => format!("{} ({})", handle(&user), user.id),
+        Ok(user) => super::registry::person_line(&user),
         Err(_) => id.to_string(),
     }
 }
@@ -297,7 +297,8 @@ fn typed(input: &DeskInput, name: &str) -> Result<()> {
         Ok(())
     } else {
         Err(create_error!(FailedValidation {
-            error: w::NAME_MISMATCH.fill(input.lang, &[("name", name)])
+            error: w::NAME_MISMATCH
+                .fill(input.lang, &[("name", &super::view::escape_markdown(name))])
         }))
     }
 }
@@ -711,10 +712,8 @@ async fn delete_owned_card(
     }
     typed(input, &handle(&user))?;
     let plan = staff_deletion::plan_delete_owned(db, &user).await?;
-    let mut lines = vec![w::DELETE_OWNED.fill(
-        lang,
-        &[("user", &format!("{} ({})", handle(&user), user.id))],
-    )];
+    let mut lines =
+        vec![w::DELETE_OWNED.fill(lang, &[("user", &super::registry::person_line(&user))])];
     owned_lines(&plan, lang, &mut lines);
     for kept in &plan.skipped {
         let kind = if kept.kind == "bot" {
@@ -818,7 +817,7 @@ async fn delete_request_card(
     let mut lines = vec![w::DELETE_REQUEST.fill(
         lang,
         &[
-            ("user", &format!("{} ({})", handle(&user), user.id)),
+            ("user", &super::registry::person_line(&user)),
             ("days", &days),
         ],
     )];
@@ -964,10 +963,7 @@ async fn delete_cancel_card(
         w::T_DELETE_CANCEL,
         lang,
         vec![
-            w::DELETE_CANCEL.fill(
-                lang,
-                &[("user", &format!("{} ({})", handle(&user), user.id))],
-            ),
+            w::DELETE_CANCEL.fill(lang, &[("user", &super::registry::person_line(&user))]),
             if stays_disabled {
                 w::CANCEL_STAYS
             } else {

@@ -539,30 +539,55 @@ pub fn counted(lang: Lang, n: &str, one: (&str, &str), many: (&str, &str)) -> St
 /// The longest text a person can be given as (`name#tag`, an id, a mention)
 const PERSON_MAX: u32 = 64;
 
-/// The person a text names: a user id, `<@id>`, `name#tag`, or a name with
-/// no tag. Refused, with what was typed, when nobody matches.
+/// The person a text names: a user id, `<@id>`, `name#tag`, or a bare
+/// name when exactly one person has it. Refused, with what was typed
+/// (escaped), when nobody or more than one person matches.
 pub async fn find_person(db: &Database, given: &str) -> Result<String> {
     let given = given.trim();
     let given = given
         .strip_prefix("<@")
         .and_then(|rest| rest.strip_suffix('>'))
         .unwrap_or(given);
+    let shown = super::view::escape_markdown(given);
+    let refused = |error: String| revolt_result::create_error!(FailedValidation { error });
     let found = if given.len() == 26 && given.chars().all(|c| c.is_ascii_alphanumeric()) {
         db.fetch_user(&given.to_uppercase()).await.ok()
     } else if let Some((name, tag)) = given.rsplit_once('#') {
         db.fetch_user_by_username(name, tag).await.ok()
     } else if !given.is_empty() {
-        db.fetch_user_by_username(given, revolt_models::v0::UNIQUE_DISCRIMINATOR)
-            .await
-            .ok()
+        // a bare name only when it names one person
+        let tags = db.fetch_discriminators_in_use(given).await?;
+        match tags.as_slice() {
+            [] => None,
+            [tag] => db.fetch_user_by_username(given, tag).await.ok(),
+            _ => {
+                return Err(refused(format!(
+                    "more than one person is called \"{shown}\": use name#tag"
+                )));
+            }
+        }
     } else {
         None
     };
     found.map(|user| user.id).ok_or_else(|| {
-        revolt_result::create_error!(FailedValidation {
-            error: format!("no user found for \"{given}\": give a user id or name#tag")
-        })
+        refused(format!(
+            "no user found for \"{shown}\": give a user id or name#tag"
+        ))
     })
+}
+
+/// A person on a card: display name (when set), handle and id
+pub fn person_line(user: &revolt_database::User) -> String {
+    let handle = revolt_models::v0::user_handle(&user.username, &user.discriminator);
+    match user
+        .display_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && *name != user.username)
+    {
+        Some(display) => format!("{display} ({handle}, {})", user.id),
+        None => format!("{handle} ({})", user.id),
+    }
 }
 
 /// The chosen options with every person option (a `User` option of the

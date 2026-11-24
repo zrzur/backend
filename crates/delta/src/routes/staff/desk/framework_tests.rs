@@ -1445,5 +1445,70 @@ async fn desk_people_are_found_by_id_or_name_also_in_a_dm() {
     s.harness.db.insert_interaction(&interaction).await.unwrap();
     let (status, body) = s.hand("run", &(interaction.id, token)).await;
     assert_eq!(status, Status::BadRequest, "{body}");
-    assert!(body.to_string().contains("nobody#0001"), "{body}");
+    // what was typed comes back escaped
+    assert!(body.to_string().contains("nobody"), "{body}");
+}
+
+/// Without the permission, nobody is looked up: the refusal is the
+/// permission's; a bare name more than one person has asks for name#tag
+#[rocket::async_test]
+async fn desk_people_are_looked_up_only_for_the_allowed() {
+    let s = stage().await;
+    super::moderation_tests::all_areas(&s);
+    let analyst = s.person(vec![StaffRole::Analyst]).await;
+    let owner = s.person(vec![StaffRole::Owner]).await;
+    s.sign_in(&analyst, -1).await;
+    s.sign_in(&owner, -1).await;
+    let command = super::tests::register_served(&s)
+        .await
+        .remove("desk-mod")
+        .unwrap();
+    let warn = |who: &str| {
+        json!([
+            { "type": "String", "name": "user", "value": who },
+            { "type": "String", "name": "category", "value": "Spam" },
+            { "type": "String", "name": "reason", "value": "Spam waves" }
+        ])
+    };
+    let pressed =
+        super::moderation_tests::press(&s, &analyst, &command, "user", "warn", warn("nobody#0001"))
+            .await;
+    let (status, body) = s.hand("run", &pressed).await;
+    assert_eq!(status, Status::Forbidden, "{body}");
+    assert_eq!(error_type(&body), "MissingPlatformPermission");
+
+    // two people called the same: the bare name is not enough
+    let (_, _, first) = s.harness.new_user().await;
+    let (_, _, second) = s.harness.new_user().await;
+    for (user, tag) in [(&first, "1111"), (&second, "2222")] {
+        s.harness
+            .db
+            .update_user(
+                &user.id,
+                &revolt_database::PartialUser {
+                    username: Some("samename".to_string()),
+                    discriminator: Some(tag.to_string()),
+                    ..Default::default()
+                },
+                vec![],
+            )
+            .await
+            .unwrap();
+    }
+    let pressed =
+        super::moderation_tests::press(&s, &owner, &command, "user", "warn", warn("samename"))
+            .await;
+    let (status, body) = s.hand("run", &pressed).await;
+    assert_eq!(status, Status::BadRequest, "{body}");
+    assert!(body.to_string().contains("name#tag"), "{body}");
+    // with the tag: found, and the card names display name, handle and id
+    let pressed =
+        super::moderation_tests::press(&s, &owner, &command, "user", "warn", warn("samename#2222"))
+            .await;
+    let (status, card) = s.hand("run", &pressed).await;
+    assert_eq!(status, Status::Ok, "{card}");
+    assert!(
+        card["content"].as_str().unwrap().contains(&second.id),
+        "{card}"
+    );
 }

@@ -297,7 +297,7 @@ fn handle(user: &User) -> String {
 
 async fn person(db: &Database, id: &str) -> String {
     match db.fetch_user(id).await {
-        Ok(user) => format!("{} ({})", handle(&user), user.id),
+        Ok(user) => super::registry::person_line(&user),
         Err(_) => id.to_string(),
     }
 }

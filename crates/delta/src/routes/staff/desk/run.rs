@@ -179,7 +179,12 @@ pub async fn run(
     if !entry.offered(&settings) {
         return Err(create_error!(NotFound));
     }
-    // people are typed as an id or name#tag: found here, before any check
+    // the presser may use this command at all: refused (and recorded)
+    // before anyone is looked up
+    if let Some(permission) = entry.permission {
+        staff.require_protective(db, permission).await?;
+    }
+    // people are typed as an id or name#tag: found here, before the card
     let options = registry::resolve_people(db, entry, options).await?;
     let input = DeskInput {
         options,

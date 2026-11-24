@@ -263,13 +263,9 @@ mod w {
 
 // ---- helpers ----
 
-fn handle(user: &User) -> String {
-    revolt_models::v0::user_handle(&user.username, &user.discriminator)
-}
-
 async fn person(db: &Database, id: &str) -> String {
     match db.fetch_user(id).await {
-        Ok(user) => format!("{} ({})", handle(&user), user.id),
+        Ok(user) => super::registry::person_line(&user),
         Err(_) => id.to_string(),
     }
 }
@@ -586,7 +582,7 @@ async fn grant_card(db: &Database, staff: &StaffContext, input: &DeskInput) -> R
             w::GRANT.fill(
                 lang,
                 &[
-                    ("user", &format!("{} ({})", handle(&subject), subject.id)),
+                    ("user", &super::registry::person_line(&subject)),
                     (
                         "days",
                         &super::registry::counted(
@@ -919,7 +915,7 @@ async fn roles_card(db: &Database, staff: &StaffContext, input: &DeskInput) -> R
             w::ROLES_CHANGE.fill(
                 lang,
                 &[
-                    ("user", &format!("{} ({})", handle(&target), target.id)),
+                    ("user", &super::registry::person_line(&target)),
                     ("from", &shown(&current_roles)),
                     ("to", &shown(&new_roles)),
                 ],

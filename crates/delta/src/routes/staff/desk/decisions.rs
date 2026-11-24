@@ -265,7 +265,7 @@ fn handle(user: &User) -> String {
 
 async fn person(db: &Database, id: &str) -> String {
     match db.fetch_user(id).await {
-        Ok(user) => format!("{} ({})", handle(&user), user.id),
+        Ok(user) => super::registry::person_line(&user),
         Err(_) => id.to_string(),
     }
 }
@@ -690,7 +690,7 @@ async fn plugin_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Resu
             w::PLUGIN_PUBLISHER.fill(
                 lang,
                 &[
-                    ("publisher", &format!("{} ({})", handle(&user), user.id)),
+                    ("publisher", &super::registry::person_line(&user)),
                     ("decision", &decision),
                 ],
             )
@@ -942,7 +942,11 @@ async fn badge_gate(
             );
             record.target_kind = Some("user".to_string());
             record.target_id = Some(user.to_string());
-            record.summary = Some(format!("{badge} denied:{} via desk", denial.code()));
+            // the catalogue's id, never the typed text
+            let known = revolt_database::badge_definition(badge)
+                .map(|d| d.id)
+                .unwrap_or("unknown");
+            record.summary = Some(format!("{known} denied:{} via desk", denial.code()));
             record_platform_audit(db, record, AuditOutcome::Denied).await?;
             Err(denial.error())
         }

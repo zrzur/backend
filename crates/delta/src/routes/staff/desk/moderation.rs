@@ -847,7 +847,7 @@ async fn appeal_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Resu
     let id = required(input, "appeal")?;
     let appeal = db.fetch_safety_appeal(&id).await?;
     let user = match db.fetch_user(&appeal.user_id).await {
-        Ok(user) => format!("{} ({})", handle(&user), user.id),
+        Ok(user) => super::registry::person_line(&user),
         Err(_) => appeal.user_id.clone(),
     };
     let overturn = required(input, "decision")? == "overturn";
@@ -908,7 +908,7 @@ async fn bot_card(db: &Database, staff: &StaffContext, input: &DeskInput) -> Res
     }
     let bot_user = db.fetch_user(&bot.id).await?;
     let owner = match db.fetch_user(&bot.owner).await {
-        Ok(user) => format!("{} ({})", handle(&user), user.id),
+        Ok(user) => super::registry::person_line(&user),
         Err(_) => bot.owner.clone(),
     };
     let reason = required(input, "reason")?;
