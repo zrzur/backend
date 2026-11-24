@@ -26,6 +26,9 @@ mod overview;
 pub(crate) mod registry;
 mod run;
 mod session;
+mod support;
+#[cfg(test)]
+mod support_tests;
 #[cfg(test)]
 mod tests;
 pub(crate) mod view;

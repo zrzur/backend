@@ -289,8 +289,20 @@ pub async fn reply(
     id: &str,
     data: Json<DataStaffReply>,
 ) -> Result<Json<StaffTicket>> {
+    reply_core(db, &staff, id, data.into_inner())
+        .await
+        .map(Json)
+}
+
+/// The console's `reply`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn reply_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataStaffReply,
+) -> Result<StaffTicket> {
     staff.require(db, StaffPermission::SupportManage).await?;
-    let data = data.into_inner();
     let body = text(&data.body, SUPPORT_BODY_MAX, "the message")?;
     let mut t = db.fetch_support_ticket(id).await?;
     if t.user_id == staff.user.id {
@@ -344,7 +356,7 @@ pub async fn reply(
         crate::util::official::ticket_answered(db, &t.user_id, &t.subject, &answer, data.close)
             .await;
     }
-    Ok(Json(full_view(db, &t).await?))
+    Ok(full_view(db, &t).await?)
 }
 
 #[derive(Deserialize)]
@@ -364,8 +376,20 @@ pub async fn change(
     id: &str,
     data: Json<DataTicketChange>,
 ) -> Result<Json<StaffTicket>> {
+    change_core(db, &staff, id, data.into_inner())
+        .await
+        .map(Json)
+}
+
+/// The console's `change`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn change_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataTicketChange,
+) -> Result<StaffTicket> {
     staff.require(db, StaffPermission::SupportManage).await?;
-    let data = data.into_inner();
     let mut t = db.fetch_support_ticket(id).await?;
     let before = t.updated_at;
     let now = staff.now.max(before + 1);
@@ -418,7 +442,7 @@ pub async fn change(
         _ => data.action.clone(),
     });
     audited(db, record, save(db, &t, before)).await?;
-    Ok(Json(full_view(db, &t).await?))
+    Ok(full_view(db, &t).await?)
 }
 
 // ---------------------------------------------------------------- notices
@@ -512,7 +536,16 @@ pub async fn send(
     staff: StaffContext,
     data: Json<DataNotice>,
 ) -> Result<Json<StaffNotice>> {
-    let data = data.into_inner();
+    send_core(db, &staff, data.into_inner()).await.map(Json)
+}
+
+/// The console's `send`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn send_core(
+    db: &Database,
+    staff: &StaffContext,
+    data: DataNotice,
+) -> Result<StaffNotice> {
     let everyone = data.user.is_none();
     let permission = if everyone {
         StaffPermission::SettingsManage
@@ -629,7 +662,7 @@ pub async fn send(
         db.set_platform_notice_delivery(&notice.id, emailed, pushed)
             .await?;
     }
-    Ok(Json(StaffNotice {
+    Ok(StaffNotice {
         user: subject.map(|u| revolt_models::v0::user_handle(&u.username, &u.discriminator)),
         live: true,
         notice: PlatformNotice {
@@ -637,7 +670,7 @@ pub async fn send(
             pushed,
             ..notice
         },
-    }))
+    })
 }
 
 #[derive(Deserialize)]
@@ -654,6 +687,17 @@ pub async fn withdraw(
     staff: StaffContext,
     id: &str,
     data: Json<DataWithdrawNotice>,
+) -> Result<()> {
+    withdraw_core(db, &staff, id, data.into_inner()).await
+}
+
+/// The console's `withdraw`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn withdraw_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataWithdrawNotice,
 ) -> Result<()> {
     let notice = db.fetch_platform_notice(id).await?;
     let permission = if notice.user_id.is_none() {

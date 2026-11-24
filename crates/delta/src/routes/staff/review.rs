@@ -514,6 +514,19 @@ pub async fn bug_review(
     id: &str,
     data: Json<DataBugReview>,
 ) -> Result<Json<BugReportReview>> {
+    bug_review_core(db, &staff, id, data.into_inner())
+        .await
+        .map(Json)
+}
+
+/// The console's `bug_review`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn bug_review_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataBugReview,
+) -> Result<BugReportReview> {
     let report = db.fetch_bug_report(id).await?;
     let (read, manage) = if is_security(&report) {
         (
@@ -527,7 +540,6 @@ pub async fn bug_review(
         return Err(create_error!(NotFound));
     }
     staff.require(db, manage).await?;
-    let data = data.into_inner();
     let mut record = staff.record("staff.bug.review", Some(manage));
     record.target_kind = Some("bug_report".to_string());
     record.target_id = Some(id.to_string());
@@ -544,5 +556,5 @@ pub async fn bug_review(
         &note,
     )
     .await;
-    Ok(Json(reviewed))
+    Ok(reviewed)
 }

@@ -399,6 +399,7 @@ pub fn entries() -> impl Iterator<Item = &'static DeskCommand> {
         .iter()
         .chain(super::lookup::ENTRIES.iter())
         .chain(super::moderation::ENTRIES.iter())
+        .chain(super::support::ENTRIES.iter())
         .chain(test_commands().0.iter())
 }
 
@@ -407,6 +408,7 @@ fn groups() -> impl Iterator<Item = &'static DeskGroup> {
         .iter()
         .chain(super::lookup::GROUPS.iter())
         .chain(super::moderation::GROUPS.iter())
+        .chain(super::support::GROUPS.iter())
         .chain(test_commands().1.iter())
 }
 
@@ -427,6 +429,15 @@ const AREA_COMMANDS: &[(&str, &str, Text)] = &[
             en: "Zrzur Desk: moderation",
             ar: "مكتب زرزور: الإشراف",
             de: "Zrzur Desk: Moderation",
+        },
+    ),
+    (
+        "support",
+        "desk-support",
+        Text {
+            en: "Zrzur Desk: support",
+            ar: "مكتب زرزور: الدعم",
+            de: "Zrzur Desk: Support",
         },
     ),
 ];
