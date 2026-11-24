@@ -96,6 +96,10 @@ pub struct RevoltFeatures {
     pub bot_dms: bool,
     /// Whether a server can be built from a Discord server template
     pub server_import: bool,
+    /// Whether people can apply for badge programs (Partner, Verified
+    /// Server, Verified Bot Developer, Content Creator) from the app
+    #[serde(default)]
+    pub badge_applications: bool,
     /// Whether such a template can be read by its link (else its text is pasted)
     pub server_import_link: bool,
     /// Whether people can save messages to a private list and set
@@ -285,6 +289,7 @@ pub async fn root() -> Result<Json<RevoltConfig>> {
                 && !config.api.smtp.host.is_empty(),
             bot_dms: config.features.bot_dms_enabled,
             server_import: config.features.server_import.enabled,
+            badge_applications: config.features.badge_applications.enabled,
             server_import_link: config.features.server_import.enabled
                 && config.features.server_import.link_fetch,
             saved_reminders: config.features.saved_reminders.enabled,

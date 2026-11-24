@@ -222,6 +222,22 @@ impl StaffGrant {
     pub fn is_owner(&self, now: i64) -> bool {
         self.is_active(now) && self.roles.contains(&StaffRole::Owner)
     }
+
+    /// Set `active_since` / `activated_by` for this new version of the
+    /// grant: kept from `previous` while access goes on, started at `now` by
+    /// `by` when access starts again, cleared when it ends.
+    pub fn carry_activation(&mut self, previous: Option<&StaffGrant>, now: i64, by: &str) {
+        if !self.is_active(now) {
+            self.active_since = None;
+            self.activated_by = None;
+        } else if let Some(previous) = previous.filter(|g| g.is_active(now)) {
+            self.active_since = previous.active_since;
+            self.activated_by = previous.activated_by.clone();
+        } else {
+            self.active_since = Some(now);
+            self.activated_by = Some(by.to_string());
+        }
+    }
 }
 
 /// Why a staff change over the API was refused
@@ -398,6 +414,8 @@ mod tests {
             version: 1,
             updated_at: 0,
             updated_by: "x".into(),
+            active_since: None,
+            activated_by: None,
         }
     }
 

@@ -119,6 +119,11 @@ secret = "ZjCofRlfm6GGtjlifmNpCDkcQbEIIVC0"
 [api.users]
 # Minimum allowed length of usernames
 min_username_length = 2
+# Early Adopter badge: accounts made strictly before this moment (UTC
+# milliseconds since 1970) show it. Leave it out and nobody gets the badge.
+# Zrzur's own servers use 2027-03-01T00:00:00Z; publish your date once and
+# never move it after announcing it. Bots and official accounts never get it.
+# early_adopter_cutoff = 1803859200000
 
 [pushd]
 # this changes the names of the queues to not overlap 

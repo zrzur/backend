@@ -241,6 +241,46 @@ pub async fn build_export_zip(db: &Database, account: &Account, user: &User) -> 
         .map(|r| json!({ "message": r.message_id, "channel": r.channel_id, "due_at": r.due_at, "created_at": r.created_at, "delivered_at": r.delivered_at }))
         .collect();
 
+    // Their badge program applications: what they wrote, the links and
+    // evidence they added, the checklist, decisions with reason codes and
+    // appeals. Reviewers stay unnamed; ownership codes are kept only hashed
+    // and are left out.
+    let mut badge_applications: Vec<Value> = vec![];
+    for application in db.fetch_badge_applications_by_applicant(&user.id).await? {
+        let evidence: Vec<Value> = db
+            .fetch_badge_evidence(&application.id)
+            .await?
+            .into_iter()
+            .map(|e| json!({ "kind": e.kind, "text": e.text, "created_at": e.created_at }))
+            .collect();
+        badge_applications.push(json!({
+            "id": application.id,
+            "program": application.program.name(),
+            "target": application.target_id,
+            "status": application.status.name(),
+            "exception": application.exception,
+            "statement": application.statement,
+            "links": application.links,
+            "ownership": application.ownership.as_ref().map(|o| json!({ "method": o.method.name(), "domain": o.domain, "verified_at": o.verified_at })),
+            // Content Creator: the channel you named and the figures the
+            // reviewer recorded (the reviewer stays unnamed)
+            "creator": application.creator,
+            "creator_figures": application.creator_figures.as_ref().map(|f| json!({ "followers": f.followers, "seen_at": f.seen_at, "active_days": f.active_days, "works": f.works, "schedule": f.schedule, "quality": f.quality })),
+            "checks": application.eligibility,
+            "created_at": application.created_at,
+            "submitted_at": application.submitted_at,
+            "decided_at": application.decided_at,
+            "reasons": application.reasons,
+            "note": application.note,
+            "reapply_after": application.reapply_after,
+            "appeal_until": application.appeal_until,
+            "appeal": application.appeal.as_ref().map(|a| json!({ "text": a.text, "status": a.status.name(), "created_at": a.created_at, "decided_at": a.decided_at, "reasons": a.reasons, "note": a.note })),
+            "ended_at": application.ended_at,
+            "end_reason": application.end_reason,
+            "evidence": evidence,
+        }));
+    }
+
     // Bots they started in direct messages (Start, or a message to it): each
     // may write to them until they stop it
     let bots_started: Vec<Value> = db
@@ -523,7 +563,7 @@ pub async fn build_export_zip(db: &Database, account: &Account, user: &User) -> 
         "Zrzur data export
 Created: {}
 
-This ZIP holds your own data as JSON files: account.json (no password or secrets), profile.json, messages.json (messages you sent, up to {DATA_EXPORT_MAX_MESSAGES}; polls show how many chose each answer), poll_votes.json (the answers you chose in polls), files.json (files you uploaded, with links that work while the file exists), servers.json, events.json (your answers to events: going, maybe or not going, with the event's title and time and your place on a waiting list; the events you created, the ones you are invited to and the ones you help organise), purchases.json, reports.json (reports you filed), support.json (your support tickets), applications.json (your applications to join the Zrzur team), team_identity.json, team_memberships.json and team_activity.json (the name, age and country you gave as a volunteer, your places in the team with the staff notes about you, and how often you helped each day: counts only), bots.json (bots you own, without tokens), creations.json (designs you made, with your rights confirmations), linked_accounts.json (accounts on other services you linked, such as Steam, and the copy we keep), saved.json (messages you saved and reminders you set: ids and times, not the messages) and settings.json. Other people appear as ids only.
+This ZIP holds your own data as JSON files: account.json (no password or secrets), profile.json, messages.json (messages you sent, up to {DATA_EXPORT_MAX_MESSAGES}; polls show how many chose each answer), poll_votes.json (the answers you chose in polls), files.json (files you uploaded, with links that work while the file exists), servers.json, events.json (your answers to events: going, maybe or not going, with the event's title and time and your place on a waiting list; the events you created, the ones you are invited to and the ones you help organise), purchases.json, reports.json (reports you filed), support.json (your support tickets), applications.json (your applications to join the Zrzur team), team_identity.json, team_memberships.json and team_activity.json (the name, age and country you gave as a volunteer, your places in the team with the staff notes about you, and how often you helped each day: counts only), bots.json (bots you own, without tokens), creations.json (designs you made, with your rights confirmations), linked_accounts.json (accounts on other services you linked, such as Steam, and the copy we keep), badge_applications.json (your applications for Partner, Verified Server, Verified Bot Developer and Content Creator, with the decisions and reasons), saved.json (messages you saved and reminders you set: ids and times, not the messages) and settings.json. Other people appear as ids only.
 {cap_note}
 Why we use this data, who receives it, how long we keep it, your rights and how to complain to the Austrian data protection authority: https://zrzur.com/legal/privacy . Questions: {ACCOUNT_CONTACT_EMAIL}.
 ",
@@ -563,6 +603,7 @@ Why we use this data, who receives it, how long we keep it, your rights and how 
         ("bots_started.json".into(), compact(Value::Array(bots_started))),
         ("creations.json".into(), compact(Value::Array(creations))),
         ("linked_accounts.json".into(), compact(Value::Array(linked_accounts))),
+        ("badge_applications.json".into(), compact(Value::Array(badge_applications))),
         (
             "saved.json".into(),
             compact(json!({ "saved": saved, "reminders": reminders })),

@@ -1,6 +1,9 @@
 use revolt_result::Result;
 
-use crate::{BadgeGrant, BadgeLogEntry, BetaFeature, BetaMember, BetaStatus, BugReport, BugStatus};
+use crate::{
+    BadgeChangeRequest, BadgeGrant, BadgeLogEntry, BadgeRequestStatus, BetaFeature, BetaMember,
+    BetaStatus, BugReport, BugStatus, CommunityBadgeCheck, CommunityCheckStatus, StaffAppointment,
+};
 
 #[cfg(feature = "mongodb")]
 mod mongodb;
@@ -36,6 +39,10 @@ pub trait AbstractBadges: Sync + Send {
 
     /// Held grants of one badge, newest first
     async fn fetch_badge_holders(&self, badge: &str, limit: usize) -> Result<Vec<BadgeGrant>>;
+
+    /// Every grant of one badge not revoked (no page limit: for checks
+    /// that must see all holders, such as the appointment gaps)
+    async fn fetch_all_badge_holders(&self, badge: &str) -> Result<Vec<BadgeGrant>>;
 
     /// Held grants whose expiry has passed
     async fn fetch_expired_badge_grants(&self, now: i64) -> Result<Vec<BadgeGrant>>;
@@ -78,4 +85,54 @@ pub trait AbstractBadges: Sync + Send {
 
     /// Reports by one author since a time (rate limit)
     async fn count_bug_reports_since(&self, author_id: &str, since: i64) -> Result<usize>;
+
+    /// One appointment record (`{user_id}:{role}`), ended ones included
+    async fn fetch_staff_appointment(&self, id: &str) -> Result<Option<StaffAppointment>>;
+
+    /// Every appointment record, ended ones included
+    async fn fetch_staff_appointments(&self) -> Result<Vec<StaffAppointment>>;
+
+    /// Create or replace an appointment record
+    async fn save_staff_appointment(&self, appointment: &StaffAppointment) -> Result<()>;
+
+    /// Save a new badge change request
+    async fn insert_badge_request(&self, request: &BadgeChangeRequest) -> Result<()>;
+
+    async fn fetch_badge_request(&self, id: &str) -> Result<BadgeChangeRequest>;
+
+    /// The latest badge change requests, newest first
+    async fn fetch_badge_requests(&self) -> Result<Vec<BadgeChangeRequest>>;
+
+    /// The open (pending, not expired at `now`) request for one change, if
+    /// any
+    async fn fetch_open_badge_request(
+        &self,
+        user_id: &str,
+        badge: &str,
+        grant: bool,
+        now: i64,
+    ) -> Result<Option<BadgeChangeRequest>>;
+
+    /// Every request still pending (expired ones included), newest first
+    async fn fetch_pending_badge_requests(&self) -> Result<Vec<BadgeChangeRequest>>;
+
+    /// Replace a request if it still has status `expected`; false otherwise
+    async fn decide_badge_request(
+        &self,
+        request: &BadgeChangeRequest,
+        expected: BadgeRequestStatus,
+    ) -> Result<bool>;
+
+    /// The community badge check of one server
+    async fn fetch_community_check(&self, server_id: &str) -> Result<Option<CommunityBadgeCheck>>;
+
+    /// Create or replace a community badge check
+    async fn save_community_check(&self, check: &CommunityBadgeCheck) -> Result<()>;
+
+    /// Community badge checks, optionally in one status, latest count first
+    async fn fetch_community_checks(
+        &self,
+        status: Option<CommunityCheckStatus>,
+        limit: usize,
+    ) -> Result<Vec<CommunityBadgeCheck>>;
 }

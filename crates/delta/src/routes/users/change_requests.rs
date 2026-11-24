@@ -142,6 +142,8 @@ pub async fn answer(
         edit_user::edit(
             db,
             user,
+            // your own profile: no staff session needed
+            None,
             Reference::from_unchecked("@me"),
             Json(edit),
         )

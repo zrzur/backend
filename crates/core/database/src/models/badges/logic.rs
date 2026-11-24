@@ -2,8 +2,9 @@
 //!
 //! `users.badges` stays the bitfield clients read (no extra query per
 //! profile or message); it is a cache of the user's held `badge_grants`
-//! and is only ever written by [`sync_user_badges`]. Plus and Early Adopter
-//! stay computed in [`User::get_badges`] from trusted state.
+//! and is only ever written by [`sync_user_badges`]. Plus, Early Adopter and
+//! the time-on-Zrzur badges stay computed in [`User::get_badges`] from
+//! trusted state.
 
 use std::collections::HashSet;
 
@@ -14,7 +15,7 @@ use ulid::Ulid;
 
 use crate::{
     epoch_ms, BadgeAction, BadgeGrant, BadgeLogEntry, BadgeSource, BetaMember, BetaStatus,
-    BugKind, BugReportQuery, BugStatus, CommunityItemStatus, CreatorStanding, Database,
+    BugKind, BugReportQuery, BugStatus, CommunityItemStatus, CreatorAction, CreatorStanding, Database,
     PartialUser, User,
 };
 
@@ -32,8 +33,19 @@ pub enum BadgeGrantRule {
     Automatic,
     /// Staff with `badges.grant`, after the eligibility check
     Staff,
-    /// Only `privileged` staff (a database flag no API can set)
+    /// A staff Owner with a fresh step-up (the `privileged` database flag
+    /// no longer gives any badge right)
     Privileged,
+    /// Nobody changes it on any path: Founder follows `[api.users]
+    /// founder_id` (a host-level setting) and nothing else
+    Locked,
+    /// Follows an official appointment (`staff_appointments`, written by
+    /// `zrzur-staff appoint` with two people); no badge permission gives it
+    Appointment,
+    /// Retired for good: no path gives it again. People who hold it keep it
+    /// (shown as a retired badge); taking one away is an Owner change with a
+    /// step-up and a second person, and the bit is never used again.
+    Historical,
 }
 
 /// One badge in the catalogue
@@ -78,32 +90,38 @@ const fn def(
 use BadgeGrantRule::*;
 
 pub static BADGE_CATALOGUE: &[BadgeDefinition] = &[
-    def("staff", UserBadges::Staff as u32, Privileged, "official", 2, 10),
-    def("founder", UserBadges::Founder as u32, Privileged, "official", 2, 5),
+    def("staff", UserBadges::Staff as u32, Appointment, "official", 2, 10),
+    def("founder", UserBadges::Founder as u32, Locked, "official", 2, 5),
     def("developer", UserBadges::Developer as u32, Privileged, "official", 1, 20),
-    def("platform_moderator", UserBadges::PlatformModeration as u32, Privileged, "official", 1, 25),
+    def("platform_moderator", UserBadges::PlatformModeration as u32, Appointment, "official", 1, 25),
     def("partner", UserBadges::Partner as u32, Staff, "official", 1, 30),
     def("super_creator", UserBadges::SuperCreator as u32, Staff, "community", 2, 40),
     def("creator", UserBadges::Creator as u32, Automatic, "community", 1, 45),
+    // creators of original content elsewhere (any platform): an application,
+    // a staff content-quality review and a second person (Phase 5)
+    def("content_creator", UserBadges::ContentCreator as u32, Staff, "program", 1, 44),
     def("elite_bug_hunter", UserBadges::EliteBugHunter as u32, Staff, "contribution", 2, 50),
     BadgeDefinition {
         auto: true,
         ..def("bug_hunter", UserBadges::BugHunter as u32, Staff, "contribution", 1, 55)
     },
     def("beta_tester", UserBadges::BetaTester as u32, Automatic, "program", 0, 60),
-    def("beta_veteran", UserBadges::BetaVeteran as u32, Automatic, "program", 1, 65),
+    // the team approves it after a completed cycle (owner, 2026-11-24);
+    // people who earned it under the old automatic rule keep it
+    def("beta_veteran", UserBadges::BetaVeteran as u32, Staff, "program", 1, 65),
     def("plus", UserBadges::Plus as u32, Dynamic, "subscription", 1, 70),
     def("early_supporter", UserBadges::Supporter as u32, Staff, "history", 1, 75),
     def("early_adopter", UserBadges::EarlyAdopter as u32, Dynamic, "history", 0, 80),
     def("verified_server_owner", UserBadges::VerifiedServerOwner as u32, Automatic, "community", 1, 46),
     def("verified_bot_developer", UserBadges::VerifiedBotDeveloper as u32, Automatic, "community", 1, 47),
-    // no record proves a win yet, so staff give it until the games bot has one
-    def("saha_champion", UserBadges::SahaChampion as u32, Staff, "community", 1, 48),
     def("community_helper", UserBadges::CommunityHelper as u32, Staff, "contribution", 1, 52),
     def("big_community", UserBadges::BigCommunity as u32, Automatic, "community", 1, 57),
     def("community_builder", UserBadges::CommunityBuilder as u32, Automatic, "community", 0, 58),
-    def("three_years", UserBadges::ThreeYears as u32, Automatic, "history", 1, 82),
-    def("one_year", UserBadges::OneYear as u32, Automatic, "history", 0, 83),
+    // computed from the account's creation time in full calendar years (UTC);
+    // apps show the highest year reached (2 and 4 to 10 have no bit of their
+    // own: they are drawn from the same `one_year` bit and the account id)
+    def("three_years", UserBadges::ThreeYears as u32, Dynamic, "history", 1, 82),
+    def("one_year", UserBadges::OneYear as u32, Dynamic, "history", 0, 83),
     // older Revolt bits: kept so nobody loses them, not given out any more
     BadgeDefinition {
         retired: true,
@@ -117,9 +135,15 @@ pub static BADGE_CATALOGUE: &[BadgeDefinition] = &[
         retired: true,
         ..def("supporter", UserBadges::ActiveSupporter as u32, Staff, "history", 0, 92)
     },
+    // retired for good (owner, 2026-11-24): never given on any path, the bit
+    // stays reserved; nobody held Saha Champion when it was retired
     BadgeDefinition {
         retired: true,
-        ..def("paw", UserBadges::Paw as u32, Privileged, "history", 0, 93)
+        ..def("saha_champion", UserBadges::SahaChampion as u32, Historical, "community", 1, 48)
+    },
+    BadgeDefinition {
+        retired: true,
+        ..def("paw", UserBadges::Paw as u32, Historical, "history", 0, 93)
     },
     BadgeDefinition {
         retired: true,
@@ -142,6 +166,18 @@ pub fn managed_badge_bits() -> u32 {
         .iter()
         .filter(|b| b.rule != Dynamic)
         .fold(0, |bits, b| bits | b.bit)
+}
+
+/// The Founder bit as `[api.users] founder_id` says: once it is set, only
+/// that account shows it (an old grant record of anyone else is history);
+/// unset, the stored bit is left as it is.
+pub fn founder_bit(badges: u32, founder: Option<&str>, user_id: &str) -> u32 {
+    let bit = UserBadges::Founder as u32;
+    match founder {
+        Some(id) if id == user_id => badges | bit,
+        Some(_) => badges & !bit,
+        None => badges,
+    }
 }
 
 /// Id of a grant record
@@ -384,39 +420,100 @@ pub async fn creator_eligibility(db: &Database, user_id: &str) -> Result<(bool, 
     Ok((active && published >= 1, published))
 }
 
-/// Published designs needed before staff can make someone a Super Creator
-pub const SUPER_CREATOR_MIN_DESIGNS: usize = 3;
+/// Approved, published designs needed before staff can make someone a
+/// Super Creator (a minimum: the team still chooses)
+pub const SUPER_CREATOR_MIN_DESIGNS: usize = 25;
 
-/// Give or take Creator after a change to someone's designs or creator
-/// record. Super Creator goes with it when Creator is lost.
+/// Days in the creator program needed before staff can make someone a
+/// Super Creator
+pub const SUPER_CREATOR_MIN_DAYS: u32 = 180;
+
+const DAY_MS: i64 = 24 * 60 * 60 * 1000;
+
+/// When someone joined the creator program: the first time staff made them
+/// a creator (creator log), or, for creators from before that log, when
+/// they got the Creator badge. `None` when there is no record of either.
+pub async fn creator_program_since(db: &Database, user_id: &str) -> Result<Option<i64>> {
+    let joined = db
+        .fetch_creator_logs(user_id)
+        .await?
+        .into_iter()
+        .filter(|log| log.action == CreatorAction::Grant)
+        .map(|log| log.created_at)
+        .min();
+    if joined.is_some() {
+        return Ok(joined);
+    }
+    Ok(db
+        .fetch_badge_grants(user_id)
+        .await?
+        .into_iter()
+        .filter(|grant| grant.badge == "creator")
+        .map(|grant| grant.granted_at)
+        .min())
+}
+
+/// Full days from `since` to `now`
+pub fn days_since(since: i64, now: i64) -> u32 {
+    ((now - since).max(0) / DAY_MS) as u32
+}
+
+/// Give Creator once someone's designs and creator record earn it. Creator
+/// is permanent (owner, 2026-11-24): losing the creator record or the
+/// designs never takes it away; only staff can, for fraud or infringement
+/// (with a second person), and then the system never gives it back. The
+/// grant goes through the badge gate (`mutate_badge`, system path) and is
+/// written to the platform audit log.
 pub async fn sync_creator_badge(db: &Database, user_id: &str) -> Result<()> {
     let (eligible, _) = creator_eligibility(db, user_id).await?;
-    let held = held_badges(db, user_id).await?;
-    if eligible && !held.contains("creator") {
-        match grant_badge(
-            db,
-            user_id,
-            "creator",
-            BadgeSource::System,
-            Some("designs".to_string()),
-            BADGE_SYSTEM_ACTOR,
-            None,
-            None,
-        )
-        .await
-        {
-            Ok(_) => {}
-            Err(error) if matches!(error.error_type, revolt_result::ErrorType::NoEffect) => {}
-            Err(error) => return Err(error),
-        }
-    } else if !eligible {
-        for badge in ["creator", "super_creator"] {
-            if held.contains(badge) {
-                revoke_badge(db, user_id, badge, BADGE_SYSTEM_ACTOR, Some("no longer eligible".into())).await?;
-            }
-        }
+    if eligible {
+        crate::grant_by_system(db, user_id, "creator", "designs", "first approved design published").await?;
     }
     Ok(())
+}
+
+/// Feedback reports that count towards Beta Veteran
+pub const BETA_VETERAN_FEEDBACK: usize = 3;
+/// Confirmed bug reports that count towards Beta Veteran
+pub const BETA_VETERAN_BUGS: usize = 1;
+
+/// What a tester sent during their last beta cycle (from joining until it
+/// ended): (substantive feedback, confirmed bug reports). Feedback counts
+/// once a reviewer has looked at it and kept it (triaged, confirmed or
+/// fixed); a bug or security report counts once confirmed or fixed.
+/// Duplicates, "not a bug" and unread reports never count.
+pub async fn beta_cycle_stats(db: &Database, member: &BetaMember) -> Result<(usize, usize)> {
+    let Some(start) = member.joined_at else {
+        return Ok((0, 0));
+    };
+    let end = member.ended_at.unwrap_or(i64::MAX);
+    let reports = db
+        .fetch_bug_reports(BugReportQuery {
+            author_id: Some(&member.id),
+            include_security: true,
+            limit: 500,
+            ..Default::default()
+        })
+        .await?;
+    let in_cycle = reports.iter().filter(|r| r.created_at >= start && r.created_at <= end);
+    let mut feedback = 0;
+    let mut bugs = 0;
+    for report in in_cycle {
+        match report.kind {
+            BugKind::Feedback
+                if matches!(report.status, BugStatus::Triaged | BugStatus::Confirmed | BugStatus::Fixed) =>
+            {
+                feedback += 1
+            }
+            BugKind::Bug | BugKind::Security
+                if matches!(report.status, BugStatus::Confirmed | BugStatus::Fixed) =>
+            {
+                bugs += 1
+            }
+            _ => {}
+        }
+    }
+    Ok((feedback, bugs))
 }
 
 /// Verified bug reports of a user: (all verified, verified security
@@ -449,16 +546,51 @@ pub const ELITE_MIN_VERIFIED: usize = 10;
 /// not.
 pub async fn badge_eligibility(db: &Database, user_id: &str, badge: &str) -> Result<Option<String>> {
     Ok(match badge {
+        // the system's grant: the record must back it at that moment too
+        "creator" => {
+            let (eligible, _) = creator_eligibility(db, user_id).await?;
+            (!eligible).then(|| "needs an active creator record and a published design".to_string())
+        }
         "super_creator" => {
-            let (creator, published) = creator_eligibility(db, user_id).await?;
-            if !creator {
-                Some("needs the Creator badge (active creator with a published design)".into())
+            let (active, published) = creator_eligibility(db, user_id).await?;
+            let since = creator_program_since(db, user_id).await?;
+            if !held_badges(db, user_id).await?.contains("creator") {
+                Some("needs the Creator badge".into())
+            } else if !active {
+                Some("needs an active creator record".into())
             } else if published < SUPER_CREATOR_MIN_DESIGNS {
-                Some(format!("needs {SUPER_CREATOR_MIN_DESIGNS} published designs"))
+                Some(format!(
+                    "needs {SUPER_CREATOR_MIN_DESIGNS} approved, published designs (has {published})"
+                ))
+            } else if since.is_none_or(|since| days_since(since, now_ms()) < SUPER_CREATOR_MIN_DAYS) {
+                Some(format!("needs {SUPER_CREATOR_MIN_DAYS} days in the creator program"))
             } else {
                 None
             }
         }
+        "beta_veteran" => match db.fetch_beta_member(user_id).await? {
+            Some(member) if member.status == BetaStatus::Completed => {
+                let (feedback, bugs) = beta_cycle_stats(db, &member).await?;
+                (feedback < BETA_VETERAN_FEEDBACK && bugs < BETA_VETERAN_BUGS).then(|| {
+                    format!(
+                        "needs {BETA_VETERAN_FEEDBACK} reviewed feedback reports or {BETA_VETERAN_BUGS} confirmed bug report in the completed cycle (has {feedback} and {bugs})"
+                    )
+                })
+            }
+            _ => Some("needs a completed beta cycle".into()),
+        },
+        // only a partner application a reviewer approved backs it: no
+        // console, command or line gives Partner on its own (Phase 4)
+        "partner" => (!crate::program_application_backs(db, user_id, crate::BadgeProgram::Partner).await?)
+            .then(|| "needs a partner application approved by a reviewer".to_string()),
+        // the same for Content Creator: the application, its reviewed
+        // figures and the quality review back it (Phase 5)
+        "content_creator" => (!crate::program_application_backs(db, user_id, crate::BadgeProgram::ContentCreator).await?)
+            .then(|| "needs a content creator application approved by a reviewer".to_string()),
+        "verified_server_owner" => (!crate::owns_verified_server(db, user_id).await?)
+            .then(|| "needs a verified server they own".to_string()),
+        "verified_bot_developer" => (!crate::owns_verified_bot(db, user_id).await?)
+            .then(|| "needs a verified bot they own that is not suspended".to_string()),
         "elite_bug_hunter" => {
             let (verified, serious) = bug_hunter_stats(db, user_id).await?;
             if !held_badges(db, user_id).await?.contains("bug_hunter") {
@@ -508,8 +640,9 @@ pub async fn beta_features_for(db: &Database, member: &BetaMember) -> Result<Vec
         .collect())
 }
 
-/// Beta Tester follows active membership; Beta Veteran follows completion
-/// and is never taken away by leaving
+/// Beta Tester follows active membership. Beta Veteran is no longer given
+/// here: the team approves it after a completed cycle (`badge_eligibility`
+/// checks the cycle's reports); leaving never takes it away.
 pub async fn sync_beta_badges(db: &Database, member: &BetaMember, actor: &str) -> Result<()> {
     let held = held_badges(db, &member.id).await?;
     let active = member.status == BetaStatus::Active;
@@ -518,9 +651,6 @@ pub async fn sync_beta_badges(db: &Database, member: &BetaMember, actor: &str) -
     }
     if !active && held.contains("beta_tester") {
         revoke_badge(db, &member.id, "beta_tester", actor, Some(format!("{:?}", member.status))).await?;
-    }
-    if member.status == BetaStatus::Completed && !held.contains("beta_veteran") {
-        grant_badge(db, &member.id, "beta_veteran", BadgeSource::System, Some("beta".into()), actor, None, None).await?;
     }
     Ok(())
 }

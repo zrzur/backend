@@ -468,9 +468,22 @@ async fn the_command_line_runs_the_same_deletion() {
     assert_eq!(count(&cli, "staff.bot.delete", "Success"), 1);
 }
 
-/// A bot marked through `zrzur-staff official-bot` (its account's
-/// `official_bot`), with no Official flag on the bot
+/// A bot marked the way `zrzur-staff official-bot` marks one: the Official
+/// flag on the bot (the one source) and `official_bot` on its account
 async fn mark_official_bot(harness: &TestHarness, bot: &Bot) {
+    let mut stored = harness.db.fetch_bot(&bot.id).await.unwrap();
+    let flags = stored.flags.unwrap_or_default() | revolt_models::v0::BotFlags::Official as i32;
+    stored
+        .update(
+            &harness.db,
+            revolt_database::PartialBot {
+                flags: Some(flags),
+                ..Default::default()
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
     harness
         .db
         .update_user(
@@ -486,7 +499,55 @@ async fn mark_official_bot(harness: &TestHarness, bot: &Bot) {
 }
 
 #[rocket::async_test]
-async fn a_bot_with_only_the_official_bot_mark_is_kept() {
+async fn the_official_bot_mark_is_written_to_the_flag_and_its_mirror_together() {
+    let harness = TestHarness::new().await;
+    let (_, _, owner) = harness.new_user().await;
+    let (bot, user) = revolt_database::create_system_bot(&harness.db, "zrzur-assistant", &owner)
+        .await
+        .unwrap();
+    let stored = harness.db.fetch_bot(&bot.id).await.unwrap();
+    assert!(revolt_database::staff_deletion::is_official_bot(&stored));
+    assert!(user.official_bot);
+    assert!(harness.db.fetch_user(&bot.id).await.unwrap().official_bot);
+
+    // `zrzur-staff official-bot-off` takes both away
+    revolt_database::set_official_bot(&harness.db, &bot.id, false).await.unwrap();
+    let stored = harness.db.fetch_bot(&bot.id).await.unwrap();
+    assert!(!revolt_database::staff_deletion::is_official_bot(&stored));
+    assert!(!harness.db.fetch_user(&bot.id).await.unwrap().official_bot);
+    // and `official-bot` gives both back, other flags untouched
+    revolt_database::set_official_bot(&harness.db, &bot.id, true).await.unwrap();
+    let stored = harness.db.fetch_bot(&bot.id).await.unwrap();
+    assert_eq!(stored.flags.unwrap_or_default(), BotFlags::Official as i32);
+    assert!(harness.db.fetch_user(&bot.id).await.unwrap().official_bot);
+}
+
+#[rocket::async_test]
+async fn the_account_mark_alone_no_longer_makes_a_bot_official() {
+    // `BotFlags::Official` is the one source: a stale `official_bot` on the
+    // account without the flag gives no protection (the migration
+    // `fill_official_bot_flags` copies every old account mark to the flag)
+    let harness = TestHarness::new().await;
+    let (_, _, developer) = harness.new_user().await;
+    let (stale, _) = harness.new_bot(&developer).await;
+    harness
+        .db
+        .update_user(
+            &stale.id,
+            &PartialUser {
+                official_bot: Some(true),
+                ..Default::default()
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
+    let stored = harness.db.fetch_bot(&stale.id).await.unwrap();
+    assert!(!revolt_database::staff_deletion::is_official_bot(&stored));
+}
+
+#[rocket::async_test]
+async fn an_official_bot_is_kept() {
     let harness = TestHarness::new().await;
     let (_, _, developer) = harness.new_user().await;
     let (marked, _) = harness.new_bot(&developer).await;

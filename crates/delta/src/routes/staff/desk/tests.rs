@@ -71,6 +71,8 @@ async fn set_grant(harness: &TestHarness, user_id: &str, roles: Vec<StaffRole>, 
         version: current.as_ref().map(|g| g.version + 1).unwrap_or(1),
         updated_at: staff_now(),
         updated_by: "test".to_string(),
+        active_since: None,
+        activated_by: None,
     };
     assert!(harness
         .db

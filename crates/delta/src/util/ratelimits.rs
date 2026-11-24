@@ -145,6 +145,10 @@ impl<'a> RatelimitResolver<Request<'a>> for DeltaRatelimits {
                         ("auth", None)
                     }
                 }
+                // badge program applications: eligibility counts members and
+                // ownership checks call out to a domain, so both are slow
+                ("badges", Some("applications" | "programs"), Method::Get) => ("badge_programs_read", None),
+                ("badges", Some("applications"), _) => ("badge_programs", None),
                 ("swagger", _, _) => ("swagger", None),
                 ("discover", _, _) => ("discover", None),
                 // Creators submitting or revising designs
@@ -217,6 +221,8 @@ impl<'a> RatelimitResolver<Request<'a>> for DeltaRatelimits {
             "auth" => self.auth_limit,
             "auth_delete" => 255,
             "default_avatar" => 255,
+            "badge_programs" => 5,
+            "badge_programs_read" => 10,
             "swagger" => 100,
             // Public browsing, also from the standalone Discover website
             "discover" => 40,

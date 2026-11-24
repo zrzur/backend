@@ -6,6 +6,7 @@ pub mod linked_upkeep;
 pub mod oauth_link;
 pub mod signed_delivery;
 pub mod official;
+pub mod ownership_probe;
 pub mod public_commands;
 pub mod ratelimits;
 pub mod steam;

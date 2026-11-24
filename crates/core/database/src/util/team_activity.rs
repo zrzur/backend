@@ -1945,6 +1945,8 @@ mod tests {
             version: 0,
             updated_at: 0,
             updated_by: "system:cli".to_string(),
+            active_since: None,
+            activated_by: None,
         };
         assert!(db.save_staff_grant(&grant, None).await.unwrap());
     }
