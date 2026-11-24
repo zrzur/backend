@@ -285,6 +285,7 @@ async fn the_owner_gives_a_badge_and_takes_it_away() {
     assert!(log.iter().any(|(_, _, _, summary)| summary == "community_helper (no change: already)"), "{log:?}");
 
     // Partner waits for a second staff member: nothing is given yet
+    s.harness.back_partner(&subject.id).await;
     let pressed = s.press(&session, "give", &subject.id, "partner", Some("Official partner")).await;
     let (status, outcome) = s.hand("grant", &pressed).await;
     assert_eq!((status, outcome["result"].as_str()), (Status::Ok, Some("pending")), "{outcome}");

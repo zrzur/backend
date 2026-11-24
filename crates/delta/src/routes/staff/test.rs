@@ -1107,6 +1107,7 @@ async fn badges_follow_staff_roles() {
     assert_eq!(body["held"], false);
 
     // Partner needs a second person: a request, nothing held yet
+    harness.back_partner(&target.id).await;
     let (status, body) = send(&harness, &senior, &senior_token, Post, &grant, json!({ "badge": "partner", "reason": "Official partner" })).await;
     assert_eq!(status, Status::Ok, "{body}");
     assert_eq!(body["status"], "pending");
@@ -1182,6 +1183,7 @@ async fn bots_and_verification_follow_staff_roles() {
     let (bot, _) = revolt_database::Bot::create(&harness.db, TestHarness::rand_string(), &bot_owner, None)
         .await
         .unwrap();
+    harness.legitimate_server_for(&bot.id).await;
     let as_owner = |method: rocket::http::Method, path: String, body: Option<Value>| {
         let mut req = harness
             .client
@@ -1273,6 +1275,7 @@ async fn approving_a_request_approves_the_intents_it_asked_for() {
     let harness = TestHarness::new().await;
     let (_, owner_session, owner) = harness.new_user().await;
     let (bot, bot_user) = harness.new_bot(&owner).await;
+    harness.legitimate_server_for(&bot.id).await;
     harness
         .db
         .update_bot(
@@ -2026,11 +2029,12 @@ async fn server_actions_follow_staff_roles() {
     let path = format!("/staff/servers/{}/actions", server.id);
 
     step_up(&harness, &ts, &ts_token).await;
+    // the verified mark comes only from an approved application now (Phase 4)
     let (status, body) = send(&harness, &ts, &ts_token, Post, &path, json!({ "action": "verify", "reason": "Known community" })).await;
-    assert_eq!(status, Status::Ok, "{body}");
-    assert_eq!(harness.db.fetch_server(&server.id).await.unwrap().flags, Some(2));
-    let (status, _) = send(&harness, &ts, &ts_token, Post, &path, json!({ "action": "verify", "reason": "Known community" })).await;
-    assert_eq!(status, Status::BadRequest);
+    assert_eq!(status, Status::BadRequest, "{body}");
+    assert_eq!(body["error"], crate::routes::staff::servers::APPLICATION_ONLY);
+    assert_ne!(harness.db.fetch_server(&server.id).await.unwrap().flags, Some(2));
+    assert!(audit_actions(&harness).await.iter().any(|(a, o)| a == "staff.server.action" && o == "Denied"));
     let (status, _) = send(&harness, &ts, &ts_token, Post, &path, json!({ "action": "mark_nsfw", "reason": "Adult content" })).await;
     assert_eq!(status, Status::Ok);
     assert!(harness.db.fetch_server(&server.id).await.unwrap().nsfw);
@@ -2074,14 +2078,22 @@ async fn partner_mark_is_its_own_bit_and_staff_only() {
     assert_eq!(flags(&harness).await, 0);
 
     step_up(&harness, &ts, &ts_token).await;
-    let (status, body) = send(&harness, &ts, &ts_token, Post, &path, json!({ "action": "verify", "reason": "Known community" })).await;
-    assert_eq!(status, Status::Ok, "{body}");
-    let (status, body) = send(&harness, &ts, &ts_token, Post, &path, json!({ "action": "partner", "reason": "Partner since today" })).await;
-    assert_eq!(status, Status::Ok, "{body}");
-    // verified and partner side by side
+    // both marks come only from an approved application now (Phase 4)
+    for action in ["verify", "partner"] {
+        let (status, body) = send(&harness, &ts, &ts_token, Post, &path, json!({ "action": action, "reason": "Known community" })).await;
+        assert_eq!(status, Status::BadRequest, "{body}");
+        assert_eq!(body["error"], crate::routes::staff::servers::APPLICATION_ONLY);
+    }
+    assert_eq!(flags(&harness).await, 0);
+    // as an approval leaves them: verified and partner side by side
+    {
+        let mut server = harness.db.fetch_server(&server.id).await.unwrap();
+        server
+            .update(&harness.db, revolt_database::PartialServer { flags: Some(2 | 4), ..Default::default() }, vec![])
+            .await
+            .unwrap();
+    }
     assert_eq!(flags(&harness).await, 2 | 4);
-    let (status, _) = send(&harness, &ts, &ts_token, Post, &path, json!({ "action": "partner", "reason": "Partner since today" })).await;
-    assert_eq!(status, Status::BadRequest);
     // taking the verified mark away keeps the partner bit, and the other way round
     let (status, _) = send(&harness, &ts, &ts_token, Post, &path, json!({ "action": "unverify", "reason": "Review ended" })).await;
     assert_eq!(status, Status::Ok);
@@ -2996,6 +3008,9 @@ mod team_page;
 
 #[path = "test_delete.rs"]
 mod delete_tests;
+
+#[path = "test_badge_programs.rs"]
+mod badge_program_tests;
 
 /// A step-up refusal on a permission that is not on the step-up list
 /// (official confirm) is audited exactly once

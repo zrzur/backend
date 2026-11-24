@@ -393,7 +393,8 @@ async fn sensitive_changes_need_a_second_person() {
     let asker_rights = strongest(&asker, BadgePath::StaffConsole);
     let second_rights = strongest(&second, BadgePath::StaffConsole);
 
-    // giving Partner waits
+    // giving Partner waits (a reviewer approved the application)
+    harness.back_partner(&target.id).await;
     let request = match try_change(&harness, &asker_rights, &target, "partner", BadgeChange::Grant).await {
         Ok(BadgeOutcome::Pending(request)) => request,
         other => panic!("{other:?}"),
@@ -566,6 +567,7 @@ async fn an_approver_without_rights_never_holds_the_request() {
     let (_, _, weak) = harness.new_user().await;
     let (_, _, real) = harness.new_user().await;
     let (_, _, target) = harness.new_user().await;
+    harness.back_partner(&target.id).await;
     let request = match try_change(&harness, &strongest(&asker, BadgePath::StaffConsole), &target, "partner", BadgeChange::Grant).await {
         Ok(BadgeOutcome::Pending(request)) => request,
         other => panic!("{other:?}"),
@@ -601,6 +603,7 @@ async fn a_refusal_is_written_after_the_decision() {
     let (_, _, asker) = harness.new_user().await;
     let (_, _, second) = harness.new_user().await;
     let (_, _, target) = harness.new_user().await;
+    harness.back_partner(&target.id).await;
     let request = match try_change(&harness, &strongest(&asker, BadgePath::StaffConsole), &target, "partner", BadgeChange::Grant).await {
         Ok(BadgeOutcome::Pending(request)) => request,
         other => panic!("{other:?}"),
@@ -778,6 +781,7 @@ async fn open_requests_and_gaps_are_found_beyond_the_newest_200() {
     let (_, _, asker) = harness.new_user().await;
     let (_, _, target) = harness.new_user().await;
     let rights = strongest(&asker, BadgePath::StaffConsole);
+    harness.back_partner(&target.id).await;
     let first = match try_change(&harness, &rights, &target, "partner", BadgeChange::Grant).await {
         Ok(BadgeOutcome::Pending(request)) => request,
         other => panic!("{other:?}"),
