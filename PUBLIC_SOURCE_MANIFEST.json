@@ -58,7 +58,7 @@
     },
     {
       "path": ".github/workflows/source-check.yml",
-      "sha256": "06ea297c315dd673de57f7ddcc5eea97dca76dddafdd77aa18bed06d002a500f",
+      "sha256": "207870cda349d09f7437aebfbf2475c6db768a43bbd8f39bb16c0df3a12ab439",
       "bytes": 963,
       "category": "reviewed-build-and-ci"
     },
@@ -202,8 +202,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "c3677a2a8355b78d0379cf5fc91880cba47fd117f6dbea39d79fbebe356227b1",
-      "bytes": 174794,
+      "sha256": "a52aadcc4b50d9f05047fb80f103ce4b68de68e3270fcf5804101509ad769b58",
+      "bytes": 174825,
       "category": "public-documentation"
     },
     {
@@ -274,7 +274,7 @@
     },
     {
       "path": "RELEASE.json",
-      "sha256": "c1446f93e06dc00a0ed21d190ff1e0e816fe56e280f8ba20b96688617a0a4f61",
+      "sha256": "cf4047913e61f886ee84c8dd50129ac1cdebb18969e3b9a628c3bbbeaf2cc4d5",
       "bytes": 299,
       "category": "product-source-or-build-manifest"
     },
@@ -298,13 +298,13 @@
     },
     {
       "path": "ZRZUR_RELEASE.md",
-      "sha256": "2746e29ecbc419d2a272c69209feba93640760524c40316fa257acb5c5e6f714",
+      "sha256": "17cb16cef2dc8fdf472bc7bad019c7a211668d295b4d1f0118201387a39073e9",
       "bytes": 1612,
       "category": "public-documentation"
     },
     {
       "path": "ZRZUR_VERSION",
-      "sha256": "d70e28aa0b3d367ad4e70a45d29bb4896c7315d51c7fa250386c4d0ff6fbb23e",
+      "sha256": "41898b48d7a9487c8febf3966ee4e826d970486e570806f69a8ecfc5a5ed75da",
       "bytes": 351,
       "category": "product-source-or-build-manifest"
     },
@@ -1582,13 +1582,13 @@
     },
     {
       "path": "crates/core/database/src/models/admin_migrations/ops/mongodb/init.rs",
-      "sha256": "08e088f7e3148cafee5296da583bf8e70665564ba80f3f1cff6b4ebf288ce615",
-      "bytes": 13777,
+      "sha256": "07ddb8c5610b73b70bad95a42cfefc349d1c198cbc99a42be2333497f700a985",
+      "bytes": 13840,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/database/src/models/admin_migrations/ops/mongodb/scripts.rs",
-      "sha256": "7e18082562bbe428daa53c5c4cd3caa242aa6e88595bedb0e8a46fe391835cfb",
+      "sha256": "2ecf7e2aa0f8121343167b74351cec999cb6e4d1a9916b4892cbaca428cb29cd",
       "bytes": 190977,
       "category": "product-source-or-build-manifest"
     },
@@ -7666,7 +7666,7 @@
     },
     {
       "path": "scripts/check-version-selftest.sh",
-      "sha256": "67a23352563b64fa64f044e6e822b9621b08c65f6403baf63855eaaf758ac20b",
+      "sha256": "96ec89d490a4de499c766880acd13998bc2cad75285992fad88c2a4a73dddc4e",
       "bytes": 1327,
       "category": "reviewed-build-and-ci"
     },
