@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Badges: community and creator rules (2026-11-24, badge plan phase 3)
+
+- **Community Builder (100) and Big Community (1,000) count genuine human members**, in crond every six hours (`community_badges` task), never on a join. A member counts when the account is a person (not a bot, deleted, banned, suspended, official or system account), at least 7 days old, with a confirmed e-mail, and has been a member for at least 24 hours. Metadata only: join times, account creation times (from the id), account flags, e-mail confirmation; no messages.
+- **Burst check:** when more than a quarter of the counted members joined, or their accounts were made, within one hour, the server is held for staff (`badge.system.community.hold`, once). Staff with `platform.badges.manage` release it (badges given at once) or refuse it (no community badge from that server until released): `GET /staff/badges/community?status=`, `POST /staff/badges/community/<server>/release|refuse` with a reason; never for a server they own; every decision and refusal is in the platform audit log.
+- Each server gives each community badge once, to its owner when it first reaches the count; it stays when the server shrinks or changes hands. Holders from the old rule keep theirs. New collection `community_badge_checks` (counts and times only); migration `PENDING_COMMUNITY_BADGE_INDEXES` adds its status index.
+- **System grants go through the badge gate:** `BadgePath::System` (`BadgeActor::system()`) gives only record-backed (`automatic`) badges, with a platform audit record (`badge.system.grant`) before the change; it never gives back a badge a person took away (`staff_revoked`) and never takes an earned achievement (`permanent`).
+- **Creator is permanent:** losing the designs or the creator record no longer takes it away (nor Super Creator). Creator, Community Builder and Big Community can be taken away only by staff, for fraud or infringement, with a second person; the system then never gives them back. `AdminUserBadges.revocable` lists what the staff member may take away.
+- **Super Creator** needs Creator, an active creator record, at least 25 approved published designs and 180 days in the creator program (first creator grant in the creator log, else the Creator badge date); staff still choose. Holders from the 3-design rule keep it. `CreatorProgress.super_creator_days` and `program_days` are new.
+- **Beta Veteran** is no longer automatic: the team gives it (staff rule, eligibility checked) after a completed cycle with at least 3 reviewed feedback reports (triaged, confirmed or fixed) or 1 confirmed bug report sent during the cycle. Holders from the old rule keep it.
+
 ### Badges: catalogue clean-up and time badges (2026-11-24, badge plan phases 1 and 2)
 
 - New badge rule `historical` (`BadgeGrantRule::Historical`): retired for good, never given on any path; holders keep it; taking one away is an Owner change with a step-up and a second person. Saha Champion (bit 67108864, no holders) and Paw (bit 128) are historical; their bits stay reserved. `GET /badges/catalogue` answers `rule: "historical"` for them.
