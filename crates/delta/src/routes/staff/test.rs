@@ -81,6 +81,8 @@ async fn grant(harness: &TestHarness, user_id: &str, roles: Vec<StaffRole>) {
         version: current.as_ref().map(|g| g.version + 1).unwrap_or(1),
         updated_at: staff_now(),
         updated_by: "test".to_string(),
+        active_since: None,
+        activated_by: None,
     };
     assert!(harness
         .db
@@ -2630,6 +2632,13 @@ async fn privileged_needs_an_owner_staff_session_from_the_same_sign_in() {
     // with an Owner staff session opened from this sign-in, it counts
     let token = sign_in(&harness, &owner, 0).await;
     assert_eq!(discover_queue(&harness, &owner.session).await, Status::Ok);
+    // editing someone else also needs a fresh step-up (security review F11)
+    assert_eq!(edit(owner.session.clone()).await, Status::Forbidden);
+    assert_ne!(
+        harness.db.fetch_user(&target.id).await.unwrap().display_name.as_deref(),
+        Some("Taken Over")
+    );
+    step_up(&harness, &owner, &token).await;
     assert_eq!(edit(owner.session.clone()).await, Status::Ok);
 
     // closed again: gone again
@@ -2930,4 +2939,72 @@ async fn unlisted_missing_step_up_is_audited_once() {
     assert_eq!(missing[0].summary.as_deref(), Some(path.as_str()));
     assert_eq!(missing[0].permission.as_deref(), Some("platform.official.manage"));
     assert!(missing[0].staff_session_id.is_some());
+}
+
+/// Security review F12: removing someone's staff roles, or switching their
+/// access off, ends the Staff badge with the appointment; a new grant
+/// records when its access started and who gave it
+#[rocket::async_test]
+async fn removing_staff_access_ends_the_staff_badge() {
+    let harness = TestHarness::new().await;
+    let owner = member(&harness, vec![StaffRole::Owner]).await;
+    let token = sign_in(&harness, &owner, -1).await;
+    step_up(&harness, &owner, &token).await;
+    let leaving = member(&harness, vec![]).await;
+    let disabled = member(&harness, vec![]).await;
+    let put = |roles: Value, version: Value| json!({ "roles": roles, "reason": "team change", "version": version });
+    for target in [&leaving, &disabled] {
+        let (status, body) = send(
+            &harness,
+            &owner,
+            &token,
+            rocket::http::Method::Put,
+            &format!("/staff/members/{}", target.user.id),
+            put(json!(["support"]), Value::Null),
+        )
+        .await;
+        assert_eq!(status, Status::Ok, "{body}");
+        let grant = harness.db.fetch_staff_grant(&target.user.id).await.unwrap().unwrap();
+        assert_eq!(grant.activated_by.as_deref(), Some(owner.user.id.as_str()));
+        assert!(grant.active_since.is_some());
+        // the Staff badge from before appointments
+        revolt_database::grant_badge(&harness.db, &target.user.id, "staff", revolt_database::BadgeSource::Admin, None, "someone", None, None)
+            .await
+            .unwrap();
+    }
+    let held = |user: String| {
+        let db = harness.db.clone();
+        async move { revolt_database::held_badges(&db, &user).await.unwrap().contains("staff") }
+    };
+
+    let (status, body) = send(
+        &harness,
+        &owner,
+        &token,
+        rocket::http::Method::Put,
+        &format!("/staff/members/{}", leaving.user.id),
+        put(json!([]), json!(1)),
+    )
+    .await;
+    assert_eq!(status, Status::Ok, "{body}");
+    assert!(!held(leaving.user.id.clone()).await);
+    assert!(held(disabled.user.id.clone()).await);
+
+    let (status, _) = send(
+        &harness,
+        &owner,
+        &token,
+        rocket::http::Method::Post,
+        &format!("/staff/members/{}/disable", disabled.user.id),
+        json!({ "reason": "left the team" }),
+    )
+    .await;
+    assert_eq!(status, Status::Ok);
+    assert!(!held(disabled.user.id.clone()).await);
+    let ended = audit_actions(&harness)
+        .await
+        .into_iter()
+        .filter(|(action, outcome)| action == revolt_database::STAFF_GRANT_END_ACTION && outcome == "Success")
+        .count();
+    assert_eq!(ended, 2);
 }

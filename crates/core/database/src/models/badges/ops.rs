@@ -40,6 +40,10 @@ pub trait AbstractBadges: Sync + Send {
     /// Held grants of one badge, newest first
     async fn fetch_badge_holders(&self, badge: &str, limit: usize) -> Result<Vec<BadgeGrant>>;
 
+    /// Every grant of one badge not revoked (no page limit: for checks
+    /// that must see all holders, such as the appointment gaps)
+    async fn fetch_all_badge_holders(&self, badge: &str) -> Result<Vec<BadgeGrant>>;
+
     /// Held grants whose expiry has passed
     async fn fetch_expired_badge_grants(&self, now: i64) -> Result<Vec<BadgeGrant>>;
 
@@ -98,6 +102,19 @@ pub trait AbstractBadges: Sync + Send {
 
     /// The latest badge change requests, newest first
     async fn fetch_badge_requests(&self) -> Result<Vec<BadgeChangeRequest>>;
+
+    /// The open (pending, not expired at `now`) request for one change, if
+    /// any
+    async fn fetch_open_badge_request(
+        &self,
+        user_id: &str,
+        badge: &str,
+        grant: bool,
+        now: i64,
+    ) -> Result<Option<BadgeChangeRequest>>;
+
+    /// Every request still pending (expired ones included), newest first
+    async fn fetch_pending_badge_requests(&self) -> Result<Vec<BadgeChangeRequest>>;
 
     /// Replace a request if it still has status `expected`; false otherwise
     async fn decide_badge_request(

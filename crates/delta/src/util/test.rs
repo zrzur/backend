@@ -118,6 +118,8 @@ impl TestHarness {
             version: 0,
             updated_at: now,
             updated_by: "test".to_string(),
+            active_since: None,
+            activated_by: None,
         });
         if !grant.roles.contains(&StaffRole::Owner) {
             grant.roles.push(StaffRole::Owner);
@@ -138,7 +140,8 @@ impl TestHarness {
                     created_at: now,
                     last_seen_at: now,
                     expires_at: now + revolt_database::STAFF_SESSION_MAX_MS,
-                    step_up_until: None,
+                    // a fresh step-up too: edits of other people need one
+                    step_up_until: Some(now + revolt_database::STAFF_SESSION_MAX_MS),
                     revoked_at: None,
                     user_agent: None,
                     kind: Default::default(),

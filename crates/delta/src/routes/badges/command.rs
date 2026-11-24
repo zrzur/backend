@@ -378,8 +378,13 @@ async fn act(db: &Database, caller: &User, data: DataBadgeCommand, give: bool) -
         return Ok(answer("self"));
     }
 
-    // nothing to do: said with one record, and no change
-    if let (Some(definition), None) = (badge_definition(&badge).filter(|d| offered(d)), &person.bot) {
+    // nothing to do: said with one record, and no change. Only once the
+    // rules allow the change: otherwise the gate below writes the Denied
+    // record and refuses (security review F6)
+    let allowed = |definition: &revolt_database::BadgeDefinition| {
+        revolt_database::badge_rule_check(&actor, definition, &person, change).is_ok()
+    };
+    if let (Some(definition), None) = (badge_definition(&badge).filter(|d| offered(d) && allowed(*d)), &person.bot) {
         sync_user_badges(db, &person.id).await?;
         let holds = held_badges(db, &person.id).await?.contains(definition.id);
         if holds == give {

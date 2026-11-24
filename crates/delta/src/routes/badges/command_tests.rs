@@ -68,6 +68,8 @@ async fn set_staff(harness: &TestHarness, user: &User, roles: Vec<StaffRole>) {
         version: current.as_ref().map(|g| g.version + 1).unwrap_or(1),
         updated_at: 0,
         updated_by: "test".to_string(),
+        active_since: None,
+        activated_by: None,
     };
     assert!(harness.db.save_staff_grant(&grant, current.map(|g| g.version)).await.unwrap());
 }
@@ -737,4 +739,29 @@ async fn a_badge_press_must_say_which_version_it_saw() {
     .unwrap();
     let status = send(other_bot.id.clone(), command.id.clone(), json!([])).dispatch().await.status();
     assert_eq!(status, Status::Ok);
+}
+
+/// Security review F6: "already" and "not held" are said only once the
+/// rules allow the change; an owner without a staff grant is refused (and
+/// written down as Denied) whatever the person holds
+#[rocket::async_test]
+async fn nothing_to_do_is_said_only_after_the_rights_check() {
+    let mut s = stage().await;
+    let (subject, owner) = (s.subject.clone(), s.owner.clone());
+    let session = s.owner_session.clone();
+    set_staff(&s.harness, &owner, vec![]).await;
+    revolt_database::grant_badge(&s.harness.db, &subject.id, "community_helper", revolt_database::BadgeSource::Admin, None, "someone", None, None)
+        .await
+        .unwrap();
+    // give what is held, take away what is not
+    for (action, path, badge) in [("give", "grant", "community_helper"), ("remove", "revoke", "partner")] {
+        let pressed = s.press(&session, action, &subject.id, badge, None).await;
+        let (status, body) = s.hand(path, &pressed).await;
+        assert_eq!(status, Status::Forbidden, "{action}: {body}");
+        assert_eq!(body["permission"], "platform.badges.manage");
+    }
+    assert!(s.holds(&subject, "community_helper").await);
+    let log = s.audit_full(&subject).await;
+    assert_eq!(log.len(), 2, "{log:?}");
+    assert!(log.iter().all(|(_, actor, outcome, summary)| actor == &owner.id && outcome == "Denied" && summary.contains("denied:no_permission")), "{log:?}");
 }

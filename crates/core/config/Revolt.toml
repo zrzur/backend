@@ -181,7 +181,12 @@ min_username_length = 2
 # badge. Changing it is a host-level change with two people: the owner
 # (guard mark) edits /etc/zrzur/Revolt.toml while a second team member
 # watches and confirms; delta writes `config.founder_id` to the platform
-# audit log at the next start ("founder_id changed").
+# audit log at the next start ("founder_id changed"), and does not start
+# while the value is set and that record can't be written.
+# Every service (delta, bonfire, pushd, crond, ...) reads this same
+# Revolt.toml and shows the Founder badge from it: the value must be the
+# same for all of them, so change it in the one shared file and restart
+# them all. The founder's Founder badge can't be hidden.
 # founder_id = ""
 # Early Adopter: accounts made strictly before this moment (UTC milliseconds
 # since 1970) get the badge, computed on every read; bots, official/system
@@ -668,10 +673,16 @@ bot = ""
 
 [features.badge_command]
 # `/badge give` and `/badge remove` in one bot (the Apply bot): the owner's
-# account gives and takes platform badges, the privileged ones included.
+# account gives and takes the badges staff may hand out (`Staff`-rule
+# badges), with the rights of the owner's own staff grant
+# (`platform.badges.manage`; no grant, no change). Privileged badges,
+# Founder, Staff and Platform Moderator are never changed here: they need a
+# step-up in the admin console, the founder setting or an appointment.
+# Sensitive changes wait for a second staff member in the console.
 # The bot decides nothing (routes under /badges/command): the server checks
-# that the press is genuine, used once and made by `owner`, and writes every
-# try, refused ones included, to the platform audit log.
+# that the press is genuine, used once and made by `owner`, runs the one
+# badge gate, and writes every try, refused ones included, to the platform
+# audit log.
 # Leave either value empty to keep the routes switched off.
 owner = ""
 bot = ""

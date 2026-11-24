@@ -74,6 +74,17 @@ impl AbstractBadges for MongoDb {
         .map_err(|_| create_database_error!("find", GRANTS))
     }
 
+    async fn fetch_all_badge_holders(&self, badge: &str) -> Result<Vec<BadgeGrant>> {
+        // served by the `badge_held` index
+        self.find_with_options(
+            GRANTS,
+            doc! { "badge": badge, "revoked_at": { "$exists": false } },
+            FindOptions::builder().sort(doc! { "_id": 1 }).build(),
+        )
+        .await
+        .map_err(|_| create_database_error!("find", GRANTS))
+    }
+
     async fn fetch_expired_badge_grants(&self, now: i64) -> Result<Vec<BadgeGrant>> {
         self.find_with_options(
             GRANTS,
@@ -256,6 +267,37 @@ impl AbstractBadges for MongoDb {
             REQUESTS,
             doc! {},
             FindOptions::builder().sort(doc! { "_id": -1 }).limit(200).build(),
+        )
+        .await
+        .map_err(|_| create_database_error!("find", REQUESTS))
+    }
+
+    async fn fetch_open_badge_request(
+        &self,
+        user_id: &str,
+        badge: &str,
+        grant: bool,
+        now: i64,
+    ) -> Result<Option<BadgeChangeRequest>> {
+        // served by the `open_change` index
+        self.col::<BadgeChangeRequest>(REQUESTS)
+            .find_one(doc! {
+                "status": to_bson(&BadgeRequestStatus::Pending),
+                "user_id": user_id,
+                "badge": badge,
+                "grant": grant,
+                "expires_at": { "$gt": now },
+            })
+            .sort(doc! { "_id": -1 })
+            .await
+            .map_err(|_| create_database_error!("find_one", REQUESTS))
+    }
+
+    async fn fetch_pending_badge_requests(&self) -> Result<Vec<BadgeChangeRequest>> {
+        self.find_with_options(
+            REQUESTS,
+            doc! { "status": to_bson(&BadgeRequestStatus::Pending) },
+            FindOptions::builder().sort(doc! { "_id": -1 }).build(),
         )
         .await
         .map_err(|_| create_database_error!("find", REQUESTS))

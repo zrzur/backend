@@ -19,7 +19,8 @@ use revolt_database::{
     creator_eligibility, epoch_ms, mutate_badge, platform_permissions, set_badge_hidden,
     sync_creator_badge, sync_user_badges, BadgeActor, BadgeChange, BadgeDenial, BadgeGrant,
     BadgeGrantRule, BadgeMutation, BadgeOutcome, BadgePath, BadgeSource, BetaMember, Database,
-    PlatformPermission, User, BADGE_CATALOGUE, ELITE_MIN_VERIFIED, SUPER_CREATOR_MIN_DESIGNS,
+    PlatformPermission, StaffPermission, User, BADGE_CATALOGUE, ELITE_MIN_VERIFIED,
+    SUPER_CREATOR_MIN_DESIGNS,
 };
 use revolt_models::v0;
 use revolt_result::{create_error, Result};
@@ -206,6 +207,10 @@ pub async fn visibility(
     data: Json<v0::DataBadgeVisibility>,
 ) -> Result<EmptyResponse> {
     no_bots(&user)?;
+    // the founder's Founder badge follows `founder_id` and is always shown
+    if badge == "founder" && revolt_config::config().await.api.users.founder().is_some() {
+        return Err(create_error!(InvalidOperation));
+    }
     set_badge_hidden(db, &user.id, badge, data.hidden).await?;
     Ok(EmptyResponse)
 }
@@ -222,23 +227,38 @@ pub async fn user_badges(
 ) -> Result<Json<Vec<v0::PublicBadge>>> {
     let now = now_ms();
     let config = revolt_config::config().await;
-    // Founder: once `founder_id` is set, an old grant of anyone else is history
-    let founder_shown = config.api.users.founder().is_none_or(|founder| founder == id);
-    Ok(Json(
-        db.fetch_badge_grants(id)
-            .await?
-            .into_iter()
-            .filter(|g| g.held(now) && !g.hidden)
-            .filter(|g| g.badge != "founder" || founder_shown)
-            // computed badges (time on Zrzur) are in `User.badges` only: an
-            // old stored grant of one is history
-            .filter(|g| badge_definition(&g.badge).is_some_and(|b| b.rule != BadgeGrantRule::Dynamic))
-            .map(|g| v0::PublicBadge {
-                badge: g.badge,
-                granted_at: g.granted_at,
-            })
-            .collect(),
-    ))
+    let grants = db.fetch_badge_grants(id).await?;
+    Ok(Json(public_badges(grants, config.api.users.founder(), id, now)))
+}
+
+/// What others see of `id`'s badges. Founder follows `founder_id` alone
+/// once it is set, the same as the badge bits (`founder_bit`): anyone
+/// else's old founder grant is history, and the founder is listed even
+/// without a grant row. The Founder badge can't be hidden then: it is a
+/// fact of the platform, not a badge one wears by choice.
+pub(crate) fn public_badges(grants: Vec<BadgeGrant>, founder: Option<&str>, id: &str, now: i64) -> Vec<v0::PublicBadge> {
+    let is_founder = founder == Some(id);
+    let mut shown: Vec<v0::PublicBadge> = grants
+        .iter()
+        .filter(|g| g.held(now))
+        // computed badges (time on Zrzur) are in `User.badges` only: an
+        // old stored grant of one is history
+        .filter(|g| badge_definition(&g.badge).is_some_and(|b| b.rule != BadgeGrantRule::Dynamic))
+        .filter(|g| match g.badge.as_str() {
+            "founder" if founder.is_some() => is_founder,
+            _ => !g.hidden,
+        })
+        .map(|g| v0::PublicBadge {
+            badge: g.badge.clone(),
+            granted_at: g.granted_at,
+        })
+        .collect();
+    if is_founder && !shown.iter().any(|b| b.badge == "founder") {
+        // since the account exists: no grant row records a date
+        let since = ulid::Ulid::from_string(id).map(|u| u.timestamp_ms() as i64).unwrap_or(0);
+        shown.insert(0, v0::PublicBadge { badge: "founder".to_string(), granted_at: since });
+    }
+    shown
 }
 
 /// The rights for the retired admin routes: every change through them is
@@ -254,14 +274,34 @@ fn admin_route_actor(actor: &User) -> BadgeActor {
     }
 }
 
-/// Staff need `badges.grant` (or a privileged account) to look
+/// Badge staff by real permissions only: `badges.grant` from a platform
+/// role, or `platform.badges.manage` from an active staff grant. The
+/// `privileged` flag counts for nothing here.
+async fn badge_staff(db: &Database, actor: &User) -> Result<bool> {
+    if actor.bot.is_some() {
+        return Ok(false);
+    }
+    let mut plain = actor.clone();
+    plain.privileged = false;
+    if platform_permissions(db, &plain).await?.has(PlatformPermission::BadgesGrant) {
+        return Ok(true);
+    }
+    let now = now_ms();
+    Ok(db
+        .fetch_staff_grant(&actor.id)
+        .await?
+        .is_some_and(|grant| grant.effective(now).contains(&StaffPermission::BadgesManage)))
+}
+
+/// Staff need `badges.grant` (or `platform.badges.manage`) to look
 async fn staff_only(db: &Database, actor: &User) -> Result<()> {
     no_bots(actor)?;
-    if actor.privileged {
+    if badge_staff(db, actor).await? {
         return Ok(());
     }
-    let perms = platform_permissions(db, actor).await?;
-    require(&perms, PlatformPermission::BadgesGrant)
+    Err(create_error!(MissingPlatformPermission {
+        permission: PlatformPermission::BadgesGrant.name().to_string()
+    }))
 }
 
 /// # Find badge holders
@@ -412,7 +452,10 @@ pub async fn admin_revoke(
     retired_change(db, &user, data.user, data.badge, BadgeChange::Revoke, data.reason).await
 }
 
-/// Through the one gate, which refuses every change of this path
+/// Refused for everyone. Only a staff caller's try is written to the audit
+/// log (through the one gate, without the typed reason, and with the
+/// target only if it is a real id): anyone else gets the same answer and
+/// writes nothing, so the log can't be filled by any signed-in account.
 async fn retired_change(
     db: &Database,
     actor: &User,
@@ -421,12 +464,14 @@ async fn retired_change(
     change: BadgeChange,
     reason: String,
 ) -> Result<Json<v0::AdminBadgeGrant>> {
+    if !badge_staff(db, actor).await? {
+        return Err(BadgeDenial::RouteRetired.error());
+    }
     let request = BadgeMutation {
         user_id,
         badge,
         change,
-        // the refusal is logged even without a usable reason
-        reason: if reason.trim().chars().count() >= 3 { reason } else { "(none given)".to_string() },
+        reason,
         expires_at: None,
     };
     match mutate_badge(db, &admin_route_actor(actor), request).await? {

@@ -466,6 +466,7 @@ pub async fn create_database(db: &MongoDb) {
     super::scripts::create_saved_reminder_indexes(&db).await;
     super::scripts::create_team_volunteer_indexes(&db).await;
     super::scripts::create_activity_block_indexes(&db).await;
+    super::scripts::create_badge_gate_indexes(&db).await;
     super::scripts::seed_platform_words(&db).await;
 
     info!("Created database.");

@@ -80,6 +80,20 @@ impl AbstractBadges for ReferenceDb {
         Ok(holders)
     }
 
+    async fn fetch_all_badge_holders(&self, badge: &str) -> Result<Vec<BadgeGrant>> {
+        let mut holders: Vec<BadgeGrant> = self
+            .badge_store
+            .lock()
+            .await
+            .grants
+            .values()
+            .filter(|g| g.badge == badge && g.revoked_at.is_none())
+            .cloned()
+            .collect();
+        holders.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(holders)
+    }
+
     async fn fetch_expired_badge_grants(&self, now: i64) -> Result<Vec<BadgeGrant>> {
         Ok(self
             .badge_store
@@ -272,6 +286,44 @@ impl AbstractBadges for ReferenceDb {
         let mut list: Vec<_> = self.badge_store.lock().await.requests.values().cloned().collect();
         list.sort_by(|a, b| b.id.cmp(&a.id));
         list.truncate(200);
+        Ok(list)
+    }
+
+    async fn fetch_open_badge_request(
+        &self,
+        user_id: &str,
+        badge: &str,
+        grant: bool,
+        now: i64,
+    ) -> Result<Option<BadgeChangeRequest>> {
+        Ok(self
+            .badge_store
+            .lock()
+            .await
+            .requests
+            .values()
+            .filter(|r| {
+                r.status == BadgeRequestStatus::Pending
+                    && now < r.expires_at
+                    && r.user_id == user_id
+                    && r.badge == badge
+                    && r.grant == grant
+            })
+            .max_by(|a, b| a.id.cmp(&b.id))
+            .cloned())
+    }
+
+    async fn fetch_pending_badge_requests(&self) -> Result<Vec<BadgeChangeRequest>> {
+        let mut list: Vec<_> = self
+            .badge_store
+            .lock()
+            .await
+            .requests
+            .values()
+            .filter(|r| r.status == BadgeRequestStatus::Pending)
+            .cloned()
+            .collect();
+        list.sort_by(|a, b| b.id.cmp(&a.id));
         Ok(list)
     }
 

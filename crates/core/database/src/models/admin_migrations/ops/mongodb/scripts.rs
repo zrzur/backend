@@ -65,6 +65,8 @@ const PENDING_TEAM_VOLUNTEER_INDEXES: i32 = 92;
 const PENDING_ACTIVITY_BLOCKS_INDEX: i32 = -1;
 // Stream badge-phase1: the coordinator gives the number at merge; -1 never runs
 const PENDING_OFFICIAL_BOT_FLAGS: i32 = -1;
+// Stream badge-phase0: the coordinator gives the number at merge; -1 never runs
+const PENDING_BADGE_GATE_INDEXES: i32 = -1;
 
 /// The earliest day a session from before expiry can expire. At least 30
 /// days out, also with expiry switched off (0), for the day it is switched on.
@@ -2676,6 +2678,11 @@ pub async fn run_migrations(db: &MongoDb, revision: i32) -> i32 {
         fill_official_bot_flags(&db.db()).await;
     }
 
+    if revision <= PENDING_BADGE_GATE_INDEXES {
+        info!("Running migration [revision {PENDING_BADGE_GATE_INDEXES} / 24-11-2026]: Indexes for badge holders and badge change requests");
+        create_badge_gate_indexes(&db.db()).await;
+    }
+
     // Reminder to update LATEST_REVISION when adding new migrations.
     LATEST_REVISION.max(revision)
 }
@@ -2737,6 +2744,28 @@ pub async fn fill_official_bot_flags(db: &mongodb::Database) {
             .await
             .expect("Failed to set the Official flag");
     }
+}
+
+/// Badge gate: every holder of one badge (appointment gaps) and the open
+/// request for one change (two-person dedupe). Only indexes, no data moves.
+/// Safe to run twice: creating an index that exists is a no-op.
+pub async fn create_badge_gate_indexes(db: &mongodb::Database) {
+    db.run_command(doc! {
+        "createIndexes": "badge_grants",
+        "indexes": [
+            { "key": { "badge": 1_i32, "revoked_at": 1_i32 }, "name": "badge_held" }
+        ]
+    })
+    .await
+    .expect("Failed to create the badge holder index");
+    db.run_command(doc! {
+        "createIndexes": "badge_change_requests",
+        "indexes": [
+            { "key": { "status": 1_i32, "user_id": 1_i32, "badge": 1_i32, "grant": 1_i32 }, "name": "open_change" }
+        ]
+    })
+    .await
+    .expect("Failed to create the badge request index");
 }
 
 /// Activity blocks (Trust & Safety) are looked up by value on every
@@ -3898,6 +3927,30 @@ mod statement_migration_tests {
         assert_eq!(flags(find("B").await.unwrap().unwrap()), Some(3));
         assert_eq!(flags(find("C").await.unwrap().unwrap()), Some(1));
         assert!(find("P").await.unwrap().is_none());
+    }
+
+    /// MongoDB only: the badge gate indexes can be made twice
+    #[tokio::test]
+    async fn badge_gate_indexes_run_twice_on_mongodb() {
+        let db = crate::DatabaseInfo::Test("badge_gate_indexes".to_string())
+            .connect()
+            .await
+            .expect("Database connection failed.");
+        let crate::Database::MongoDb(mongo) = &db else {
+            return;
+        };
+        for _ in 0..2 {
+            super::create_badge_gate_indexes(&mongo.db()).await;
+        }
+        for (collection, name) in [("badge_grants", "badge_held"), ("badge_change_requests", "open_change")] {
+            let names = mongo
+                .db()
+                .collection::<Document>(collection)
+                .list_index_names()
+                .await
+                .unwrap();
+            assert!(names.contains(&name.to_string()), "{collection}: {names:?}");
+        }
     }
 
     /// MongoDB only: the activity block indexes can be made twice
