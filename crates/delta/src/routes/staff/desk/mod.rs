@@ -14,6 +14,9 @@
 //! [`StaffContext`]: super::StaffContext
 
 mod actor;
+mod admin;
+#[cfg(test)]
+mod admin_tests;
 mod decisions;
 #[cfg(test)]
 mod decisions_tests;
