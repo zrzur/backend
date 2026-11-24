@@ -99,7 +99,14 @@ async fn check(
     let mut record = staff.record(action, Some(StaffPermission::BadgesManage));
     record.target_kind = Some("user".to_string());
     record.target_id = Some(id.to_string());
-    record.reason = Some(data.reason.trim().chars().take(500).collect());
+    // the person reads it, the audit log keeps it: 300 at most
+    let why = data.reason.trim();
+    if why.chars().count() < 3 || why.chars().count() > 300 {
+        return Err(revolt_result::failed_validation(vec![
+            revolt_result::ValidationProblem::length("reason", 3, 300),
+        ]));
+    }
+    record.reason = Some(why.to_string());
     record.summary = Some(data.badge.clone());
     Ok(record)
 }

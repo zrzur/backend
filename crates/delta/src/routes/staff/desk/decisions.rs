@@ -1208,11 +1208,11 @@ const USER: DeskOption = opt(
     true,
     t("The user", "المستخدم", "Der Benutzer"),
 );
-const REASON: DeskOption = text("reason", true, 500, t("Reason", "السبب", "Grund"));
+const REASON: DeskOption = text("reason", true, 300, t("Reason", "السبب", "Grund"));
 const REASON_OPTIONAL: DeskOption = text(
     "reason",
     false,
-    500,
+    300,
     t(
         "Reason (needed to refuse)",
         "السبب (لازم للرفض)",
@@ -1469,7 +1469,7 @@ pub static ENTRIES: &[DeskCommand] = &[
             text(
                 "reason",
                 false,
-                512,
+                300,
                 t(
                     "Reason (deny, remove)",
                     "السبب (رفض، إزالة)",
@@ -1497,7 +1497,7 @@ pub static ENTRIES: &[DeskCommand] = &[
             text(
                 "note",
                 false,
-                500,
+                300,
                 t(
                     "Note for the owner (needed to deny)",
                     "ملاحظة للمالك (لازمة للرفض)",
@@ -1604,7 +1604,7 @@ pub static ENTRIES: &[DeskCommand] = &[
                 false,
                 t("Allow it", "السماح بها", "Erlauben"),
             ),
-            text("note", false, 500, t("Note", "ملاحظة", "Notiz")),
+            text("note", false, 300, t("Note", "ملاحظة", "Notiz")),
         ],
         P::ReportsResolve,
         false,

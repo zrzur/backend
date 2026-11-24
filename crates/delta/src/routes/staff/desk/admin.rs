@@ -199,6 +199,21 @@ mod w {
         "ينشر تحديثًا للسياسات لكل المستخدمين، يسري في {when}؛ ويُطلب من كل مستخدم قراءته والإقرار به. الرابط: {url}",
         "Veröffentlicht eine Richtlinien-Änderung für alle, gültig ab {when}; alle werden gebeten, sie zu lesen und zu bestätigen. Link: {url}",
     );
+    pub const PUBLISH_HOST: Text = t(
+        "Host: zrzur.com (a legal page). Who sees it: every user, at their next connection.",
+        "المضيف: zrzur.com (صفحة قانونية). من يراه: كل المستخدمين عند اتصالهم التالي.",
+        "Host: zrzur.com (eine Rechtsseite). Wer es sieht: alle Nutzerinnen und Nutzer bei der nächsten Verbindung.",
+    );
+    pub const PUBLISH_NOW: Text = t(
+        "It takes effect now (0 days).",
+        "يسري الآن (0 يوم).",
+        "Es gilt sofort (0 Tage).",
+    );
+    pub const PUBLISH_VERSION: Text = t(
+        "A change to the Terms or the Privacy Policy also needs the version and date on the legal page.",
+        "تغيير شروط الخدمة أو سياسة الخصوصية يحتاج أيضًا إلى تحديث الإصدار والتاريخ في الصفحة القانونية.",
+        "Eine Änderung der Nutzungsbedingungen oder der Datenschutzerklärung braucht auch Version und Datum auf der Rechtsseite.",
+    );
     pub const WITHDRAW: Text = t(
         "Withdraws the policy update {id} ({url}): people who have not acknowledged it stop seeing it. It cannot be undone.",
         "يسحب تحديث السياسات {id} ({url}): ومن لم يُقرّ به لن يراه بعد الآن. ولا يمكن التراجع عن ذلك.",
@@ -732,9 +747,9 @@ async fn publish_card(_: &Database, staff: &StaffContext, input: &DeskInput) -> 
         }
     }
     let url = data.url.trim();
-    if !url.starts_with("https://") || url.len() > 300 || url.chars().any(char::is_whitespace) {
+    if !super::super::policies::legal_page(url) {
         return Err(create_error!(FailedValidation {
-            error: "the link must be an https address".to_string()
+            error: "the link must be one of the legal pages on https://zrzur.com".to_string()
         }));
     }
     if data.effective_in_days > 90 {
@@ -744,6 +759,11 @@ async fn publish_card(_: &Database, staff: &StaffContext, input: &DeskInput) -> 
     }
     let when = super::registry::when(staff.now + data.effective_in_days as i64 * 86_400_000);
     let mut lines = vec![w::PUBLISH.fill(lang, &[("when", &when), ("url", url)])];
+    lines.push(w::PUBLISH_HOST.get(lang).to_string());
+    if data.effective_in_days == 0 {
+        lines.push(w::PUBLISH_NOW.get(lang).to_string());
+    }
+    lines.push(w::PUBLISH_VERSION.get(lang).to_string());
     for language in ["ar", "en", "de"] {
         lines.push(format!("{language}: {}", data.messages[language]));
     }
@@ -1163,7 +1183,7 @@ const USER: DeskOption = opt(
     true,
     t("The user", "المستخدم", "Der Benutzer"),
 );
-const REASON: DeskOption = text("reason", true, 500, t("Reason", "السبب", "Grund"));
+const REASON: DeskOption = text("reason", true, 300, t("Reason", "السبب", "Grund"));
 const ORDER: DeskOption = text(
     "order",
     true,
@@ -1379,7 +1399,7 @@ pub static ENTRIES: &[DeskCommand] = &[
                     "Funktions-IDs, durch Komma getrennt",
                 ),
             ),
-            text("note", false, 500, t("Note", "ملاحظة", "Notiz")),
+            text("note", false, 300, t("Note", "ملاحظة", "Notiz")),
         ],
         P::SettingsManage,
         beta_member_card,

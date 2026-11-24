@@ -41,6 +41,45 @@ pub async fn list(db: &State<Database>, staff: StaffContext) -> Result<Json<Vec<
     Ok(Json(changes))
 }
 
+/// The legal pages a policy update may link to (zrzur.com, as in the
+/// website's sitemap)
+pub const LEGAL_PAGES: &[&str] = &[
+    "terms",
+    "privacy",
+    "community-guidelines",
+    "enforcement-appeals",
+    "paid-services",
+    "server-owner-rules",
+    "discover-guidelines",
+    "developer-terms",
+    "plugin-policy",
+    "creator-terms",
+    "imprint",
+    "contact",
+];
+
+/// `https://zrzur.com/legal/<page>` or `https://zrzur.com/<ar|de>/legal/<page>`
+/// exactly: the host compared to the character (no user part, port,
+/// look-alike host, query or fragment), a known page
+pub fn legal_page(url: &str) -> bool {
+    let Some(path) = url.strip_prefix("https://zrzur.com/") else {
+        return false;
+    };
+    if url.len() > 300
+        || path
+            .chars()
+            .any(|c| c.is_whitespace() || matches!(c, '?' | '#' | '%' | '\\' | '@' | ':'))
+    {
+        return false;
+    }
+    let parts: Vec<&str> = path.split('/').collect();
+    let parts = match parts.as_slice() {
+        [lang, rest @ ..] if matches!(*lang, "ar" | "de") => rest,
+        all => all,
+    };
+    matches!(parts, ["legal", page] if LEGAL_PAGES.contains(page))
+}
+
 #[derive(Deserialize)]
 pub struct DataPolicyChange {
     /// The message by language: `ar`, `en` and `de`, 3 to 300 characters
@@ -96,8 +135,10 @@ pub(super) async fn publish_core(
         return Err(invalid("unknown language"));
     }
     let url = data.url.trim();
-    if !url.starts_with("https://") || url.len() > 300 || url.chars().any(char::is_whitespace) {
-        return Err(invalid("the link must be an https address"));
+    if !legal_page(url) {
+        return Err(invalid(
+            "the link must be one of the legal pages on https://zrzur.com",
+        ));
     }
     if data.effective_in_days > 90 {
         return Err(invalid("effective in 0 to 90 days"));
@@ -183,4 +224,36 @@ pub(super) async fn withdraw_core(
         return Err(error);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod legal_page_tests {
+    use super::legal_page;
+
+    #[test]
+    fn only_zrzur_legal_pages() {
+        for good in [
+            "https://zrzur.com/legal/privacy",
+            "https://zrzur.com/ar/legal/terms",
+            "https://zrzur.com/de/legal/community-guidelines",
+        ] {
+            assert!(legal_page(good), "{good}");
+        }
+        for bad in [
+            "http://zrzur.com/legal/privacy",
+            "https://example.org/legal/privacy",
+            "https://zrzur.com.evil.example/legal/privacy",
+            "https://user@zrzur.com/legal/privacy",
+            "https://zrzur.com@evil.example/legal/privacy",
+            "https://zrzur.com:8443/legal/privacy",
+            "https://zrzur.com/legal/privacy?x=1",
+            "https://zrzur.com/legal/privacy#top",
+            "https://zrzur.com/legal/unknown",
+            "https://zrzur.com/fr/legal/privacy",
+            "https://zrzur.com/legal/privacy/../../x",
+            "https://zrzur.com/blog",
+        ] {
+            assert!(!legal_page(bad), "{bad}");
+        }
+    }
 }

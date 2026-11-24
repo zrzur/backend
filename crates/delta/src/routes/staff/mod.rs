@@ -278,9 +278,10 @@ pub struct AuditCheck {
 
 pub(super) fn reason(text: &str) -> Result<String> {
     let text = text.trim();
-    if text.chars().count() < 3 || text.chars().count() > 500 {
+    // it reaches the audit log and often the person: kept short
+    if text.chars().count() < 3 || text.chars().count() > 300 {
         return Err(revolt_result::failed_validation(vec![
-            revolt_result::ValidationProblem::length("reason", 3, 500),
+            revolt_result::ValidationProblem::length("reason", 3, 300),
         ]));
     }
     Ok(text.to_string())

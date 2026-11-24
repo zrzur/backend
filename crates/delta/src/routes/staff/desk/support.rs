@@ -1201,7 +1201,7 @@ const USER: DeskOption = opt(
     true,
     t("The user", "المستخدم", "Der Benutzer"),
 );
-const REASON: DeskOption = text("reason", true, 500, t("Reason", "السبب", "Grund"));
+const REASON: DeskOption = text("reason", true, 300, t("Reason", "السبب", "Grund"));
 const ANSWER: DeskOption = text(
     "text",
     true,
@@ -1562,7 +1562,7 @@ pub static ENTRIES: &[DeskCommand] = &[
             text(
                 "reason",
                 true,
-                500,
+                300,
                 t("Reason they see", "السبب الظاهر له", "Sichtbarer Grund"),
             ),
             text(
@@ -1646,7 +1646,7 @@ pub static ENTRIES: &[DeskCommand] = &[
             text(
                 "reason",
                 true,
-                500,
+                300,
                 t("Reason they see", "السبب الظاهر له", "Sichtbarer Grund"),
             ),
             text(
@@ -1675,7 +1675,7 @@ pub static ENTRIES: &[DeskCommand] = &[
             text(
                 "note",
                 false,
-                1000,
+                300,
                 t("Note they read", "ملاحظة يقرؤها", "Notiz für die Person"),
             ),
             SEVERITY,
@@ -1809,7 +1809,7 @@ pub static ENTRIES: &[DeskCommand] = &[
             text(
                 "reason",
                 true,
-                500,
+                300,
                 t("Reason (10-500)", "السبب (10-500)", "Grund (10-500)"),
             ),
         ],

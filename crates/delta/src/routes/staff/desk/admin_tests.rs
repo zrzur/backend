@@ -148,6 +148,13 @@ async fn desk_billing_runs_the_consoles_actions() {
     )
     .await;
     assert!(grant.view["content"].as_str().unwrap().contains("7 days"));
+    // a typed reason: the card says where the words go
+    assert!(
+        grant.view["content"]
+            .as_str()
+            .unwrap()
+            .contains("audit log")
+    );
 
     for c in [&refund, &deliver, &reconcile, &grant] {
         assert!(c.danger(), "{}", c.view);
@@ -226,6 +233,13 @@ async fn desk_settings_run_the_consoles_actions() {
     )
     .await;
     assert_eq!(error, "FailedValidation");
+    for bad in [
+        "https://zrzur.com.evil.example/legal/privacy",
+        "https://zrzur.com/blog",
+    ] {
+        let error = refused(&s, &owner, &command, "policy", "publish", policy(bad)).await;
+        assert_eq!(error, "FailedValidation", "{bad}");
+    }
 
     let feature = card(
         &s,

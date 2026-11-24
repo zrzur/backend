@@ -982,7 +982,7 @@ const USER: DeskOption = opt(
     t("The user", "المستخدم", "Der Benutzer"),
 );
 const REASON: DeskOption = DeskOption {
-    max_length: Some(500),
+    max_length: Some(300),
     ..opt(
         "reason",
         CommandOptionType::String,
@@ -991,7 +991,7 @@ const REASON: DeskOption = DeskOption {
     )
 };
 const STAFF_REASON: DeskOption = DeskOption {
-    max_length: Some(500),
+    max_length: Some(300),
     ..opt(
         "reason",
         CommandOptionType::String,
@@ -1000,7 +1000,7 @@ const STAFF_REASON: DeskOption = DeskOption {
     )
 };
 const NOTE: DeskOption = DeskOption {
-    max_length: Some(500),
+    max_length: Some(300),
     ..opt(
         "note",
         CommandOptionType::String,
@@ -1300,7 +1300,7 @@ pub static ENTRIES: &[DeskCommand] = &[
             id("case"),
             STATUS,
             DeskOption {
-                max_length: Some(500),
+                max_length: Some(300),
                 ..opt(
                     "public_note",
                     CommandOptionType::String,
@@ -1418,7 +1418,7 @@ pub static ENTRIES: &[DeskCommand] = &[
             id("appeal"),
             DECISION,
             DeskOption {
-                max_length: Some(500),
+                max_length: Some(300),
                 ..opt(
                     "note",
                     CommandOptionType::String,

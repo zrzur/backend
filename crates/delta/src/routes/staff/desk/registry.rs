@@ -946,6 +946,12 @@ pub mod texts {
         ar: "تأكيد",
         de: "Bestätigen",
     };
+    /// On every card with a typed reason or note: where the words go
+    pub const WORDS_KEPT: Text = Text {
+        en: "What you write is kept in the audit log and may be shown to the person concerned: do not write names or details of other people.",
+        ar: "يُحفظ ما تكتبه في سجل التدقيق وقد يُعرض على صاحب الشأن: لا تكتب أسماء أشخاص آخرين ولا تفاصيل عنهم.",
+        de: "Was du schreibst, wird im Prüfprotokoll gespeichert und kann der betroffenen Person gezeigt werden: schreib keine Namen oder Details anderer Personen.",
+    };
     pub const FRESH_CODE: Text = Text {
         en: "You will be asked for a fresh code before this runs.",
         ar: "سيُطلب منك رمز جديد قبل التنفيذ.",

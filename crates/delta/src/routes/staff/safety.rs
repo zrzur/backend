@@ -628,9 +628,10 @@ pub(super) async fn user_action_core(
             .await?;
     }
     let reason = data.public_reason.trim().to_string();
-    if reason.chars().count() < 3 || reason.chars().count() > 500 {
+    // the person reads it, the audit log keeps it: 300 at most
+    if reason.chars().count() < 3 || reason.chars().count() > 300 {
         return Err(revolt_result::failed_validation(vec![
-            revolt_result::ValidationProblem::length("public_reason", 3, 500),
+            revolt_result::ValidationProblem::length("public_reason", 3, 300),
         ]));
     }
     // refuse protected accounts before a case is opened

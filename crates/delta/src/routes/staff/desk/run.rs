@@ -248,6 +248,13 @@ async fn propose(
     let prepared = prepare(db, staff, &input).await?;
     let irreversible = entry.irreversible || prepared.irreversible;
     let mut lines = prepared.lines;
+    if entry
+        .options
+        .iter()
+        .any(|o| matches!(o.name, "reason" | "note" | "public_note"))
+    {
+        lines.push(texts::WORDS_KEPT.get(input.lang).to_string());
+    }
     if prepared.permanent {
         lines.push(texts::PERMANENT.get(input.lang).to_string());
     }

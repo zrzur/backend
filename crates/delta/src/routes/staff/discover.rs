@@ -81,7 +81,13 @@ pub(super) async fn decide_core(
     ) && reason.is_none_or(|r| r.chars().count() < 3)
     {
         return Err(revolt_result::failed_validation(vec![
-            revolt_result::ValidationProblem::length("reason", 3, 512),
+            revolt_result::ValidationProblem::length("reason", 3, 300),
+        ]));
+    }
+    // the owner reads it, the audit log keeps it: 300 at most
+    if reason.is_some_and(|r| r.chars().count() > 300) {
+        return Err(revolt_result::failed_validation(vec![
+            revolt_result::ValidationProblem::length("reason", 3, 300),
         ]));
     }
     // the request must exist before we log deciding it

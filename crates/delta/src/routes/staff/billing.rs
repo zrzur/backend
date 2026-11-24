@@ -52,6 +52,16 @@ async fn audited<T>(
     }
 }
 
+/// A reason the person reads and the audit log keeps: 300 at most
+fn short_reason(reason: &str) -> Result<()> {
+    if reason.trim().chars().count() > 300 {
+        return Err(revolt_result::failed_validation(vec![
+            revolt_result::ValidationProblem::length("reason", 3, 300),
+        ]));
+    }
+    Ok(())
+}
+
 fn validated<T: Validate>(data: T) -> Result<T> {
     data.validate()
         .map_err(|error| revolt_database::util::validation::validation_failed(&error))?;
@@ -225,6 +235,7 @@ pub(super) async fn refund_core(
         .require_step_up(db, StaffPermission::BillingManage)
         .await?;
     let data = validated(data)?;
+    short_reason(&data.reason)?;
     let before = db.fetch_order(id).await?;
     // what this refund gives back: the amount asked for, or all that was
     // left (never the order's whole amount after an earlier partial refund)
@@ -389,6 +400,7 @@ pub(super) async fn grant_core(
         .require_step_up(db, StaffPermission::BillingManage)
         .await?;
     let data = validated(data)?;
+    short_reason(&data.reason)?;
     let subject = db.fetch_user(&data.user).await?;
     if subject.bot.is_some() {
         return Err(create_error!(IsBot));
