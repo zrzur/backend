@@ -18,7 +18,7 @@ use crate::util::test::TestHarness;
 const SECRET: &str = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
 
 /// A TOTP code `offset` steps from now (-1, 0 and +1 are accepted)
-fn code(offset: i64) -> String {
+pub(super) fn code(offset: i64) -> String {
     let key = base32::decode(base32::Alphabet::RFC4648 { padding: false }, SECRET).unwrap();
     let step = (staff_now() / 1000) as u64 / 30;
     let step = (step as i64 + offset) as u64;
@@ -28,13 +28,13 @@ fn code(offset: i64) -> String {
 /// Never a valid code (not six digits)
 const WRONG_CODE: &str = "wrong!";
 
-struct Person {
-    user: User,
-    session: Session,
+pub(super) struct Person {
+    pub(super) user: User,
+    pub(super) session: Session,
 }
 
 /// What the press is
-enum Kind<'a> {
+pub(super) enum Kind<'a> {
     /// `/desk <sub>`
     Command(&'a str),
     /// A submitted form `zd:...` with this code
@@ -43,14 +43,14 @@ enum Kind<'a> {
     Button(&'a str),
 }
 
-struct Stage {
-    harness: TestHarness,
-    bot: Bot,
+pub(super) struct Stage {
+    pub(super) harness: TestHarness,
+    pub(super) bot: Bot,
     /// The configured place
-    place: Channel,
+    pub(super) place: Channel,
     /// A channel of the same server that is not a place
-    elsewhere: Channel,
-    server_id: String,
+    pub(super) elsewhere: Channel,
+    pub(super) server_id: String,
 }
 
 async fn enable_totp(harness: &TestHarness, account: &mut Account) {
@@ -60,7 +60,7 @@ async fn enable_totp(harness: &TestHarness, account: &mut Account) {
     account.save(&harness.db).await.unwrap();
 }
 
-async fn set_grant(harness: &TestHarness, user_id: &str, roles: Vec<StaffRole>, disabled: bool) {
+pub(super) async fn set_grant(harness: &TestHarness, user_id: &str, roles: Vec<StaffRole>, disabled: bool) {
     let current = harness.db.fetch_staff_grant(user_id).await.unwrap();
     let grant = StaffGrant {
         id: user_id.to_string(),
@@ -79,7 +79,7 @@ async fn set_grant(harness: &TestHarness, user_id: &str, roles: Vec<StaffRole>, 
         .unwrap());
 }
 
-fn settings(bot: &Bot, places: Vec<String>, allow_dms: bool) -> FeaturesStaffDesk {
+pub(super) fn settings(bot: &Bot, places: Vec<String>, allow_dms: bool) -> FeaturesStaffDesk {
     FeaturesStaffDesk {
         enabled: true,
         bot: bot.id.clone(),
@@ -89,7 +89,7 @@ fn settings(bot: &Bot, places: Vec<String>, allow_dms: bool) -> FeaturesStaffDes
     }
 }
 
-async fn stage() -> Stage {
+pub(super) async fn stage() -> Stage {
     stage_with(false).await
 }
 
@@ -114,7 +114,7 @@ async fn stage_with(allow_dms: bool) -> Stage {
 
 impl Stage {
     /// A person with TOTP on and these staff roles (none: no grant)
-    async fn person(&self, roles: Vec<StaffRole>) -> Person {
+    pub(super) async fn person(&self, roles: Vec<StaffRole>) -> Person {
         let (mut account, session, user) = self.harness.new_user().await;
         enable_totp(&self.harness, &mut account).await;
         if !roles.is_empty() {
@@ -174,12 +174,12 @@ impl Stage {
     }
 
     /// A press in the desk channel
-    async fn press(&self, who: &Person, kind: Kind<'_>) -> (String, String) {
+    pub(super) async fn press(&self, who: &Person, kind: Kind<'_>) -> (String, String) {
         self.press_by(&self.bot.id, who, kind, self.place.id(), Some(&self.server_id)).await
     }
 
     /// The bot hands a press back to `/staff/desk/<path>`
-    async fn hand(&self, path: &str, pressed: &(String, String)) -> (Status, Value) {
+    pub(super) async fn hand(&self, path: &str, pressed: &(String, String)) -> (Status, Value) {
         self.hand_with("x-bot-token", &self.bot.token, path, pressed).await
     }
 
@@ -204,7 +204,7 @@ impl Stage {
     }
 
     /// Signs in on the desk with the code `offset` steps from now
-    async fn sign_in(&self, who: &Person, offset: i64) -> Value {
+    pub(super) async fn sign_in(&self, who: &Person, offset: i64) -> Value {
         let code = code(offset);
         let pressed = self.press(who, Kind::Modal(LOGIN_MODAL, &code)).await;
         let (status, body) = self.hand("session", &pressed).await;
@@ -218,7 +218,7 @@ impl Stage {
     }
 
     /// The open desk sessions of a person
-    async fn desk_sessions(&self, who: &Person) -> Vec<StaffSession> {
+    pub(super) async fn desk_sessions(&self, who: &Person) -> Vec<StaffSession> {
         self.harness
             .db
             .fetch_staff_sessions_for_user(&who.user.id, staff_now())
@@ -230,7 +230,7 @@ impl Stage {
     }
 
     /// (action, outcome, summary) of a person's records, oldest first
-    async fn records(&self, who: &Person) -> Vec<(String, String, String)> {
+    pub(super) async fn records(&self, who: &Person) -> Vec<(String, String, String)> {
         let mut records: Vec<_> = self
             .harness
             .db
@@ -249,7 +249,7 @@ impl Stage {
     }
 
     /// (action, outcome, staff_session_id) of a person's records, oldest first
-    async fn record_sessions(&self, who: &Person) -> Vec<(String, String, Option<String>)> {
+    pub(super) async fn record_sessions(&self, who: &Person) -> Vec<(String, String, Option<String>)> {
         let mut records: Vec<_> = self
             .harness
             .db
@@ -294,7 +294,7 @@ impl Stage {
     }
 }
 
-fn error_type(body: &Value) -> &str {
+pub(super) fn error_type(body: &Value) -> &str {
     body["type"].as_str().unwrap_or_default()
 }
 
@@ -992,6 +992,7 @@ async fn code_never_reaches_the_bot() {
         "application_id": s.bot.id,
         "channel_id": s.place.id(),
         "command_id": command.id,
+        "command_version": command.version,
         "options": [{ "type": "SubCommand", "name": "me" }],
         "nonce": ulid::Ulid::new().to_string(),
     }))
