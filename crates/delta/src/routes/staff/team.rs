@@ -39,7 +39,8 @@ const MAX_LIMIT: u32 = 200;
 /// Months of counts a person's page shows, the current one included
 const MONTHS: usize = 6;
 const MIN_REMOVE_REASON: usize = 10;
-const MAX_REMOVE_REASON: usize = 500;
+// the person reads it, the audit log keeps it: 300 at most (DK-13)
+const MAX_REMOVE_REASON: usize = 300;
 const MAX_NOTE: usize = 2000;
 
 /// One volunteer in the list
@@ -614,7 +615,7 @@ pub(super) async fn note_core(
 
 /// # Team: remove a volunteer
 ///
-/// Needs a fresh step-up and a reason of 10 to 500 characters. The person
+/// Needs a fresh step-up and a reason of 10 to 300 characters. The person
 /// gets the polite message from the official account, with the reason;
 /// the audit log keeps only its length.
 #[post("/team/<id>/remove", data = "<data>")]

@@ -1703,7 +1703,7 @@ async fn policy_updates_reach_users() {
     let token = sign_in(&harness, &owner, -1).await;
     let change = json!({
         "messages": { "ar": "حدّثنا شروط الاستخدام", "en": "We updated the terms of use", "de": "Wir haben die Nutzungsbedingungen aktualisiert" },
-        "url": "https://zrzur.com/terms",
+        "url": "https://zrzur.com/legal/terms",
         "effective_in_days": 14
     });
 
@@ -1718,7 +1718,7 @@ async fn policy_updates_reach_users() {
     let (status, _) = send(&harness, &owner, &token, Post, "/staff/policies", missing).await;
     assert_eq!(status, Status::BadRequest);
     let mut plain = change.clone();
-    plain["url"] = json!("http://zrzur.com/terms");
+    plain["url"] = json!("http://zrzur.com/legal/terms");
     let (status, _) = send(&harness, &owner, &token, Post, "/staff/policies", plain).await;
     assert_eq!(status, Status::BadRequest);
     let (status, body) = send(&harness, &owner, &token, Post, "/staff/policies", change).await;
