@@ -338,7 +338,9 @@ pub async fn identity(
     staff: StaffContext,
     id: &str,
 ) -> Result<Json<IdentityView>> {
-    identity_core(db, &staff, id).await.map(Json)
+    identity_core(db, &staff, id, "admin console")
+        .await
+        .map(Json)
 }
 
 /// The console's `identity`, for any caller holding a [`StaffContext`]
@@ -347,6 +349,7 @@ pub(super) async fn identity_core(
     db: &Database,
     staff: &StaffContext,
     id: &str,
+    source: &str,
 ) -> Result<IdentityView> {
     staff.require(db, StaffPermission::TeamManage).await?;
     step_up(db, &staff).await?;
@@ -359,7 +362,7 @@ pub(super) async fn identity_core(
         "team.identity.view",
         &member,
         None,
-        format!("admin console, member {}", member.id),
+        format!("{source}, member {}", member.id),
     )
     .await?;
     Ok(identity_view(db, &member.user_id, false)

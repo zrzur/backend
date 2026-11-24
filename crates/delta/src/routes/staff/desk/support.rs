@@ -239,6 +239,9 @@ mod w {
         "Schweregrad: {severity}",
     );
     pub const DUPLICATE_OF: Text = t("Duplicate of: {id}", "مكرر لـ: {id}", "Duplikat von: {id}");
+    pub const NO_END: Text = t("No end date.", "بلا تاريخ انتهاء.", "Ohne Enddatum.");
+    pub const TICKET_CHANGED: &str = "the ticket changed since the card";
+    pub const NOT_SEEN: &str = "desk: a report this person may not see";
     pub const NOTE_TO: Text = t(
         "Note they read: {note}",
         "ملاحظة يقرؤها: {note}",
@@ -316,6 +319,30 @@ fn required_user(input: &DeskInput, name: &str) -> Result<String> {
 fn optional(input: &DeskInput, name: &str) -> Option<String> {
     input.text(name).filter(|v| !v.is_empty())
 }
+
+/// A fixed choice's name in `lang`; the raw value when it has none
+fn named(option: &DeskOption, value: &str, lang: Lang) -> String {
+    option
+        .choices
+        .iter()
+        .find(|choice| choice.value == value)
+        .map(|choice| choice.name.get(lang).to_string())
+        .unwrap_or_else(|| value.to_string())
+}
+
+/// Not about yourself, not about a bot: refused before a card is made
+async fn about_a_person(db: &Database, staff: &StaffContext, id: &str) -> Result<()> {
+    if id == staff.user.id {
+        return Err(create_error!(CannotReportYourself));
+    }
+    if db.fetch_user(id).await?.bot.is_some() {
+        return Err(create_error!(IsBot));
+    }
+    Ok(())
+}
+
+/// The name of a stored `updated_at`
+const TICKET_UPDATED: &str = "_ticket_updated_at";
 
 fn json<T: serde::Serialize>(value: &T) -> Value {
     serde_json::to_value(value).unwrap_or(Value::Null)
@@ -420,7 +447,42 @@ async fn ticket_of(db: &Database, input: &DeskInput) -> Result<(String, String, 
     Ok((id, ticket.subject.clone(), user))
 }
 
-async fn reply_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Result<Prepared> {
+/// A ticket card: the ticket as read, stored; nobody answers their own
+async fn ticket_prepared(
+    db: &Database,
+    staff: &StaffContext,
+    input: &DeskInput,
+    title: Text,
+    lines: Vec<String>,
+    own_refused: bool,
+) -> Result<Prepared> {
+    let id = required(input, "ticket")?;
+    let ticket = db.fetch_support_ticket(&id).await?;
+    if own_refused && ticket.user_id == staff.user.id {
+        return Err(create_error!(NotPrivileged));
+    }
+    let mut prepared = prepared("support_ticket", &id, title, input.lang, lines);
+    prepared.stored = vec![InteractionDataOption {
+        name: TICKET_UPDATED.to_string(),
+        kind: CommandOptionType::Integer,
+        value: Some(InteractionOptionValue::Integer(ticket.updated_at)),
+        options: None,
+    }];
+    Ok(prepared)
+}
+
+/// Right before the change: the ticket is still as the card showed it
+async fn ticket_check(
+    db: &Database,
+    _: &StaffContext,
+    input: &DeskInput,
+) -> Result<Option<&'static str>> {
+    let ticket = db.fetch_support_ticket(&required(input, "ticket")?).await?;
+    Ok((input.integer(TICKET_UPDATED) != Some(ticket.updated_at)).then_some(w::TICKET_CHANGED))
+}
+boxed!(ticket_verify, ticket_check, Option<&'static str>);
+
+async fn reply_card(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<Prepared> {
     let lang = input.lang;
     let (id, subject, user) = ticket_of(db, input).await?;
     let text = required(input, "text")?;
@@ -436,7 +498,7 @@ async fn reply_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Resul
     if input.boolean("close") == Some(true) {
         lines.push(w::AND_CLOSE.get(lang).to_string());
     }
-    Ok(prepared("support_ticket", &id, w::T_REPLY, lang, lines))
+    ticket_prepared(db, staff, input, w::T_REPLY, lines, true).await
 }
 
 async fn reply_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
@@ -454,14 +516,14 @@ boxed!(ticket_reply, reply_run, DeskView);
 
 async fn ticket_note_card_fn(
     db: &Database,
-    _: &StaffContext,
+    staff: &StaffContext,
     input: &DeskInput,
 ) -> Result<Prepared> {
     let lang = input.lang;
     let (id, subject, _) = ticket_of(db, input).await?;
     let text = required(input, "text")?;
     let line = w::STAFF_NOTE.fill(lang, &[("subject", &subject), ("id", &id), ("text", &text)]);
-    Ok(prepared("support_ticket", &id, w::T_NOTE, lang, vec![line]))
+    ticket_prepared(db, staff, input, w::T_NOTE, vec![line], true).await
 }
 
 async fn ticket_note_run(
@@ -497,13 +559,7 @@ async fn assign_card(db: &Database, staff: &StaffContext, input: &DeskInput) -> 
             ("user", &person(db, &to).await),
         ],
     );
-    Ok(prepared(
-        "support_ticket",
-        &id,
-        w::T_ASSIGN,
-        lang,
-        vec![line],
-    ))
+    ticket_prepared(db, staff, input, w::T_ASSIGN, vec![line], false).await
 }
 
 async fn ticket_change(
@@ -535,17 +591,11 @@ async fn assign_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> R
 boxed!(ticket_assign_card, assign_card, Prepared);
 boxed!(ticket_assign, assign_run, DeskView);
 
-async fn close_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Result<Prepared> {
+async fn close_card(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<Prepared> {
     let lang = input.lang;
     let (id, subject, user) = ticket_of(db, input).await?;
     let line = w::CLOSE.fill(lang, &[("subject", &subject), ("id", &id), ("user", &user)]);
-    Ok(prepared(
-        "support_ticket",
-        &id,
-        w::T_CLOSE,
-        lang,
-        vec![line],
-    ))
+    ticket_prepared(db, staff, input, w::T_CLOSE, vec![line], false).await
 }
 async fn close_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
     ticket_change(db, staff, input, "close", None).await
@@ -553,17 +603,11 @@ async fn close_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> Re
 boxed!(ticket_close_card, close_card, Prepared);
 boxed!(ticket_close, close_run, DeskView);
 
-async fn reopen_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Result<Prepared> {
+async fn reopen_card(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<Prepared> {
     let lang = input.lang;
     let (id, subject, user) = ticket_of(db, input).await?;
     let line = w::REOPEN.fill(lang, &[("subject", &subject), ("id", &id), ("user", &user)]);
-    Ok(prepared(
-        "support_ticket",
-        &id,
-        w::T_REOPEN,
-        lang,
-        vec![line],
-    ))
+    ticket_prepared(db, staff, input, w::T_REOPEN, vec![line], false).await
 }
 async fn reopen_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
     ticket_change(db, staff, input, "reopen", None).await
@@ -609,8 +653,9 @@ fn notice_lines(lang: Lang, head: String, data: &DataNotice) -> Vec<String> {
     if let Some(link) = &data.link {
         lines.push(w::LINK.fill(lang, &[("link", link)]));
     }
-    if let Some(days) = data.expires_in_days {
-        lines.push(w::FOR_DAYS.fill(lang, &[("days", &days.to_string())]));
+    match data.expires_in_days {
+        Some(days) => lines.push(w::FOR_DAYS.fill(lang, &[("days", &days.to_string())])),
+        None => lines.push(w::NO_END.get(lang).to_string()),
     }
     if data.email {
         lines.push(w::BY_EMAIL.get(lang).to_string());
@@ -618,13 +663,19 @@ fn notice_lines(lang: Lang, head: String, data: &DataNotice) -> Vec<String> {
     lines
 }
 
-async fn send_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Result<Prepared> {
+async fn send_card(db: &Database, _staff: &StaffContext, input: &DeskInput) -> Result<Prepared> {
     let lang = input.lang;
     let user = required_user(input, "user")?;
+    if db.fetch_user(&user).await?.bot.is_some() {
+        return Err(create_error!(IsBot));
+    }
     let data = notice_data(input, Some(user.clone()))?;
     let head = w::NOTICE_TO.fill(
         lang,
-        &[("user", &person(db, &user).await), ("tone", &data.tone)],
+        &[
+            ("user", &person(db, &user).await),
+            ("tone", &named(&TONE, &data.tone, lang)),
+        ],
     );
     Ok(prepared(
         "user",
@@ -646,7 +697,7 @@ boxed!(notice_send, send_run, DeskView);
 async fn everyone_card(_: &Database, _: &StaffContext, input: &DeskInput) -> Result<Prepared> {
     let lang = input.lang;
     let data = notice_data(input, None)?;
-    let head = w::NOTICE_ALL.fill(lang, &[("tone", &data.tone)]);
+    let head = w::NOTICE_ALL.fill(lang, &[("tone", &named(&TONE, &data.tone, lang))]);
     Ok(Prepared {
         target_kind: Some("platform".to_string()),
         target: None,
@@ -729,9 +780,10 @@ fn changes(input: &DeskInput) -> AccountChanges {
     }
 }
 
-async fn change_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Result<Prepared> {
+async fn change_card(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<Prepared> {
     let lang = input.lang;
     let user = required_user(input, "user")?;
+    about_a_person(db, staff, &user).await?;
     let reason = required(input, "reason")?;
     let mut lines = vec![w::CHANGE.fill(lang, &[("user", &person(db, &user).await)])];
     for (name, label) in CHANGE_FIELDS {
@@ -740,7 +792,7 @@ async fn change_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Resu
         }
     }
     if let Some(field) = optional(input, "clear") {
-        lines.push(w::CLEAR.fill(lang, &[("field", &field)]));
+        lines.push(w::CLEAR.fill(lang, &[("field", &named(&CLEAR, &field, lang))]));
     }
     lines.push(w::THEY_SEE.fill(lang, &[("reason", &reason)]));
     Ok(prepared("user", &user, w::T_CHANGE, lang, lines))
@@ -782,9 +834,10 @@ async fn cancel_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> R
 boxed!(change_cancel_card, cancel_card, Prepared);
 boxed!(change_cancel, cancel_run, DeskView);
 
-async fn security_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Result<Prepared> {
+async fn security_card(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<Prepared> {
     let lang = input.lang;
     let user = required_user(input, "user")?;
+    about_a_person(db, staff, &user).await?;
     let who = person(db, &user).await;
     let line = match required(input, "kind")?.as_str() {
         "email" => w::SECURITY_EMAIL.fill(
@@ -818,10 +871,21 @@ boxed!(security_request, security_run, DeskView);
 
 // ---- bug reviews ----
 
-async fn bug_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Result<Prepared> {
+async fn bug_card(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<Prepared> {
     let lang = input.lang;
     let id = required(input, "bug")?;
     let report = db.fetch_bug_report(&id).await?;
+    // a report this person may not see is "not found", as in the console,
+    // before anything about it is shown
+    if !super::super::review::sees(staff, &report) {
+        let mut record = staff.record("staff.bug.review", Some(StaffPermission::SupportManage));
+        record.target_kind = Some("bug_report".to_string());
+        record.target_id = Some(id.clone());
+        record.summary = Some(w::NOT_SEEN.to_string());
+        revolt_database::record_platform_audit(db, record, revolt_database::AuditOutcome::Denied)
+            .await?;
+        return Err(create_error!(NotFound));
+    }
     let action = required(input, "action")?;
     let mut lines = vec![w::BUG.fill(
         lang,
@@ -829,14 +893,14 @@ async fn bug_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Result<
             ("title", &report.title),
             ("id", &id),
             ("user", &person(db, &report.author_id).await),
-            ("action", &action),
+            ("action", &named(&BUG_ACTION, &action, lang)),
         ],
     )];
     if matches!(action.as_str(), "confirm" | "fix") {
         lines.push(w::HUNTER.get(lang).to_string());
     }
     if let Some(severity) = optional(input, "severity") {
-        lines.push(w::SEVERITY.fill(lang, &[("severity", &severity)]));
+        lines.push(w::SEVERITY.fill(lang, &[("severity", &named(&SEVERITY, &severity, lang))]));
     }
     if let Some(duplicate) = optional(input, "duplicate_of") {
         lines.push(w::DUPLICATE_OF.fill(lang, &[("id", &duplicate)]));
@@ -921,7 +985,7 @@ async fn team_identity_view(
     input: &DeskInput,
 ) -> Result<DeskView> {
     // the console's rules: TeamManage, a fresh step-up, and every look logged
-    let identity = identity_core(db, staff, &required(input, "member")?).await?;
+    let identity = identity_core(db, staff, &required(input, "member")?, "Zrzur Desk").await?;
     Ok(fields(
         DeskView::new(w::T_IDENTITY.get(input.lang)),
         &json(&identity),
@@ -991,12 +1055,23 @@ async fn counting_run(db: &Database, staff: &StaffContext, input: &DeskInput) ->
 boxed!(team_counting_card, counting_card, Prepared);
 boxed!(team_counting, counting_run, DeskView);
 
-async fn away_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Result<Prepared> {
+async fn away_card(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<Prepared> {
     let lang = input.lang;
     let (id, user) = member_of(db, input).await?;
     let days = input
         .integer("days")
         .ok_or_else(|| create_error!(InvalidOperation))?;
+    // the volunteers' own longest stay, as the console checks it
+    let max = crate::routes::team_desk::staff_desk(&staff.user.id)
+        .await?
+        .volunteers
+        .away_max_days
+        .max(0);
+    if !(0..=max).contains(&days) {
+        return Err(create_error!(FailedValidation {
+            error: format!("days: 0 to {max}")
+        }));
+    }
     let line = if days == 0 {
         w::BACK.fill(lang, &[("user", &user), ("id", &id)])
     } else {
@@ -1127,7 +1202,16 @@ const USER: DeskOption = opt(
     t("The user", "المستخدم", "Der Benutzer"),
 );
 const REASON: DeskOption = text("reason", true, 500, t("Reason", "السبب", "Grund"));
-const ANSWER: DeskOption = text("text", true, 4000, t("Text", "النص", "Text"));
+const ANSWER: DeskOption = text(
+    "text",
+    true,
+    900,
+    t(
+        "Text (desk: up to 900)",
+        "النص (في المكتب: حتى 900)",
+        "Text (im Desk: bis 900)",
+    ),
+);
 
 const TONE: DeskOption = DeskOption {
     choices: &[
@@ -1165,19 +1249,19 @@ const NOTICE_TEXT: [DeskOption; 6] = [
     text(
         "text_en",
         true,
-        1000,
+        200,
         t("Text (English)", "النص (إنجليزي)", "Text (Englisch)"),
     ),
     text(
         "text_ar",
         true,
-        1000,
+        200,
         t("Text (Arabic)", "النص (عربي)", "Text (Arabisch)"),
     ),
     text(
         "text_de",
         true,
-        1000,
+        200,
         t("Text (German)", "النص (ألماني)", "Text (Deutsch)"),
     ),
 ];
@@ -1187,16 +1271,20 @@ const LINK: DeskOption = text(
     300,
     t("https link", "رابط https", "https-Link"),
 );
-const DAYS: DeskOption = opt(
-    "days",
-    CommandOptionType::Integer,
-    false,
-    t(
-        "Days shown (1-365)",
-        "أيام الظهور (1-365)",
-        "Tage sichtbar (1-365)",
-    ),
-);
+const DAYS: DeskOption = DeskOption {
+    min_value: Some(1.0),
+    max_value: Some(365.0),
+    ..opt(
+        "days",
+        CommandOptionType::Integer,
+        false,
+        t(
+            "Days shown (1-365)",
+            "أيام الظهور (1-365)",
+            "Tage sichtbar (1-365)",
+        ),
+    )
+};
 
 const CLEAR: DeskOption = DeskOption {
     choices: &[
@@ -1317,77 +1405,92 @@ pub static GROUPS: &[DeskGroup] = &[
 ];
 
 pub static ENTRIES: &[DeskCommand] = &[
-    entry(
-        Some("ticket"),
-        "reply",
-        t("Answer a ticket", "الرد على تذكرة", "Beantworten"),
-        &[
-            id("ticket"),
-            ANSWER,
-            opt(
-                "close",
-                CommandOptionType::Boolean,
-                false,
-                t("Close it too", "وإغلاقها", "Auch schließen"),
-            ),
-        ],
-        P::SupportManage,
-        false,
-        Some(ticket_reply_card),
-        ticket_reply,
-    ),
-    entry(
-        Some("ticket"),
-        "note",
-        t("Staff note", "ملاحظة إدارية", "Team-Notiz"),
-        &[id("ticket"), ANSWER],
-        P::SupportManage,
-        false,
-        Some(ticket_note_card),
-        ticket_note,
-    ),
-    entry(
-        Some("ticket"),
-        "assign",
-        t("Assign", "إسناد", "Zuweisen"),
-        &[
-            id("ticket"),
-            opt(
-                "user",
-                CommandOptionType::User,
-                false,
-                t(
-                    "Staff member (none: you)",
-                    "عضو الإدارة (فارغ: أنت)",
-                    "Teammitglied (leer: du)",
+    DeskCommand {
+        verify: Some(ticket_verify),
+        ..entry(
+            Some("ticket"),
+            "reply",
+            t("Answer a ticket", "الرد على تذكرة", "Beantworten"),
+            &[
+                id("ticket"),
+                ANSWER,
+                opt(
+                    "close",
+                    CommandOptionType::Boolean,
+                    false,
+                    t("Close it too", "وإغلاقها", "Auch schließen"),
                 ),
-            ),
-        ],
-        P::SupportManage,
-        false,
-        Some(ticket_assign_card),
-        ticket_assign,
-    ),
-    entry(
-        Some("ticket"),
-        "close",
-        t("Close", "إغلاق", "Schließen"),
-        &[id("ticket")],
-        P::SupportManage,
-        false,
-        Some(ticket_close_card),
-        ticket_close,
-    ),
-    entry(
-        Some("ticket"),
-        "reopen",
-        t("Reopen", "إعادة فتح", "Wieder öffnen"),
-        &[id("ticket")],
-        P::SupportManage,
-        false,
-        Some(ticket_reopen_card),
-        ticket_reopen,
-    ),
+            ],
+            P::SupportManage,
+            false,
+            Some(ticket_reply_card),
+            ticket_reply,
+        )
+    },
+    DeskCommand {
+        verify: Some(ticket_verify),
+        ..entry(
+            Some("ticket"),
+            "note",
+            t("Staff note", "ملاحظة إدارية", "Team-Notiz"),
+            &[id("ticket"), ANSWER],
+            P::SupportManage,
+            false,
+            Some(ticket_note_card),
+            ticket_note,
+        )
+    },
+    DeskCommand {
+        verify: Some(ticket_verify),
+        ..entry(
+            Some("ticket"),
+            "assign",
+            t("Assign", "إسناد", "Zuweisen"),
+            &[
+                id("ticket"),
+                opt(
+                    "user",
+                    CommandOptionType::User,
+                    false,
+                    t(
+                        "Staff member (none: you)",
+                        "عضو الإدارة (فارغ: أنت)",
+                        "Teammitglied (leer: du)",
+                    ),
+                ),
+            ],
+            P::SupportManage,
+            false,
+            Some(ticket_assign_card),
+            ticket_assign,
+        )
+    },
+    DeskCommand {
+        verify: Some(ticket_verify),
+        ..entry(
+            Some("ticket"),
+            "close",
+            t("Close", "إغلاق", "Schließen"),
+            &[id("ticket")],
+            P::SupportManage,
+            false,
+            Some(ticket_close_card),
+            ticket_close,
+        )
+    },
+    DeskCommand {
+        verify: Some(ticket_verify),
+        ..entry(
+            Some("ticket"),
+            "reopen",
+            t("Reopen", "إعادة فتح", "Wieder öffnen"),
+            &[id("ticket")],
+            P::SupportManage,
+            false,
+            Some(ticket_reopen_card),
+            ticket_reopen,
+        )
+    },
     // the console always asks for a step-up before a notice
     entry(
         Some("notice"),
@@ -1483,8 +1586,12 @@ pub static ENTRIES: &[DeskCommand] = &[
             text(
                 "bio",
                 false,
-                2000,
-                t("New about me", "نبذة جديدة", "Neues Über mich"),
+                900,
+                t(
+                    "New about me (desk: up to 900)",
+                    "نبذة جديدة (في المكتب: حتى 900)",
+                    "Neues Über mich (im Desk: bis 900)",
+                ),
             ),
             CLEAR,
         ],
@@ -1655,12 +1762,15 @@ pub static ENTRIES: &[DeskCommand] = &[
         t("Set away", "تسجيل غياب", "Abwesend setzen"),
         &[
             id("member"),
-            opt(
-                "days",
-                CommandOptionType::Integer,
-                true,
-                t("Days (0: back)", "الأيام (0: عودة)", "Tage (0: zurück)"),
-            ),
+            DeskOption {
+                min_value: Some(0.0),
+                ..opt(
+                    "days",
+                    CommandOptionType::Integer,
+                    true,
+                    t("Days (0: back)", "الأيام (0: عودة)", "Tage (0: zurück)"),
+                )
+            },
         ],
         P::TeamManage,
         false,
@@ -1676,11 +1786,11 @@ pub static ENTRIES: &[DeskCommand] = &[
             text(
                 "text",
                 false,
-                2000,
+                900,
                 t(
-                    "Note (none: clear)",
-                    "الملاحظة (فارغ: مسح)",
-                    "Notiz (leer: löschen)",
+                    "Note (none: clear; desk: up to 900)",
+                    "الملاحظة (فارغ: مسح؛ في المكتب: حتى 900)",
+                    "Notiz (leer: löschen; im Desk: bis 900)",
                 ),
             ),
         ],

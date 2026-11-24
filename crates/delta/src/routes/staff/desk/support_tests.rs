@@ -595,3 +595,187 @@ async fn desk_support_follows_the_consoles_guards() {
         "{view}"
     );
 }
+
+/// The cards apply the console's rules before showing anything: a security
+/// report stays hidden from Support; nobody answers their own ticket; no
+/// notice, change or security request about a bot or yourself; away within
+/// the configured limit; a notice without an end says so; a ticket card is
+/// refused when the ticket changed since
+#[rocket::async_test]
+async fn desk_support_cards_follow_the_console() {
+    let s = stage().await;
+    all_areas(&s);
+    let owner = s.person(vec![StaffRole::Owner]).await;
+    let support = s.person(vec![StaffRole::Support]).await;
+    s.sign_in(&owner, -1).await;
+    s.sign_in(&support, -1).await;
+    team_on(&s, &owner).await;
+    let command = register_support(&s).await;
+    let console = console_token(&s, &owner, 0).await;
+    let (_, user_session, user) = s.harness.new_user().await;
+
+    // a security report: Support (no SecurityRead) gets "not found"
+    let secret = as_user(&s, &user_session.token, "/bugs", json!({ "kind": "security", "title": "Token in logs", "description": "The session token shows in the logs", "platform": "web" })).await;
+    let pressed = press(
+        &s,
+        &support,
+        &command,
+        "bug",
+        "review",
+        json!([
+            text("bug", secret["_id"].as_str().unwrap()),
+            text("action", "triage")
+        ]),
+    )
+    .await;
+    let (status, body) = s.hand("run", &pressed).await;
+    assert_eq!(
+        (status, error_type(&body)),
+        (Status::NotFound, "NotFound"),
+        "{body}"
+    );
+    assert!(
+        s.records(&support)
+            .await
+            .iter()
+            .any(|r| r.1 == "Denied" && r.2 == "desk: a report this person may not see"),
+        "{:?}",
+        s.records(&support).await
+    );
+
+    // nobody answers their own ticket
+    let own = ticket(&s, &owner.session.token).await;
+    let pressed = press(
+        &s,
+        &owner,
+        &command,
+        "ticket",
+        "reply",
+        json!([text("ticket", &own), text("text", "Answering myself")]),
+    )
+    .await;
+    assert_eq!(
+        error_type(&s.hand("run", &pressed).await.1),
+        "NotPrivileged"
+    );
+
+    // about a bot, or about yourself
+    let pressed = press(
+        &s,
+        &owner,
+        &command,
+        "notice",
+        "send",
+        notice_options(Some(&s.bot.id)),
+    )
+    .await;
+    assert_eq!(error_type(&s.hand("run", &pressed).await.1), "IsBot");
+    let pressed = press(
+        &s,
+        &owner,
+        &command,
+        "change-request",
+        "create",
+        json!([
+            user_opt(&s.bot.id),
+            text("reason", "Rename it"),
+            text("display_name", "Sam")
+        ]),
+    )
+    .await;
+    assert_eq!(error_type(&s.hand("run", &pressed).await.1), "IsBot");
+    let pressed = press_top(
+        &s,
+        &owner,
+        &command,
+        "security-request",
+        json!([
+            user_opt(&owner.user.id),
+            text("kind", "two_factor"),
+            text("reason", "Lost my phone")
+        ]),
+    )
+    .await;
+    assert_eq!(
+        error_type(&s.hand("run", &pressed).await.1),
+        "CannotReportYourself"
+    );
+
+    // away: no longer than the volunteers' own limit (90 here)
+    let (_, _, volunteer_user) = s.harness.new_user().await;
+    let member = volunteer(&s, &volunteer_user, TeamMemberStatus::Active).await;
+    let pressed = press(
+        &s,
+        &owner,
+        &command,
+        "team",
+        "away",
+        json!([
+            member_opt(&member.id),
+            json!({ "type": "Integer", "name": "days", "value": 91 })
+        ]),
+    )
+    .await;
+    assert_eq!(
+        error_type(&s.hand("run", &pressed).await.1),
+        "FailedValidation"
+    );
+
+    // a notice without an end says so
+    let c = card(
+        &s,
+        &owner,
+        &command,
+        "notice",
+        "send",
+        notice_options(Some(&user.id)),
+    )
+    .await;
+    assert!(
+        c.view["lines"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("No end date.")),
+        "{}",
+        c.view
+    );
+
+    // the ticket changes between the card and the press: refused
+    let t = ticket(&s, &user_session.token).await;
+    let c = card(
+        &s,
+        &owner,
+        &command,
+        "ticket",
+        "close",
+        json!([text("ticket", &t)]),
+    )
+    .await;
+    let response = s
+        .harness
+        .client
+        .post(format!("/staff/support/tickets/{t}/messages"))
+        .header(Header::new("x-session-token", owner.session.token.clone()))
+        .header(Header::new("x-staff-session", console.clone()))
+        .header(ContentType::JSON)
+        .body(json!({ "body": "Looking into it" }).to_string())
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Ok);
+    let (status, body) = confirm(&s, &owner, &c).await;
+    assert_eq!(
+        (status, error_type(&body)),
+        (Status::BadRequest, "InvalidOperation"),
+        "{body}"
+    );
+    assert!(
+        s.records(&owner)
+            .await
+            .iter()
+            .any(|r| r.1 == "Denied" && r.2 == "desk: the ticket changed since the card")
+    );
+    assert_ne!(
+        serde_json::to_value(s.harness.db.fetch_support_ticket(&t).await.unwrap().status).unwrap(),
+        json!("Closed")
+    );
+}

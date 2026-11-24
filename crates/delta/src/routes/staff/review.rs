@@ -430,7 +430,7 @@ pub async fn plugin_decide(
 
 // ---- bug reports ----
 
-fn sees(staff: &StaffContext, report: &BugReport) -> bool {
+pub(super) fn sees(staff: &StaffContext, report: &BugReport) -> bool {
     staff.has(if is_security(report) {
         StaffPermission::SecurityRead
     } else {
