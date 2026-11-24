@@ -77,9 +77,10 @@ impl AbstractPlatformStaff for ReferenceDb {
         Ok(())
     }
 
-    async fn set_staff_step_up(&self, id: &str, until: i64) -> Result<()> {
+    async fn set_staff_step_up(&self, id: &str, at: i64, until: i64) -> Result<()> {
         if let Some(s) = self.platform_staff.lock().await.sessions.get_mut(id) {
             s.step_up_until = Some(until);
+            s.step_up_at = Some(at);
         }
         Ok(())
     }

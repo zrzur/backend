@@ -186,7 +186,16 @@ auto_derived!(
         /// The user must confirm deletion by email
         WaitingForVerification { token: String, expiry: Timestamp },
         /// The account is scheduled for deletion
-        Scheduled { after: Timestamp },
+        Scheduled {
+            after: Timestamp,
+            /// The staff member who asked for it (none: the person themselves)
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            requested_by: Option<String>,
+            /// The account was disabled already before (a staff request that
+            /// is cancelled leaves it disabled)
+            #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+            disabled_before: bool,
+        },
         /// This account was deleted
         Deleted,
     }
@@ -970,10 +979,24 @@ impl Account {
 
     /// Schedule an account for deletion
     pub async fn schedule_deletion(&mut self, db: &Database) -> Result<()> {
+        self.schedule_deletion_for(db, None).await
+    }
+
+    /// Schedule an account for deletion, asked for by `requested_by` (a
+    /// staff member) or the person themselves (`None`); remembers whether
+    /// the account was disabled already, so a cancelled staff request
+    /// restores exactly that
+    pub async fn schedule_deletion_for(
+        &mut self,
+        db: &Database,
+        requested_by: Option<String>,
+    ) -> Result<()> {
         self.deletion = Some(DeletionInfo::Scheduled {
             after: Timestamp::now_utc()
                 .checked_add(Duration::days(ACCOUNT_DELETION_GRACE_DAYS))
                 .unwrap(),
+            requested_by,
+            disabled_before: self.disabled,
         });
 
         self.disable(db).await
@@ -1000,6 +1023,8 @@ impl Account {
         // their private saved list and their reminders
         db.delete_saved_messages_of(&self.id).await?;
         db.delete_reminders_of(&self.id).await?;
+        // badge program applications, their evidence and reviews (legal BV-09)
+        crate::erase_applications_of(db, &self.id).await?;
 
         self.email = format!("Deleted User {}", &self.id);
         self.email_normalised = format!("Deleted User {}", &self.id);

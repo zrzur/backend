@@ -21,11 +21,25 @@ fn to_bson<T: serde::Serialize>(value: &T) -> Result<bson::Bson> {
     bson::to_bson(value).map_err(|_| create_database_error!("to_bson", COL))
 }
 
+/// `expires_at` as a BSON date: the TTL index only fires on a date, and
+/// the model keeps an ISO text
+fn purge_at(expires_at: &Timestamp) -> bson::DateTime {
+    bson::DateTime::from_millis(
+        expires_at
+            .duration_since(Timestamp::UNIX_EPOCH)
+            .whole_milliseconds() as i64,
+    )
+}
+
 #[async_trait]
 impl AbstractInteractions for MongoDb {
     async fn insert_interaction(&self, interaction: &Interaction) -> Result<()> {
-        self.col::<Interaction>(COL)
-            .insert_one(interaction)
+        // `purge_at`: a BSON date copy of `expires_at` for the TTL index
+        let mut document = bson::to_document(interaction)
+            .map_err(|_| create_database_error!("to_document", COL))?;
+        document.insert("purge_at", purge_at(&interaction.expires_at));
+        self.col::<bson::Document>(COL)
+            .insert_one(document)
             .await
             .map(|_| ())
             .map_err(|error| {

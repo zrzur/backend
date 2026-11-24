@@ -26,7 +26,7 @@ struct MigrationInfo {
     revision: i32,
 }
 
-pub const LATEST_REVISION: i32 = 93; // MUST BE +1 to last migration
+pub const LATEST_REVISION: i32 = 98; // MUST BE +1 to last migration
 // Number given only in the release after the one above, once no old delta runs:
 // a session an old delta wrote during the rollout has no date and never expires.
 const PENDING_SESSION_EXPIRY_FILL: i32 = -1;
@@ -62,7 +62,22 @@ const PENDING_SERVER_EVENT_ANSWERS: i32 = 91;
 // Stream team-volunteers: the coordinator gives the number at merge; -1 never runs
 const PENDING_TEAM_VOLUNTEER_INDEXES: i32 = 92;
 // Stream rich-presence: the coordinator gives the number at merge; -1 never runs
-const PENDING_ACTIVITY_BLOCKS_INDEX: i32 = -1;
+const PENDING_ACTIVITY_BLOCKS_INDEX: i32 = 93;
+// Stream badge-phase1: the coordinator gives the number at merge; -1 never runs
+const PENDING_OFFICIAL_BOT_FLAGS: i32 = 95;
+// Stream badge-phase0: the coordinator gives the number at merge; -1 never runs
+const PENDING_BADGE_GATE_INDEXES: i32 = 94;
+// Stream badge-phase3: the coordinator gives the number at merge; -1 never runs
+const PENDING_COMMUNITY_BADGE_INDEXES: i32 = 96;
+/// Badge program applications, evidence, reviews and weekly server activity
+/// (number given by the coordinator at merge)
+const PENDING_BADGE_PROGRAM_INDEXES: i32 = 97;
+// Stream zrzur-desk-full: the coordinator gives the number at merge; -1 never runs
+const PENDING_DESK_PENDING_INDEXES: i32 = -1;
+/// TTL on `purge_at` (a BSON date) for interactions and OAuth codes and
+/// tokens. Index only: existing rows get no `purge_at` here (deleting them
+/// needs the owner's approval; the backfill is a separate admin script).
+const PENDING_PURGE_AT_INDEXES: i32 = -1;
 
 /// The earliest day a session from before expiry can expire. At least 30
 /// days out, also with expiry switched off (0), for the day it is switched on.
@@ -2669,6 +2684,36 @@ pub async fn run_migrations(db: &MongoDb, revision: i32) -> i32 {
         create_activity_block_indexes(&db.db()).await;
     }
 
+    if revision <= PENDING_OFFICIAL_BOT_FLAGS {
+        info!("Running migration [revision {PENDING_OFFICIAL_BOT_FLAGS} / 24-11-2026]: The official bot mark moves to the bot's Official flag");
+        fill_official_bot_flags(&db.db()).await;
+    }
+
+    if revision <= PENDING_BADGE_GATE_INDEXES {
+        info!("Running migration [revision {PENDING_BADGE_GATE_INDEXES} / 24-11-2026]: Indexes for badge holders and badge change requests");
+        create_badge_gate_indexes(&db.db()).await;
+    }
+
+    if revision <= PENDING_COMMUNITY_BADGE_INDEXES {
+        info!("Running migration [revision {PENDING_COMMUNITY_BADGE_INDEXES} / 24-11-2026]: Index for the community badge counts");
+        create_community_badge_indexes(&db.db()).await;
+    }
+
+    if revision <= PENDING_BADGE_PROGRAM_INDEXES {
+        info!("Running migration [revision {PENDING_BADGE_PROGRAM_INDEXES} / 24-11-2026]: Indexes for badge program applications and weekly server activity");
+        create_badge_program_indexes(&db.db()).await;
+    }
+
+    if revision <= PENDING_DESK_PENDING_INDEXES {
+        info!("Running migration [revision {PENDING_DESK_PENDING_INDEXES} / 24-11-2026]: Index for Zrzur Desk pending actions");
+        create_desk_pending_indexes(&db.db()).await;
+    }
+
+    if revision <= PENDING_PURGE_AT_INDEXES {
+        info!("Running migration [revision {PENDING_PURGE_AT_INDEXES} / 24-11-2026]: TTL on purge_at for interactions and OAuth codes and tokens");
+        create_purge_at_indexes(&db.db()).await;
+    }
+
     // Reminder to update LATEST_REVISION when adding new migrations.
     LATEST_REVISION.max(revision)
 }
@@ -2702,6 +2747,138 @@ pub async fn create_team_volunteer_indexes(db: &mongodb::Database) {
     })
     .await
     .expect("Failed to create the team identity index");
+}
+
+/// `BotFlags::Official` becomes the one source of the official bot mark.
+/// Until now `zrzur-staff official-bot` wrote only the account's
+/// `official_bot`; every bot whose account has it gets the flag (Discover,
+/// deletion protection and bot edits read the flag). Other flags stay. Safe
+/// to run twice: OR-ing a set bit changes nothing.
+pub async fn fill_official_bot_flags(db: &mongodb::Database) {
+    let official = revolt_models::v0::BotFlags::Official as i32;
+    let mut marked = db
+        .collection::<Document>("users")
+        .find(doc! { "official_bot": true, "bot": { "$exists": true } })
+        .projection(doc! { "_id": 1_i32 })
+        .await
+        .expect("Failed to read official bot accounts");
+    let mut ids = vec![];
+    while let Some(user) = marked.next().await {
+        let user = user.expect("Failed to read an official bot account");
+        if let Ok(id) = user.get_str("_id") {
+            ids.push(id.to_string());
+        }
+    }
+    let bots = db.collection::<Document>("bots");
+    for id in ids {
+        bots.update_one(doc! { "_id": &id }, doc! { "$bit": { "flags": { "or": official } } })
+            .await
+            .expect("Failed to set the Official flag");
+    }
+}
+
+/// Badge gate: every holder of one badge (appointment gaps) and the open
+/// request for one change (two-person dedupe). Only indexes, no data moves.
+/// Safe to run twice: creating an index that exists is a no-op.
+pub async fn create_badge_gate_indexes(db: &mongodb::Database) {
+    db.run_command(doc! {
+        "createIndexes": "badge_grants",
+        "indexes": [
+            { "key": { "badge": 1_i32, "revoked_at": 1_i32 }, "name": "badge_held" }
+        ]
+    })
+    .await
+    .expect("Failed to create the badge holder index");
+    db.run_command(doc! {
+        "createIndexes": "badge_change_requests",
+        "indexes": [
+            { "key": { "status": 1_i32, "user_id": 1_i32, "badge": 1_i32, "grant": 1_i32 }, "name": "open_change" }
+        ]
+    })
+    .await
+    .expect("Failed to create the badge request index");
+}
+
+/// Community badge counts (crond, one per server) are listed by status,
+/// latest count first, for staff to look at held servers. Only an index, no
+/// data moves. Safe to run twice: creating an index that exists is a no-op.
+pub async fn create_community_badge_indexes(db: &mongodb::Database) {
+    db.run_command(doc! {
+        "createIndexes": "community_badge_checks",
+        "indexes": [
+            { "key": { "status": 1_i32, "checked_at": -1_i32 }, "name": "status_checked" }
+        ]
+    })
+    .await
+    .expect("Failed to create the community badge index");
+}
+
+/// Badge program applications are listed by applicant, by server or bot,
+/// by status for the review queue, and found by crond when a recheck or a
+/// retention date comes; evidence and reviews by application; weekly
+/// server activity by server and week, and deleted by week. Only indexes,
+/// no data moves. Safe to run twice: creating an index that exists is a
+/// no-op.
+pub async fn create_badge_program_indexes(db: &mongodb::Database) {
+    for (collection, indexes) in [
+        (
+            "badge_applications",
+            vec![
+                doc! { "key": { "applicant_id": 1_i32, "_id": -1_i32 }, "name": "applicant" },
+                doc! { "key": { "target_id": 1_i32, "_id": -1_i32 }, "name": "target" },
+                doc! { "key": { "status": 1_i32, "program": 1_i32, "_id": -1_i32 }, "name": "queue" },
+                doc! { "key": { "status": 1_i32, "recheck_due": 1_i32, "next_review_at": 1_i32 }, "name": "recheck" },
+                doc! { "key": { "evidence_purge_at": 1_i32 }, "name": "evidence_purge", "sparse": true },
+                doc! { "key": { "purge_at": 1_i32 }, "name": "purge", "sparse": true },
+            ],
+        ),
+        ("badge_evidence", vec![doc! { "key": { "application_id": 1_i32 }, "name": "application" }]),
+        ("badge_reviews", vec![doc! { "key": { "application_id": 1_i32 }, "name": "application" }]),
+        (
+            "server_activity_weeks",
+            vec![
+                doc! { "key": { "server_id": 1_i32, "week": 1_i32 }, "name": "server_week" },
+                doc! { "key": { "week": 1_i32 }, "name": "week" },
+            ],
+        ),
+    ] {
+        db.run_command(doc! { "createIndexes": collection, "indexes": indexes })
+            .await
+            .expect("Failed to create the badge program indexes");
+    }
+}
+
+/// Zrzur Desk pending actions disappear ten minutes after they were made
+/// (TTL on `purge_at`, a BSON date copy of `expires_at`). Only an index, no data moves. Safe to run
+/// twice: creating an index that exists is a no-op.
+pub async fn create_desk_pending_indexes(db: &mongodb::Database) {
+    db.run_command(doc! {
+        "createIndexes": "desk_pending",
+        "indexes": [
+            { "key": { "purge_at": 1_i32 }, "name": "purge_at_ttl", "expireAfterSeconds": 0_i32 }
+        ]
+    })
+    .await
+    .expect("Failed to create the desk pending index");
+}
+
+/// Interactions and OAuth codes and tokens disappear when they expire: a
+/// TTL index on `purge_at`, the BSON date copy every new row carries (the
+/// old `expires_at_ttl` never fired: `expires_at` is stored as text). Rows
+/// from before carry no `purge_at` and stay until the owner approves the
+/// backfill. Only indexes, no data moves. Safe to run twice: creating an
+/// index that exists is a no-op.
+pub async fn create_purge_at_indexes(db: &mongodb::Database) {
+    for collection in ["interactions", "oauth_codes", "oauth_tokens"] {
+        db.run_command(doc! {
+            "createIndexes": collection,
+            "indexes": [
+                { "key": { "purge_at": 1_i32 }, "name": "purge_at_ttl", "expireAfterSeconds": 0_i32 }
+            ]
+        })
+        .await
+        .unwrap_or_else(|error| panic!("Failed to create the purge_at index on {collection}: {error}"));
+    }
 }
 
 /// Activity blocks (Trust & Safety) are looked up by value on every
@@ -3822,6 +3999,226 @@ mod statement_migration_tests {
                 .await
                 .unwrap();
             assert_eq!(names.len(), wanted, "{collection}: {names:?}");
+        }
+    }
+
+    /// MongoDB only: every bot whose account has `official_bot` gets the
+    /// Official flag, other flags stay, other bots are left alone, twice
+    #[tokio::test]
+    async fn official_bot_flags_fill_twice_on_mongodb() {
+        let db = crate::DatabaseInfo::Test(format!("official_bot_flags_{}", ulid::Ulid::new()))
+            .connect()
+            .await
+            .expect("Database connection failed.");
+        let crate::Database::MongoDb(mongo) = &db else {
+            return;
+        };
+        let users = mongo.db().collection::<Document>("users");
+        let bots = mongo.db().collection::<Document>("bots");
+        users
+            .insert_many([
+                doc! { "_id": "A", "username": "a", "official_bot": true, "bot": { "owner": "O" } },
+                doc! { "_id": "B", "username": "b", "official_bot": true, "bot": { "owner": "O" } },
+                doc! { "_id": "C", "username": "c", "bot": { "owner": "O" } },
+                doc! { "_id": "P", "username": "p", "official_bot": true },
+            ])
+            .await
+            .unwrap();
+        bots.insert_many([
+            doc! { "_id": "A", "owner": "O" },
+            doc! { "_id": "B", "owner": "O", "flags": 1_i32 },
+            doc! { "_id": "C", "owner": "O", "flags": 1_i32 },
+        ])
+        .await
+        .unwrap();
+        for _ in 0..2 {
+            super::fill_official_bot_flags(&mongo.db()).await;
+        }
+        let flags = |bot: Document| bot.get_i32("flags").ok();
+        let find = |id: &'static str| bots.find_one(doc! { "_id": id });
+        assert_eq!(flags(find("A").await.unwrap().unwrap()), Some(2));
+        assert_eq!(flags(find("B").await.unwrap().unwrap()), Some(3));
+        assert_eq!(flags(find("C").await.unwrap().unwrap()), Some(1));
+        assert!(find("P").await.unwrap().is_none());
+    }
+
+    /// MongoDB only: the badge gate indexes can be made twice
+    #[tokio::test]
+    async fn badge_gate_indexes_run_twice_on_mongodb() {
+        let db = crate::DatabaseInfo::Test("badge_gate_indexes".to_string())
+            .connect()
+            .await
+            .expect("Database connection failed.");
+        let crate::Database::MongoDb(mongo) = &db else {
+            return;
+        };
+        for _ in 0..2 {
+            super::create_badge_gate_indexes(&mongo.db()).await;
+        }
+        for (collection, name) in [("badge_grants", "badge_held"), ("badge_change_requests", "open_change")] {
+            let names = mongo
+                .db()
+                .collection::<Document>(collection)
+                .list_index_names()
+                .await
+                .unwrap();
+            assert!(names.contains(&name.to_string()), "{collection}: {names:?}");
+        }
+    }
+
+    /// MongoDB only: the purge_at indexes can be made twice, and new
+    /// interactions and OAuth codes and tokens carry `purge_at` as a date
+    #[tokio::test]
+    async fn purge_at_indexes_and_new_rows_on_mongodb() {
+        use crate::{AbstractInteractions, AbstractOAuth, Interaction, OAuthCode, OAuthToken};
+        use iso8601_timestamp::{Duration, Timestamp};
+        let db = crate::DatabaseInfo::Test("purge_at_indexes".to_string())
+            .connect()
+            .await
+            .expect("Database connection failed.");
+        let crate::Database::MongoDb(mongo) = &db else {
+            return;
+        };
+        for _ in 0..2 {
+            super::create_purge_at_indexes(&mongo.db()).await;
+        }
+        for collection in ["interactions", "oauth_codes", "oauth_tokens"] {
+            let names = mongo
+                .db()
+                .collection::<Document>(collection)
+                .list_index_names()
+                .await
+                .unwrap();
+            assert_eq!(names.iter().filter(|n| *n == "purge_at_ttl").count(), 1, "{collection}: {names:?}");
+        }
+
+        let (interaction, _) = Interaction::new(
+            revolt_models::v0::InteractionType::Command,
+            ulid::Ulid::new().to_string(),
+            ulid::Ulid::new().to_string(),
+            None,
+            ulid::Ulid::new().to_string(),
+            ulid::Ulid::new().to_string(),
+        );
+        mongo.insert_interaction(&interaction).await.unwrap();
+        let later = Timestamp::now_utc() + Duration::minutes(10);
+        let code = OAuthCode {
+            code_hash: ulid::Ulid::new().to_string(),
+            application_id: "app".to_string(),
+            user_id: "user".to_string(),
+            redirect_uri: "https://example.org/cb".to_string(),
+            scopes: vec![],
+            code_challenge: "c".to_string(),
+            expires_at: later,
+        };
+        mongo.insert_oauth_code(&code).await.unwrap();
+        let token = OAuthToken {
+            id: ulid::Ulid::new().to_string(),
+            family: ulid::Ulid::new().to_string(),
+            application_id: "app".to_string(),
+            user_id: "user".to_string(),
+            scopes: vec![],
+            access_hash: ulid::Ulid::new().to_string(),
+            refresh_hash: ulid::Ulid::new().to_string(),
+            access_expires_at: later,
+            expires_at: later,
+            revoked: false,
+        };
+        mongo.insert_oauth_token(&token).await.unwrap();
+        for (collection, id, expires) in [
+            ("interactions", interaction.id.clone(), interaction.expires_at),
+            ("oauth_codes", code.code_hash.clone(), code.expires_at),
+            ("oauth_tokens", token.id.clone(), token.expires_at),
+        ] {
+            let row = mongo
+                .db()
+                .collection::<Document>(collection)
+                .find_one(doc! { "_id": &id })
+                .await
+                .unwrap()
+                .unwrap();
+            let purge_at = row.get_datetime("purge_at").expect("purge_at is a BSON date");
+            let wanted = expires
+                .duration_since(Timestamp::UNIX_EPOCH)
+                .whole_milliseconds() as i64;
+            assert_eq!(purge_at.timestamp_millis(), wanted, "{collection}");
+        }
+        // the rows still read as the models
+        assert_eq!(mongo.fetch_interaction(&interaction.id).await.unwrap().id, interaction.id);
+    }
+
+    /// MongoDB only: the desk pending index can be made twice
+    #[tokio::test]
+    async fn desk_pending_indexes_run_twice_on_mongodb() {
+        let db = crate::DatabaseInfo::Test("desk_pending_indexes".to_string())
+            .connect()
+            .await
+            .expect("Database connection failed.");
+        let crate::Database::MongoDb(mongo) = &db else {
+            return;
+        };
+        for _ in 0..2 {
+            super::create_desk_pending_indexes(&mongo.db()).await;
+        }
+        let names = mongo
+            .db()
+            .collection::<Document>("desk_pending")
+            .list_index_names()
+            .await
+            .unwrap();
+        // the test database is kept between runs: count only this index
+        assert_eq!(names.iter().filter(|n| *n == "purge_at_ttl").count(), 1, "{names:?}");
+    }
+
+    /// MongoDB only: the community badge index can be made twice
+    #[tokio::test]
+    async fn community_badge_indexes_run_twice_on_mongodb() {
+        let db = crate::DatabaseInfo::Test("community_badge_indexes".to_string())
+            .connect()
+            .await
+            .expect("Database connection failed.");
+        let crate::Database::MongoDb(mongo) = &db else {
+            return;
+        };
+        for _ in 0..2 {
+            super::create_community_badge_indexes(&mongo.db()).await;
+        }
+        let names = mongo
+            .db()
+            .collection::<Document>("community_badge_checks")
+            .list_index_names()
+            .await
+            .unwrap();
+        assert!(names.contains(&"status_checked".to_string()), "{names:?}");
+    }
+
+    /// MongoDB only: the badge program indexes can be made twice
+    #[tokio::test]
+    async fn badge_program_indexes_run_twice_on_mongodb() {
+        let db = crate::DatabaseInfo::Test("badge_program_indexes".to_string())
+            .connect()
+            .await
+            .expect("Database connection failed.");
+        let crate::Database::MongoDb(mongo) = &db else {
+            return;
+        };
+        for _ in 0..2 {
+            super::create_badge_program_indexes(&mongo.db()).await;
+        }
+        for (collection, name) in [
+            ("badge_applications", "queue"),
+            ("badge_applications", "recheck"),
+            ("badge_evidence", "application"),
+            ("badge_reviews", "application"),
+            ("server_activity_weeks", "server_week"),
+        ] {
+            let names = mongo
+                .db()
+                .collection::<Document>(collection)
+                .list_index_names()
+                .await
+                .unwrap();
+            assert!(names.contains(&name.to_string()), "{collection}: {names:?}");
         }
     }
 

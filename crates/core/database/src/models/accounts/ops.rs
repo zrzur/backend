@@ -12,6 +12,10 @@ pub trait AbstractAccounts: Sync + Send {
     /// Find account by id
     async fn fetch_account(&self, id: &str) -> Result<Account>;
 
+    /// Of these account ids, the ones whose e-mail is confirmed (verified,
+    /// or verified and moving to a new address)
+    async fn fetch_verified_account_ids(&self, ids: &[String]) -> Result<std::collections::HashSet<String>>;
+
     /// Find account by normalised email
     async fn fetch_account_by_normalised_email(
         &self,
@@ -29,6 +33,9 @@ pub trait AbstractAccounts: Sync + Send {
 
     /// Find accounts which are due to be deleted
     async fn fetch_accounts_due_for_deletion(&self) -> Result<Vec<Account>>;
+
+    /// Accounts whose deletion is scheduled (due or not), at most `limit`
+    async fn fetch_accounts_scheduled_for_deletion(&self, limit: i64) -> Result<Vec<Account>>;
 
     /// Accounts made from an invite link before `before` whose e-mail is
     /// still not confirmed

@@ -45,11 +45,11 @@ pub fn is_official_server(server: &Server) -> bool {
     server.flags.is_some_and(|f| f & SERVER_OFFICIAL != 0)
 }
 
-/// A bot Zrzur runs: the Official flag on the bot, or the official-bot mark
-/// on its account (`zrzur-staff official-bot`). `bot_user` is the bot's own
-/// account; without it only the flag counts.
-pub fn is_official_bot(bot: &Bot, bot_user: Option<&User>) -> bool {
-    bot.flags.is_some_and(|f| f & BOT_OFFICIAL != 0) || bot_user.is_some_and(|u| u.official_bot)
+/// A bot Zrzur runs: the Official flag on the bot, the one source of the
+/// mark (`zrzur-staff official-bot` sets it, and the account's
+/// `official_bot` with it)
+pub fn is_official_bot(bot: &Bot) -> bool {
+    bot.flags.is_some_and(|f| f & BOT_OFFICIAL != 0)
 }
 
 /// Banned by staff. A disabled account alone is not enough: people
@@ -166,7 +166,7 @@ pub async fn staff_delete_bot(
         summary.push_str(&format!(" ({context})"));
     }
     let record = record_for(actor, "staff.bot.delete", "bot", &bot.id, &why, summary);
-    if is_official_bot(bot, bot_user.as_ref()) {
+    if is_official_bot(bot) {
         record_platform_audit(db, record, AuditOutcome::Denied).await?;
         return Err(create_error!(NotPrivileged));
     }
@@ -239,7 +239,7 @@ pub async fn plan_delete_owned(db: &Database, user: &User) -> Result<DeleteOwned
     for bot in db.fetch_bots_by_user(&user.id).await? {
         let bot_user = db.fetch_user(&bot.id).await.ok();
         let name = bot_user.as_ref().map(|u| u.username.clone()).unwrap_or_default();
-        if is_official_bot(&bot, bot_user.as_ref()) {
+        if is_official_bot(&bot) {
             plan.skipped.push(SkippedItem {
                 kind: "bot".into(),
                 id: bot.id.clone(),

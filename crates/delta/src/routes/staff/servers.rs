@@ -14,17 +14,25 @@
 //! first. Members see the change at once.
 
 use revolt_database::{
-    record_platform_audit, voice::VoiceClient, AuditOutcome, Database, PartialServer, StaffPermission,
+    AuditOutcome, Database, PartialServer, StaffPermission, record_platform_audit,
+    voice::VoiceClient,
 };
-use revolt_result::{create_error, Result};
-use rocket::{serde::json::Json, State};
+use revolt_result::{Result, create_error};
+use rocket::{State, serde::json::Json};
 use serde::{Deserialize, Serialize};
 
-use super::{reason, StaffContext};
+use super::{StaffContext, reason};
 
 /// `flags` bits: 1 official, 2 verified, 4 partner. Each action changes its
 /// own bit and keeps the others.
-use revolt_database::{SERVER_FLAG_OFFICIAL as FLAG_OFFICIAL, SERVER_FLAG_PARTNER as FLAG_PARTNER, SERVER_FLAG_VERIFIED as FLAG_VERIFIED};
+use revolt_database::{
+    SERVER_FLAG_OFFICIAL as FLAG_OFFICIAL, SERVER_FLAG_PARTNER as FLAG_PARTNER,
+    SERVER_FLAG_VERIFIED as FLAG_VERIFIED,
+};
+
+/// What `verify` and `partner` answer: those marks come from applications
+pub const APPLICATION_ONLY: &str =
+    "Verified Server and Partner are given only by approving an application (Badge applications).";
 
 #[derive(Deserialize)]
 pub struct DataServerAction {
@@ -55,12 +63,27 @@ pub async fn act(
     id: &str,
     data: Json<DataServerAction>,
 ) -> Result<Json<ServerActionResult>> {
-    let data = data.into_inner();
+    act_core(db, voice_client, &staff, id, data.into_inner())
+        .await
+        .map(Json)
+}
+
+/// The console's `act`, for any caller holding a [`StaffContext`] (the
+/// console route and Zrzur Desk): the same checks and records
+pub(super) async fn act_core(
+    db: &Database,
+    voice_client: &VoiceClient,
+    staff: &StaffContext,
+    id: &str,
+    data: DataServerAction,
+) -> Result<ServerActionResult> {
     if data.action == "delete" {
-        return delete(db, voice_client, &staff, id, &data.reason).await.map(Json);
+        return delete(db, voice_client, staff, id, &data.reason).await;
     }
     let transfer = data.action == "transfer";
-    staff.require_step_up(db, StaffPermission::ServersRestrict).await?;
+    staff
+        .require_step_up(db, StaffPermission::ServersRestrict)
+        .await?;
     if transfer && !staff.grant.is_owner(staff.now) {
         return Err(create_error!(NotPrivileged));
     }
@@ -69,24 +92,22 @@ pub async fn act(
     let mut partial = PartialServer::default();
     let flags = server.flags.unwrap_or_default();
     let mut summary = data.action.clone();
+    // Verified Server and Partner come only from an approved application
+    // (Badge applications), with its checks, reasons and two-person rules
+    if matches!(data.action.as_str(), "verify" | "partner") {
+        let mut record = staff.record("staff.server.action", Some(StaffPermission::ServersRestrict));
+        record.target_kind = Some("server".to_string());
+        record.target_id = Some(server.id.clone());
+        record.summary = Some(format!("{} denied:application_only", data.action));
+        record_platform_audit(db, record, AuditOutcome::Denied).await?;
+        return Err(create_error!(FailedValidation { error: APPLICATION_ONLY.to_string() }));
+    }
     match data.action.as_str() {
-        "verify" => {
-            if flags & (FLAG_OFFICIAL | FLAG_VERIFIED) != 0 {
-                return Err(create_error!(InvalidOperation));
-            }
-            partial.flags = Some(flags | FLAG_VERIFIED);
-        }
         "unverify" => {
             if flags & FLAG_VERIFIED == 0 {
                 return Err(create_error!(InvalidOperation));
             }
             partial.flags = Some(flags & !FLAG_VERIFIED);
-        }
-        "partner" => {
-            if flags & FLAG_PARTNER != 0 {
-                return Err(create_error!(InvalidOperation));
-            }
-            partial.flags = Some(flags | FLAG_PARTNER);
         }
         "unpartner" => {
             if flags & FLAG_PARTNER == 0 {
@@ -102,7 +123,28 @@ pub async fn act(
             partial.nsfw = Some(nsfw);
         }
         "transfer" => {
-            let to = data.to.as_deref().ok_or_else(|| create_error!(InvalidOperation))?;
+            // an official server is not handed over until a two-person
+            // rule for it exists
+            if flags & FLAG_OFFICIAL != 0 {
+                let mut record = staff.record(
+                    "staff.server.action",
+                    Some(StaffPermission::ServersRestrict),
+                );
+                record.target_kind = Some("server".to_string());
+                record.target_id = Some(server.id.clone());
+                record.summary = Some("transfer of an official server".to_string());
+                revolt_database::record_platform_audit(
+                    db,
+                    record,
+                    revolt_database::AuditOutcome::Denied,
+                )
+                .await?;
+                return Err(create_error!(NotPrivileged));
+            }
+            let to = data
+                .to
+                .as_deref()
+                .ok_or_else(|| create_error!(InvalidOperation))?;
             if to == server.owner {
                 return Err(create_error!(InvalidOperation));
             }
@@ -130,41 +172,70 @@ pub async fn act(
     // flags 0 means no mark in the app
     if let Err(error) = server.update(db, partial, vec![]).await {
         let mut failed = record;
-        failed.summary = Some(format!("{:?}", error.error_type).chars().take(200).collect());
+        failed.summary = Some(
+            format!("{:?}", error.error_type)
+                .chars()
+                .take(200)
+                .collect(),
+        );
         let _ = record_platform_audit(db, failed, AuditOutcome::Failed).await;
         return Err(error);
     }
 
     // a failure here never undoes the action
-    if matches!(data.action.as_str(), "verify" | "unverify" | "transfer") {
-        for owner in [&previous_owner, &server.owner] {
-            if let Err(error) = revolt_database::sync_verified_server_owner(db, owner).await {
-                log::error!("verified server owner badge for {owner}: {error:?}");
-            }
+    if transfer {
+        server.flags = crate::routes::badges::programs::after_server_transfer(db, &server, &previous_owner).await;
+    } else if matches!(data.action.as_str(), "unverify" | "unpartner") {
+        // the approved application ends with its mark (Partner: the badge too)
+        let program = if data.action == "unverify" {
+            revolt_database::BadgeProgram::VerifiedServer
+        } else {
+            revolt_database::BadgeProgram::Partner
+        };
+        let programs = revolt_config::config().await.api.badge_programs;
+        if let Err(error) = revolt_database::end_programs_for_target(
+            db,
+            &programs,
+            &server.id,
+            Some(program),
+            "mark_removed",
+            crate::routes::badges::now_ms(),
+        )
+        .await
+        {
+            log::error!("programs of server {}: {:?}", server.id, error.error_type);
+        }
+        if let Err(error) = revolt_database::sync_verified_server_owner(db, &server.owner).await {
+            log::error!("verified server owner badge for {}: {error:?}", server.owner);
         }
     }
 
     // the owner (and a new owner) hear about it in their private messages
     let key = match data.action.as_str() {
-        "verify" => "server.verified",
         "unverify" => "server.unverified",
         "mark_nsfw" => "server.nsfw",
         "unmark_nsfw" => "server.not_nsfw",
-        "partner" => "server.partnered",
         "unpartner" => "server.unpartnered",
         _ => "server.transferred_from",
     };
     crate::util::official::server(db, &previous_owner, key, &server.name, &why).await;
     if transfer {
-        crate::util::official::server(db, &server.owner, "server.transferred_to", &server.name, &why).await;
+        crate::util::official::server(
+            db,
+            &server.owner,
+            "server.transferred_to",
+            &server.name,
+            &why,
+        )
+        .await;
     }
-    Ok(Json(ServerActionResult {
+    Ok(ServerActionResult {
         id: server.id,
         owner: server.owner,
         flags: server.flags,
         nsfw: server.nsfw,
         deleted: false,
-    }))
+    })
 }
 
 /// `delete`: owner role and step-up, a reason, never an official server.

@@ -181,6 +181,9 @@ async fn enforce(
             }
             // drop the bot's open connections; its token stops working
             EventV1::Logout.p(id.clone()).await;
+            // a suspended bot's Verified Bot application ends, and the owner's
+            // Verified Bot Developer badge goes (through the badge gate)
+            revolt_database::bot_programs_ended(db, &id, &bot.owner, "bot_suspended").await;
             Ok((Some(bot.owner), None))
         }
         SafetyActionKind::RemoveDiscoverListing => {
@@ -838,6 +841,17 @@ pub(crate) async fn prepare_public_case(db: &Database, reviewer: &User, case: &m
         capture_public_evidence(db, reviewer, case).await?;
     }
     Ok(())
+}
+
+/// The account an action on `case` would concern, read only: the same
+/// owner resolution as [`prepare_public_case`], without changing the case
+/// or copying evidence
+pub(crate) async fn resolved_owner(db: &Database, case: &SafetyCase) -> Option<String> {
+    if owner_is_stale(db, case).await {
+        super::public_report::resolve_owner(db, case.target.kind, &case.target.id).await.0
+    } else {
+        case.target_owner_id.clone()
+    }
 }
 
 /// Nobody is named yet, or the case names the webhook or bot that posted the

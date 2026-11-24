@@ -6,17 +6,19 @@
 //! Every change and every refused attempt is written to the platform audit
 //! log. Not part of the public OpenAPI document or the SDK.
 
-mod guard;
+mod audited;
 mod badges;
-mod change_requests;
+mod badge_applications;
 mod beta;
 mod billing;
+mod bots;
+mod change_requests;
 mod content;
 mod creators;
-mod bots;
 mod deletion;
 mod desk;
 mod discover;
+mod guard;
 mod metrics;
 mod official;
 mod platform;
@@ -27,29 +29,28 @@ mod security;
 mod servers;
 mod support;
 mod team;
-mod words;
-mod audited;
 #[cfg(test)]
 mod test;
+mod words;
 
-pub use guard::StaffContext;
-pub(crate) use desk::{
-    hides_field_from_bot as desk_hides_field_from_bot, keeps_options as desk_keeps_options,
-    CODE_FIELD as DESK_CODE_FIELD,
-};
 #[cfg(test)]
 pub(crate) use desk::test_settings as desk_test_settings;
+pub(crate) use desk::{
+    CODE_FIELD as DESK_CODE_FIELD, answers_privately as desk_answers_privately,
+    hides_field_from_bot as desk_hides_field_from_bot, keeps_options as desk_keeps_options,
+};
+pub use guard::StaffContext;
 pub use metrics::Metrics;
 
 use revolt_database::{
-    check_staff_change, new_staff_token, record_platform_audit, staff_now, staff_token_hash,
-    verify_audit_chain, verify_staff_totp, AuditOutcome, AuditRecord, Database, PlatformAuditEntry,
-    PlatformAuditQuery, Session, StaffGrant, StaffPermission, StaffRole, StaffSession,
-    StaffSessionKind, Totp, User,
-    STAFF_SESSION_IDLE_MS, STAFF_SESSION_MAX_MS, STAFF_STEP_UP_MS,
+    AuditOutcome, AuditRecord, Database, PlatformAuditEntry, PlatformAuditQuery,
+    STAFF_SESSION_IDLE_MS, STAFF_SESSION_MAX_MS, STAFF_STEP_UP_MS, Session, StaffGrant,
+    StaffPermission, StaffRole, StaffSession, StaffSessionKind, Totp, User, check_staff_change,
+    new_staff_token, record_platform_audit, staff_now, staff_token_hash, verify_audit_chain,
+    verify_staff_totp,
 };
-use revolt_result::{create_error, Result};
-use rocket::{serde::json::Json, Request, Route, State};
+use revolt_result::{Result, create_error};
+use rocket::{Request, Route, State, serde::json::Json};
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
@@ -85,6 +86,20 @@ pub fn routes() -> Vec<Route> {
         badges::user_badges,
         badges::grant,
         badges::revoke,
+        badges::requests,
+        badges::approve,
+        badges::refuse,
+        badges::community_checks,
+        badges::community_release,
+        badges::community_refuse,
+        badge_applications::queue,
+        badge_applications::detail,
+        badge_applications::take,
+        badge_applications::decide,
+        badge_applications::decide_appeal,
+        badge_applications::recheck,
+        badge_applications::creator_ownership,
+        badge_applications::creator_figures,
         bots::list,
         bots::detail,
         bots::disable,
@@ -93,6 +108,9 @@ pub fn routes() -> Vec<Route> {
         bots::unverify,
         bots::delete,
         deletion::delete_owned,
+        deletion::delete_request,
+        deletion::cancel_delete_request,
+        deletion::deletions,
         change_requests::list,
         change_requests::create,
         change_requests::cancel,
@@ -275,9 +293,10 @@ pub struct AuditCheck {
 
 pub(super) fn reason(text: &str) -> Result<String> {
     let text = text.trim();
-    if text.chars().count() < 3 || text.chars().count() > 500 {
+    // it reaches the audit log and often the person: kept short
+    if text.chars().count() < 3 || text.chars().count() > 300 {
         return Err(revolt_result::failed_validation(vec![
-            revolt_result::ValidationProblem::length("reason", 3, 500),
+            revolt_result::ValidationProblem::length("reason", 3, 300),
         ]));
     }
     Ok(text.to_string())
@@ -426,6 +445,7 @@ async fn open_session(
         last_seen_at: now,
         expires_at: now + STAFF_SESSION_MAX_MS,
         step_up_until: None,
+        step_up_at: None,
         revoked_at: None,
         user_agent: client.user_agent,
         kind: Default::default(),
@@ -449,9 +469,14 @@ async fn open_session(
 /// # Close the staff session (sign out of the console)
 #[delete("/session")]
 async fn close_session(db: &State<Database>, staff: StaffContext) -> Result<()> {
-    db.revoke_staff_session(&staff.session.id, staff.now).await?;
-    record_platform_audit(db, staff.record("staff.session.close", None), AuditOutcome::Success)
+    db.revoke_staff_session(&staff.session.id, staff.now)
         .await?;
+    record_platform_audit(
+        db,
+        staff.record("staff.session.close", None),
+        AuditOutcome::Success,
+    )
+    .await?;
     Ok(())
 }
 
@@ -471,10 +496,17 @@ async fn step_up(
         return Err(error);
     }
     let until = (staff.now + STAFF_STEP_UP_MS).min(staff.session.expires_at);
-    record_platform_audit(db, staff.record("staff.session.step_up", None), AuditOutcome::Success)
+    record_platform_audit(
+        db,
+        staff.record("staff.session.step_up", None),
+        AuditOutcome::Success,
+    )
+    .await?;
+    db.set_staff_step_up(&staff.session.id, staff.now, until)
         .await?;
-    db.set_staff_step_up(&staff.session.id, until).await?;
-    Ok(Json(StepUp { step_up_until: until }))
+    Ok(Json(StepUp {
+        step_up_until: until,
+    }))
 }
 
 /// # Who am I
@@ -516,6 +548,12 @@ async fn roles(db: &State<Database>, staff: StaffContext) -> Result<Json<Vec<Rol
 /// # Staff members
 #[get("/members")]
 async fn members(db: &State<Database>, staff: StaffContext) -> Result<Json<Vec<StaffMember>>> {
+    members_core(db, &staff).await.map(Json)
+}
+
+/// The console's `members`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+async fn members_core(db: &Database, staff: &StaffContext) -> Result<Vec<StaffMember>> {
     staff.require(db, StaffPermission::StaffRead).await?;
     let grants = db.fetch_staff_grants().await?;
     let ids: Vec<String> = grants.iter().map(|g| g.id.clone()).collect();
@@ -545,7 +583,7 @@ async fn members(db: &State<Database>, staff: StaffContext) -> Result<Json<Vec<S
             updated_by: grant.updated_by,
         });
     }
-    Ok(Json(out))
+    Ok(out)
 }
 
 fn role_names(roles: &[StaffRole]) -> String {
@@ -569,10 +607,23 @@ async fn set_member(
     id: &str,
     data: Json<DataSetMember>,
 ) -> Result<Json<StaffMember>> {
+    set_member_core(db, &staff, id, data.into_inner())
+        .await
+        .map(Json)
+}
+
+/// The console's `set_member`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+async fn set_member_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataSetMember,
+) -> Result<StaffMember> {
     staff
         .require_step_up(db, StaffPermission::StaffManage)
         .await?;
-    let data = data.into_inner();
+    let data = data;
     let reason = reason(&data.reason)?;
     let target = db.fetch_user(id).await?;
     if target.bot.is_some() {
@@ -593,10 +644,14 @@ async fn set_member(
     new_roles.dedup();
 
     let current = fetch_grant(db, id).await?;
-    let current_roles = current.as_ref().map(|g| g.roles.clone()).unwrap_or_default();
+    let current_roles = current
+        .as_ref()
+        .map(|g| g.roles.clone())
+        .unwrap_or_default();
     let mut record = staff.record("staff.grant.update", Some(StaffPermission::StaffManage));
     record.target_kind = Some("user".to_string());
     record.target_id = Some(target.id.clone());
+    let end_reason = reason.clone();
     record.reason = Some(reason);
     record.summary = Some(format!(
         "roles {} -> {}",
@@ -612,7 +667,10 @@ async fn set_member(
         &new_roles,
     ) {
         let mut record = record;
-        record.summary = Some(format!("{} ({denied:?})", record.summary.unwrap_or_default()));
+        record.summary = Some(format!(
+            "{} ({denied:?})",
+            record.summary.unwrap_or_default()
+        ));
         record_platform_audit(db, record, AuditOutcome::Denied).await?;
         return Err(create_error!(NotPrivileged));
     }
@@ -621,7 +679,7 @@ async fn set_member(
     if data.version != expected {
         return Err(create_error!(InvalidOperation));
     }
-    let grant = StaffGrant {
+    let mut grant = StaffGrant {
         id: target.id.clone(),
         roles: new_roles,
         disabled: false,
@@ -630,7 +688,10 @@ async fn set_member(
         version: expected.unwrap_or(0) + 1,
         updated_at: staff.now,
         updated_by: staff.user.id.clone(),
+        active_since: None,
+        activated_by: None,
     };
+    grant.carry_activation(current.as_ref(), staff.now, &staff.user.id);
     if !db.save_staff_grant(&grant, expected).await? {
         return Err(create_error!(InvalidOperation));
     }
@@ -649,8 +710,14 @@ async fn set_member(
         }
         return Err(error);
     }
-    db.revoke_staff_sessions_for_user(&target.id, staff.now).await?;
-    Ok(Json(StaffMember {
+    db.revoke_staff_sessions_for_user(&target.id, staff.now)
+        .await?;
+    // no access left: the Staff badge goes too (the appointment end)
+    if grant.roles.is_empty() {
+        revolt_database::end_staff_badge_with_grant(db, &staff.user.id, &target.id, &end_reason)
+            .await?;
+    }
+    Ok(std::convert::identity(StaffMember {
         user_id: grant.id.clone(),
         username: Some(target.username),
         active: grant.is_active(staff.now),
@@ -676,6 +743,17 @@ async fn disable_member(
     id: &str,
     data: Json<DataReason>,
 ) -> Result<()> {
+    disable_member_core(db, &staff, id, data.into_inner()).await
+}
+
+/// The console's `disable_member`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+async fn disable_member_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataReason,
+) -> Result<()> {
     staff
         .require_step_up(db, StaffPermission::StaffManage)
         .await?;
@@ -686,6 +764,7 @@ async fn disable_member(
     let mut record = staff.record("staff.grant.disable", Some(StaffPermission::StaffManage));
     record.target_kind = Some("user".to_string());
     record.target_id = Some(id.to_string());
+    let end_reason = reason.clone();
     record.reason = Some(reason);
     if id == staff.user.id || grant.roles.contains(&StaffRole::Owner) {
         record_platform_audit(db, record, AuditOutcome::Denied).await?;
@@ -701,10 +780,14 @@ async fn disable_member(
     grant.version += 1;
     grant.updated_at = staff.now;
     grant.updated_by = staff.user.id.clone();
+    grant.active_since = None;
+    grant.activated_by = None;
     if !db.save_staff_grant(&grant, Some(expected)).await? {
         return Err(create_error!(InvalidOperation));
     }
     db.revoke_staff_sessions_for_user(id, staff.now).await?;
+    // access switched off: the Staff badge goes too (the appointment end)
+    revolt_database::end_staff_badge_with_grant(db, &staff.user.id, id, &end_reason).await?;
     Ok(())
 }
 
@@ -720,7 +803,22 @@ async fn revoke_member_sessions(
     id: &str,
     data: Json<DataReason>,
 ) -> Result<Json<usize>> {
-    staff.require_protective(db, StaffPermission::StaffManage).await?;
+    revoke_member_sessions_core(db, &staff, id, data.into_inner())
+        .await
+        .map(Json)
+}
+
+/// The console's `revoke_member_sessions`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+async fn revoke_member_sessions_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataReason,
+) -> Result<usize> {
+    staff
+        .require_protective(db, StaffPermission::StaffManage)
+        .await?;
     let mut record = staff.record("staff.sessions.revoke", Some(StaffPermission::StaffManage));
     record.target_kind = Some("user".to_string());
     record.target_id = Some(id.to_string());
@@ -739,7 +837,9 @@ async fn revoke_member_sessions(
         staff.require(db, StaffPermission::StaffManage).await?;
     }
     record_platform_audit(db, record, AuditOutcome::Success).await?;
-    Ok(Json(db.revoke_staff_sessions_for_user(id, staff.now).await?))
+    Ok(std::convert::identity(
+        db.revoke_staff_sessions_for_user(id, staff.now).await?,
+    ))
 }
 
 // ---- audit log ----
@@ -756,17 +856,31 @@ async fn audit(
     target: Option<String>,
     limit: Option<usize>,
 ) -> Result<Json<Vec<PlatformAuditEntry>>> {
+    audit_core(db, &staff, before, actor, target, limit)
+        .await
+        .map(Json)
+}
+
+/// The console's `audit`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+async fn audit_core(
+    db: &Database,
+    staff: &StaffContext,
+    before: Option<i64>,
+    actor: Option<String>,
+    target: Option<String>,
+    limit: Option<usize>,
+) -> Result<Vec<PlatformAuditEntry>> {
     staff.require(db, StaffPermission::AuditRead).await?;
-    Ok(Json(
-        db.fetch_platform_audit(PlatformAuditQuery {
+    Ok(db
+        .fetch_platform_audit(PlatformAuditQuery {
             before_seq: before,
             actor_id: actor.filter(|a| !a.is_empty() && a.len() <= 64),
             target_id: target.filter(|t| !t.is_empty() && t.len() <= 64),
             action_prefix: None,
             limit: limit.unwrap_or(50).clamp(1, 200),
         })
-        .await?,
-    ))
+        .await?)
 }
 
 /// # Check the audit chain
@@ -779,9 +893,24 @@ async fn verify_audit(
     from: Option<i64>,
     limit: Option<usize>,
 ) -> Result<Json<AuditCheck>> {
+    verify_audit_core(db, &staff, from, limit).await.map(Json)
+}
+
+/// The console's `verify_audit`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+async fn verify_audit_core(
+    db: &Database,
+    staff: &StaffContext,
+    from: Option<i64>,
+    limit: Option<usize>,
+) -> Result<AuditCheck> {
     staff.require(db, StaffPermission::AuditRead).await?;
     let limit = limit.unwrap_or(1000).clamp(1, 5000);
-    let last = db.fetch_last_platform_audit().await?.map(|e| e.seq).unwrap_or(0);
+    let last = db
+        .fetch_last_platform_audit()
+        .await?
+        .map(|e| e.seq)
+        .unwrap_or(0);
     let from = from.unwrap_or(last - limit as i64 + 1).max(1);
     // include the record before `from` so the first link is checked too
     let mut entries = db
@@ -793,10 +922,10 @@ async fn verify_audit(
         None
     };
     let result = verify_audit_chain(before.as_ref(), &entries);
-    Ok(Json(AuditCheck {
+    Ok(AuditCheck {
         checked: entries.len(),
         from_seq: from,
         ok: result.is_ok(),
         first_bad_seq: result.err(),
-    }))
+    })
 }

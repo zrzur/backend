@@ -20,6 +20,7 @@ database_derived!(
     pub struct ReferenceDb {
         pub audit_logs: Arc<Mutex<HashMap<String, AuditLogEntry>>>,
         pub badge_store: Arc<Mutex<crate::BadgeStore>>,
+        pub badge_programs: Arc<Mutex<crate::ProgramStore>>,
         pub plugin_store: Arc<Mutex<crate::PluginStore>>,
         pub bots: Arc<Mutex<HashMap<String, Bot>>>,
         pub channels: Arc<Mutex<HashMap<String, Channel>>>,
@@ -31,6 +32,7 @@ database_derived!(
         pub command_permissions:
             Arc<Mutex<HashMap<String, revolt_models::v0::CommandPermissions>>>,
         pub interactions: Arc<Mutex<HashMap<String, crate::Interaction>>>,
+        pub desk_pending: Arc<Mutex<HashMap<String, crate::DeskPending>>>,
         pub oauth: Arc<Mutex<crate::ReferenceOAuth>>,
         pub emojis: Arc<Mutex<HashMap<String, Emoji>>>,
         pub soundboard_sounds: Arc<Mutex<HashMap<String, crate::SoundboardSound>>>,

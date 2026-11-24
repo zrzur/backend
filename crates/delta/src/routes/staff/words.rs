@@ -6,20 +6,26 @@
 
 use revolt_database::{Database, StaffPermission};
 use revolt_models::v0::{DataPlatformWord, PlatformWord};
-use revolt_result::{create_error, Result};
-use rocket::{serde::json::Json, State};
+use revolt_result::{Result, create_error};
+use rocket::{State, serde::json::Json};
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 use validator::Validate;
 
 use super::audited::audited;
-use super::{reason, DataReason, StaffContext};
+use super::{DataReason, StaffContext, reason};
 
 /// # The word list
 #[get("/words")]
 pub async fn list(db: &State<Database>, staff: StaffContext) -> Result<Json<Vec<PlatformWord>>> {
+    list_core(db, &staff).await.map(Json)
+}
+
+/// The console's `list`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn list_core(db: &Database, staff: &StaffContext) -> Result<Vec<PlatformWord>> {
     staff.require(db, StaffPermission::ReportsRead).await?;
-    Ok(Json(db.fetch_platform_words().await?))
+    Ok(db.fetch_platform_words().await?)
 }
 
 #[derive(Deserialize)]
@@ -47,9 +53,20 @@ pub async fn add(
     staff: StaffContext,
     data: Json<DataAddWord>,
 ) -> Result<Json<PlatformWord>> {
+    add_core(db, &staff, data.into_inner()).await.map(Json)
+}
+
+/// The console's `add`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn add_core(
+    db: &Database,
+    staff: &StaffContext,
+    data: DataAddWord,
+) -> Result<PlatformWord> {
     staff.require(db, StaffPermission::ReportsResolve).await?;
-    let data = data.into_inner();
-    data.word.validate().map_err(|error| revolt_database::util::validation::validation_failed(&error))?;
+    data.word
+        .validate()
+        .map_err(|error| revolt_database::util::validation::validation_failed(&error))?;
     let pattern = data.word.pattern.trim().to_string();
     if pattern.trim_matches('*').trim().is_empty() {
         return Err(create_error!(FailedValidation {
@@ -79,7 +96,7 @@ pub async fn add(
     record.reason = Some(reason(&data.reason)?);
     record.summary = Some(word.pattern.clone());
     audited(db, record, db.insert_platform_word(&word)).await?;
-    Ok(Json(word))
+    Ok(word)
 }
 
 /// # Remove a word
@@ -90,13 +107,27 @@ pub async fn remove(
     id: &str,
     data: Json<DataReason>,
 ) -> Result<rocket_empty::EmptyResponse> {
+    remove_core(db, &staff, id, data.into_inner()).await?;
+    Ok(rocket_empty::EmptyResponse)
+}
+
+/// The console's `remove`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn remove_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataReason,
+) -> Result<()> {
     staff.require(db, StaffPermission::ReportsResolve).await?;
-    let mut record = staff.record("platform.words.remove", Some(StaffPermission::ReportsResolve));
+    let mut record = staff.record(
+        "platform.words.remove",
+        Some(StaffPermission::ReportsResolve),
+    );
     record.target_kind = Some("platform_word".to_string());
     record.target_id = Some(id.to_string());
     record.reason = Some(reason(&data.reason)?);
-    audited(db, record, db.delete_platform_word(id)).await?;
-    Ok(rocket_empty::EmptyResponse)
+    audited(db, record, db.delete_platform_word(id)).await
 }
 
 /// # Try a text against the list
@@ -106,8 +137,18 @@ pub async fn check(
     staff: StaffContext,
     data: Json<DataWordCheck>,
 ) -> Result<Json<WordCheck>> {
+    check_core(db, &staff, data.into_inner()).await.map(Json)
+}
+
+/// The console's `check`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn check_core(
+    db: &Database,
+    staff: &StaffContext,
+    data: DataWordCheck,
+) -> Result<WordCheck> {
     staff.require(db, StaffPermission::ReportsRead).await?;
-    Ok(Json(WordCheck {
+    Ok(WordCheck {
         category: revolt_database::check_platform_words(db, &data.text).await?,
-    }))
+    })
 }

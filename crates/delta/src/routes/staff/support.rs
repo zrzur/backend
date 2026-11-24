@@ -19,14 +19,13 @@ use std::collections::HashMap;
 
 use revolt_config::config;
 use revolt_database::{
-    record_platform_audit,
+    AuditOutcome, AuditRecord, Database, NOTICE_BODY_MAX, NOTICE_TITLE_MAX, PlatformNotice,
+    SUPPORT_BODY_MAX, SUPPORT_CATEGORIES, SUPPORT_MESSAGES_MAX, StaffPermission, SupportTicket,
+    SupportTicketMessage, SupportTicketQuery, SupportTicketStatus, record_platform_audit,
     util::email::{email_templates, send_email},
-    AuditOutcome, AuditRecord, Database, PlatformNotice, StaffPermission, SupportTicket,
-    SupportTicketMessage, SupportTicketQuery, SupportTicketStatus, NOTICE_BODY_MAX,
-    NOTICE_TITLE_MAX, SUPPORT_BODY_MAX, SUPPORT_CATEGORIES, SUPPORT_MESSAGES_MAX,
 };
-use revolt_result::{create_error, Result};
-use rocket::{serde::json::Json, State};
+use revolt_result::{Result, create_error};
+use rocket::{State, serde::json::Json};
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
@@ -51,7 +50,12 @@ async fn audited<T>(
         Ok(value) => Ok(value),
         Err(error) => {
             let mut failed = record;
-            failed.summary = Some(format!("{:?}", error.error_type).chars().take(200).collect());
+            failed.summary = Some(
+                format!("{:?}", error.error_type)
+                    .chars()
+                    .take(200)
+                    .collect(),
+            );
             let _ = record_platform_audit(db, failed, AuditOutcome::Failed).await;
             Err(error)
         }
@@ -104,7 +108,12 @@ async fn names(db: &Database, mut ids: Vec<String>) -> Result<HashMap<String, St
         .fetch_users(&ids)
         .await?
         .into_iter()
-        .map(|u| (u.id, revolt_models::v0::user_handle(&u.username, &u.discriminator)))
+        .map(|u| {
+            (
+                u.id,
+                revolt_models::v0::user_handle(&u.username, &u.discriminator),
+            )
+        })
         .collect())
 }
 
@@ -183,8 +192,27 @@ pub async fn tickets(
     user: Option<&str>,
     before: Option<i64>,
 ) -> Result<Json<Vec<StaffTicket>>> {
+    tickets_core(db, &staff, status, assigned, category, user, before)
+        .await
+        .map(Json)
+}
+
+/// The console's `tickets`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn tickets_core(
+    db: &Database,
+    staff: &StaffContext,
+    status: Option<&str>,
+    assigned: Option<&str>,
+    category: Option<&str>,
+    user: Option<&str>,
+    before: Option<i64>,
+) -> Result<Vec<StaffTicket>> {
     staff.require(db, StaffPermission::SupportRead).await?;
-    if category.is_some_and(|c| !SUPPORT_CATEGORIES.contains(&c)) || user.is_some_and(|u| u.len() > 64) || assigned.is_some_and(|a| a.len() > 64) {
+    if category.is_some_and(|c| !SUPPORT_CATEGORIES.contains(&c))
+        || user.is_some_and(|u| u.len() > 64)
+        || assigned.is_some_and(|a| a.len() > 64)
+    {
         return Err(create_error!(InvalidOperation));
     }
     let status = status.map(parse_status).transpose()?;
@@ -207,15 +235,29 @@ pub async fn tickets(
     let mut ids: Vec<String> = list.iter().map(|t| t.user_id.clone()).collect();
     ids.extend(list.iter().filter_map(|t| t.assigned_to.clone()));
     let names = names(db, ids).await?;
-    Ok(Json(list.iter().map(|t| staff_view(t, &names, false)).collect()))
+    Ok(list.iter().map(|t| staff_view(t, &names, false)).collect())
 }
 
 /// # A support ticket, with staff notes
 #[get("/support/tickets/<id>")]
-pub async fn ticket(db: &State<Database>, staff: StaffContext, id: &str) -> Result<Json<StaffTicket>> {
+pub async fn ticket(
+    db: &State<Database>,
+    staff: StaffContext,
+    id: &str,
+) -> Result<Json<StaffTicket>> {
+    ticket_core(db, &staff, id).await.map(Json)
+}
+
+/// The console's `ticket`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn ticket_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+) -> Result<StaffTicket> {
     staff.require(db, StaffPermission::SupportRead).await?;
     let t = db.fetch_support_ticket(id).await?;
-    Ok(Json(full_view(db, &t).await?))
+    Ok(full_view(db, &t).await?)
 }
 
 fn ticket_record(staff: &StaffContext, action: &str, t: &SupportTicket) -> AuditRecord {
@@ -247,8 +289,20 @@ pub async fn reply(
     id: &str,
     data: Json<DataStaffReply>,
 ) -> Result<Json<StaffTicket>> {
+    reply_core(db, &staff, id, data.into_inner())
+        .await
+        .map(Json)
+}
+
+/// The console's `reply`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn reply_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataStaffReply,
+) -> Result<StaffTicket> {
     staff.require(db, StaffPermission::SupportManage).await?;
-    let data = data.into_inner();
     let body = text(&data.body, SUPPORT_BODY_MAX, "the message")?;
     let mut t = db.fetch_support_ticket(id).await?;
     if t.user_id == staff.user.id {
@@ -256,7 +310,9 @@ pub async fn reply(
         return Err(create_error!(NotPrivileged));
     }
     if t.messages.len() >= SUPPORT_MESSAGES_MAX {
-        return Err(invalid("this ticket is full; ask the person to open a new one"));
+        return Err(invalid(
+            "this ticket is full; ask the person to open a new one",
+        ));
     }
     let before = t.updated_at;
     let now = staff.now.max(before + 1);
@@ -282,16 +338,25 @@ pub async fn reply(
         }
     }
     t.updated_at = now;
-    let action = if data.internal { "staff.support.note" } else { "staff.support.reply" };
+    let action = if data.internal {
+        "staff.support.note"
+    } else {
+        "staff.support.reply"
+    };
     let mut record = ticket_record(&staff, action, &t);
     record.summary = Some(status_name(t.status).to_string());
     audited(db, record, save(db, &t, before)).await?;
     if !data.internal {
         // the answer arrives in their private messages from Zrzur's official account
-        let answer = t.messages.last().map(|m| m.body.clone()).unwrap_or_default();
-        crate::util::official::ticket_answered(db, &t.user_id, &t.subject, &answer, data.close).await;
+        let answer = t
+            .messages
+            .last()
+            .map(|m| m.body.clone())
+            .unwrap_or_default();
+        crate::util::official::ticket_answered(db, &t.user_id, &t.subject, &answer, data.close)
+            .await;
     }
-    Ok(Json(full_view(db, &t).await?))
+    Ok(full_view(db, &t).await?)
 }
 
 #[derive(Deserialize)]
@@ -311,8 +376,20 @@ pub async fn change(
     id: &str,
     data: Json<DataTicketChange>,
 ) -> Result<Json<StaffTicket>> {
+    change_core(db, &staff, id, data.into_inner())
+        .await
+        .map(Json)
+}
+
+/// The console's `change`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn change_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataTicketChange,
+) -> Result<StaffTicket> {
     staff.require(db, StaffPermission::SupportManage).await?;
-    let data = data.into_inner();
     let mut t = db.fetch_support_ticket(id).await?;
     let before = t.updated_at;
     let now = staff.now.max(before + 1);
@@ -320,8 +397,15 @@ pub async fn change(
         "assign" => {
             let to = data.to.unwrap_or_else(|| staff.user.id.clone());
             // only to someone who can work on tickets
-            let grant = db.fetch_staff_grant(&to).await?.ok_or_else(|| create_error!(NotFound))?;
-            if !grant.is_active(now) || !grant.effective(now).contains(&StaffPermission::SupportManage) {
+            let grant = db
+                .fetch_staff_grant(&to)
+                .await?
+                .ok_or_else(|| create_error!(NotFound))?;
+            if !grant.is_active(now)
+                || !grant
+                    .effective(now)
+                    .contains(&StaffPermission::SupportManage)
+            {
                 return Err(invalid("they can't work on support tickets"));
             }
             if to == t.user_id {
@@ -358,7 +442,7 @@ pub async fn change(
         _ => data.action.clone(),
     });
     audited(db, record, save(db, &t, before)).await?;
-    Ok(Json(full_view(db, &t).await?))
+    Ok(full_view(db, &t).await?)
 }
 
 // ---------------------------------------------------------------- notices
@@ -375,22 +459,35 @@ pub struct StaffNotice {
 ///
 /// Newest first; `user` limits it to one person's notices.
 #[get("/notices?<user>")]
-pub async fn notices(db: &State<Database>, staff: StaffContext, user: Option<&str>) -> Result<Json<Vec<StaffNotice>>> {
+pub async fn notices(
+    db: &State<Database>,
+    staff: StaffContext,
+    user: Option<&str>,
+) -> Result<Json<Vec<StaffNotice>>> {
+    notices_core(db, &staff, user).await.map(Json)
+}
+
+/// The console's `notices`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn notices_core(
+    db: &Database,
+    staff: &StaffContext,
+    user: Option<&str>,
+) -> Result<Vec<StaffNotice>> {
     staff.require(db, StaffPermission::SupportRead).await?;
     if user.is_some_and(|u| u.len() > 64) {
         return Err(create_error!(InvalidOperation));
     }
     let list = db.fetch_platform_notices(user, 100).await?;
     let names = names(db, list.iter().filter_map(|n| n.user_id.clone()).collect()).await?;
-    Ok(Json(
-        list.into_iter()
-            .map(|n| StaffNotice {
-                user: n.user_id.as_ref().and_then(|u| names.get(u).cloned()),
-                live: n.is_live(staff.now),
-                notice: n,
-            })
-            .collect(),
-    ))
+    Ok(list
+        .into_iter()
+        .map(|n| StaffNotice {
+            user: n.user_id.as_ref().and_then(|u| names.get(u).cloned()),
+            live: n.is_live(staff.now),
+            notice: n,
+        })
+        .collect())
 }
 
 #[derive(Deserialize)]
@@ -413,14 +510,21 @@ pub struct DataNotice {
     pub email: bool,
 }
 
-fn languages(values: &HashMap<String, String>, max: usize, what: &str) -> Result<HashMap<String, String>> {
+fn languages(
+    values: &HashMap<String, String>,
+    max: usize,
+    what: &str,
+) -> Result<HashMap<String, String>> {
     if values.keys().any(|k| !LANGUAGES.contains(&k.as_str())) {
         return Err(invalid("unknown language"));
     }
     let mut out = HashMap::new();
     for language in LANGUAGES {
         let value = values.get(language).map(String::as_str).unwrap_or_default();
-        out.insert(language.to_string(), text(value, max, &format!("{what} ({language})"))?);
+        out.insert(
+            language.to_string(),
+            text(value, max, &format!("{what} ({language})"))?,
+        );
     }
     Ok(out)
 }
@@ -432,21 +536,48 @@ pub async fn send(
     staff: StaffContext,
     data: Json<DataNotice>,
 ) -> Result<Json<StaffNotice>> {
-    let data = data.into_inner();
+    send_core(db, &staff, data.into_inner()).await.map(Json)
+}
+
+/// The console's `send`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn send_core(
+    db: &Database,
+    staff: &StaffContext,
+    data: DataNotice,
+) -> Result<StaffNotice> {
     let everyone = data.user.is_none();
-    let permission = if everyone { StaffPermission::SettingsManage } else { StaffPermission::SupportManage };
+    let permission = if everyone {
+        StaffPermission::SettingsManage
+    } else {
+        StaffPermission::SupportManage
+    };
     staff.require_step_up(db, permission).await?;
     let title = languages(&data.title, NOTICE_TITLE_MAX, "the title")?;
     let body = languages(&data.body, NOTICE_BODY_MAX, "the text")?;
     if !matches!(data.tone.as_str(), "info" | "warning" | "important") {
         return Err(invalid("unknown tone"));
     }
-    let link = match data.link.as_deref().map(str::trim).filter(|l| !l.is_empty()) {
-        Some(l) if l.starts_with("https://") && l.len() <= 300 && !l.chars().any(char::is_whitespace) => Some(l.to_string()),
+    let link = match data
+        .link
+        .as_deref()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+    {
+        Some(l)
+            if l.starts_with("https://")
+                && l.len() <= 300
+                && !l.chars().any(char::is_whitespace) =>
+        {
+            Some(l.to_string())
+        }
         Some(_) => return Err(invalid("the link must be an https address")),
         None => None,
     };
-    if data.expires_in_days.is_some_and(|d| !(1..=365).contains(&d)) {
+    if data
+        .expires_in_days
+        .is_some_and(|d| !(1..=365).contains(&d))
+    {
         return Err(invalid("expires in 1 to 365 days"));
     }
     if everyone && data.email {
@@ -476,7 +607,9 @@ pub async fn send(
         tone: data.tone.clone(),
         created_by: staff.user.id.clone(),
         created_at: staff.now,
-        expires_at: data.expires_in_days.map(|d| staff.now + d as i64 * 24 * 60 * 60 * 1000),
+        expires_at: data
+            .expires_in_days
+            .map(|d| staff.now + d as i64 * 24 * 60 * 60 * 1000),
         withdrawn_at: None,
         emailed: false,
         pushed: false,
@@ -516,16 +649,28 @@ pub async fn send(
         // a notice to one person arrives in their private messages from
         // Zrzur's official account (with its own push notification); the
         // in-app copy is then not shown again
-        crate::util::official::notice(db, &user.id, &notice.title, &notice.body, notice.link.as_deref()).await;
+        crate::util::official::notice(
+            db,
+            &user.id,
+            &notice.title,
+            &notice.body,
+            notice.link.as_deref(),
+        )
+        .await;
         db.dismiss_platform_notice(&notice.id, &user.id).await?;
         pushed = true;
-        db.set_platform_notice_delivery(&notice.id, emailed, pushed).await?;
+        db.set_platform_notice_delivery(&notice.id, emailed, pushed)
+            .await?;
     }
-    Ok(Json(StaffNotice {
+    Ok(StaffNotice {
         user: subject.map(|u| revolt_models::v0::user_handle(&u.username, &u.discriminator)),
         live: true,
-        notice: PlatformNotice { emailed, pushed, ..notice },
-    }))
+        notice: PlatformNotice {
+            emailed,
+            pushed,
+            ..notice
+        },
+    })
 }
 
 #[derive(Deserialize)]
@@ -543,8 +688,23 @@ pub async fn withdraw(
     id: &str,
     data: Json<DataWithdrawNotice>,
 ) -> Result<()> {
+    withdraw_core(db, &staff, id, data.into_inner()).await
+}
+
+/// The console's `withdraw`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn withdraw_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataWithdrawNotice,
+) -> Result<()> {
     let notice = db.fetch_platform_notice(id).await?;
-    let permission = if notice.user_id.is_none() { StaffPermission::SettingsManage } else { StaffPermission::SupportManage };
+    let permission = if notice.user_id.is_none() {
+        StaffPermission::SettingsManage
+    } else {
+        StaffPermission::SupportManage
+    };
     staff.require_step_up(db, permission).await?;
     let why = super::reason(&data.reason)?;
     if notice.withdrawn_at.is_some() {

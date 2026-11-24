@@ -18,12 +18,18 @@
 //! One press writes one audit record; the owner also gets a confirmation
 //! from Zrzur for every change, independent of what the bot shows.
 //!
-//! The owner may give every hand-given badge, the privileged and retired
-//! ones included (owner's decision, 2026-11-21). Badges that follow a record
-//! (Plus, Creator, Beta, ...) still can't be given by hand, nobody changes
-//! their own badges, and bots get none. Every change is written to the
-//! platform audit log before it is made, and the person gets the same
-//! official notice as for a grant in the admin console.
+//! The owner acts with his real staff rights, through the same gate as the
+//! admin console (`revolt_database::mutate_badge`): only `Staff`-rule
+//! badges that are not retired are offered (`platform.badges.manage` of his
+//! staff grant). Founder (locked), Staff and Platform Moderator
+//! (appointments), retired badges and `Privileged` badges (they need a
+//! TOTP step-up a command can't give) are never offered and refused if
+//! forced. Badges that follow a record (Plus, Creator, Beta, ...) can't be
+//! given by hand, nobody changes their own badges, and bots get none.
+//! Sensitive grants (Partner, Elite Bug Hunter) wait for a second staff
+//! member in the admin console. Every change and every refusal is written
+//! to the platform audit log, and the person gets the same official notice
+//! as for a grant in the admin console.
 //!
 //! Kept out of the public OpenAPI document, like the other bot desks.
 
@@ -31,18 +37,18 @@ use std::collections::BTreeMap;
 
 use revolt_config::{config, FeaturesBadgeCommand};
 use revolt_database::{
-    badge_definition, held_badges, record_platform_audit, sync_user_badges, AuditOutcome,
-    AuditRecord, BadgeDefinition, BadgeGrantRule, Database, Interaction, User, BADGE_CATALOGUE,
+    badge_definition, held_badges, mutate_badge, record_platform_audit, sync_user_badges,
+    AuditOutcome, AuditRecord, BadgeActor, BadgeChange, BadgeDefinition, BadgeGrantRule,
+    BadgeMutation, BadgeOutcome, BadgePath, Database, Interaction, User, BADGE_CATALOGUE,
 };
 use revolt_models::v0::{
-    CommandOptionType, CommandOptionValue, DataGrantBadge, DataRevokeBadge,
-    InteractionDataOption, InteractionOptionValue, InteractionType,
+    CommandOptionType, CommandOptionValue, InteractionDataOption, InteractionOptionValue,
+    InteractionType,
 };
 use revolt_result::{create_error, ErrorType, Result};
 use rocket::{serde::json::Json, Route, State};
 use serde::{Deserialize, Serialize};
 
-use super::{grant_checked, revoke_with, BadgeRights};
 
 /// The command's name as the bot registers it
 pub const COMMAND: &str = "badge";
@@ -109,10 +115,11 @@ pub(crate) async fn keeps_options(bot: &str, command_name: &str) -> bool {
     command_name == COMMAND && current(bot).await.is_some_and(|s| s.bot == bot)
 }
 
-/// Badges the command offers: every hand-given one, privileged and retired
-/// included; never one that follows a record
+/// Badges the command offers: hand-given `Staff`-rule badges still given
+/// out. Never Founder, Staff, Platform Moderator, a retired badge, a
+/// `Privileged` one (needs a step-up) or one that follows a record.
 fn offered(definition: &BadgeDefinition) -> bool {
-    matches!(definition.rule, BadgeGrantRule::Staff | BadgeGrantRule::Privileged)
+    definition.rule == BadgeGrantRule::Staff && !definition.retired
 }
 
 /// The offered badges in the catalogue's order: active first, by priority
@@ -128,6 +135,9 @@ fn rule_word(rule: BadgeGrantRule) -> &'static str {
         _ => "staff",
     }
 }
+
+/// Changes that wait for a second staff member (answer `pending`)
+pub const PENDING: &str = "pending";
 
 #[derive(Serialize, Debug)]
 pub struct CommandBadge {
@@ -187,7 +197,8 @@ pub struct BadgeCommandResult {
     /// `give` or `remove`
     pub action: &'static str,
     /// `done`; `already` (give: they had it); `not_held` (remove: they did
-    /// not have it); `self` (nobody changes their own badges)
+    /// not have it); `self` (nobody changes their own badges); `pending` (a
+    /// second staff member approves it in the admin console)
     pub result: &'static str,
     pub badge: String,
     pub names: BTreeMap<&'static str, String>,
@@ -334,97 +345,78 @@ async fn act(db: &Database, caller: &User, data: DataBadgeCommand, give: bool) -
     }
 
     let subject = subject.filter(|s| !s.is_empty()).ok_or_else(|| create_error!(InvalidOperation))?;
-    let definition = badge_definition(&badge).ok_or_else(|| create_error!(NotFound))?;
-    if !offered(definition) {
-        return Err(create_error!(InvalidOperation));
-    }
     let person = db.fetch_user(&subject).await.map_err(|_| create_error!(UnknownUser))?;
     let person_name = format!("{}#{}", person.username, person.discriminator);
+    let id_of = |badge: &str| badge_definition(badge).map(|d| d.id).unwrap_or("unknown").to_string();
     let answer = |result: &'static str| BadgeCommandResult {
         action: sub,
         result,
-        badge: definition.id.to_string(),
-        names: crate::util::official::badge_names(definition.id),
+        badge: id_of(&badge),
+        names: crate::util::official::badge_names(&id_of(&badge)),
         user: CommandPerson {
             id: person.id.clone(),
             name: person_name.clone(),
         },
     };
-    // nobody changes their own badges, the owner neither
+
+    // the owner's real staff rights: no grant, no rights; never a step-up
+    let actor = BadgeActor::from_staff_grant(db, &settings.owner, BadgePath::BadgeCommand, revolt_database::staff_now()).await?;
+    let reason = reason_of(options);
+    let change = if give { BadgeChange::Grant } else { BadgeChange::Revoke };
+    let request = BadgeMutation {
+        user_id: person.id.clone(),
+        badge: badge.clone(),
+        change,
+        reason: reason.clone(),
+        expires_at: None,
+        source_ref: None,
+    };
+
+    // nobody changes their own badges, the owner neither: refused (and
+    // written to the audit log) by the gate, answered in plain words
     if person.id == settings.owner {
+        let _ = mutate_badge(db, &actor, request).await;
         return Ok(answer("self"));
     }
-    if person.bot.is_some() {
-        return Err(create_error!(IsBot));
+
+    // nothing to do: said with one record, and no change. Only once the
+    // rules allow the change: otherwise the gate below writes the Denied
+    // record and refuses (security review F6)
+    let allowed = |definition: &revolt_database::BadgeDefinition| {
+        revolt_database::badge_rule_check(&actor, definition, &person, change).is_ok()
+    };
+    if let (Some(definition), None) = (badge_definition(&badge).filter(|d| offered(d) && allowed(*d)), &person.bot) {
+        sync_user_badges(db, &person.id).await?;
+        let holds = held_badges(db, &person.id).await?.contains(definition.id);
+        if holds == give {
+            let result = if give { "already" } else { "not_held" };
+            let record = AuditRecord {
+                actor_id: settings.owner.clone(),
+                action: action.to_string(),
+                target_kind: Some("user".to_string()),
+                target_id: Some(person.id.clone()),
+                reason: Some(reason.clone()),
+                summary: Some(format!("{} (no change: {result})", definition.id)),
+                ..Default::default()
+            };
+            record_platform_audit(db, record, AuditOutcome::Success).await?;
+            return Ok(answer(result));
+        }
     }
 
-    let reason = reason_of(options);
-    let mut record = AuditRecord {
-        actor_id: settings.owner.clone(),
-        action: action.to_string(),
-        target_kind: Some("user".to_string()),
-        target_id: Some(person.id.clone()),
-        reason: Some(reason.clone()),
-        summary: Some(definition.id.to_string()),
-        ..Default::default()
-    };
-    // nothing to do: said with one record, and no change
-    sync_user_badges(db, &person.id).await?;
-    let holds = held_badges(db, &person.id).await?.contains(definition.id);
-    if holds == give {
-        let result = if give { "already" } else { "not_held" };
-        record.summary = Some(format!("{} (no change: {result})", definition.id));
-        record_platform_audit(db, record, AuditOutcome::Success).await?;
-        return Ok(answer(result));
-    }
-    // written before the change: a failed write stops it
-    record_platform_audit(db, record.clone(), AuditOutcome::Success).await?;
-    let rights = BadgeRights {
-        staff: true,
-        privileged: true,
-    };
-    let change = if give {
-        grant_checked(
-            db,
-            &settings.owner,
-            rights,
-            DataGrantBadge {
-                user: person.id.clone(),
-                badge: definition.id.to_string(),
-                reason: reason.clone(),
-                expires_at: None,
-            },
-            true,
-        )
-        .await
-    } else {
-        revoke_with(
-            db,
-            &settings.owner,
-            rights,
-            DataRevokeBadge {
-                user: person.id.clone(),
-                badge: definition.id.to_string(),
-                reason: reason.clone(),
-            },
-        )
-        .await
-    };
-    match change {
-        Ok(_) => {
-            crate::util::official::badge(db, &person.id, give, definition.id, &reason).await;
+    // every rule, the audit records and the change: the one gate
+    match mutate_badge(db, &actor, request).await {
+        Ok(BadgeOutcome::Applied(_)) => {
+            let id = id_of(&badge);
+            crate::util::official::badge(db, &person.id, give, &id, &reason).await;
             // the owner's own confirmation, from Zrzur: it does not depend on the bot
-            crate::util::official::badge_command_done(db, &settings.owner, give, definition.id, &person_name, &reason).await;
+            crate::util::official::badge_command_done(db, &settings.owner, give, &id, &person_name, &reason).await;
             Ok(answer("done"))
         }
+        Ok(BadgeOutcome::Pending(_)) => Ok(answer(PENDING)),
         // someone else changed it in the same moment: nothing was done
         Err(error) if matches!(error.error_type, ErrorType::NoEffect) => Ok(answer(if give { "already" } else { "not_held" })),
-        Err(error) => {
-            let mut failed = record;
-            failed.summary = Some(format!("{} {:?}", definition.id, error.error_type).chars().take(200).collect());
-            let _ = record_platform_audit(db, failed, AuditOutcome::Failed).await;
-            Err(error)
-        }
+        Err(error) => Err(error),
     }
 }
 

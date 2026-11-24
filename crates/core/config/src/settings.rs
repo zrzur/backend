@@ -237,8 +237,23 @@ pub struct LiveKitNode {
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct ApiUsers {
+    /// Early Adopter: accounts made strictly before this moment (UTC
+    /// milliseconds) show the badge. Unset: nobody does. Zrzur's value
+    /// (2027-03-01T00:00:00Z = 1803859200000) is a deploy-time setting.
     pub early_adopter_cutoff: Option<u64>,
     pub min_username_length: usize,
+    /// The one account that shows the Zrzur Founder badge. No API, bot,
+    /// console or command line writes it: changing it is a host-level
+    /// configuration change (two people, see Revolt.toml).
+    #[serde(default)]
+    pub founder_id: Option<String>,
+}
+
+impl ApiUsers {
+    /// `founder_id`, trimmed; `None` when unset or empty
+    pub fn founder(&self) -> Option<&str> {
+        self.founder_id.as_deref().map(str::trim).filter(|id| !id.is_empty())
+    }
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -270,6 +285,113 @@ pub struct Api {
     /// Accounts on other services a person can link to their profile
     #[serde(default)]
     pub connections: ApiConnections,
+    /// Partner, Verified Server and Verified Bot Developer: the numbers that
+    /// let someone apply, and how long application data is kept
+    #[serde(default)]
+    pub badge_programs: ApiBadgePrograms,
+}
+
+/// The badge programs people apply for (Partner, Verified Server, Verified
+/// Bot Developer, Content Creator). The numbers only let someone apply: a person on the team
+/// always decides. Defaults are the owner's numbers (2026-11-23 brief);
+/// `Revolt.test.toml` uses small ones.
+#[derive(Deserialize, Debug, Clone)]
+#[serde(default)]
+pub struct ApiBadgePrograms {
+    /// Partner: genuine human members
+    pub partner_members: usize,
+    /// Partner: server age in days
+    pub partner_age_days: i64,
+    /// Partner: average unique weekly active members over `partner_weeks`
+    pub partner_weekly_active: u32,
+    /// Partner: average unique weekly contributors over `partner_weeks`
+    pub partner_weekly_contributors: u32,
+    /// Partner: per cent of new members still there after their first week
+    pub partner_retention_percent: u32,
+    /// Partner: weeks the averages cover
+    pub partner_weeks: u32,
+    /// Partner: fewer joins than this in the window is "not enough data"
+    /// (the retention item then goes to the reviewer)
+    pub partner_retention_min_joins: u32,
+    /// Partner: a partnership is checked again after this many days
+    pub partner_review_days: i64,
+    /// Verified Server: genuine human members (standard route)
+    pub verified_server_members: usize,
+    /// Verified Server: server age in days (standard route)
+    pub verified_server_age_days: i64,
+    /// Verified Bot Developer: legitimate servers the bot is in
+    pub bot_servers: usize,
+    /// Verified Bot Developer: bot age in days
+    pub bot_age_days: i64,
+    /// A server counts for a bot only with this many genuine human members
+    pub bot_server_min_humans: usize,
+    /// Servers of one owner that count for a bot at most (one person's
+    /// servers, or their other accounts', never add up to the number)
+    pub bot_servers_per_owner: usize,
+    /// crond measures weekly activity of servers with at least this many
+    /// members of any kind
+    pub metrics_min_members: usize,
+    /// After a refusal, a new application waits this many days
+    pub reapply_days: i64,
+    /// A refusal may be appealed within this many days
+    pub appeal_days: i64,
+    /// Evidence and ownership codes are deleted this many days after the
+    /// final decision (or the end of the appeal window)
+    pub evidence_days: i64,
+    /// The application and decision record is kept this many days after a
+    /// refusal, a withdrawal of a submitted application, or the end of the
+    /// badge
+    pub record_days: i64,
+    /// Drafts nobody touched for this many days are deleted
+    pub draft_days: i64,
+    /// Content Creator: followers or subscribers on ONE platform (never
+    /// added up across platforms), as a reviewer saw them
+    pub creator_followers: i64,
+    /// Content Creator: days of active publishing
+    pub creator_active_days: i64,
+    /// Content Creator: substantial original works in the last
+    /// `creator_window_days` (or an equivalent livestream schedule)
+    pub creator_works: i64,
+    pub creator_window_days: i64,
+    /// Content Creator: a follower figure older than this many days must be
+    /// looked at again before an approval
+    pub creator_figures_fresh_days: i64,
+    /// Content Creator: the profile code is accepted this many days (a
+    /// reviewer checks it by hand, so it waits longer than a DNS code)
+    pub creator_code_days: i64,
+}
+
+impl Default for ApiBadgePrograms {
+    fn default() -> Self {
+        ApiBadgePrograms {
+            partner_members: 5000,
+            partner_age_days: 180,
+            partner_weekly_active: 500,
+            partner_weekly_contributors: 200,
+            partner_retention_percent: 20,
+            partner_weeks: 8,
+            partner_retention_min_joins: 50,
+            partner_review_days: 180,
+            verified_server_members: 10000,
+            verified_server_age_days: 180,
+            bot_servers: 25,
+            bot_age_days: 30,
+            bot_server_min_humans: 10,
+            bot_servers_per_owner: 2,
+            metrics_min_members: 5000,
+            reapply_days: 90,
+            appeal_days: 30,
+            evidence_days: 90,
+            record_days: 365,
+            draft_days: 30,
+            creator_followers: 100_000,
+            creator_active_days: 90,
+            creator_works: 5,
+            creator_window_days: 90,
+            creator_figures_fresh_days: 30,
+            creator_code_days: 90,
+        }
+    }
 }
 
 /// Accounts on other services a person can link to their profile
@@ -1363,6 +1485,9 @@ pub struct Features {
 
     #[serde(default)]
     pub server_import: FeaturesServerImport,
+
+    #[serde(default)]
+    pub badge_applications: FeaturesBadgeApplications,
     /// Boxed: the settings are copied onto the stack of every request, and
     /// some long test walks have no room left for another wide field
     #[serde(default)]
@@ -1412,6 +1537,18 @@ pub struct Features {
 
     #[serde(default)]
     pub voice_capture: FeaturesVoiceCapture,
+}
+
+/// Applying for badge programs (Partner, Verified Server, Verified Bot
+/// Developer, Content Creator) from the app. Off, every applicant route
+/// (`/badges/programs/*`, `/badges/applications*`) answers
+/// `FeatureDisabled` and the app shows no way in; the team still reviews
+/// and decides the applications already made in the admin console.
+#[derive(Deserialize, Debug, Clone, Default)]
+pub struct FeaturesBadgeApplications {
+    /// Unset means off
+    #[serde(default)]
+    pub enabled: bool,
 }
 
 /// Building a server from a layout read out of a Discord server template

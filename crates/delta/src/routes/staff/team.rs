@@ -16,21 +16,20 @@
 use std::collections::HashMap;
 
 use revolt_database::{
-    record_platform_audit,
+    AuditOutcome, AuditRecord, Database, StaffPermission, TeamHistory, TeamMember,
+    TeamMemberFilter, TeamMemberStatus, record_platform_audit,
     util::team_activity::{
-        counting_stopped, day_of, previous_month, COUNTING_RESUMED, COUNTING_STOPPED,
+        COUNTING_RESUMED, COUNTING_STOPPED, counting_stopped, day_of, previous_month,
     },
-    AuditOutcome, AuditRecord, Database, StaffPermission, TeamHistory, TeamMember, TeamMemberFilter,
-    TeamMemberStatus,
 };
-use revolt_result::{create_error, Result};
-use rocket::{serde::json::Json, State};
+use revolt_result::{Result, create_error};
+use rocket::{State, serde::json::Json};
 use serde::{Deserialize, Serialize};
 
 use super::StaffContext;
 use crate::routes::team_desk::{
-    self, identity_view, length_problem, member_word, no_identity, role_name, server_name,
-    volunteers, IdentityView,
+    self, IdentityView, identity_view, length_problem, member_word, no_identity, role_name,
+    server_name, volunteers,
 };
 
 /// Rows of the list a page holds, when the caller names none
@@ -40,7 +39,8 @@ const MAX_LIMIT: u32 = 200;
 /// Months of counts a person's page shows, the current one included
 const MONTHS: usize = 6;
 const MIN_REMOVE_REASON: usize = 10;
-const MAX_REMOVE_REASON: usize = 500;
+// the person reads it, the audit log keeps it: 300 at most (DK-13)
+const MAX_REMOVE_REASON: usize = 300;
 const MAX_NOTE: usize = 2000;
 
 /// One volunteer in the list
@@ -146,7 +146,12 @@ async fn row(
         servers.insert(member.server.clone(), name.trim().to_string());
     }
     let account_name = match db.fetch_user(&member.user_id).await {
-        Ok(person) => person.display_name.clone().unwrap_or(person.username).trim().to_string(),
+        Ok(person) => person
+            .display_name
+            .clone()
+            .unwrap_or(person.username)
+            .trim()
+            .to_string(),
         Err(_) => String::new(),
     };
     let (from, to) = volunteers::month_bounds(now);
@@ -189,12 +194,19 @@ async fn person(
     let row = row(db, settings, member, &mut HashMap::new(), now).await?;
     let months = last_months(now);
     let days = db
-        .fetch_team_activity(&member.user_id, months[0] * 100 + 1, months[MONTHS - 1] * 100 + 31)
+        .fetch_team_activity(
+            &member.user_id,
+            months[0] * 100 + 1,
+            months[MONTHS - 1] * 100 + 31,
+        )
         .await?;
     let months = months
         .into_iter()
         .map(|month| {
-            let mut total = StaffTeamMonth { month, ..Default::default() };
+            let mut total = StaffTeamMonth {
+                month,
+                ..Default::default()
+            };
             for day in days.iter().filter(|day| day.day / 100 == month) {
                 for count in &day.counts {
                     total.messages = total.messages.saturating_add(count.messages);
@@ -255,11 +267,29 @@ pub async fn list(
     after: Option<&str>,
     limit: Option<u32>,
 ) -> Result<Json<Vec<StaffTeamRow>>> {
+    list_core(db, &staff, role, status, after, limit)
+        .await
+        .map(Json)
+}
+
+/// The console's `list`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn list_core(
+    db: &Database,
+    staff: &StaffContext,
+    role: Option<&str>,
+    status: Option<&str>,
+    after: Option<&str>,
+    limit: Option<u32>,
+) -> Result<Vec<StaffTeamRow>> {
     staff.require(db, StaffPermission::TeamManage).await?;
     let settings = team_desk::staff_desk(&staff.user.id).await?;
     let filter = TeamMemberFilter {
         role: role.filter(|r| !r.is_empty()).map(str::to_string),
-        status: status.filter(|s| !s.is_empty()).map(parse_status).transpose()?,
+        status: status
+            .filter(|s| !s.is_empty())
+            .map(parse_status)
+            .transpose()?,
         after: after.filter(|a| !a.is_empty()).map(str::to_string),
         limit: Some(limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT)),
     };
@@ -268,16 +298,30 @@ pub async fn list(
     for member in db.fetch_team_members(&filter).await? {
         rows.push(row(db, &settings, &member, &mut servers, staff.now).await?);
     }
-    Ok(Json(rows))
+    Ok(rows)
 }
 
 /// # Team: one volunteer
 #[get("/team/<id>")]
-pub async fn detail(db: &State<Database>, staff: StaffContext, id: &str) -> Result<Json<StaffTeamPerson>> {
+pub async fn detail(
+    db: &State<Database>,
+    staff: StaffContext,
+    id: &str,
+) -> Result<Json<StaffTeamPerson>> {
+    detail_core(db, &staff, id).await.map(Json)
+}
+
+/// The console's `detail`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn detail_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+) -> Result<StaffTeamPerson> {
     staff.require(db, StaffPermission::TeamManage).await?;
     let settings = team_desk::staff_desk(&staff.user.id).await?;
     let member = member_of(db, id).await?;
-    Ok(Json(person(db, &settings, &member, staff.now).await?))
+    Ok(person(db, &settings, &member, staff.now).await?)
 }
 
 /// `require_step_up`; the guard records a missing step-up itself
@@ -290,26 +334,75 @@ async fn step_up(db: &Database, staff: &StaffContext) -> Result<()> {
 /// Needs a fresh step-up. Every view is logged: who looked at whom, never
 /// what was shown.
 #[post("/team/<id>/identity")]
-pub async fn identity(db: &State<Database>, staff: StaffContext, id: &str) -> Result<Json<IdentityView>> {
+pub async fn identity(
+    db: &State<Database>,
+    staff: StaffContext,
+    id: &str,
+) -> Result<Json<IdentityView>> {
+    identity_core(db, &staff, id, "admin console")
+        .await
+        .map(Json)
+}
+
+/// The console's `identity`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn identity_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    source: &str,
+) -> Result<IdentityView> {
     staff.require(db, StaffPermission::TeamManage).await?;
     step_up(db, &staff).await?;
     let _ = team_desk::staff_desk(&staff.user.id).await?;
     let member = member_of(db, id).await?;
     team_desk::purge_due(db, staff.now).await?;
-    log(db, &staff, "team.identity.view", &member, None, format!("admin console, member {}", member.id)).await?;
-    Ok(Json(identity_view(db, &member.user_id, false).await?.unwrap_or_else(no_identity)))
+    log(
+        db,
+        &staff,
+        "team.identity.view",
+        &member,
+        None,
+        format!("{source}, member {}", member.id),
+    )
+    .await?;
+    Ok(identity_view(db, &member.user_id, false)
+        .await?
+        .unwrap_or_else(no_identity))
 }
 
 /// # Team: confirm a volunteer on trial
 #[post("/team/<id>/confirm")]
-pub async fn confirm(db: &State<Database>, staff: StaffContext, id: &str) -> Result<Json<StaffTeamPerson>> {
+pub async fn confirm(
+    db: &State<Database>,
+    staff: StaffContext,
+    id: &str,
+) -> Result<Json<StaffTeamPerson>> {
+    confirm_core(db, &staff, id).await.map(Json)
+}
+
+/// The console's `confirm`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn confirm_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+) -> Result<StaffTeamPerson> {
     staff.require(db, StaffPermission::TeamManage).await?;
     let settings = team_desk::staff_desk(&staff.user.id).await?;
     let member = member_of(db, id).await?;
     if member.status != TeamMemberStatus::Trial {
         return Err(create_error!(InvalidOperation));
     }
-    log(db, &staff, "team.member.confirm", &member, None, format!("member {}", member.id)).await?;
+    log(
+        db,
+        &staff,
+        "team.member.confirm",
+        &member,
+        None,
+        format!("member {}", member.id),
+    )
+    .await?;
     // read again right before the write: a leave or removal in between wins
     let mut member = member_of(db, id).await?;
     if member.status != TeamMemberStatus::Trial {
@@ -323,7 +416,7 @@ pub async fn confirm(db: &State<Database>, staff: StaffContext, id: &str) -> Res
         action: "confirmed".to_string(),
     });
     db.update_team_member(&member).await?;
-    Ok(Json(person(db, &settings, &member, staff.now).await?))
+    Ok(person(db, &settings, &member, staff.now).await?)
 }
 
 /// # Team: stop or resume counting a person
@@ -341,6 +434,19 @@ pub async fn counting(
     id: &str,
     data: Json<DataCounting>,
 ) -> Result<Json<StaffTeamPerson>> {
+    counting_core(db, &staff, id, data.into_inner())
+        .await
+        .map(Json)
+}
+
+/// The console's `counting`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn counting_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataCounting,
+) -> Result<StaffTeamPerson> {
     staff.require(db, StaffPermission::TeamManage).await?;
     let settings = team_desk::staff_desk(&staff.user.id).await?;
     let member = member_of(db, id).await?;
@@ -349,10 +455,22 @@ pub async fn counting(
     }
     let all = db.fetch_team_members_of(&member.user_id).await?;
     if counting_stopped(&all) != data.on {
-        return Ok(Json(person(db, &settings, &member, staff.now).await?));
+        return Ok(person(db, &settings, &member, staff.now).await?);
     }
-    let word = if data.on { COUNTING_RESUMED } else { COUNTING_STOPPED };
-    log(db, &staff, "team.member.counting", &member, None, format!("member {}, {word}", member.id)).await?;
+    let word = if data.on {
+        COUNTING_RESUMED
+    } else {
+        COUNTING_STOPPED
+    };
+    log(
+        db,
+        &staff,
+        "team.member.counting",
+        &member,
+        None,
+        format!("member {}, {word}", member.id),
+    )
+    .await?;
     for other in all.iter().filter(|m| m.is_current()) {
         // read again right before the write: a leave in between wins
         let mut other = member_of(db, &other.id).await?;
@@ -367,7 +485,7 @@ pub async fn counting(
         db.update_team_member(&other).await?;
     }
     let member = member_of(db, id).await?;
-    Ok(Json(person(db, &settings, &member, staff.now).await?))
+    Ok(person(db, &settings, &member, staff.now).await?)
 }
 
 /// # Team: set away, or bring back
@@ -381,6 +499,17 @@ pub async fn away(
     id: &str,
     data: Json<DataAway>,
 ) -> Result<Json<StaffTeamPerson>> {
+    away_core(db, &staff, id, data.into_inner()).await.map(Json)
+}
+
+/// The console's `away`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn away_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataAway,
+) -> Result<StaffTeamPerson> {
     staff.require(db, StaffPermission::TeamManage).await?;
     let settings = team_desk::staff_desk(&staff.user.id).await?;
     let max = settings.volunteers.away_max_days.max(0);
@@ -392,7 +521,15 @@ pub async fn away(
     if !volunteers::set_away(db, &mut member, &staff.user.id, data.days, max).await? {
         return Err(create_error!(InvalidOperation));
     }
-    log(db, &staff, "team.member.away", &member, None, format!("member {}, days {}", member.id, data.days)).await?;
+    log(
+        db,
+        &staff,
+        "team.member.away",
+        &member,
+        None,
+        format!("member {}, days {}", member.id, data.days),
+    )
+    .await?;
     // the volunteer hears of it, as after their own "I'm away": until when
     // (as stored), or the status they are back to
     let (key, vars) = if member.status == TeamMemberStatus::Away {
@@ -402,12 +539,25 @@ pub async fn away(
             .unwrap_or_default();
         ("volunteer.away_by_staff", vec![("until", until)])
     } else {
-        ("volunteer.back_by_staff", vec![("state", member_word(member.status).to_string())])
+        (
+            "volunteer.back_by_staff",
+            vec![("state", member_word(member.status).to_string())],
+        )
     };
-    let vars: Vec<(&str, &str)> = vars.iter().map(|(name, value)| (*name, value.as_str())).collect();
-    crate::util::team_texts::send(db, &member.user_id, key, settings.role(&member.role), &member.role, &vars)
-        .await;
-    Ok(Json(person(db, &settings, &member, staff.now).await?))
+    let vars: Vec<(&str, &str)> = vars
+        .iter()
+        .map(|(name, value)| (*name, value.as_str()))
+        .collect();
+    crate::util::team_texts::send(
+        db,
+        &member.user_id,
+        key,
+        settings.role(&member.role),
+        &member.role,
+        &vars,
+    )
+    .await;
+    Ok(person(db, &settings, &member, staff.now).await?)
 }
 
 /// # Team: write the staff note
@@ -421,6 +571,17 @@ pub async fn note(
     id: &str,
     data: Json<DataNote>,
 ) -> Result<Json<StaffTeamPerson>> {
+    note_core(db, &staff, id, data.into_inner()).await.map(Json)
+}
+
+/// The console's `note`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn note_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataNote,
+) -> Result<StaffTeamPerson> {
     staff.require(db, StaffPermission::TeamManage).await?;
     let settings = team_desk::staff_desk(&staff.user.id).await?;
     let text = data.text.trim();
@@ -429,20 +590,32 @@ pub async fn note(
         return Err(length_problem("text", 0, MAX_NOTE));
     }
     let member = member_of(db, id).await?;
-    log(db, &staff, "team.member.note", &member, None, format!("member {}, {} characters", member.id, length)).await?;
+    log(
+        db,
+        &staff,
+        "team.member.note",
+        &member,
+        None,
+        format!("member {}, {} characters", member.id, length),
+    )
+    .await?;
     // read again right before the write: a leave or removal in between wins
     let mut member = member_of(db, id).await?;
     if !member.is_current() {
         return Err(create_error!(InvalidOperation));
     }
-    member.notes = if text.is_empty() { None } else { Some(text.to_string()) };
+    member.notes = if text.is_empty() {
+        None
+    } else {
+        Some(text.to_string())
+    };
     db.update_team_member(&member).await?;
-    Ok(Json(person(db, &settings, &member, staff.now).await?))
+    Ok(person(db, &settings, &member, staff.now).await?)
 }
 
 /// # Team: remove a volunteer
 ///
-/// Needs a fresh step-up and a reason of 10 to 500 characters. The person
+/// Needs a fresh step-up and a reason of 10 to 300 characters. The person
 /// gets the polite message from the official account, with the reason;
 /// the audit log keeps only its length.
 #[post("/team/<id>/remove", data = "<data>")]
@@ -452,13 +625,30 @@ pub async fn remove(
     id: &str,
     data: Json<DataRemoveVolunteer>,
 ) -> Result<Json<StaffTeamPerson>> {
+    remove_core(db, &staff, id, data.into_inner())
+        .await
+        .map(Json)
+}
+
+/// The console's `remove`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn remove_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataRemoveVolunteer,
+) -> Result<StaffTeamPerson> {
     staff.require(db, StaffPermission::TeamManage).await?;
     step_up(db, &staff).await?;
     let settings = team_desk::staff_desk(&staff.user.id).await?;
     let reason = data.reason.trim();
     let length = reason.chars().count();
     if !(MIN_REMOVE_REASON..=MAX_REMOVE_REASON).contains(&length) {
-        return Err(length_problem("reason", MIN_REMOVE_REASON, MAX_REMOVE_REASON));
+        return Err(length_problem(
+            "reason",
+            MIN_REMOVE_REASON,
+            MAX_REMOVE_REASON,
+        ));
     }
     let mut member = member_of(db, id).await?;
     if !member.is_current() {
@@ -466,9 +656,25 @@ pub async fn remove(
     }
     // the reason is about a person and goes only to them: the log keeps
     // that there was one, not what it said
-    log(db, &staff, "team.member.remove", &member, None, format!("member {}, reason of {} characters", member.id, length)).await?;
+    log(
+        db,
+        &staff,
+        "team.member.remove",
+        &member,
+        None,
+        format!("member {}, reason of {} characters", member.id, length),
+    )
+    .await?;
     // end_membership reads the record again and does nothing if it is gone
-    volunteers::end_membership(db, &settings, &mut member, &staff.user.id, "removed", Some(reason)).await?;
+    volunteers::end_membership(
+        db,
+        &settings,
+        &mut member,
+        &staff.user.id,
+        "removed",
+        Some(reason),
+    )
+    .await?;
     let member = member_of(db, id).await?;
-    Ok(Json(person(db, &settings, &member, staff.now).await?))
+    Ok(person(db, &settings, &member, staff.now).await?)
 }

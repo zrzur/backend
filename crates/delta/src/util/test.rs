@@ -118,6 +118,8 @@ impl TestHarness {
             version: 0,
             updated_at: now,
             updated_by: "test".to_string(),
+            active_since: None,
+            activated_by: None,
         });
         if !grant.roles.contains(&StaffRole::Owner) {
             grant.roles.push(StaffRole::Owner);
@@ -138,7 +140,9 @@ impl TestHarness {
                     created_at: now,
                     last_seen_at: now,
                     expires_at: now + revolt_database::STAFF_SESSION_MAX_MS,
-                    step_up_until: None,
+                    // a fresh step-up too: edits of other people need one
+                    step_up_until: Some(now + revolt_database::STAFF_SESSION_MAX_MS),
+                    step_up_at: Some(now),
                     revoked_at: None,
                     user_agent: None,
                     kind: Default::default(),
@@ -340,6 +344,94 @@ impl TestHarness {
             .expect("`Bot`");
 
         (bot, bot_user)
+    }
+
+    /// A person who counts everywhere: an account `days_old` days old with
+    /// a confirmed e-mail and a declared adult age (`n` keeps the creation
+    /// times of several apart)
+    pub async fn genuine_person(&self, days_old: i64, n: i64) -> User {
+        let now = revolt_database::staff_now();
+        let made = now - days_old * 86_400_000 - n * 3 * 3_600_000;
+        let id = ulid::Ulid::from_parts(made as u64, rand::random::<u128>() & 0xffff_ffff).to_string();
+        let user = User::create(&self.db, TestHarness::rand_string(), Some(id.clone()), None)
+            .await
+            .expect("`User`");
+        self.account_from_user(id).await;
+        user
+    }
+
+    /// A server of a genuine person with five genuine members (joined days
+    /// apart, so no burst), with `bot` in it: one legitimate server for the
+    /// Verified Bot Developer numbers (`Revolt.test.toml` asks for one)
+    pub async fn legitimate_server_for(&self, bot: &str) -> Server {
+        let now = revolt_database::staff_now();
+        let owner = self.genuine_person(60, 0).await;
+        let (server, _) = self.new_server(&owner).await;
+        for n in 0..6 {
+            let member = if n < 5 {
+                self.genuine_person(30 + n * 2, n).await.id
+            } else {
+                bot.to_string()
+            };
+            self.db
+                .insert_or_merge_member(&Member {
+                    id: revolt_database::MemberCompositeKey {
+                        server: server.id.clone(),
+                        user: member,
+                    },
+                    joined_at: revolt_database::from_epoch_ms(now - (48 + n * 24) * 3_600_000),
+                    ..Default::default()
+                })
+                .await
+                .expect("`Member`");
+        }
+        server
+    }
+
+    /// An approved Partner application of `user_id`: the record the badge
+    /// gate wants before anyone may give Partner (tests of the two-person
+    /// rule use Partner as their sensitive badge)
+    pub async fn back_partner(&self, user_id: &str) {
+        let now = revolt_database::staff_now();
+        self.db
+            .insert_badge_application(&revolt_database::BadgeApplication {
+                id: ulid::Ulid::new().to_string(),
+                program: revolt_database::BadgeProgram::Partner,
+                applicant_id: user_id.to_string(),
+                target_id: ulid::Ulid::new().to_string(),
+                status: revolt_database::ApplicationStatus::Approved,
+                exception: false,
+                statement: String::new(),
+                links: vec![],
+                authorized: true,
+                ownership: None,
+                creator: None,
+                creator_figures: None,
+                eligibility: vec![],
+                created_at: now,
+                updated_at: now,
+                submitted_at: Some(now),
+                reviewer_id: None,
+                first_approval_by: None,
+                badge_request_id: None,
+                decided_at: Some(now),
+                decided_by: None,
+                reasons: vec![],
+                note: None,
+                reapply_after: None,
+                appeal_until: None,
+                appeal: None,
+                next_review_at: None,
+                recheck_due: false,
+                improve_until: None,
+                ended_at: None,
+                end_reason: None,
+                evidence_purge_at: None,
+                evidence_purged: false,
+                purge_at: None,
+            })
+            .await
+            .expect("`BadgeApplication`");
     }
 }
 

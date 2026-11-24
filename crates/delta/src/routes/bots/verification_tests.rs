@@ -214,6 +214,8 @@ async fn the_links_go_on_the_request_and_the_bot() {
     let harness = TestHarness::new().await;
     let (_, session, owner) = harness.new_user().await;
     let (bot, _) = harness.new_bot(&owner).await;
+    // the Verified Bot Developer numbers unlock asking (one legitimate server here)
+    harness.legitimate_server_for(&bot.id).await;
 
     let status = apply(
         &harness,

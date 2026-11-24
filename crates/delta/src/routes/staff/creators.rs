@@ -11,13 +11,13 @@
 //! (take one down through Trust & Safety). Every change is written to the
 //! platform audit log first.
 
-use revolt_database::{record_platform_audit, AuditOutcome, Database, StaffPermission};
+use revolt_database::{AuditOutcome, Database, StaffPermission, record_platform_audit};
 use revolt_models::v0::{CreatorLogEntry, CreatorRecord, DataCreatorAction};
-use revolt_result::{create_error, Result};
-use rocket::{serde::json::Json, State};
+use revolt_result::{Result, create_error};
+use rocket::{State, serde::json::Json};
 use serde::Deserialize;
 
-use super::{reason, StaffContext};
+use super::{StaffContext, reason};
 use crate::routes::community::admin::{creator_change, creator_list};
 
 /// # Creators
@@ -25,7 +25,21 @@ use crate::routes::community::admin::{creator_change, creator_list};
 /// Without `q`: everyone with a creator record. With `q`: users matching
 /// it by name, with their standing (to find someone to make a creator).
 #[get("/creators?<q>")]
-pub async fn list(db: &State<Database>, staff: StaffContext, q: Option<&str>) -> Result<Json<Vec<CreatorRecord>>> {
+pub async fn list(
+    db: &State<Database>,
+    staff: StaffContext,
+    q: Option<&str>,
+) -> Result<Json<Vec<CreatorRecord>>> {
+    list_core(db, &staff, q).await.map(Json)
+}
+
+/// The console's `list`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn list_core(
+    db: &Database,
+    staff: &StaffContext,
+    q: Option<&str>,
+) -> Result<Vec<CreatorRecord>> {
     staff.require(db, StaffPermission::UsersRead).await?;
     if q.is_some_and(|q| q.chars().count() > 64) {
         return Err(create_error!(FailedValidation {
@@ -38,12 +52,16 @@ pub async fn list(db: &State<Database>, staff: StaffContext, q: Option<&str>) ->
         // reviewers without a creator record aren't creators
         records.retain(|r| r.creator.is_some());
     }
-    Ok(Json(records))
+    Ok(records)
 }
 
 /// # A creator's history
 #[get("/creators/<id>/history")]
-pub async fn history(db: &State<Database>, staff: StaffContext, id: &str) -> Result<Json<Vec<CreatorLogEntry>>> {
+pub async fn history(
+    db: &State<Database>,
+    staff: StaffContext,
+    id: &str,
+) -> Result<Json<Vec<CreatorLogEntry>>> {
     staff.require(db, StaffPermission::UsersRead).await?;
     Ok(Json(
         db.fetch_creator_logs(id)
@@ -69,15 +87,33 @@ pub async fn change(
     id: &str,
     data: Json<DataCreatorChange>,
 ) -> Result<Json<CreatorRecord>> {
+    change_core(db, &staff, id, data.into_inner())
+        .await
+        .map(Json)
+}
+
+/// The console's `change`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn change_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataCreatorChange,
+) -> Result<CreatorRecord> {
     staff.require(db, StaffPermission::CreatorsManage).await?;
-    let data = data.into_inner();
-    if !matches!(data.action.as_str(), "grant" | "suspend" | "revoke" | "reinstate") {
+    if !matches!(
+        data.action.as_str(),
+        "grant" | "suspend" | "revoke" | "reinstate"
+    ) {
         return Err(create_error!(InvalidOperation));
     }
     let why = reason(&data.reason)?;
     // the user must exist before we log changing them
     db.fetch_user(id).await?;
-    let mut record = staff.record("staff.creator.change", Some(StaffPermission::CreatorsManage));
+    let mut record = staff.record(
+        "staff.creator.change",
+        Some(StaffPermission::CreatorsManage),
+    );
     record.target_kind = Some("user".to_string());
     record.target_id = Some(id.to_string());
     record.reason = Some(why.clone());
@@ -96,10 +132,15 @@ pub async fn change(
     .await;
     if let Err(error) = &result {
         let mut failed = record;
-        failed.summary = Some(format!("{:?}", error.error_type).chars().take(200).collect());
+        failed.summary = Some(
+            format!("{:?}", error.error_type)
+                .chars()
+                .take(200)
+                .collect(),
+        );
         let _ = record_platform_audit(db, failed, AuditOutcome::Failed).await;
     } else {
         crate::util::official::creator(db, id, &action, &why).await;
     }
-    result.map(Json)
+    result
 }

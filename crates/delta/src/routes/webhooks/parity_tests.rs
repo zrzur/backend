@@ -662,6 +662,8 @@ async fn the_names_of_staff_and_verified_bots_are_taken() {
                 version: 1,
                 updated_at: 0,
                 updated_by: "test".to_string(),
+                active_since: None,
+                activated_by: None,
             },
             None,
         )

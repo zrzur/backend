@@ -12,20 +12,20 @@
 //! Every change is written to the platform audit log first.
 
 use revolt_database::{
-    record_platform_audit, AuditOutcome, BotInformation, BotVerification, BotVerificationStatus,
-    Database, PartialBot, PartialUser, StaffPermission,
+    AuditOutcome, BotInformation, BotVerification, BotVerificationStatus, Database, PartialBot,
+    PartialUser, StaffPermission, record_platform_audit,
 };
 use revolt_models::v0::{
     BotFlags, DataSafetyAction, SafetyAction, SafetyActionKind, SafetyCategory, SafetyTargetKind,
 };
-use revolt_result::{create_error, Result};
-use rocket::{serde::json::Json, State};
+use revolt_result::{Result, create_error};
+use rocket::{State, serde::json::Json};
 use serde::{Deserialize, Serialize};
 
 use super::audited::{audited, audited_noting};
-use super::{reason, StaffContext};
+use super::{StaffContext, reason};
 use crate::routes::{
-    bots::verification::{status_name, VERIFIED},
+    bots::verification::{VERIFIED, status_name},
     safety::{actions::take_as, reports::open_staff_case},
 };
 
@@ -105,12 +105,13 @@ async fn rows(db: &Database, bots: Vec<revolt_database::Bot>) -> Result<Vec<BotR
         .map(|bot| {
             let flags = bot.flags.unwrap_or_default();
             let user = find(&bot.id);
-            // the flag, or the official-bot mark of `zrzur-staff official-bot`
-            let official = revolt_database::staff_deletion::is_official_bot(&bot, user);
+            // the Official flag, set by `zrzur-staff official-bot`
+            let official = revolt_database::staff_deletion::is_official_bot(&bot);
             BotRow {
                 username: user.map(|u| u.username.clone()),
                 discriminator: user.map(|u| u.discriminator.clone()),
-                owner_username: find(&bot.owner).map(|u| revolt_models::v0::user_handle(&u.username, &u.discriminator)),
+                owner_username: find(&bot.owner)
+                    .map(|u| revolt_models::v0::user_handle(&u.username, &u.discriminator)),
                 owner_id: bot.owner,
                 public: bot.public,
                 discoverable: bot.discoverable,
@@ -134,6 +135,18 @@ pub async fn list(
     before: Option<&str>,
     limit: Option<usize>,
 ) -> Result<Json<Vec<BotRow>>> {
+    list_core(db, &staff, q, before, limit).await.map(Json)
+}
+
+/// The console's `list`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn list_core(
+    db: &Database,
+    staff: &StaffContext,
+    q: Option<&str>,
+    before: Option<&str>,
+    limit: Option<usize>,
+) -> Result<Vec<BotRow>> {
     staff.require(db, StaffPermission::UsersRead).await?;
     if q.is_some_and(|q| q.len() > 64) {
         return Err(create_error!(FailedValidation {
@@ -143,12 +156,26 @@ pub async fn list(
     let bots = db
         .staff_list_bots(q, before, limit.unwrap_or(50).clamp(1, 100))
         .await?;
-    rows(db, bots).await.map(Json)
+    rows(db, bots).await
 }
 
 /// # One bot
 #[get("/bots/<id>")]
-pub async fn detail(db: &State<Database>, staff: StaffContext, id: &str) -> Result<Json<BotDetail>> {
+pub async fn detail(
+    db: &State<Database>,
+    staff: StaffContext,
+    id: &str,
+) -> Result<Json<BotDetail>> {
+    detail_core(db, &staff, id).await.map(Json)
+}
+
+/// The console's `detail`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn detail_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+) -> Result<BotDetail> {
     staff.require(db, StaffPermission::UsersRead).await?;
     let bot = db.fetch_bot(id).await?;
     let servers = db.fetch_server_count(&bot.id).await.unwrap_or(0);
@@ -164,15 +191,18 @@ pub async fn detail(db: &State<Database>, staff: StaffContext, id: &str) -> Resu
         some(&bot.terms_of_service_url),
         some(&bot.privacy_policy_url),
     );
-    let row = rows(db, vec![bot]).await?.pop().ok_or_else(|| create_error!(NotFound))?;
-    Ok(Json(BotDetail {
+    let row = rows(db, vec![bot])
+        .await?
+        .pop()
+        .ok_or_else(|| create_error!(NotFound))?;
+    Ok(BotDetail {
         row,
         servers,
         interactions_url,
         terms_of_service_url: terms,
         privacy_policy_url: privacy,
         verifications,
-    }))
+    })
 }
 
 #[derive(Deserialize)]
@@ -194,8 +224,20 @@ pub async fn disable(
     id: &str,
     data: Json<DataDisableBot>,
 ) -> Result<Json<SafetyAction>> {
+    disable_core(db, &staff, id, data.into_inner())
+        .await
+        .map(Json)
+}
+
+/// The console's `disable`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn disable_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataDisableBot,
+) -> Result<SafetyAction> {
     staff.require(db, StaffPermission::ReportsResolve).await?;
-    let data = data.into_inner();
     let public_reason = reason(&data.public_reason)?;
     let bot = db.fetch_bot(id).await?;
     let bot_user = db.fetch_user(&bot.id).await?;
@@ -246,10 +288,15 @@ pub async fn disable(
     .await;
     if let Err(error) = &result {
         let mut failed = record;
-        failed.summary = Some(format!("{:?}", error.error_type).chars().take(200).collect());
+        failed.summary = Some(
+            format!("{:?}", error.error_type)
+                .chars()
+                .take(200)
+                .collect(),
+        );
         let _ = record_platform_audit(db, failed, AuditOutcome::Failed).await;
     }
-    result.map(Json)
+    result
 }
 
 #[derive(Serialize)]
@@ -271,6 +318,19 @@ pub async fn verifications(
     status: Option<&str>,
     after: Option<&str>,
 ) -> Result<Json<Vec<VerificationEntry>>> {
+    verifications_core(db, &staff, status, after)
+        .await
+        .map(Json)
+}
+
+/// The console's `verifications`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn verifications_core(
+    db: &Database,
+    staff: &StaffContext,
+    status: Option<&str>,
+    after: Option<&str>,
+) -> Result<Vec<VerificationEntry>> {
     staff.require(db, StaffPermission::ServersRead).await?;
     let status = match status {
         None | Some("Pending") => Some(BotVerificationStatus::Pending),
@@ -296,15 +356,19 @@ pub async fn verifications(
             servers,
         });
     }
-    Ok(Json(entries))
+    Ok(entries)
 }
 
 /// Sets or clears the verified flag and the mark on the bot's profile;
 /// `intents` are added to the approved privileged intents
-async fn set_verified(db: &Database, bot_id: &str, verified: bool, intents: i64) -> Result<()> {
+pub(crate) async fn set_verified(db: &Database, bot_id: &str, verified: bool, intents: i64) -> Result<()> {
     let mut bot = db.fetch_bot(bot_id).await?;
     let flags = bot.flags.unwrap_or_default();
-    let flags = if verified { flags | VERIFIED } else { flags & !VERIFIED };
+    let flags = if verified {
+        flags | VERIFIED
+    } else {
+        flags & !VERIFIED
+    };
     let approved_intents = (intents != 0).then_some(bot.approved_intents | intents);
     bot.update(
         db,
@@ -349,15 +413,32 @@ pub async fn decide_verification(
     id: &str,
     data: Json<DataVerificationDecision>,
 ) -> Result<Json<VerificationView>> {
+    decide_verification_core(db, &staff, id, data.into_inner())
+        .await
+        .map(Json)
+}
+
+/// The console's `decide_verification`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn decide_verification_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataVerificationDecision,
+) -> Result<VerificationView> {
     staff.require(db, StaffPermission::ServersRestrict).await?;
-    let data = data.into_inner();
-    let note = match data.note.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+    let note = match data
+        .note
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+    {
         Some(note) => Some(reason(note)?),
         None if data.approve => None,
         None => {
             return Err(revolt_result::failed_validation(vec![
                 revolt_result::ValidationProblem::new("note", "required"),
-            ]))
+            ]));
         }
     };
     let mut request = db.fetch_bot_verification(id).await?;
@@ -369,7 +450,33 @@ pub async fn decide_verification(
     if bot.owner == staff.user.id {
         return Err(create_error!(NotPrivileged));
     }
-    let mut record = staff.record("staff.bot.verification", Some(StaffPermission::ServersRestrict));
+    // the Verified Bot Developer numbers still hold (legitimate servers, age,
+    // an adult owner with a confirmed e-mail): this route is no way around them
+    if data.approve {
+        let owner = db.fetch_user(&bot.owner).await?;
+        let programs = revolt_config::config().await.api.badge_programs;
+        let checklist = revolt_database::program_eligibility(
+            db,
+            &programs,
+            revolt_database::BadgeProgram::VerifiedBot,
+            &owner,
+            &bot.id,
+            false,
+            false,
+            staff.now,
+        )
+        .await?;
+        let missing = checklist.missing();
+        if !missing.is_empty() {
+            return Err(create_error!(FailedValidation {
+                error: format!("not_eligible:{}", missing.join(","))
+            }));
+        }
+    }
+    let mut record = staff.record(
+        "staff.bot.verification",
+        Some(StaffPermission::ServersRestrict),
+    );
     record.target_kind = Some("bot".to_string());
     record.target_id = Some(bot.id.clone());
     record.reason = note.clone();
@@ -412,10 +519,25 @@ pub async fn decide_verification(
         Ok(())
     })
     .await?;
-    let bot_name = db.fetch_user(&bot.id).await.map(|u| u.username).unwrap_or_default();
-    let key = if data.approve { "bot.verified" } else { "bot.denied" };
-    crate::util::official::bot(db, &bot.owner, key, &bot_name, request.decision_note.as_deref()).await;
-    Ok(Json(view(request)))
+    let bot_name = db
+        .fetch_user(&bot.id)
+        .await
+        .map(|u| u.username)
+        .unwrap_or_default();
+    let key = if data.approve {
+        "bot.verified"
+    } else {
+        "bot.denied"
+    };
+    crate::util::official::bot(
+        db,
+        &bot.owner,
+        key,
+        &bot_name,
+        request.decision_note.as_deref(),
+    )
+    .await;
+    Ok(view(request))
 }
 
 #[derive(Deserialize)]
@@ -430,6 +552,17 @@ pub async fn unverify(
     staff: StaffContext,
     id: &str,
     data: Json<DataUnverify>,
+) -> Result<()> {
+    unverify_core(db, &staff, id, data.into_inner()).await
+}
+
+/// The console's `unverify`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn unverify_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataUnverify,
 ) -> Result<()> {
     staff.require(db, StaffPermission::ServersRestrict).await?;
     let why = reason(&data.reason)?;
@@ -459,6 +592,8 @@ pub async fn unverify(
         Ok(())
     })
     .await?;
+    // an approved Verified Bot application ends with the mark
+    revolt_database::bot_programs_ended(db, &bot.id, &bot.owner, "mark_removed").await;
     let name = db.fetch_user(&bot.id).await.map(|u| u.username).unwrap_or_default();
     crate::util::official::bot(db, &bot.owner, "bot.unverified", &name, Some(&why)).await;
     Ok(())
@@ -490,16 +625,37 @@ pub async fn delete(
     id: &str,
     data: Json<DataDeleteBot>,
 ) -> Result<Json<DeletedBot>> {
-    super::deletion::require_delete_gate(db, &staff, "staff.bot.delete", "bot", id).await?;
+    delete_core(db, voice_client, &staff, id, data.into_inner())
+        .await
+        .map(Json)
+}
+
+/// The console's `delete`, for any caller holding a [`StaffContext`] (the
+/// console route and Zrzur Desk): the same checks and records
+pub(super) async fn delete_core(
+    db: &Database,
+    voice_client: &revolt_database::voice::VoiceClient,
+    staff: &StaffContext,
+    id: &str,
+    data: DataDeleteBot,
+) -> Result<DeletedBot> {
+    super::deletion::require_delete_gate(db, staff, "staff.bot.delete", "bot", id).await?;
     let why = reason(&data.reason)?;
     let bot = db.fetch_bot(id).await?;
     let username = db.fetch_user(&bot.id).await.ok().map(|u| u.username);
-    super::deletion::delete_bot(db, voice_client, &staff, &bot, &why).await?;
-    crate::util::official::bot(db, &bot.owner, "bot.deleted", username.as_deref().unwrap_or_default(), Some(&why)).await;
-    Ok(Json(DeletedBot {
+    super::deletion::delete_bot(db, voice_client, staff, &bot, &why).await?;
+    crate::util::official::bot(
+        db,
+        &bot.owner,
+        "bot.deleted",
+        username.as_deref().unwrap_or_default(),
+        Some(&why),
+    )
+    .await;
+    Ok(DeletedBot {
         id: bot.id,
         username,
         owner_id: bot.owner,
         deleted: true,
-    }))
+    })
 }

@@ -195,6 +195,10 @@ pub async fn answer(
         }
         InteractionCallbackType::DeferredMessage => {
             let ephemeral = data.data.is_some_and(|d| d.ephemeral);
+            // Zrzur Desk answers only in private
+            if !ephemeral && crate::routes::staff::desk_answers_privately(&interaction).await {
+                return Err(create_error!(InvalidOperation));
+            }
             claim(
                 db,
                 &interaction,
@@ -248,14 +252,17 @@ pub async fn respond(
     data: InteractionResponseData,
     from: &[InteractionStatus],
 ) -> Result<()> {
-    validate_response(db, &interaction, &data, true).await?;
-
     // A deferred answer keeps the visibility chosen when deferring
     let ephemeral = if interaction.status == InteractionStatus::Deferred {
         interaction.ephemeral
     } else {
         data.ephemeral
     };
+    // Zrzur Desk answers only in private
+    if !ephemeral && crate::routes::staff::desk_answers_privately(&interaction).await {
+        return Err(create_error!(InvalidOperation));
+    }
+    validate_response(db, &interaction, &data, true).await?;
 
     if ephemeral {
         let message = ephemeral_message(&interaction, data)?;

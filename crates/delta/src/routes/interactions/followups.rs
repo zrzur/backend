@@ -61,6 +61,10 @@ pub async fn send_followup(
         }));
     }
     let data = data.into_inner();
+    // Zrzur Desk answers only in private
+    if !data.ephemeral && crate::routes::staff::desk_answers_privately(&interaction).await {
+        return Err(create_error!(InvalidOperation));
+    }
     validate_response(db, &interaction, &data, true).await?;
 
     if data.ephemeral {

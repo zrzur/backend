@@ -22,7 +22,15 @@ pub fn start_workers(db: Database, amqp: AMQP) {
     task::spawn(crate::billing_worker(db.clone()));
     task::spawn(crate::billing_webhook_worker(db.clone()));
     task::spawn(crate::badge_worker(db.clone()));
-    task::spawn(crate::time_badge_worker(db.clone()));
+    // One Year and Three Years are computed now: end the grants stored
+    // before (a no-op once done)
+    task::spawn(async move {
+        match crate::retire_stored_time_badges(&db).await {
+            Ok(0) => {}
+            Ok(ended) => log::info!("badges: {ended} stored time badge grants ended"),
+            Err(error) => log::error!("badges: {error:?}"),
+        }
+    });
 }
 
 /// Task with additional information on when it should run

@@ -9,13 +9,16 @@
 
 use std::collections::HashMap;
 
-use revolt_database::{record_platform_audit, AuditOutcome, Database, PlatformAuditEntry, PlatformAuditQuery, StaffPermission};
-use revolt_result::{create_error, Result};
-use rocket::{serde::json::Json, State};
+use revolt_database::{
+    AuditOutcome, Database, PlatformAuditEntry, PlatformAuditQuery, StaffPermission,
+    record_platform_audit,
+};
+use revolt_result::{Result, create_error};
+use rocket::{State, serde::json::Json};
 use serde::{Deserialize, Serialize};
 
 use super::audited::audited;
-use super::{reason, StaffContext};
+use super::{StaffContext, reason};
 
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 /// How far back the overview reads
@@ -69,6 +72,12 @@ fn count(window: &mut Window, e: &PlatformAuditEntry) {
 /// # Security overview
 #[get("/security")]
 pub async fn overview(db: &State<Database>, staff: StaffContext) -> Result<Json<SecurityOverview>> {
+    overview_core(db, &staff).await.map(Json)
+}
+
+/// The console's `overview`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn overview_core(db: &Database, staff: &StaffContext) -> Result<SecurityOverview> {
     staff.require(db, StaffPermission::SecurityRead).await?;
     let entries = db
         .fetch_platform_audit(PlatformAuditQuery {
@@ -104,13 +113,13 @@ pub async fn overview(db: &State<Database>, staff: StaffContext) -> Result<Json<
         .collect();
     top_denied.sort_by(|a, b| b.count.cmp(&a.count).then(a.actor_id.cmp(&b.actor_id)));
     top_denied.truncate(5);
-    Ok(Json(SecurityOverview {
+    Ok(SecurityOverview {
         day,
         week,
         top_denied,
         recent,
         scanned: entries.len(),
-    }))
+    })
 }
 
 #[derive(Deserialize)]
@@ -123,8 +132,26 @@ pub struct DataLock {
 /// For a session that looks stolen. Their roles stay; they have to sign in
 /// to the console again (with their authenticator).
 #[post("/security/members/<id>/lock", data = "<data>")]
-pub async fn lock(db: &State<Database>, staff: StaffContext, id: &str, data: Json<DataLock>) -> Result<Json<usize>> {
-    staff.require_step_up(db, StaffPermission::SecurityRespond).await?;
+pub async fn lock(
+    db: &State<Database>,
+    staff: StaffContext,
+    id: &str,
+    data: Json<DataLock>,
+) -> Result<Json<usize>> {
+    lock_core(db, &staff, id, data.into_inner()).await.map(Json)
+}
+
+/// The console's `lock`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn lock_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataLock,
+) -> Result<usize> {
+    staff
+        .require_step_up(db, StaffPermission::SecurityRespond)
+        .await?;
     let why = reason(&data.reason)?;
     if id == staff.user.id {
         // signing yourself out is the sign-out button
@@ -133,7 +160,10 @@ pub async fn lock(db: &State<Database>, staff: StaffContext, id: &str, data: Jso
     let Some(target) = db.fetch_staff_grant(id).await? else {
         return Err(create_error!(NotFound));
     };
-    let mut record = staff.record("staff.security.lock", Some(StaffPermission::SecurityRespond));
+    let mut record = staff.record(
+        "staff.security.lock",
+        Some(StaffPermission::SecurityRespond),
+    );
     record.target_kind = Some("user".to_string());
     record.target_id = Some(id.to_string());
     record.reason = Some(why);
@@ -143,7 +173,7 @@ pub async fn lock(db: &State<Database>, staff: StaffContext, id: &str, data: Jso
         record_platform_audit(db, record, AuditOutcome::Denied).await?;
         return Err(create_error!(NotPrivileged));
     }
-    Ok(Json(
+    Ok(std::convert::identity(
         audited(db, record, db.revoke_staff_sessions_for_user(id, staff.now)).await?,
     ))
 }

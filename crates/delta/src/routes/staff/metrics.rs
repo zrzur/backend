@@ -14,9 +14,9 @@ use std::{
 use revolt_database::{Database, StaffPermission};
 use revolt_result::Result;
 use rocket::{
+    Data, Request, Response, State,
     fairing::{Fairing, Info, Kind},
     serde::json::Json,
-    Data, Request, Response, State,
 };
 use serde::Serialize;
 
@@ -60,7 +60,11 @@ impl Fairing for Metrics {
             return;
         };
         let key = format!("{} {}", request.method(), route.uri.as_str());
-        let elapsed = request.local_cache(|| Started(Instant::now())).0.elapsed().as_millis() as u64;
+        let elapsed = request
+            .local_cache(|| Started(Instant::now()))
+            .0
+            .elapsed()
+            .as_millis() as u64;
         let status = response.status().code;
         if let Ok(mut counters) = COUNTERS.lock() {
             let c = counters.entry(key).or_default();
@@ -100,6 +104,12 @@ pub struct ApiMetrics {
 /// # API metrics
 #[get("/operations/metrics")]
 pub async fn metrics(db: &State<Database>, staff: StaffContext) -> Result<Json<ApiMetrics>> {
+    metrics_core(db, &staff).await.map(Json)
+}
+
+/// The console's `metrics`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn metrics_core(db: &Database, staff: &StaffContext) -> Result<ApiMetrics> {
     staff.require(db, StaffPermission::OperationsRead).await?;
     let snapshot: Vec<(String, Counter)> = COUNTERS
         .lock()
@@ -117,11 +127,11 @@ pub async fn metrics(db: &State<Database>, staff: StaffContext) -> Result<Json<A
         })
         .collect();
     routes.sort_by(|a, b| b.requests.cmp(&a.requests).then(a.route.cmp(&b.route)));
-    Ok(Json(ApiMetrics {
+    Ok(ApiMetrics {
         since: *STARTED,
         requests: routes.iter().map(|r| r.requests).sum(),
         client_errors: routes.iter().map(|r| r.client_errors).sum(),
         server_errors: routes.iter().map(|r| r.server_errors).sum(),
         routes,
-    }))
+    })
 }

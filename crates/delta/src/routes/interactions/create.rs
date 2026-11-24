@@ -302,13 +302,13 @@ async fn command(
     // the badge bot's `/badge` keeps what the person chose for a later route:
     // there the version the person saw is required, not only checked when sent
     let keeps_badge = !autocomplete && crate::routes::badges::command::keeps_options(&scope.bot.id, &command.name).await;
-    // the staff desk bot's `/desk` keeps its sub-command for `/staff/desk`,
-    // which reads only the sub-command's name (no version needed there)
+    // the staff desk bot's `/desk` keeps its sub-command and options for
+    // `/staff/desk`, which acts on them: the same rule, the version is required
     let keeps = keeps_badge
         || (!autocomplete && crate::routes::staff::desk_keeps_options(&scope.bot.id, &command.name).await);
     let version_differs = match data.command_version.as_ref() {
         Some(version) => version != &command.version,
-        None => keeps_badge,
+        None => keeps,
     };
     if version_differs {
         return Err(invalid("this command changed, reload and try again"));
@@ -390,6 +390,10 @@ async fn command(
     if keeps {
         interaction.command_options = options.clone();
         interaction.command_version = Some(command.version.clone());
+        interaction.locale = data
+            .locale
+            .clone()
+            .filter(|locale| locale.len() <= 16);
     }
 
     let mut payload = payload(db, user, &scope, &interaction, token, data.locale).await;

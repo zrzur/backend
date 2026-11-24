@@ -23,6 +23,29 @@ impl AbstractAccounts for MongoDb {
         query!(self, find_one_by_id, COL, id)?.ok_or_else(|| create_error!(UnknownUser))
     }
 
+    async fn fetch_verified_account_ids(&self, ids: &[String]) -> Result<std::collections::HashSet<String>> {
+        if ids.is_empty() {
+            return Ok(Default::default());
+        }
+        // only the ids are read: no e-mail or other account data
+        let mut cursor = self
+            .col::<Document>(COL)
+            .find(doc! {
+                "_id": { "$in": ids },
+                "verification.status": { "$in": ["Verified", "Moving"] },
+            })
+            .projection(doc! { "_id": 1_i32 })
+            .await
+            .map_err(|_| create_database_error!("find", COL))?;
+        let mut verified = std::collections::HashSet::new();
+        while let Some(row) = cursor.try_next().await.map_err(|_| create_database_error!("find", COL))? {
+            if let Ok(id) = row.get_str("_id") {
+                verified.insert(id.to_string());
+            }
+        }
+        Ok(verified)
+    }
+
     /// Find account by normalised email
     async fn fetch_account_by_normalised_email(
         &self,
@@ -107,6 +130,18 @@ impl AbstractAccounts for MongoDb {
                 }
             }
         )
+    }
+
+    async fn fetch_accounts_scheduled_for_deletion(&self, limit: i64) -> Result<Vec<Account>> {
+        self.col::<Account>(COL)
+            .find(doc! { "deletion.status": "Scheduled" })
+            .sort(doc! { "deletion.after": -1 })
+            .limit(limit)
+            .await
+            .map_err(|_| create_database_error!("find", COL))?
+            .try_collect()
+            .await
+            .map_err(|_| create_database_error!("collect", COL))
     }
 
     async fn fetch_provisional_accounts_before(&self, before: Timestamp) -> Result<Vec<Account>> {

@@ -10,21 +10,20 @@
 
 use revolt_config::config;
 use revolt_database::{
-    record_platform_audit, staff_token_hash,
+    ACCOUNT_CHANGE_MAX_OPEN, ACCOUNT_CHANGE_REMOVABLE, ACCOUNT_CHANGE_TTL_MS,
+    ACCOUNT_SECURITY_CHANGE_TTL_MS, AccountChangeRequest, AccountChangeStatus, AccountChanges,
+    AuditOutcome, Database, StaffPermission, record_platform_audit, staff_token_hash,
     util::email::{email_templates, normalise_email, send_email, validate_email},
-    AccountChangeRequest, AccountChangeStatus, AccountChanges, AuditOutcome, Database,
-    StaffPermission, ACCOUNT_CHANGE_MAX_OPEN, ACCOUNT_CHANGE_REMOVABLE, ACCOUNT_CHANGE_TTL_MS,
-    ACCOUNT_SECURITY_CHANGE_TTL_MS,
 };
 use revolt_models::v0::AccountChangeRequestView;
-use revolt_result::{create_error, Result};
-use rocket::{serde::json::Json, State};
+use revolt_result::{Result, create_error};
+use rocket::{State, serde::json::Json};
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 use validator::Validate;
 
 use super::audited::audited;
-use super::{reason, StaffContext};
+use super::{StaffContext, reason};
 use crate::routes::users::change_requests::{as_edit, status_of, view};
 
 #[derive(Serialize)]
@@ -51,7 +50,11 @@ fn staff_view(request: &AccountChangeRequest, now: i64) -> StaffChangeRequest {
 
 /// # Change requests about a user
 #[get("/users/<id>/change-requests")]
-pub async fn list(db: &State<Database>, staff: StaffContext, id: &str) -> Result<Json<Vec<StaffChangeRequest>>> {
+pub async fn list(
+    db: &State<Database>,
+    staff: StaffContext,
+    id: &str,
+) -> Result<Json<Vec<StaffChangeRequest>>> {
     staff.require(db, StaffPermission::UsersRead).await?;
     let pii = staff.has(StaffPermission::UsersPiiRead);
     Ok(Json(
@@ -78,7 +81,11 @@ pub struct DataChangeRequest {
 }
 
 fn trimmed(value: &Option<String>) -> Option<String> {
-    value.as_deref().map(str::trim).filter(|v| !v.is_empty()).map(str::to_string)
+    value
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_string)
 }
 
 /// # Ask a user to agree to a change
@@ -89,8 +96,20 @@ pub async fn create(
     id: &str,
     data: Json<DataChangeRequest>,
 ) -> Result<Json<StaffChangeRequest>> {
+    create_core(db, &staff, id, data.into_inner())
+        .await
+        .map(Json)
+}
+
+/// The console's `create`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn create_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataChangeRequest,
+) -> Result<StaffChangeRequest> {
     staff.require(db, StaffPermission::SupportManage).await?;
-    let data = data.into_inner();
     let why = reason(&data.reason)?;
     let subject = db.fetch_user(id).await?;
     if subject.bot.is_some() {
@@ -126,7 +145,11 @@ pub async fn create(
             error: "nothing to change".to_string()
         }));
     }
-    if changes.display_name.as_deref().is_some_and(revolt_database::passes_for_official) {
+    if changes
+        .display_name
+        .as_deref()
+        .is_some_and(revolt_database::passes_for_official)
+    {
         return Err(create_error!(InvalidUsername));
     }
     let request = AccountChangeRequest {
@@ -143,7 +166,8 @@ pub async fn create(
     };
     // the same rules as the user editing their own profile
     let edit = as_edit(&request);
-    edit.validate().map_err(|error| revolt_database::util::validation::validation_failed(&error))?;
+    edit.validate()
+        .map_err(|error| revolt_database::util::validation::validation_failed(&error))?;
     if let Some(bio) = &request.changes.bio {
         if bio.chars().count() > 2000 {
             return Err(create_error!(FailedValidation {
@@ -161,14 +185,17 @@ pub async fn create(
         return Err(create_error!(InvalidOperation));
     }
 
-    let mut record = staff.record("staff.user.change_request", Some(StaffPermission::SupportManage));
+    let mut record = staff.record(
+        "staff.user.change_request",
+        Some(StaffPermission::SupportManage),
+    );
     record.target_kind = Some("user".to_string());
     record.target_id = Some(subject.id.clone());
     record.reason = Some(why);
     record.summary = Some(summary(&request.changes));
     audited(db, record, db.insert_account_change_request(&request)).await?;
     crate::util::official::change_request(db, &subject.id).await;
-    Ok(Json(staff_view(&request, staff.now)))
+    Ok(staff_view(&request, staff.now))
 }
 
 fn summary(changes: &AccountChanges) -> String {
@@ -193,13 +220,30 @@ fn summary(changes: &AccountChanges) -> String {
 
 /// # Withdraw a change request
 #[post("/change-requests/<id>/cancel")]
-pub async fn cancel(db: &State<Database>, staff: StaffContext, id: &str) -> Result<Json<StaffChangeRequest>> {
+pub async fn cancel(
+    db: &State<Database>,
+    staff: StaffContext,
+    id: &str,
+) -> Result<Json<StaffChangeRequest>> {
+    cancel_core(db, &staff, id).await.map(Json)
+}
+
+/// The console's `cancel`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn cancel_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+) -> Result<StaffChangeRequest> {
     staff.require(db, StaffPermission::SupportManage).await?;
     let mut request = db.fetch_account_change_request(id).await?;
     if status_of(&request, staff.now) != "Pending" {
         return Err(create_error!(InvalidOperation));
     }
-    let mut record = staff.record("staff.user.change_request.cancel", Some(StaffPermission::SupportManage));
+    let mut record = staff.record(
+        "staff.user.change_request.cancel",
+        Some(StaffPermission::SupportManage),
+    );
     record.target_kind = Some("user".to_string());
     record.target_id = Some(request.user_id.clone());
     record.summary = Some(request.id.clone());
@@ -216,7 +260,7 @@ pub async fn cancel(db: &State<Database>, staff: StaffContext, id: &str) -> Resu
         Ok(())
     })
     .await?;
-    Ok(Json(staff_view(&request, staff.now)))
+    Ok(staff_view(&request, staff.now))
 }
 
 #[derive(Deserialize)]
@@ -243,8 +287,22 @@ pub async fn security(
     id: &str,
     data: Json<DataSecurityChange>,
 ) -> Result<Json<StaffChangeRequest>> {
-    staff.require_step_up(db, StaffPermission::SupportManage).await?;
-    let data = data.into_inner();
+    security_core(db, &staff, id, data.into_inner())
+        .await
+        .map(Json)
+}
+
+/// The console's `security`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn security_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: DataSecurityChange,
+) -> Result<StaffChangeRequest> {
+    staff
+        .require_step_up(db, StaffPermission::SupportManage)
+        .await?;
     let why = reason(&data.reason)?;
     let subject = db.fetch_user(id).await?;
     if subject.bot.is_some() {
@@ -269,7 +327,12 @@ pub async fn security(
             )
         }
         "email" => {
-            let email = data.new_email.as_deref().map(str::trim).unwrap_or_default().to_string();
+            let email = data
+                .new_email
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or_default()
+                .to_string();
             validate_email(&email)?;
             if db
                 .fetch_account_by_normalised_email(&normalise_email(email.clone()))
@@ -306,7 +369,11 @@ pub async fn security(
     }
 
     let token = nanoid::nanoid!(48);
-    if changes.display_name.as_deref().is_some_and(revolt_database::passes_for_official) {
+    if changes
+        .display_name
+        .as_deref()
+        .is_some_and(revolt_database::passes_for_official)
+    {
         return Err(create_error!(InvalidUsername));
     }
     let request = AccountChangeRequest {
@@ -321,13 +388,21 @@ pub async fn security(
         decided_at: None,
         token_hash: Some(staff_token_hash(&token)),
     };
-    let mut record = staff.record("staff.user.security_request", Some(StaffPermission::SupportManage));
+    let mut record = staff.record(
+        "staff.user.security_request",
+        Some(StaffPermission::SupportManage),
+    );
     record.target_kind = Some("user".to_string());
     record.target_id = Some(subject.id.clone());
     record.reason = Some(why.clone());
     // the new address is personal data: the log says what kind of change only
     record.summary = Some(data.kind.clone());
-    audited(db, record.clone(), db.insert_account_change_request(&request)).await?;
+    audited(
+        db,
+        record.clone(),
+        db.insert_account_change_request(&request),
+    )
+    .await?;
 
     let template = email_templates().await.account_change;
     let sent = send_email(
@@ -353,5 +428,5 @@ pub async fn security(
         let _ = record_platform_audit(db, record, AuditOutcome::Failed).await;
         return Err(error);
     }
-    Ok(Json(staff_view(&request, staff.now)))
+    Ok(staff_view(&request, staff.now))
 }

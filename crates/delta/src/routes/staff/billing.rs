@@ -13,13 +13,13 @@
 
 use iso8601_timestamp::Timestamp;
 use revolt_database::{
+    AuditOutcome, AuditRecord, Database, OrderSearch, StaffPermission, WebhookEventStatus,
     admin_summary, epoch_ms, fulfil_order, grant_plus, process_webhook_event, reconcile,
-    record_platform_audit, request_refund, AuditOutcome, AuditRecord, Database, OrderSearch,
-    StaffPermission, WebhookEventStatus,
+    record_platform_audit, request_refund,
 };
 use revolt_models::v0::{self, OrderStatus};
-use revolt_result::{create_error, Result};
-use rocket::{serde::json::Json, State};
+use revolt_result::{Result, create_error};
+use rocket::{State, serde::json::Json};
 use validator::Validate;
 
 use super::StaffContext;
@@ -40,23 +40,51 @@ async fn audited<T>(
         Ok(value) => Ok(value),
         Err(error) => {
             let mut failed = record;
-            failed.summary = Some(format!("{:?}", error.error_type).chars().take(200).collect());
+            failed.summary = Some(
+                format!("{:?}", error.error_type)
+                    .chars()
+                    .take(200)
+                    .collect(),
+            );
             let _ = record_platform_audit(db, failed, AuditOutcome::Failed).await;
             Err(error)
         }
     }
 }
 
+/// A reason the person reads and the audit log keeps: 300 at most
+fn short_reason(reason: &str) -> Result<()> {
+    if reason.trim().chars().count() > 300 {
+        return Err(revolt_result::failed_validation(vec![
+            revolt_result::ValidationProblem::length("reason", 3, 300),
+        ]));
+    }
+    Ok(())
+}
+
 fn validated<T: Validate>(data: T) -> Result<T> {
-    data.validate().map_err(|error| revolt_database::util::validation::validation_failed(&error))?;
+    data.validate()
+        .map_err(|error| revolt_database::util::validation::validation_failed(&error))?;
     Ok(data)
 }
 
 /// # Billing summary
 #[get("/billing/summary")]
-pub async fn summary(db: &State<Database>, staff: StaffContext) -> Result<Json<v0::BillingAdminSummary>> {
+pub async fn summary(
+    db: &State<Database>,
+    staff: StaffContext,
+) -> Result<Json<v0::BillingAdminSummary>> {
+    summary_core(db, &staff).await.map(Json)
+}
+
+/// The console's `summary`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn summary_core(
+    db: &Database,
+    staff: &StaffContext,
+) -> Result<v0::BillingAdminSummary> {
     staff.require(db, StaffPermission::BillingRead).await?;
-    Ok(Json(admin_summary(db).await?))
+    Ok(admin_summary(db).await?)
 }
 
 /// # Orders
@@ -105,7 +133,11 @@ pub async fn orders(
 
 /// # Order
 #[get("/billing/orders/<id>")]
-pub async fn order(db: &State<Database>, staff: StaffContext, id: &str) -> Result<Json<v0::AdminOrder>> {
+pub async fn order(
+    db: &State<Database>,
+    staff: StaffContext,
+    id: &str,
+) -> Result<Json<v0::AdminOrder>> {
     staff.require(db, StaffPermission::BillingRead).await?;
     Ok(Json(db.fetch_order(id).await?.into()))
 }
@@ -120,7 +152,10 @@ pub async fn audit(
     limit: Option<i64>,
 ) -> Result<Json<Vec<v0::BillingAuditEntry>>> {
     staff.require(db, StaffPermission::BillingRead).await?;
-    Ok(Json(db.fetch_billing_audit(order, member, self::limit(limit)).await?))
+    Ok(Json(
+        db.fetch_billing_audit(order, member, self::limit(limit))
+            .await?,
+    ))
 }
 
 /// # Webhook events
@@ -183,9 +218,30 @@ pub async fn refund(
     id: &str,
     data: Json<v0::DataRefundOrder>,
 ) -> Result<Json<v0::AdminOrder>> {
-    staff.require_step_up(db, StaffPermission::BillingManage).await?;
-    let data = validated(data.into_inner())?;
-    db.fetch_order(id).await?;
+    refund_core(db, &staff, id, data.into_inner())
+        .await
+        .map(Json)
+}
+
+/// The console's `refund`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn refund_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+    data: v0::DataRefundOrder,
+) -> Result<v0::AdminOrder> {
+    staff
+        .require_step_up(db, StaffPermission::BillingManage)
+        .await?;
+    let data = validated(data)?;
+    short_reason(&data.reason)?;
+    let before = db.fetch_order(id).await?;
+    // what this refund gives back: the amount asked for, or all that was
+    // left (never the order's whole amount after an earlier partial refund)
+    let given = data
+        .amount
+        .unwrap_or(before.amount.saturating_sub(before.amount_refunded));
     let mut record = order_record(&staff, "staff.billing.refund", id);
     record.reason = Some(data.reason.trim().chars().take(500).collect());
     record.summary = Some(match data.amount {
@@ -195,25 +251,51 @@ pub async fn refund(
     let order = audited(
         db,
         record,
-        request_refund(db, id, data.amount, data.revoke, &staff.user.id, &data.reason),
+        request_refund(
+            db,
+            id,
+            data.amount,
+            data.revoke,
+            &staff.user.id,
+            &data.reason,
+        ),
     )
     .await?;
-    let minor = data.amount.map(|a| a as f64).unwrap_or(order.amount as f64);
-    let amount = format!("{:.2} {}", minor / 100.0, order.currency.to_uppercase());
+    let amount = format!(
+        "{:.2} {}",
+        given as f64 / 100.0,
+        order.currency.to_uppercase()
+    );
     crate::util::official::refunded(db, &order.user_id, &amount, &data.reason).await;
-    Ok(Json(order.into()))
+    Ok(std::convert::identity(order.into()))
 }
 
 /// # Deliver a paid order again
 ///
 /// Delivery is keyed by the order, so nothing is given twice.
 #[post("/billing/orders/<id>/deliver")]
-pub async fn deliver(db: &State<Database>, staff: StaffContext, id: &str) -> Result<Json<v0::AdminOrder>> {
-    staff.require_step_up(db, StaffPermission::BillingManage).await?;
+pub async fn deliver(
+    db: &State<Database>,
+    staff: StaffContext,
+    id: &str,
+) -> Result<Json<v0::AdminOrder>> {
+    deliver_core(db, &staff, id).await.map(Json)
+}
+
+/// The console's `deliver`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn deliver_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+) -> Result<v0::AdminOrder> {
+    staff
+        .require_step_up(db, StaffPermission::BillingManage)
+        .await?;
     db.fetch_order(id).await?;
     let record = order_record(&staff, "staff.billing.deliver", id);
     audited(db, record, fulfil_order(db, id)).await?;
-    Ok(Json(db.fetch_order(id).await?.into()))
+    Ok(std::convert::identity(db.fetch_order(id).await?.into()))
 }
 
 /// # Retry a failed webhook event
@@ -223,7 +305,19 @@ pub async fn retry_webhook(
     staff: StaffContext,
     id: &str,
 ) -> Result<Json<v0::WebhookEventInfo>> {
-    staff.require_step_up(db, StaffPermission::BillingManage).await?;
+    retry_webhook_core(db, &staff, id).await.map(Json)
+}
+
+/// The console's `retry_webhook`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn retry_webhook_core(
+    db: &Database,
+    staff: &StaffContext,
+    id: &str,
+) -> Result<v0::WebhookEventInfo> {
+    staff
+        .require_step_up(db, StaffPermission::BillingManage)
+        .await?;
     let event = db
         .fetch_webhook_event(id)
         .await?
@@ -231,7 +325,10 @@ pub async fn retry_webhook(
     if event.status != WebhookEventStatus::Failed {
         return Err(create_error!(InvalidOperation));
     }
-    let mut record = staff.record("staff.billing.webhook_retry", Some(StaffPermission::BillingManage));
+    let mut record = staff.record(
+        "staff.billing.webhook_retry",
+        Some(StaffPermission::BillingManage),
+    );
     record.target_kind = Some("webhook".to_string());
     record.target_id = Some(id.to_string());
     audited(db, record, async {
@@ -241,7 +338,7 @@ pub async fn retry_webhook(
         process_webhook_event(db, id).await
     })
     .await?;
-    Ok(Json(
+    Ok(std::convert::identity(
         db.fetch_webhook_event(id)
             .await?
             .ok_or_else(|| create_error!(NotFound))?
@@ -254,11 +351,30 @@ pub async fn retry_webhook(
 /// Compares orders and subscriptions with the provider (safe policy only:
 /// never creates payments or refunds) and returns the open issues.
 #[post("/billing/reconcile")]
-pub async fn reconcile_now(db: &State<Database>, staff: StaffContext) -> Result<Json<Vec<v0::ReconciliationIssue>>> {
-    staff.require_step_up(db, StaffPermission::BillingManage).await?;
-    let record = staff.record("staff.billing.reconcile", Some(StaffPermission::BillingManage));
+pub async fn reconcile_now(
+    db: &State<Database>,
+    staff: StaffContext,
+) -> Result<Json<Vec<v0::ReconciliationIssue>>> {
+    reconcile_now_core(db, &staff).await.map(Json)
+}
+
+/// The console's `reconcile_now`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn reconcile_now_core(
+    db: &Database,
+    staff: &StaffContext,
+) -> Result<Vec<v0::ReconciliationIssue>> {
+    staff
+        .require_step_up(db, StaffPermission::BillingManage)
+        .await?;
+    let record = staff.record(
+        "staff.billing.reconcile",
+        Some(StaffPermission::BillingManage),
+    );
     audited(db, record, reconcile(db)).await?;
-    Ok(Json(db.fetch_reconciliation_issues(false, 200).await?))
+    Ok(std::convert::identity(
+        db.fetch_reconciliation_issues(false, 200).await?,
+    ))
 }
 
 /// # Grant Feather
@@ -270,8 +386,21 @@ pub async fn grant(
     staff: StaffContext,
     data: Json<v0::DataGrantPlus>,
 ) -> Result<Json<v0::BillingOverview>> {
-    staff.require_step_up(db, StaffPermission::BillingManage).await?;
-    let data = validated(data.into_inner())?;
+    grant_core(db, &staff, data.into_inner()).await.map(Json)
+}
+
+/// The console's `grant`, for any caller holding a [`StaffContext`]
+/// (the console route and Zrzur Desk): the same checks and records
+pub(super) async fn grant_core(
+    db: &Database,
+    staff: &StaffContext,
+    data: v0::DataGrantPlus,
+) -> Result<v0::BillingOverview> {
+    staff
+        .require_step_up(db, StaffPermission::BillingManage)
+        .await?;
+    let data = validated(data)?;
+    short_reason(&data.reason)?;
     let subject = db.fetch_user(&data.user).await?;
     if subject.bot.is_some() {
         return Err(create_error!(IsBot));
@@ -285,7 +414,14 @@ pub async fn grant(
     record.target_id = Some(subject.id.clone());
     record.reason = Some(data.reason.trim().chars().take(500).collect());
     record.summary = Some(format!("{} days", data.days));
-    audited(db, record, grant_plus(db, &staff.user.id, &data.user, data.days, &data.reason)).await?;
+    audited(
+        db,
+        record,
+        grant_plus(db, &staff.user.id, &data.user, data.days, &data.reason),
+    )
+    .await?;
     crate::util::official::feather_granted(db, &data.user, data.days as i64).await;
-    Ok(Json(crate::routes::billing::overview_of(db, &data.user).await?))
+    Ok(std::convert::identity(
+        crate::routes::billing::overview_of(db, &data.user).await?,
+    ))
 }
