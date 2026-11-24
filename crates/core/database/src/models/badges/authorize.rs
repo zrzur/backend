@@ -289,13 +289,13 @@ pub fn is_permanent_achievement(definition: &BadgeDefinition) -> bool {
 /// application.
 pub const CONDITION_BADGES: [&str; 1] = ["partner"];
 
-/// Sensitive changes that need two people: giving Partner or Elite Bug
-/// Hunter, and taking away any `Privileged` or `Historical` badge or an
+/// Sensitive changes that need two people: giving Partner, Elite Bug
+/// Hunter or Content Creator (its first approval), and taking away any `Privileged` or `Historical` badge or an
 /// earned achievement. (Founder, Staff and Platform Moderator never get
 /// here: they are refused before.)
 pub fn needs_second_person(definition: &BadgeDefinition, change: BadgeChange) -> bool {
     match change {
-        BadgeChange::Grant => matches!(definition.id, "partner" | "elite_bug_hunter"),
+        BadgeChange::Grant => matches!(definition.id, "partner" | "elite_bug_hunter" | "content_creator"),
         BadgeChange::Revoke => {
             matches!(
                 definition.rule,
@@ -597,7 +597,12 @@ async fn mutate_badge_inner(
             .await?
         }
         BadgeChange::Revoke => {
-            apply(db, record, summary, revoke_badge(db, &subject, definition.id, &actor.id, Some(reason))).await?
+            let grant = apply(db, record, summary, revoke_badge(db, &subject, definition.id, &actor.id, Some(reason))).await?;
+            // a person took a program's badge away: its application ends
+            if actor.path != BadgePath::System {
+                crate::program_badge_removed(db, &subject, definition.id, &actor.id).await;
+            }
+            grant
         }
     };
     Ok(BadgeOutcome::Applied(grant))

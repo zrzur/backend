@@ -98,6 +98,8 @@ pub fn routes() -> Vec<Route> {
         badge_applications::decide,
         badge_applications::decide_appeal,
         badge_applications::recheck,
+        badge_applications::creator_ownership,
+        badge_applications::creator_figures,
         bots::list,
         bots::detail,
         bots::disable,

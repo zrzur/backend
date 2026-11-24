@@ -309,6 +309,9 @@ auto_derived!(
         SahaChampion = 67108864,
         /// Helped people with support, chosen by staff
         CommunityHelper = 134217728,
+        /// Established creator of original content on another platform:
+        /// an application, a staff quality review and two people
+        ContentCreator = 268435456,
     }
 
     /// User flag enum

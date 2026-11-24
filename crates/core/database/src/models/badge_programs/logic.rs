@@ -20,10 +20,11 @@ use revolt_result::{create_error, ErrorType, Result};
 use ulid::Ulid;
 
 use crate::{
-    mutate_badge, program_eligibility, record_platform_audit, sha256_hex, AppealStatus,
+    application_checklist, mutate_badge, record_platform_audit, sha256_hex, AppealStatus,
     ApplicationAppeal, ApplicationStatus, AuditOutcome, AuditRecord, BadgeActor, BadgeApplication,
-    BadgeChange, BadgeEvidence, BadgeMutation, BadgeProgram, BadgeReview, Database, OwnershipChallenge,
-    OwnershipMethod, ProgramEligibility, StaffPermission, User, DAY_MS,
+    BadgeChange, BadgeEvidence, BadgeMutation, BadgeProgram, BadgeReview, CreatorChannel, CreatorFigures,
+    Database, OwnershipChallenge, OwnershipMethod, ProgramEligibility, StaffPermission, User, CREATOR_QUALITY,
+    DAY_MS,
 };
 
 
@@ -46,6 +47,25 @@ pub const IMPROVE_DAYS: i64 = 30;
 pub const WITHDRAWN_KEEP_DAYS: i64 = 30;
 /// Reason codes a reviewer may give at once
 pub const REASONS_MAX: usize = 5;
+/// Content Creator: links to works at most, and the length of a schedule
+pub const CREATOR_WORKS_MAX: usize = 10;
+pub const SCHEDULE_MAX: usize = 500;
+/// Content Creator: platforms named in plain text (never a logo or brand)
+pub const CREATOR_PLATFORMS: [&str; 8] = ["youtube", "tiktok", "twitch", "instagram", "x", "kick", "facebook", "other"];
+/// Content Creator: kinds of content (a genre is never a reason to refuse)
+pub const CREATOR_CATEGORIES: [&str; 11] = [
+    "education",
+    "technology",
+    "gaming",
+    "livestream",
+    "tutorials",
+    "creative",
+    "comedy",
+    "art",
+    "film",
+    "commentary",
+    "other",
+];
 /// The TXT record name and the file path of the ownership challenge
 pub const DNS_RECORD_PREFIX: &str = "_zrzur-verification";
 pub const WEBSITE_PATH: &str = "/.well-known/zrzur-verification.txt";
@@ -88,6 +108,24 @@ pub fn reason_codes(program: BadgeProgram) -> &'static [&'static str] {
             "malicious",
             "inflated_installs",
             "safety_violations",
+            "other",
+        ],
+        // the published criteria, one code each (owner's brief, section 6);
+        // a genre is never one of them
+        BadgeProgram::ContentCreator => &[
+            "criteria_met",
+            "more_information",
+            "ownership_not_proven",
+            "followers_not_met",
+            "activity_not_met",
+            "works_not_met",
+            "originality",
+            "effort",
+            "consistency",
+            "authenticity",
+            "safety",
+            "honesty",
+            "rights",
             "other",
         ],
     }
@@ -161,6 +199,48 @@ pub fn clean_domain(value: &str) -> Option<String> {
     valid.then_some(domain)
 }
 
+/// Content Creator's channel as the applicant named it: a known platform
+/// (with its name for `other`), a public https address, a kind of content,
+/// at most ten https links to works and a short schedule
+pub fn clean_creator(channel: &CreatorChannel) -> Result<CreatorChannel> {
+    let platform = channel.platform.trim().to_ascii_lowercase();
+    if !CREATOR_PLATFORMS.contains(&platform.as_str()) {
+        return Err(invalid("platform"));
+    }
+    let platform_name = match channel.platform_name.as_deref().map(clean_text).filter(|n| !n.is_empty()) {
+        Some(name) if name.chars().count() > 40 => return Err(invalid("platform_name")),
+        Some(name) if platform == "other" => Some(name),
+        None if platform == "other" => return Err(invalid("platform_name")),
+        _ => None,
+    };
+    let category = channel.category.trim().to_ascii_lowercase();
+    if !CREATOR_CATEGORIES.contains(&category.as_str()) {
+        return Err(invalid("category"));
+    }
+    let url = if channel.url.trim().is_empty() { String::new() } else { clean_link(&channel.url)? };
+    if channel.works.len() > CREATOR_WORKS_MAX {
+        return Err(invalid("too_many_works"));
+    }
+    let works = channel
+        .works
+        .iter()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| clean_link(l))
+        .collect::<Result<Vec<String>>>()?;
+    let schedule = match channel.schedule.as_deref().map(clean_text).filter(|s| !s.is_empty()) {
+        Some(text) if text.chars().count() > SCHEDULE_MAX => return Err(invalid("schedule")),
+        other => other,
+    };
+    Ok(CreatorChannel {
+        platform,
+        platform_name,
+        url,
+        category,
+        works,
+        schedule,
+    })
+}
+
 /// Whether `reviewer` must not review this application: they made it, or
 /// they own the server or bot now
 pub fn reviewer_conflict(application: &BadgeApplication, owner_id: Option<&str>, reviewer: &str) -> bool {
@@ -215,16 +295,19 @@ pub async fn save_application(db: &Database, application: &mut BadgeApplication,
     Ok(())
 }
 
-/// Current owner of the server or bot an application is for
+/// Current owner of the server or bot an application is for (Content
+/// Creator: the applicant themself, while the account exists)
 pub async fn target_owner(db: &Database, program: BadgeProgram, target_id: &str) -> Result<Option<String>> {
-    let owner = if program.targets_bot() {
+    let owner = if program.targets_person() {
+        db.fetch_user(target_id).await.map(|user| user.id)
+    } else if program.targets_bot() {
         db.fetch_bot(target_id).await.map(|bot| bot.owner)
     } else {
         db.fetch_server(target_id).await.map(|server| server.owner)
     };
     match owner {
         Ok(owner) => Ok(Some(owner)),
-        Err(error) if matches!(error.error_type, ErrorType::NotFound | ErrorType::UnknownServer) => Ok(None),
+        Err(error) if matches!(error.error_type, ErrorType::NotFound | ErrorType::UnknownServer | ErrorType::UnknownUser) => Ok(None),
         Err(error) => Err(error),
     }
 }
@@ -235,6 +318,8 @@ pub struct ApplicationInput {
     pub statement: Option<String>,
     pub links: Option<Vec<String>>,
     pub authorized: Option<bool>,
+    /// Content Creator: the channel or profile
+    pub creator: Option<CreatorChannel>,
 }
 
 /// What keeps someone from starting an application now, if anything:
@@ -294,11 +379,16 @@ pub async fn create_application(
     if exception && program != BadgeProgram::VerifiedServer {
         return Err(invalid("exception_verified_server_only"));
     }
+    if input.creator.is_some() && !program.targets_person() {
+        return Err(invalid("creator_content_creator_only"));
+    }
     // the target exists and is theirs; otherwise it is as if it didn't exist
     if target_owner(db, program, target_id).await?.as_deref() != Some(applicant.id.as_str()) {
         return Err(create_error!(NotFound));
     }
-    let already = if program.targets_bot() {
+    let already = if program.targets_person() {
+        crate::held_badges(db, &applicant.id).await?.contains("content_creator")
+    } else if program.targets_bot() {
         db.fetch_bot(target_id).await?.flags.unwrap_or_default() & BotFlags::Verified as i32 != 0
     } else if program == BadgeProgram::VerifiedServer {
         db.fetch_server(target_id).await?.flags.unwrap_or_default() & (crate::SERVER_FLAG_VERIFIED | crate::SERVER_FLAG_OFFICIAL) != 0
@@ -322,6 +412,8 @@ pub async fn create_application(
         links: clean_links(input.links.as_deref().unwrap_or_default())?,
         authorized: input.authorized.unwrap_or(false),
         ownership: None,
+        creator: input.creator.as_ref().map(clean_creator).transpose()?,
+        creator_figures: None,
         eligibility: vec![],
         created_at: now,
         updated_at: now,
@@ -380,6 +472,17 @@ pub async fn edit_application(db: &Database, mut application: BadgeApplication, 
     if let Some(authorized) = input.authorized {
         application.authorized = authorized;
     }
+    if let Some(channel) = input.creator {
+        if !application.program.targets_person() {
+            return Err(invalid("creator_content_creator_only"));
+        }
+        let channel = clean_creator(&channel)?;
+        // another channel: the code placed on the old one proves nothing
+        if application.creator.as_ref().is_some_and(|old| old.url != channel.url) {
+            application.ownership = None;
+        }
+        application.creator = Some(channel);
+    }
     save_application(db, &mut application, before, now).await?;
     Ok(application)
 }
@@ -425,8 +528,9 @@ pub fn challenge_value(code: &str) -> String {
     format!("zrzur-verification={code}")
 }
 
-/// Start an ownership challenge (Verified Server). The code comes back
-/// once; only its hash is kept. A new challenge replaces the old one.
+/// Start an ownership challenge (Verified Server: DNS or website; Content
+/// Creator: the profile of the named channel). The code comes back once;
+/// only its hash is kept. A new challenge replaces the old one.
 pub async fn issue_challenge(
     db: &Database,
     mut application: BadgeApplication,
@@ -435,18 +539,41 @@ pub async fn issue_challenge(
     now: i64,
 ) -> Result<(BadgeApplication, String)> {
     editable(&application)?;
-    if application.program != BadgeProgram::VerifiedServer {
-        return Err(invalid("no_ownership_check"));
-    }
-    let domain = clean_domain(domain).ok_or_else(|| invalid("domain"))?;
-    let code = nanoid::nanoid!(32, &nanoid::alphabet::SAFE);
+    let (domain, ttl) = match (application.program, method) {
+        (BadgeProgram::VerifiedServer, OwnershipMethod::Dns | OwnershipMethod::Website) => {
+            (clean_domain(domain).ok_or_else(|| invalid("domain"))?, CHALLENGE_TTL_MS)
+        }
+        (BadgeProgram::ContentCreator, OwnershipMethod::Profile) => {
+            // the host of the named channel: the code goes on that page
+            let url = application
+                .creator
+                .as_ref()
+                .map(|c| c.url.clone())
+                .filter(|u| !u.is_empty())
+                .ok_or_else(|| invalid("channel_needed"))?;
+            let host = reqwest::Url::parse(&url)
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_ascii_lowercase))
+                .ok_or_else(|| invalid("https_link"))?;
+            let days = revolt_config::config().await.api.badge_programs.creator_code_days;
+            (host, days * DAY_MS)
+        }
+        _ => return Err(invalid("no_ownership_check")),
+    };
+    // a profile code is short enough for a person to read and type
+    let code = if method == OwnershipMethod::Profile {
+        format!("zrzur-{}", nanoid::nanoid!(12, &PROFILE_ALPHABET))
+    } else {
+        nanoid::nanoid!(32, &nanoid::alphabet::SAFE)
+    };
+    let value = if method == OwnershipMethod::Profile { code.clone() } else { challenge_value(&code) };
     let before = application.updated_at;
     application.ownership = Some(OwnershipChallenge {
         method,
         domain,
-        code_hash: sha256_hex(challenge_value(&code).as_bytes()),
+        code_hash: sha256_hex(value.as_bytes()),
         issued_at: now,
-        expires_at: now + CHALLENGE_TTL_MS,
+        expires_at: now + ttl,
         verified_at: None,
     });
     save_application(db, &mut application, before, now).await?;
@@ -460,7 +587,133 @@ pub async fn issue_challenge(
         method.name(),
     )
     .await?;
-    Ok((application, code))
+    Ok((application, value))
+}
+
+/// Letters and digits a person reads without mistakes (no 0/o, 1/l/i)
+const PROFILE_ALPHABET: [char; 31] = [
+    'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'j', 'k', 'm', 'n', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x',
+    'y', 'z', '2', '3', '4', '5', '6', '7', '8', '9',
+];
+
+/// The code a reviewer saw, as it is compared: trimmed, lower case
+pub fn profile_code(seen: &str) -> String {
+    seen.trim().trim_matches('"').to_ascii_lowercase()
+}
+
+/// Content Creator: a reviewer opened the named channel and types the code
+/// they saw in its description or a pinned post. Only the hash is compared;
+/// each try is written to the audit log (result only, never the code).
+pub async fn reviewer_confirm_profile(
+    db: &Database,
+    mut application: BadgeApplication,
+    reviewer: &str,
+    staff_session: Option<String>,
+    seen: &str,
+    now: i64,
+) -> Result<BadgeApplication> {
+    if !matches!(application.status, ApplicationStatus::Submitted | ApplicationStatus::InReview) {
+        return Err(invalid("not_waiting"));
+    }
+    let Some(challenge) = application.ownership.clone().filter(|o| o.method == OwnershipMethod::Profile) else {
+        return Err(invalid("no_challenge"));
+    };
+    let fresh = now < challenge.expires_at && !challenge.code_hash.is_empty();
+    let matched = fresh && sha256_hex(profile_code(seen).as_bytes()) == challenge.code_hash;
+    let detail = format!("profile {}", if matched { "matched" } else if fresh { "not_found" } else { "expired" });
+    application_audit(
+        db,
+        reviewer,
+        staff_session,
+        "staff.badge.application.ownership",
+        &application,
+        if matched { AuditOutcome::Success } else { AuditOutcome::Denied },
+        &detail,
+    )
+    .await?;
+    if !matched {
+        return Err(invalid(if fresh { "challenge_not_found" } else { "challenge_expired" }));
+    }
+    let before = application.updated_at;
+    if let Some(ownership) = application.ownership.as_mut() {
+        ownership.verified_at = Some(now);
+    }
+    if application.reviewer_id.is_none() {
+        application.reviewer_id = Some(reviewer.to_string());
+    }
+    save_application(db, &mut application, before, now).await?;
+    record_review(db, &application, reviewer, "ownership_seen", &[], None, now).await?;
+    Ok(application)
+}
+
+/// What a reviewer records about a Content Creator channel
+#[derive(Debug, Clone, Default)]
+pub struct FiguresInput {
+    pub followers: i64,
+    pub seen_at: i64,
+    pub active_days: i64,
+    pub works: i64,
+    pub schedule: bool,
+    pub quality: Vec<String>,
+}
+
+/// Content Creator: the reviewer records what they saw on the public page
+/// (the figure with its day, days active, works counted) and the quality
+/// criteria they found met. Recording again replaces it. Nothing is given:
+/// the decision is a separate step, and the first approval needs a second
+/// person.
+pub async fn record_creator_figures(
+    db: &Database,
+    mut application: BadgeApplication,
+    reviewer: &str,
+    staff_session: Option<String>,
+    input: FiguresInput,
+    now: i64,
+) -> Result<BadgeApplication> {
+    if !application.program.targets_person() {
+        return Err(invalid("not_content_creator"));
+    }
+    if !matches!(application.status, ApplicationStatus::Submitted | ApplicationStatus::InReview) {
+        return Err(invalid("not_waiting"));
+    }
+    // plain numbers a person read off a page; a day within the last year,
+    // never in the future
+    let sane = (0..=10_000_000_000).contains(&input.followers)
+        && (0..=36_500).contains(&input.active_days)
+        && (0..=10_000).contains(&input.works)
+        && input.seen_at <= now + DAY_MS
+        && input.seen_at >= now - 365 * DAY_MS;
+    if !sane {
+        return Err(invalid("figures"));
+    }
+    let mut quality: Vec<String> = vec![];
+    for code in &input.quality {
+        let Some(known) = CREATOR_QUALITY.iter().find(|c| **c == code.as_str()) else {
+            return Err(invalid("quality"));
+        };
+        if !quality.iter().any(|q| q == known) {
+            quality.push(known.to_string());
+        }
+    }
+    let before = application.updated_at;
+    application.creator_figures = Some(CreatorFigures {
+        followers: input.followers,
+        seen_at: input.seen_at,
+        active_days: input.active_days,
+        works: input.works,
+        schedule: input.schedule,
+        quality,
+        recorded_by: reviewer.to_string(),
+        recorded_at: now,
+    });
+    if application.reviewer_id.is_none() {
+        application.reviewer_id = Some(reviewer.to_string());
+    }
+    save_application(db, &mut application, before, now).await?;
+    record_review(db, &application, reviewer, "figures_recorded", &[], None, now).await?;
+    // nothing about the channel in the log: ids and the program only
+    application_audit(db, reviewer, staff_session, "staff.badge.application.figures", &application, AuditOutcome::Success, "").await?;
+    Ok(application)
 }
 
 /// Check what the DNS record or the file held against the challenge. Each
@@ -470,6 +723,10 @@ pub async fn confirm_challenge(db: &Database, mut application: BadgeApplication,
     let Some(challenge) = application.ownership.clone() else {
         return Err(invalid("no_challenge"));
     };
+    // a profile code is looked for by a reviewer, never by the server
+    if challenge.method == OwnershipMethod::Profile {
+        return Err(invalid("checked_by_reviewer"));
+    }
     let fresh = now < challenge.expires_at && !challenge.code_hash.is_empty();
     let matched = fresh
         && found
@@ -508,18 +765,7 @@ pub async fn submit_application(
     if !application.authorized {
         return Err(invalid("not_authorized"));
     }
-    let ownership_verified = application.ownership.as_ref().is_some_and(|o| o.verified_at.is_some());
-    let eligibility = program_eligibility(
-        db,
-        programs,
-        application.program,
-        applicant,
-        &application.target_id,
-        application.exception,
-        ownership_verified,
-        now,
-    )
-    .await?;
+    let eligibility = application_checklist(db, programs, applicant, &application, now).await?;
     let missing = eligibility.missing();
     if !missing.is_empty() {
         return Err(invalid(&format!("not_eligible:{}", missing.join(","))));
@@ -638,7 +884,12 @@ pub async fn record_review(
 /// A refusal's dates: the wait before a new application, the appeal window
 /// and when the evidence and the record go
 pub fn refuse_dates(application: &mut BadgeApplication, programs: &ApiBadgePrograms, now: i64) {
-    application.reapply_after = Some(now + programs.reapply_days * DAY_MS);
+    // Content Creator: when only information was missing there is no wait
+    // (the published rule: "sooner if only information was missing")
+    let only_information = application.program == BadgeProgram::ContentCreator
+        && !application.reasons.is_empty()
+        && application.reasons.iter().all(|r| r == "more_information");
+    application.reapply_after = Some(if only_information { now } else { now + programs.reapply_days * DAY_MS });
     application.appeal_until = Some(now + programs.appeal_days * DAY_MS);
     application.evidence_purge_at = Some(now + (programs.appeal_days + programs.evidence_days) * DAY_MS);
     application.purge_at = Some(now + programs.record_days.max(programs.reapply_days) * DAY_MS);
@@ -656,15 +907,48 @@ pub fn approve_dates(application: &mut BadgeApplication, programs: &ApiBadgeProg
     application.improve_until = None;
 }
 
-/// Whether Partner may be given to this person: an application of theirs
-/// that a reviewer approved (the badge waits for the second person) or that
-/// is approved. No path gives Partner without one.
-pub async fn partner_application_backs(db: &Database, user_id: &str) -> Result<bool> {
+/// Whether a program's badge (Partner, Content Creator) may be given to
+/// this person: an application of theirs that a reviewer approved (the
+/// badge waits for the second person) or that is approved. No path gives
+/// either badge without one.
+pub async fn program_application_backs(db: &Database, user_id: &str, program: BadgeProgram) -> Result<bool> {
     Ok(db.fetch_badge_applications_by_applicant(user_id).await?.iter().any(|a| {
-        a.program == BadgeProgram::Partner
+        a.program == program
             && (a.status == ApplicationStatus::Approved
                 || (a.status == ApplicationStatus::InReview && a.first_approval_by.is_some()))
     }))
+}
+
+/// [`program_application_backs`] for Partner
+pub async fn partner_application_backs(db: &Database, user_id: &str) -> Result<bool> {
+    program_application_backs(db, user_id, BadgeProgram::Partner).await
+}
+
+/// A person took a program's badge away in the badge console (Content
+/// Creator): the approved application behind it ends with `badge_removed`.
+/// The gate calls it after the change; failures are logged.
+pub async fn program_badge_removed(db: &Database, user_id: &str, badge: &str, actor: &str) {
+    let program = match badge {
+        "content_creator" => BadgeProgram::ContentCreator,
+        _ => return,
+    };
+    let programs = revolt_config::config().await.api.badge_programs;
+    let applications = match db.fetch_badge_applications_by_applicant(user_id).await {
+        Ok(list) => list,
+        Err(error) => {
+            log::error!("applications of {user_id}: {:?}", error.error_type);
+            return;
+        }
+    };
+    for application in applications
+        .into_iter()
+        .filter(|a| a.program == program && a.status == ApplicationStatus::Approved)
+    {
+        // the badge is gone already: only the record ends
+        if let Err(error) = mark_ended(db, &programs, application, actor, "badge_removed", now_ms()).await {
+            log::error!("ending the {badge} application of {user_id}: {:?}", error.error_type);
+        }
+    }
 }
 
 /// Take a badge away because its condition ended (the system, through the
@@ -693,10 +977,8 @@ async fn system_revoke(db: &Database, user_id: &str, badge: &str, source_ref: &s
     }
 }
 
-/// End an approved application (its mark or badge went), with the Partner
-/// badge when it was one. The caller deals with the marks and sends the
-/// notice.
-pub async fn end_application(
+/// The record of an approved application ends (no badge is touched here)
+async fn mark_ended(
     db: &Database,
     programs: &ApiBadgePrograms,
     mut application: BadgeApplication,
@@ -704,9 +986,6 @@ pub async fn end_application(
     reason: &str,
     now: i64,
 ) -> Result<BadgeApplication> {
-    if application.status != ApplicationStatus::Approved {
-        return Ok(application);
-    }
     let before = application.updated_at;
     application.status = ApplicationStatus::Ended;
     application.ended_at = Some(now);
@@ -716,6 +995,24 @@ pub async fn end_application(
     application.purge_at = Some(now + programs.record_days * DAY_MS);
     save_application(db, &mut application, before, now).await?;
     application_audit(db, actor, None, "badge.application.end", &application, AuditOutcome::Success, reason).await?;
+    Ok(application)
+}
+
+/// End an approved application (its mark or badge went), with the Partner
+/// badge when it was one. The caller deals with the marks and sends the
+/// notice.
+pub async fn end_application(
+    db: &Database,
+    programs: &ApiBadgePrograms,
+    application: BadgeApplication,
+    actor: &str,
+    reason: &str,
+    now: i64,
+) -> Result<BadgeApplication> {
+    if application.status != ApplicationStatus::Approved {
+        return Ok(application);
+    }
+    let application = mark_ended(db, programs, application, actor, reason, now).await?;
     if application.program == BadgeProgram::Partner {
         system_revoke(
             db,
@@ -791,6 +1088,12 @@ pub async fn program_upkeep(db: &Database, programs: &ApiBadgePrograms, now: i64
         let before = application.updated_at;
         if let Some(ownership) = application.ownership.as_mut() {
             ownership.code_hash = String::new();
+        }
+        // the links to works are evidence too; the channel and the
+        // recorded figures stay with the decision record
+        if let Some(channel) = application.creator.as_mut() {
+            channel.works.clear();
+            channel.schedule = None;
         }
         application.evidence_purged = true;
         save_application(db, &mut application, before, now).await?;

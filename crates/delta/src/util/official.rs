@@ -665,14 +665,14 @@ mod tests {
         use revolt_database::{reason_codes, BadgeProgram};
         for (language, _) in LANGUAGES {
             let texts = &TEXTS[language];
-            for program in [BadgeProgram::Partner, BadgeProgram::VerifiedServer, BadgeProgram::VerifiedBot] {
+            for program in BadgeProgram::ALL {
                 assert!(texts.contains_key(&format!("program.name.{}", program.name())), "{language}");
                 for code in reason_codes(program) {
                     let key = format!("program.reason.{code}");
                     assert!(texts.get(&key).is_some_and(|t| !t.body.is_empty()), "{language} {key}");
                 }
             }
-            for end in ["ownership_transferred", "server_deleted", "bot_deleted", "bot_suspended", "mark_removed", "recheck"] {
+            for end in ["ownership_transferred", "server_deleted", "bot_deleted", "bot_suspended", "mark_removed", "recheck", "badge_removed"] {
                 assert!(texts.contains_key(&format!("program.end.{end}")), "{language} {end}");
             }
             let refused = program_reasons(language, &["criteria_met".to_string(), "other".to_string()]);
@@ -718,15 +718,22 @@ mod tests {
             ("beta_veteran", "مختبِر مخضرم", "Beta Veteran", "Beta-Veteran"),
             ("elite_bug_hunter", "صائد الأخطاء النخبة", "Elite Bug Hunter", "Elite-Fehlerjäger"),
             ("founder", "مؤسس زرزور", "Zrzur Founder", "Zrzur-Gründer"),
+            ("content_creator", "صانع محتوى", "Content Creator", "Content Creator"),
         ] {
             let names = badge_names(badge);
             assert_eq!(names["ar"], ar, "{badge}");
             assert_eq!(names["en"], en, "{badge}");
             assert_eq!(names["de"], de, "{badge}");
         }
+        // «صانع محتوى» belongs to Content Creator alone, and no two active
+        // badges share a name in any language
         for (code, _) in LANGUAGES {
-            for badge in revolt_database::BADGE_CATALOGUE {
+            for badge in revolt_database::BADGE_CATALOGUE.iter().filter(|b| b.id != "content_creator") {
                 assert_ne!(badge_names(badge.id)[code], "صانع محتوى", "{}", badge.id);
+            }
+            let mut seen = std::collections::HashSet::new();
+            for badge in revolt_database::BADGE_CATALOGUE.iter().filter(|b| !b.retired) {
+                assert!(seen.insert(badge_names(badge.id)[code].clone()), "{code} {} repeats a name", badge.id);
             }
         }
     }

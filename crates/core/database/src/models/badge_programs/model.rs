@@ -1,5 +1,5 @@
 //! Applications for the badge programs: Zrzur Partner, Verified Server (and
-//! Verified Server Owner) and Verified Bot Developer.
+//! Verified Server Owner), Verified Bot Developer and Content Creator.
 //!
 //! The numbers of each program only let someone apply; a person on the team
 //! reviews every application and decides with a statement of reasons. Data
@@ -21,8 +21,17 @@
 //!   members, contributors, joins, joins still there a week later). Never a
 //!   member id, never message content. Kept 26 weeks.
 //!
-//! The ownership code of a DNS or website challenge is stored only as a
-//! SHA-256 hash, shown once to the applicant, and dropped with the evidence.
+//! The ownership code of a DNS, website or profile challenge is stored only
+//! as a SHA-256 hash, shown once to the applicant, and dropped with the
+//! evidence.
+//!
+//! Content Creator (Phase 5): the applicant names one channel or profile on
+//! another platform and places a code in its description or a pinned post.
+//! Zrzur never calls the platform: a reviewer opens the public page, types
+//! the code they saw (it is compared with the hash), and records the
+//! follower figure they saw with its date, the activity and works they
+//! counted, and the seven quality criteria. Nothing else about the channel
+//! is stored (legal BV-02, BV-05).
 
 auto_derived!(
     /// A program someone applies for
@@ -34,6 +43,9 @@ auto_derived!(
         VerifiedServer,
         /// Verified mark on a bot and the Verified Bot Developer badge
         VerifiedBot,
+        /// Content Creator (badge `content_creator`, on the applicant): an
+        /// established creator of original content on another platform
+        ContentCreator,
     }
 
     /// Where an application stands
@@ -66,6 +78,9 @@ auto_derived!(
         Dns,
         /// A file at `https://<domain>/.well-known/zrzur-verification.txt`
         Website,
+        /// Content Creator: the code in the description or a pinned post of
+        /// the named channel or profile, seen by a reviewer (never fetched)
+        Profile,
     }
 
     /// An ownership challenge: only the hash of the code is kept
@@ -93,6 +108,52 @@ auto_derived!(
         pub value: Option<i64>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub needed: Option<i64>,
+    }
+
+    /// Content Creator: the one channel or profile the application is about,
+    /// as the applicant names it
+    pub struct CreatorChannel {
+        /// `youtube`, `tiktok`, `twitch`, `instagram`, `x`, `kick`,
+        /// `facebook` or `other`; shown as plain text, never a logo
+        pub platform: String,
+        /// The platform's name when `platform` is `other`
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub platform_name: Option<String>,
+        /// Public https address of the channel or profile
+        pub url: String,
+        /// `education`, `technology`, `gaming`, `livestream`, `tutorials`,
+        /// `creative`, `comedy`, `art`, `film`, `commentary` or `other`
+        pub category: String,
+        /// Public https links to recent original works (at most 10)
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub works: Vec<String>,
+        /// A regular livestream schedule, in the applicant's words
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub schedule: Option<String>,
+    }
+
+    /// Content Creator: what a reviewer saw on the public channel page and
+    /// recorded by hand. Only the figure, its date and the counts; never a
+    /// follower list or a copy of the page.
+    pub struct CreatorFigures {
+        /// Followers or subscribers on that one platform
+        pub followers: i64,
+        /// The day the reviewer saw the figure
+        pub seen_at: i64,
+        /// Days of active publishing the reviewer counted
+        pub active_days: i64,
+        /// Substantial original works in the last 90 days
+        pub works: i64,
+        /// A regular livestream schedule counts in place of the works
+        #[serde(default)]
+        pub schedule: bool,
+        /// Quality criteria the reviewer found met: `originality`, `effort`,
+        /// `consistency`, `authenticity` (no signs of bought followers or
+        /// fake engagement in the review), `safety`, `honesty`, `rights`
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub quality: Vec<String>,
+        pub recorded_by: String,
+        pub recorded_at: i64,
     }
 
     /// Where an appeal stands
@@ -144,6 +205,12 @@ auto_derived!(
         pub authorized: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub ownership: Option<OwnershipChallenge>,
+        /// Content Creator: the channel or profile it is about
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub creator: Option<CreatorChannel>,
+        /// Content Creator: what the reviewer saw and recorded
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub creator_figures: Option<CreatorFigures>,
         /// The checklist as it stood at submission (counts only)
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         pub eligibility: Vec<EligibilityItem>,
@@ -264,6 +331,7 @@ impl BadgeProgram {
             BadgeProgram::Partner => "partner",
             BadgeProgram::VerifiedServer => "verified_server",
             BadgeProgram::VerifiedBot => "verified_bot",
+            BadgeProgram::ContentCreator => "content_creator",
         }
     }
 
@@ -272,14 +340,38 @@ impl BadgeProgram {
             "partner" => Some(BadgeProgram::Partner),
             "verified_server" => Some(BadgeProgram::VerifiedServer),
             "verified_bot" => Some(BadgeProgram::VerifiedBot),
+            "content_creator" => Some(BadgeProgram::ContentCreator),
             _ => None,
         }
     }
 
-    /// Whether the target is a bot (else a server)
+    /// Whether the target is a bot
     pub fn targets_bot(&self) -> bool {
         matches!(self, BadgeProgram::VerifiedBot)
     }
+
+    /// Whether the target is the applicant themself (else a server or bot)
+    pub fn targets_person(&self) -> bool {
+        matches!(self, BadgeProgram::ContentCreator)
+    }
+
+    /// The profile badge an approval gives through the badge gate (the
+    /// marks of Verified Server and Verified Bot follow their own records)
+    pub fn gate_badge(&self) -> Option<&'static str> {
+        match self {
+            BadgeProgram::Partner => Some("partner"),
+            BadgeProgram::ContentCreator => Some("content_creator"),
+            BadgeProgram::VerifiedServer | BadgeProgram::VerifiedBot => None,
+        }
+    }
+
+    /// Every program, in the order the apps list them
+    pub const ALL: [BadgeProgram; 4] = [
+        BadgeProgram::Partner,
+        BadgeProgram::VerifiedServer,
+        BadgeProgram::VerifiedBot,
+        BadgeProgram::ContentCreator,
+    ];
 }
 
 impl ApplicationStatus {
@@ -338,6 +430,7 @@ impl OwnershipMethod {
         match self {
             OwnershipMethod::Dns => "dns",
             OwnershipMethod::Website => "website",
+            OwnershipMethod::Profile => "profile",
         }
     }
 
@@ -345,6 +438,7 @@ impl OwnershipMethod {
         match name {
             "dns" => Some(OwnershipMethod::Dns),
             "website" => Some(OwnershipMethod::Website),
+            "profile" => Some(OwnershipMethod::Profile),
             _ => None,
         }
     }

@@ -9,9 +9,15 @@
 //!   Verified Bot also `platform.servers.restrict`
 //! - nobody reviews an application they made or one for a server or bot
 //!   they own
-//! - Partner: two people. The first approval opens the Partner badge
-//!   request through the badge gate; a different reviewer approves it here
-//!   (or in the badge requests list) and the partnership starts
+//! - Partner and Content Creator: two people. The first approval opens the
+//!   badge request through the badge gate; a different reviewer approves it
+//!   here (or in the badge requests list) and the badge is given
+//! - Content Creator: the reviewer opens the named channel by hand, types
+//!   the code they saw in its description or a pinned post (compared with
+//!   the stored hash), and records the follower figure they saw with its
+//!   date, the days active, the works counted and the seven quality
+//!   criteria. Every line must be settled before an approval. Zrzur never
+//!   calls the platform.
 //! - Verified Server as an official entity below the numbers: a staff Owner
 //!   approves first, a different reviewer second
 //! - an appeal is decided by someone other than the reviewer who refused
@@ -21,19 +27,20 @@
 
 use revolt_config::config;
 use revolt_database::{
-    application_audit, approve_badge_request, approve_dates, checked_decision, end_application,
-    mutate_badge, program_eligibility, record_review, refuse_badge_request, refuse_dates,
-    reviewer_conflict, save_application, sync_verified_server_owner, target_owner, AppealStatus,
-    ApplicationStatus, AuditOutcome, BadgeActor, BadgeApplication, BadgeChange, BadgeMutation,
-    BadgeOutcome, BadgePath, BadgeProgram, BadgeRequestStatus, Database, PartialServer,
-    StaffPermission, IMPROVE_DAYS, SERVER_FLAG_PARTNER, SERVER_FLAG_VERIFIED,
+    application_audit, application_checklist, approve_badge_request, approve_dates, checked_decision,
+    end_application, mutate_badge, record_creator_figures, record_review, refuse_badge_request,
+    refuse_dates, reviewer_confirm_profile, reviewer_conflict, save_application,
+    sync_verified_server_owner, target_owner, AppealStatus, ApplicationStatus, AuditOutcome, BadgeActor,
+    BadgeApplication, BadgeChange, BadgeMutation, BadgeOutcome, BadgePath, BadgeProgram,
+    BadgeRequestStatus, Database, FiguresInput, PartialServer, StaffPermission, IMPROVE_DAYS,
+    SERVER_FLAG_PARTNER, SERVER_FLAG_VERIFIED,
 };
 use revolt_result::{create_error, Result};
 use rocket::{serde::json::Json, State};
 use serde::{Deserialize, Serialize};
 
 use super::StaffContext;
-use crate::routes::badges::programs::{check_view, ownership_view, target_name};
+use crate::routes::badges::programs::{channel_view, check_view, ownership_view, target_name};
 
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 
@@ -103,6 +110,19 @@ pub struct AppealView {
     pub note: Option<String>,
 }
 
+/// Content Creator: what a reviewer recorded
+#[derive(Serialize, Debug)]
+pub struct FiguresView {
+    pub followers: i64,
+    pub seen_at: i64,
+    pub active_days: i64,
+    pub works: i64,
+    pub schedule: bool,
+    pub quality: Vec<String>,
+    pub recorded_by: String,
+    pub recorded_at: i64,
+}
+
 /// One application, as a reviewer sees it
 #[derive(Serialize, Debug)]
 pub struct ApplicationDetail {
@@ -112,6 +132,12 @@ pub struct ApplicationDetail {
     pub links: Vec<String>,
     pub authorized: bool,
     pub ownership: Option<revolt_models::v0::ApplicationOwnership>,
+    /// Content Creator: the channel the applicant named
+    pub creator: Option<revolt_models::v0::CreatorChannelData>,
+    /// Content Creator: what a reviewer saw and recorded
+    pub creator_figures: Option<FiguresView>,
+    /// Content Creator: the quality criteria a reviewer checks
+    pub quality_criteria: Vec<String>,
     /// The checklist when it was sent
     pub checks: Vec<revolt_models::v0::ProgramCheck>,
     /// The checklist measured now
@@ -211,18 +237,9 @@ pub async fn queue(
 async fn detail_of(db: &Database, staff: &StaffContext, application: &BadgeApplication) -> Result<ApplicationDetail> {
     let programs = config().await.api.badge_programs;
     let live = match db.fetch_user(&application.applicant_id).await {
-        Ok(applicant) => program_eligibility(
-            db,
-            &programs,
-            application.program,
-            &applicant,
-            &application.target_id,
-            application.exception,
-            application.ownership.as_ref().is_some_and(|o| o.verified_at.is_some()),
-            staff.now,
-        )
-        .await?
-        .items
+        Ok(applicant) => application_checklist(db, &programs, &applicant, application, staff.now)
+            .await?
+            .items
         .iter()
         .map(check_view)
         .collect(),
@@ -239,6 +256,22 @@ async fn detail_of(db: &Database, staff: &StaffContext, application: &BadgeAppli
         links: application.links.clone(),
         authorized: application.authorized,
         ownership: ownership_view(application),
+        creator: application.creator.as_ref().map(channel_view),
+        creator_figures: application.creator_figures.as_ref().map(|f| FiguresView {
+            followers: f.followers,
+            seen_at: f.seen_at,
+            active_days: f.active_days,
+            works: f.works,
+            schedule: f.schedule,
+            quality: f.quality.clone(),
+            recorded_by: f.recorded_by.clone(),
+            recorded_at: f.recorded_at,
+        }),
+        quality_criteria: if application.program.targets_person() {
+            revolt_database::CREATOR_QUALITY.iter().map(|c| c.to_string()).collect()
+        } else {
+            vec![]
+        },
         checks: application.eligibility.iter().map(check_view).collect(),
         live_checks: live,
         decided_at: application.decided_at,
@@ -364,14 +397,15 @@ pub struct DataDecision {
 /// the marks also servers.restrict
 async fn require_decision_rights(db: &Database, staff: &StaffContext, program: BadgeProgram) -> Result<()> {
     staff.require_step_up(db, StaffPermission::BadgesManage).await?;
-    if program != BadgeProgram::Partner {
+    if program.gate_badge().is_none() {
         staff.require(db, StaffPermission::ServersRestrict).await?;
     }
     Ok(())
 }
 
 /// The application is approved: the mark is set (Verified Server, Verified
-/// Bot) and the record closed. Partner's badge was given by the gate already.
+/// Bot) and the record closed. Partner's and Content Creator's badges were
+/// given by the gate already.
 async fn finish_approval(
     db: &Database,
     staff: &StaffContext,
@@ -394,6 +428,8 @@ async fn finish_approval(
         BadgeProgram::VerifiedBot => {
             super::bots::set_verified(db, &application.target_id, true, 0).await?;
         }
+        // the badge is on the person already (the gate, second person)
+        BadgeProgram::ContentCreator => {}
     }
     let before = application.updated_at;
     application.status = ApplicationStatus::Approved;
@@ -427,8 +463,9 @@ async fn finish_approval(
     Ok(application)
 }
 
-/// First of two approvals: Partner opens its badge request through the
-/// gate; the official-entity exception notes who approved first
+/// First of two approvals: Partner and Content Creator open their badge
+/// request through the gate; the official-entity exception notes who
+/// approved first
 async fn first_approval(
     db: &Database,
     staff: &StaffContext,
@@ -441,15 +478,15 @@ async fn first_approval(
     application.reviewer_id = Some(staff.user.id.clone());
     application.first_approval_by = Some(staff.user.id.clone());
     save_application(db, &mut application, before, staff.now).await?;
-    if application.program == BadgeProgram::Partner {
+    if let Some(badge) = application.program.gate_badge() {
         let outcome = mutate_badge(
             db,
             &actor(staff),
             BadgeMutation {
                 user_id: application.applicant_id.clone(),
-                badge: "partner".to_string(),
+                badge: badge.to_string(),
                 change: BadgeChange::Grant,
-                reason: format!("partner application {}", application.id),
+                reason: format!("{} application {}", application.program.name(), application.id),
                 expires_at: None,
                 source_ref: None,
             },
@@ -507,23 +544,14 @@ pub async fn decide(
         "approve" => {
             // the numbers still hold now
             let applicant = db.fetch_user(&application.applicant_id).await?;
-            let ownership = application.ownership.as_ref().is_some_and(|o| o.verified_at.is_some());
-            let checklist = program_eligibility(
-                db,
-                &programs,
-                application.program,
-                &applicant,
-                &application.target_id,
-                application.exception,
-                ownership,
-                staff.now,
-            )
-            .await?;
-            let missing = checklist.missing();
+            let checklist = application_checklist(db, &programs, &applicant, &application, staff.now).await?;
+            // Content Creator: every line settled by a person first (the
+            // code seen, a fresh figure, the works and all seven criteria)
+            let missing = if application.program.targets_person() { checklist.unsettled() } else { checklist.missing() };
             if !missing.is_empty() {
                 return Err(invalid(&format!("not_eligible:{}", missing.join(","))));
             }
-            let two_people = application.program == BadgeProgram::Partner
+            let two_people = application.program.gate_badge().is_some()
                 || (application.program == BadgeProgram::VerifiedServer && application.exception);
             if !two_people {
                 finish_approval(db, &staff, application, reasons, note).await?
@@ -532,7 +560,7 @@ pub async fn decide(
                     application_audit(db, &staff.user.id, Some(staff.session.id.clone()), "staff.badge.application.approve", &application, AuditOutcome::Denied, "denied:same_person").await?;
                     return Err(create_error!(NotPrivileged));
                 }
-                if application.program == BadgeProgram::Partner {
+                if application.program.gate_badge().is_some() {
                     let request_id = application.badge_request_id.clone().ok_or_else(|| invalid("no_request"))?;
                     let request = db.fetch_badge_request(&request_id).await?;
                     // approved meanwhile in the badge requests list: only the record is left
@@ -741,5 +769,98 @@ pub async fn recheck(
         }
         _ => crate::util::official::program_ended(db, &application.applicant_id, "partner", "recheck", note.as_deref()).await,
     }
+    detail_of(db, &staff, &application).await.map(Json)
+}
+
+#[derive(Deserialize)]
+pub struct DataCreatorOwnership {
+    /// The code exactly as you saw it on the channel
+    pub code: String,
+}
+
+/// Load a Content Creator application a reviewer may work on
+async fn creator_application(db: &Database, staff: &StaffContext, id: &str, action: &str) -> Result<BadgeApplication> {
+    staff.require(db, StaffPermission::BadgesManage).await?;
+    let application = reviewable(db, staff, id, action).await?;
+    if application.program != BadgeProgram::ContentCreator {
+        return Err(invalid("not_content_creator"));
+    }
+    Ok(application)
+}
+
+/// # Content Creator: the code on the channel
+///
+/// You opened the channel the applicant named and found the code in its
+/// description or a pinned post: type it here. Only its hash is compared;
+/// the try is written to the audit log (never the code).
+#[post("/badges/applications/<id>/creator/ownership", data = "<data>")]
+pub async fn creator_ownership(
+    db: &State<Database>,
+    staff: StaffContext,
+    id: &str,
+    data: Json<DataCreatorOwnership>,
+) -> Result<Json<ApplicationDetail>> {
+    let application = creator_application(db, &staff, id, "ownership").await?;
+    let application = reviewer_confirm_profile(
+        db,
+        application,
+        &staff.user.id,
+        Some(staff.session.id.clone()),
+        &data.code,
+        staff.now,
+    )
+    .await?;
+    detail_of(db, &staff, &application).await.map(Json)
+}
+
+#[derive(Deserialize)]
+pub struct DataCreatorFigures {
+    /// Followers or subscribers you saw on that one platform
+    pub followers: i64,
+    /// The day you saw it (ms since 1970, UTC)
+    pub seen_at: i64,
+    /// Days of active publishing you counted
+    pub active_days: i64,
+    /// Substantial original works in the last 90 days
+    pub works: i64,
+    /// A regular livestream schedule counts in place of the works
+    #[serde(default)]
+    pub schedule: bool,
+    /// Quality criteria you found met
+    #[serde(default)]
+    pub quality: Vec<String>,
+}
+
+/// # Content Creator: what you saw
+///
+/// Record the figure from the public page with the day you saw it, the
+/// days active and works you counted, and the quality criteria you found
+/// met ("authenticity": no signs of bought followers or fake engagement in
+/// your review). Recording again replaces it.
+#[post("/badges/applications/<id>/creator/figures", data = "<data>")]
+pub async fn creator_figures(
+    db: &State<Database>,
+    staff: StaffContext,
+    id: &str,
+    data: Json<DataCreatorFigures>,
+) -> Result<Json<ApplicationDetail>> {
+    let application = creator_application(db, &staff, id, "figures").await?;
+    let data = data.into_inner();
+    let application = record_creator_figures(
+        db,
+        application,
+        &staff.user.id,
+        Some(staff.session.id.clone()),
+        FiguresInput {
+            followers: data.followers,
+            seen_at: data.seen_at,
+            active_days: data.active_days,
+            works: data.works,
+            schedule: data.schedule,
+            quality: data.quality,
+        },
+        staff.now,
+    )
+    .await?;
     detail_of(db, &staff, &application).await.map(Json)
 }

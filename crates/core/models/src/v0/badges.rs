@@ -393,16 +393,38 @@ auto_derived!(
 
     /// Ownership check of an application (the code itself is shown once)
     pub struct ApplicationOwnership {
-        /// `dns` or `website`
+        /// `dns`, `website` or `profile` (Content Creator: the code goes in
+        /// the channel's description or a pinned post; a reviewer looks)
         pub method: String,
         pub domain: String,
-        /// Where the TXT record goes
+        /// Where the TXT record goes (empty for `profile`)
         pub record_name: String,
-        /// Where the file goes
+        /// Where the file goes (empty for `profile`)
         pub file_url: String,
         pub expires_at: i64,
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
         pub verified_at: Option<i64>,
+    }
+
+    /// Content Creator: the one channel or profile on another platform
+    pub struct CreatorChannelData {
+        /// `youtube`, `tiktok`, `twitch`, `instagram`, `x`, `kick`,
+        /// `facebook` or `other` (plain text; never a logo)
+        pub platform: String,
+        /// The platform's name when `platform` is `other`
+        #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+        pub platform_name: Option<String>,
+        /// Public https address of the channel or profile
+        pub url: String,
+        /// `education`, `technology`, `gaming`, `livestream`, `tutorials`,
+        /// `creative`, `comedy`, `art`, `film`, `commentary` or `other`
+        pub category: String,
+        /// Public https links to recent original works (at most 10)
+        #[cfg_attr(feature = "serde", serde(default))]
+        pub works: Vec<String>,
+        /// A regular livestream schedule, in your words
+        #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+        pub schedule: Option<String>,
     }
 
     /// Your appeal against a refusal
@@ -431,7 +453,7 @@ auto_derived!(
     pub struct BadgeApplicationView {
         #[cfg_attr(feature = "serde", serde(rename = "_id"))]
         pub id: String,
-        /// `partner`, `verified_server` or `verified_bot`
+        /// `partner`, `verified_server`, `verified_bot` or `content_creator`
         pub program: String,
         pub target_id: String,
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
@@ -447,6 +469,9 @@ auto_derived!(
         pub authorized: bool,
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
         pub ownership: Option<ApplicationOwnership>,
+        /// Content Creator: the channel or profile it is about
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        pub creator: Option<CreatorChannelData>,
         /// The checklist as it stood when you sent it
         pub checks: Vec<ProgramCheck>,
         pub created_at: i64,
@@ -478,9 +503,10 @@ auto_derived!(
 
     /// Start an application (a draft)
     pub struct DataCreateBadgeApplication {
-        /// `partner`, `verified_server` or `verified_bot`
+        /// `partner`, `verified_server`, `verified_bot` or `content_creator`
         pub program: String,
-        /// Your server (Partner, Verified Server) or bot (Verified Bot)
+        /// Your server (Partner, Verified Server), bot (Verified Bot) or
+        /// your own user id (Content Creator)
         pub target_id: String,
         /// Verified Server as an official entity below the numbers
         #[cfg_attr(feature = "serde", serde(default))]
@@ -491,6 +517,9 @@ auto_derived!(
         pub links: Option<Vec<String>>,
         #[cfg_attr(feature = "serde", serde(default))]
         pub authorized: Option<bool>,
+        /// Content Creator: the channel or profile
+        #[cfg_attr(feature = "serde", serde(default))]
+        pub creator: Option<CreatorChannelData>,
     }
 
     /// Change a draft
@@ -501,6 +530,9 @@ auto_derived!(
         pub links: Option<Vec<String>>,
         #[cfg_attr(feature = "serde", serde(default))]
         pub authorized: Option<bool>,
+        /// Content Creator: the channel or profile
+        #[cfg_attr(feature = "serde", serde(default))]
+        pub creator: Option<CreatorChannelData>,
     }
 
     /// Add a link or a short note
@@ -510,14 +542,18 @@ auto_derived!(
         pub text: String,
     }
 
-    /// Start an ownership check of a domain
+    /// Start an ownership check of a domain (or, for Content Creator, of
+    /// the named channel)
     pub struct DataOwnershipChallenge {
-        /// `dns` or `website`
+        /// `dns` or `website` (Verified Server); `profile` (Content Creator)
         pub method: String,
+        /// The domain; ignored for `profile` (the channel's address is used)
+        #[cfg_attr(feature = "serde", serde(default))]
         pub domain: String,
     }
 
-    /// A new ownership check: put `value` in the TXT record or the file.
+    /// A new ownership check: put `value` in the TXT record or the file
+    /// (Content Creator: in the channel's description or a pinned post).
     /// It is shown only now.
     pub struct OwnershipChallengeIssued {
         pub application: BadgeApplicationView,

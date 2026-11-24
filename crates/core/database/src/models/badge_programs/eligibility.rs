@@ -11,9 +11,21 @@ use revolt_result::{ErrorType, Result};
 use ulid::Ulid;
 
 use crate::{
-    count_genuine_members, genuine_person, partner_activity, week_of, BadgeProgram, CommunityCheckStatus,
-    Database, EligibilityItem, User, DAY_MS,
+    count_genuine_members, genuine_person, partner_activity, week_of, BadgeApplication, BadgeProgram,
+    CommunityCheckStatus, Database, EligibilityItem, User, DAY_MS,
 };
+
+/// Content Creator: the seven published quality criteria a reviewer checks
+/// on the first approval (owner's brief, section 6)
+pub const CREATOR_QUALITY: [&str; 7] = [
+    "originality",
+    "effort",
+    "consistency",
+    "authenticity",
+    "safety",
+    "honesty",
+    "rights",
+];
 
 /// The checklist for one program and target
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -29,6 +41,16 @@ impl ProgramEligibility {
         self.items
             .iter()
             .filter(|item| item.met == Some(false))
+            .map(|item| item.code.clone())
+            .collect()
+    }
+
+    /// Codes of every line that is not met yet, the ones a person checks
+    /// included (an approval that needs every line settled)
+    pub fn unsettled(&self) -> Vec<String> {
+        self.items
+            .iter()
+            .filter(|item| item.met != Some(true))
             .map(|item| item.code.clone())
             .collect()
     }
@@ -152,6 +174,18 @@ pub async fn program_eligibility(
 ) -> Result<ProgramEligibility> {
     let mut eligibility = ProgramEligibility::default();
     let items = &mut eligibility.items;
+    if program.targets_person() {
+        // Content Creator: about the applicant; nothing here can be
+        // measured before an application (a reviewer looks at the channel)
+        if target_id != applicant.id {
+            items.push(line("target", Some(false), None, None));
+            return Ok(eligibility);
+        }
+        eligibility.owner_id = Some(applicant.id.clone());
+        items.extend(creator_lines(programs, None, now));
+        items.extend(applicant_lines(db, applicant).await?);
+        return Ok(eligibility);
+    }
     if program.targets_bot() {
         let bot = match db.fetch_bot(target_id).await {
             Ok(bot) => bot,
@@ -220,4 +254,92 @@ pub async fn program_eligibility(
     }
     items.extend(applicant_lines(db, applicant).await?);
     Ok(eligibility)
+}
+
+/// Content Creator's lines from an application (or before one: every line
+/// waits for a person). `channel` and `ownership` (the code was asked for)
+/// are the applicant's part; followers, activity, works and quality come
+/// only from what a reviewer recorded, and stay "a person checks" until
+/// then. A follower figure older than `creator_figures_fresh_days` counts
+/// as not looked at.
+pub fn creator_lines(programs: &ApiBadgePrograms, application: Option<&BadgeApplication>, now: i64) -> Vec<EligibilityItem> {
+    let channel = application.and_then(|a| a.creator.as_ref());
+    let figures = application.and_then(|a| a.creator_figures.as_ref());
+    let ownership = application.and_then(|a| a.ownership.as_ref());
+    let mut items = vec![];
+    if application.is_some() {
+        let complete = channel.is_some_and(|c| {
+            !c.url.is_empty() && (c.works.len() as i64 >= programs.creator_works || c.schedule.as_deref().is_some_and(|s| !s.trim().is_empty()))
+        });
+        items.push(line("channel", Some(complete), None, None));
+    }
+    items.push(match ownership {
+        Some(o) if o.verified_at.is_some() => line("ownership", Some(true), None, None),
+        // the code was asked for: a reviewer looks for it
+        Some(_) => line("ownership", None, None, None),
+        None if application.is_some() => line("ownership", Some(false), None, None),
+        None => line("ownership", None, None, None),
+    });
+    let fresh = figures.filter(|f| now - f.seen_at <= programs.creator_figures_fresh_days * DAY_MS);
+    items.push(match fresh {
+        Some(f) => threshold_line("followers", f.followers, programs.creator_followers),
+        None => line("followers", None, None, Some(programs.creator_followers)),
+    });
+    items.push(match figures {
+        Some(f) => threshold_line("active_days", f.active_days, programs.creator_active_days),
+        None => line("active_days", None, None, Some(programs.creator_active_days)),
+    });
+    items.push(match figures {
+        Some(f) => line(
+            "works",
+            Some(f.works >= programs.creator_works || f.schedule),
+            Some(f.works),
+            Some(programs.creator_works),
+        ),
+        None => line("works", None, None, Some(programs.creator_works)),
+    });
+    items.push(match figures {
+        Some(f) => {
+            let met = CREATOR_QUALITY.iter().filter(|c| f.quality.iter().any(|q| q == *c)).count() as i64;
+            threshold_line("quality", met, CREATOR_QUALITY.len() as i64)
+        }
+        None => line("quality", None, None, Some(CREATOR_QUALITY.len() as i64)),
+    });
+    items
+}
+
+/// The checklist of an application as it stands: the program's lines for
+/// its target, and for Content Creator the lines from the application
+/// itself (the channel, the profile code, what the reviewer recorded)
+pub async fn application_checklist(
+    db: &Database,
+    programs: &ApiBadgePrograms,
+    applicant: &User,
+    application: &BadgeApplication,
+    now: i64,
+) -> Result<ProgramEligibility> {
+    if application.program.targets_person() {
+        let mut eligibility = ProgramEligibility {
+            items: vec![],
+            owner_id: Some(application.applicant_id.clone()),
+        };
+        if application.target_id != applicant.id {
+            eligibility.items.push(line("target", Some(false), None, None));
+            return Ok(eligibility);
+        }
+        eligibility.items.extend(creator_lines(programs, Some(application), now));
+        eligibility.items.extend(applicant_lines(db, applicant).await?);
+        return Ok(eligibility);
+    }
+    program_eligibility(
+        db,
+        programs,
+        application.program,
+        applicant,
+        &application.target_id,
+        application.exception,
+        application.ownership.as_ref().is_some_and(|o| o.verified_at.is_some()),
+        now,
+    )
+    .await
 }

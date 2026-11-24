@@ -614,6 +614,8 @@ async fn application_data_is_deleted_on_time_and_with_the_account() {
         links: vec![],
         authorized: true,
         ownership: None,
+        creator: None,
+        creator_figures: None,
         eligibility: vec![],
         created_at: now - 400 * DAY,
         updated_at: now - 400 * DAY,

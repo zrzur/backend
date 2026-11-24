@@ -778,5 +778,57 @@
   "program.end.recheck": {
     "title": "",
     "body": "a new check found the conditions are no longer met."
+  },
+  "badge_name.content_creator": {
+    "title": "Content Creator",
+    "body": ""
+  },
+  "program.name.content_creator": {
+    "title": "Content Creator",
+    "body": "Content Creator"
+  },
+  "program.reason.followers_not_met": {
+    "title": "",
+    "body": "The follower number we saw on that one platform is below the published minimum."
+  },
+  "program.reason.activity_not_met": {
+    "title": "",
+    "body": "The channel has not been active for long enough."
+  },
+  "program.reason.works_not_met": {
+    "title": "",
+    "body": "We did not find enough substantial original works in the last 90 days, or an equivalent regular livestream schedule."
+  },
+  "program.reason.originality": {
+    "title": "",
+    "body": "Originality: most of the work is reposted or copied without an original contribution."
+  },
+  "program.reason.effort": {
+    "title": "",
+    "body": "Effort: the works show little real effort, for example repetitive content made to collect views."
+  },
+  "program.reason.consistency": {
+    "title": "",
+    "body": "Consistency: the channel rests on one viral upload rather than regular work."
+  },
+  "program.reason.authenticity": {
+    "title": "",
+    "body": "Authenticity: our review found signs of bought followers or coordinated fake engagement."
+  },
+  "program.reason.safety": {
+    "title": "",
+    "body": "Safety and legality: the content breaks the law or Zrzur's rules."
+  },
+  "program.reason.honesty": {
+    "title": "",
+    "body": "Honesty: systematic misleading clickbait, impersonation or false claims."
+  },
+  "program.reason.rights": {
+    "title": "",
+    "body": "Rights: repeated infringement, stolen content or unauthorised reuploads."
+  },
+  "program.end.badge_removed": {
+    "title": "",
+    "body": "the team took the badge away."
   }
 }

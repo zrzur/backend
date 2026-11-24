@@ -404,6 +404,8 @@ impl TestHarness {
                 links: vec![],
                 authorized: true,
                 ownership: None,
+                creator: None,
+                creator_figures: None,
                 eligibility: vec![],
                 created_at: now,
                 updated_at: now,

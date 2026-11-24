@@ -292,7 +292,7 @@ pub struct Api {
 }
 
 /// The badge programs people apply for (Partner, Verified Server, Verified
-/// Bot Developer). The numbers only let someone apply: a person on the team
+/// Bot Developer, Content Creator). The numbers only let someone apply: a person on the team
 /// always decides. Defaults are the owner's numbers (2026-11-23 brief);
 /// `Revolt.test.toml` uses small ones.
 #[derive(Deserialize, Debug, Clone)]
@@ -344,6 +344,21 @@ pub struct ApiBadgePrograms {
     pub record_days: i64,
     /// Drafts nobody touched for this many days are deleted
     pub draft_days: i64,
+    /// Content Creator: followers or subscribers on ONE platform (never
+    /// added up across platforms), as a reviewer saw them
+    pub creator_followers: i64,
+    /// Content Creator: days of active publishing
+    pub creator_active_days: i64,
+    /// Content Creator: substantial original works in the last
+    /// `creator_window_days` (or an equivalent livestream schedule)
+    pub creator_works: i64,
+    pub creator_window_days: i64,
+    /// Content Creator: a follower figure older than this many days must be
+    /// looked at again before an approval
+    pub creator_figures_fresh_days: i64,
+    /// Content Creator: the profile code is accepted this many days (a
+    /// reviewer checks it by hand, so it waits longer than a DNS code)
+    pub creator_code_days: i64,
 }
 
 impl Default for ApiBadgePrograms {
@@ -369,6 +384,12 @@ impl Default for ApiBadgePrograms {
             evidence_days: 90,
             record_days: 365,
             draft_days: 30,
+            creator_followers: 100_000,
+            creator_active_days: 90,
+            creator_works: 5,
+            creator_window_days: 90,
+            creator_figures_fresh_days: 30,
+            creator_code_days: 90,
         }
     }
 }
@@ -1464,6 +1485,9 @@ pub struct Features {
 
     #[serde(default)]
     pub server_import: FeaturesServerImport,
+
+    #[serde(default)]
+    pub badge_applications: FeaturesBadgeApplications,
     /// Boxed: the settings are copied onto the stack of every request, and
     /// some long test walks have no room left for another wide field
     #[serde(default)]
@@ -1513,6 +1537,18 @@ pub struct Features {
 
     #[serde(default)]
     pub voice_capture: FeaturesVoiceCapture,
+}
+
+/// Applying for badge programs (Partner, Verified Server, Verified Bot
+/// Developer, Content Creator) from the app. Off, every applicant route
+/// (`/badges/programs/*`, `/badges/applications*`) answers
+/// `FeatureDisabled` and the app shows no way in; the team still reviews
+/// and decides the applications already made in the admin console.
+#[derive(Deserialize, Debug, Clone, Default)]
+pub struct FeaturesBadgeApplications {
+    /// Unset means off
+    #[serde(default)]
+    pub enabled: bool,
 }
 
 /// Building a server from a layout read out of a Discord server template

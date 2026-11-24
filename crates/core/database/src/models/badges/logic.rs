@@ -97,6 +97,9 @@ pub static BADGE_CATALOGUE: &[BadgeDefinition] = &[
     def("partner", UserBadges::Partner as u32, Staff, "official", 1, 30),
     def("super_creator", UserBadges::SuperCreator as u32, Staff, "community", 2, 40),
     def("creator", UserBadges::Creator as u32, Automatic, "community", 1, 45),
+    // creators of original content elsewhere (any platform): an application,
+    // a staff content-quality review and a second person (Phase 5)
+    def("content_creator", UserBadges::ContentCreator as u32, Staff, "program", 1, 44),
     def("elite_bug_hunter", UserBadges::EliteBugHunter as u32, Staff, "contribution", 2, 50),
     BadgeDefinition {
         auto: true,
@@ -578,8 +581,12 @@ pub async fn badge_eligibility(db: &Database, user_id: &str, badge: &str) -> Res
         },
         // only a partner application a reviewer approved backs it: no
         // console, command or line gives Partner on its own (Phase 4)
-        "partner" => (!crate::partner_application_backs(db, user_id).await?)
+        "partner" => (!crate::program_application_backs(db, user_id, crate::BadgeProgram::Partner).await?)
             .then(|| "needs a partner application approved by a reviewer".to_string()),
+        // the same for Content Creator: the application, its reviewed
+        // figures and the quality review back it (Phase 5)
+        "content_creator" => (!crate::program_application_backs(db, user_id, crate::BadgeProgram::ContentCreator).await?)
+            .then(|| "needs a content creator application approved by a reviewer".to_string()),
         "verified_server_owner" => (!crate::owns_verified_server(db, user_id).await?)
             .then(|| "needs a verified server they own".to_string()),
         "verified_bot_developer" => (!crate::owns_verified_bot(db, user_id).await?)

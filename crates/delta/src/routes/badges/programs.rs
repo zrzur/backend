@@ -1,5 +1,9 @@
 //! Badge programs people apply for: Zrzur Partner, Verified Server (with
-//! Verified Server Owner) and Verified Bot Developer.
+//! Verified Server Owner), Verified Bot Developer and Content Creator.
+//!
+//! Behind `[features.badge_applications] enabled` (off by default): off,
+//! every route here answers `FeatureDisabled`; the team's review in the
+//! admin console keeps working for applications already made.
 //!
 //! The numbers of a program only let someone apply. The applicant writes a
 //! draft, proves control of a domain where the program needs it (Verified
@@ -14,10 +18,10 @@
 
 use revolt_config::config;
 use revolt_database::{
-    add_evidence, appeal_application, application_blocker, challenge_value, confirm_challenge,
-    create_application, edit_application, end_programs_for_target, issue_challenge, own_application,
-    program_eligibility, submit_application, sync_verified_server_owner, withdraw_application,
-    ApplicationInput, BadgeApplication, BadgeProgram, Database, EligibilityItem, OwnershipMethod,
+    add_evidence, appeal_application, application_blocker, confirm_challenge, create_application,
+    edit_application, end_programs_for_target, issue_challenge, own_application, program_eligibility,
+    submit_application, sync_verified_server_owner, withdraw_application, ApplicationInput,
+    BadgeApplication, BadgeProgram, CreatorChannel, Database, EligibilityItem, OwnershipMethod,
     PartialServer, Server, User, DNS_RECORD_PREFIX, SERVER_FLAG_OFFICIAL, SERVER_FLAG_PARTNER,
     SERVER_FLAG_VERIFIED, WEBSITE_PATH,
 };
@@ -27,6 +31,41 @@ use rocket::{serde::json::Json, State};
 
 use super::{no_bots, now_ms};
 use crate::util::ownership_probe;
+
+/// The applicant routes are open only with `[features.badge_applications]`
+pub(crate) async fn applications_open() -> Result<()> {
+    if config().await.features.badge_applications.enabled {
+        Ok(())
+    } else {
+        Err(create_error!(FeatureDisabled {
+            feature: "badge_applications".to_string()
+        }))
+    }
+}
+
+/// The channel from the API shape
+pub(crate) fn channel_in(data: v0::CreatorChannelData) -> CreatorChannel {
+    CreatorChannel {
+        platform: data.platform,
+        platform_name: data.platform_name,
+        url: data.url,
+        category: data.category,
+        works: data.works,
+        schedule: data.schedule,
+    }
+}
+
+/// The channel in the API shape
+pub(crate) fn channel_view(channel: &CreatorChannel) -> v0::CreatorChannelData {
+    v0::CreatorChannelData {
+        platform: channel.platform.clone(),
+        platform_name: channel.platform_name.clone(),
+        url: channel.url.clone(),
+        category: channel.category.clone(),
+        works: channel.works.clone(),
+        schedule: channel.schedule.clone(),
+    }
+}
 
 fn program_of(name: &str) -> Result<BadgeProgram> {
     BadgeProgram::from_name(name).ok_or_else(|| create_error!(FailedValidation { error: "program".to_string() }))
@@ -41,9 +80,10 @@ pub(crate) fn check_view(item: &EligibilityItem) -> v0::ProgramCheck {
     }
 }
 
-/// Name of the server or bot, when it still exists
+/// Name of the server or bot (Content Creator: the applicant), when it
+/// still exists
 pub(crate) async fn target_name(db: &Database, application: &BadgeApplication) -> Option<String> {
-    if application.program.targets_bot() {
+    if application.program.targets_bot() || application.program.targets_person() {
         db.fetch_user(&application.target_id).await.ok().map(|user| user.username)
     } else {
         db.fetch_server(&application.target_id).await.ok().map(|server| server.name)
@@ -51,13 +91,16 @@ pub(crate) async fn target_name(db: &Database, application: &BadgeApplication) -
 }
 
 pub(crate) fn ownership_view(application: &BadgeApplication) -> Option<v0::ApplicationOwnership> {
-    application.ownership.as_ref().map(|o| v0::ApplicationOwnership {
-        method: o.method.name().to_string(),
-        domain: o.domain.clone(),
-        record_name: format!("{DNS_RECORD_PREFIX}.{}", o.domain),
-        file_url: format!("https://{}{WEBSITE_PATH}", o.domain),
-        expires_at: o.expires_at,
-        verified_at: o.verified_at,
+    application.ownership.as_ref().map(|o| {
+        let profile = o.method == OwnershipMethod::Profile;
+        v0::ApplicationOwnership {
+            method: o.method.name().to_string(),
+            domain: o.domain.clone(),
+            record_name: if profile { String::new() } else { format!("{DNS_RECORD_PREFIX}.{}", o.domain) },
+            file_url: if profile { String::new() } else { format!("https://{}{WEBSITE_PATH}", o.domain) },
+            expires_at: o.expires_at,
+            verified_at: o.verified_at,
+        }
     })
 }
 
@@ -79,6 +122,7 @@ pub(crate) async fn application_view(db: &Database, application: &BadgeApplicati
         links: application.links.clone(),
         authorized: application.authorized,
         ownership: ownership_view(application),
+        creator: application.creator.as_ref().map(channel_view),
         checks: application.eligibility.iter().map(check_view).collect(),
         created_at: application.created_at,
         submitted_at: application.submitted_at,
@@ -159,6 +203,7 @@ pub(crate) async fn after_server_transfer(db: &Database, server: &Server, previo
 #[openapi(tag = "Badges")]
 #[get("/programs/targets")]
 pub async fn targets(db: &State<Database>, user: User) -> Result<Json<Vec<v0::ProgramTarget>>> {
+    applications_open().await?;
     no_bots(&user)?;
     let mut list: Vec<v0::ProgramTarget> = db
         .fetch_owned_servers(&user.id)
@@ -185,7 +230,8 @@ pub async fn targets(db: &State<Database>, user: User) -> Result<Json<Vec<v0::Pr
 ///
 /// What the server measured for one of your servers or bots, line by line,
 /// and whether you may start an application. Lines without `met` are
-/// checked by a person. Meeting the numbers only lets you apply.
+/// checked by a person. Meeting the numbers only lets you apply. Content
+/// Creator: `target` is `@me` (or your own id).
 #[openapi(tag = "Badges")]
 #[get("/programs/<program>/eligibility?<target>&<exception>")]
 pub async fn eligibility(
@@ -195,8 +241,10 @@ pub async fn eligibility(
     target: &str,
     exception: Option<bool>,
 ) -> Result<Json<v0::ProgramEligibility>> {
+    applications_open().await?;
     no_bots(&user)?;
     let program = program_of(program)?;
+    let target = if program.targets_person() && target == "@me" { user.id.as_str() } else { target };
     let exception = exception.unwrap_or(false) && program == BadgeProgram::VerifiedServer;
     let now = now_ms();
     let programs = config().await.api.badge_programs;
@@ -225,6 +273,7 @@ pub async fn eligibility(
 #[openapi(tag = "Badges")]
 #[get("/applications/@me")]
 pub async fn my_applications(db: &State<Database>, user: User) -> Result<Json<Vec<v0::BadgeApplicationView>>> {
+    applications_open().await?;
     no_bots(&user)?;
     let mut list = vec![];
     for application in db.fetch_badge_applications_by_applicant(&user.id).await? {
@@ -244,19 +293,22 @@ pub async fn create(
     user: User,
     data: Json<v0::DataCreateBadgeApplication>,
 ) -> Result<Json<v0::BadgeApplicationView>> {
+    applications_open().await?;
     no_bots(&user)?;
     let data = data.into_inner();
     let program = program_of(&data.program)?;
+    let target = if program.targets_person() && data.target_id == "@me" { user.id.clone() } else { data.target_id };
     let application = create_application(
         db,
         &user,
         program,
-        &data.target_id,
+        &target,
         data.exception,
         ApplicationInput {
             statement: data.statement,
             links: data.links,
             authorized: data.authorized,
+            creator: data.creator.map(channel_in),
         },
         now_ms(),
     )
@@ -273,6 +325,7 @@ pub async fn edit(
     id: &str,
     data: Json<v0::DataEditBadgeApplication>,
 ) -> Result<Json<v0::BadgeApplicationView>> {
+    applications_open().await?;
     let data = data.into_inner();
     let application = own_application(db, &user, id).await?;
     let application = edit_application(
@@ -282,6 +335,7 @@ pub async fn edit(
             statement: data.statement,
             links: data.links,
             authorized: data.authorized,
+            creator: data.creator.map(channel_in),
         },
         now_ms(),
     )
@@ -301,6 +355,7 @@ pub async fn evidence(
     id: &str,
     data: Json<v0::DataApplicationEvidence>,
 ) -> Result<Json<v0::BadgeApplicationView>> {
+    applications_open().await?;
     let application = own_application(db, &user, id).await?;
     add_evidence(db, &application, &data.kind, &data.text, now_ms()).await?;
     application_view(db, &application).await.map(Json)
@@ -311,7 +366,9 @@ pub async fn evidence(
 /// Verified Server: put the value that comes back in a TXT record at
 /// `_zrzur-verification.<domain>` or in the file
 /// `https://<domain>/.well-known/zrzur-verification.txt`. It is shown only
-/// now and accepted for 7 days.
+/// now and accepted for 7 days. Content Creator (`profile`): put it in the
+/// description or a pinned post of the channel you named; a reviewer looks
+/// for it by hand (Zrzur never calls the platform). Accepted for 90 days.
 #[openapi(tag = "Badges")]
 #[post("/applications/<id>/ownership", data = "<data>")]
 pub async fn ownership(
@@ -320,22 +377,25 @@ pub async fn ownership(
     id: &str,
     data: Json<v0::DataOwnershipChallenge>,
 ) -> Result<Json<v0::OwnershipChallengeIssued>> {
+    applications_open().await?;
     let method = OwnershipMethod::from_name(&data.method)
         .ok_or_else(|| create_error!(FailedValidation { error: "method".to_string() }))?;
     let application = own_application(db, &user, id).await?;
-    let (application, code) = issue_challenge(db, application, method, &data.domain, now_ms()).await?;
+    let (application, value) = issue_challenge(db, application, method, &data.domain, now_ms()).await?;
     Ok(Json(v0::OwnershipChallengeIssued {
         application: application_view(db, &application).await?,
-        value: challenge_value(&code),
+        value,
     }))
 }
 
 /// # Check ownership now
 ///
-/// Reads the TXT record or the file and compares it with the code.
+/// Reads the TXT record or the file and compares it with the code. A
+/// Content Creator profile code is checked by a reviewer instead.
 #[openapi(tag = "Badges")]
 #[post("/applications/<id>/ownership/verify")]
 pub async fn verify_ownership(db: &State<Database>, user: User, id: &str) -> Result<Json<v0::BadgeApplicationView>> {
+    applications_open().await?;
     let application = own_application(db, &user, id).await?;
     let Some(challenge) = application.ownership.clone() else {
         return Err(create_error!(FailedValidation { error: "no_challenge".to_string() }));
@@ -343,6 +403,8 @@ pub async fn verify_ownership(db: &State<Database>, user: User, id: &str) -> Res
     let found = match challenge.method {
         OwnershipMethod::Dns => ownership_probe::lookup_txt(&format!("{DNS_RECORD_PREFIX}.{}", challenge.domain)).await,
         OwnershipMethod::Website => ownership_probe::fetch_website_file(&challenge.domain, WEBSITE_PATH).await,
+        // nothing is fetched: `confirm_challenge` refuses it
+        OwnershipMethod::Profile => vec![],
     };
     let application = confirm_challenge(db, application, &found, now_ms()).await?;
     application_view(db, &application).await.map(Json)
@@ -356,6 +418,7 @@ pub async fn verify_ownership(db: &State<Database>, user: User, id: &str) -> Res
 #[openapi(tag = "Badges")]
 #[post("/applications/<id>/submit")]
 pub async fn submit(db: &State<Database>, user: User, id: &str) -> Result<Json<v0::BadgeApplicationView>> {
+    applications_open().await?;
     no_bots(&user)?;
     let application = own_application(db, &user, id).await?;
     let programs = config().await.api.badge_programs;
@@ -369,6 +432,7 @@ pub async fn submit(db: &State<Database>, user: User, id: &str) -> Result<Json<v
 #[openapi(tag = "Badges")]
 #[post("/applications/<id>/withdraw")]
 pub async fn withdraw(db: &State<Database>, user: User, id: &str) -> Result<Json<v0::BadgeApplicationView>> {
+    applications_open().await?;
     let application = own_application(db, &user, id).await?;
     let application = withdraw_application(db, application, now_ms()).await?;
     application_view(db, &application).await.map(Json)
@@ -385,6 +449,7 @@ pub async fn appeal(
     id: &str,
     data: Json<v0::DataApplicationAppeal>,
 ) -> Result<Json<v0::BadgeApplicationView>> {
+    applications_open().await?;
     let application = own_application(db, &user, id).await?;
     let application = appeal_application(db, application, &data.text, now_ms()).await?;
     application_view(db, &application).await.map(Json)

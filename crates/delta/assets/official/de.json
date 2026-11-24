@@ -778,5 +778,57 @@
   "program.end.recheck": {
     "title": "",
     "body": "Eine neue Prüfung hat ergeben, dass die Bedingungen nicht mehr erfüllt sind."
+  },
+  "badge_name.content_creator": {
+    "title": "Content Creator",
+    "body": ""
+  },
+  "program.name.content_creator": {
+    "title": "Content Creator",
+    "body": "Content Creator"
+  },
+  "program.reason.followers_not_met": {
+    "title": "",
+    "body": "Die Followerzahl, die wir auf dieser einen Plattform gesehen haben, liegt unter dem veröffentlichten Minimum."
+  },
+  "program.reason.activity_not_met": {
+    "title": "",
+    "body": "Der Kanal ist noch nicht lange genug aktiv."
+  },
+  "program.reason.works_not_met": {
+    "title": "",
+    "body": "Wir haben in den letzten 90 Tagen nicht genug substanzielle eigene Werke oder einen gleichwertigen regelmäßigen Livestream-Plan gefunden."
+  },
+  "program.reason.originality": {
+    "title": "",
+    "body": "Originalität: Die Inhalte sind überwiegend übernommen oder kopiert, ohne eigenen Beitrag."
+  },
+  "program.reason.effort": {
+    "title": "",
+    "body": "Aufwand: Die Werke zeigen wenig echten Aufwand, zum Beispiel wiederholte Inhalte, um Aufrufe zu sammeln."
+  },
+  "program.reason.consistency": {
+    "title": "",
+    "body": "Beständigkeit: Der Kanal beruht auf einem einzelnen viralen Upload statt auf regelmäßiger Arbeit."
+  },
+  "program.reason.authenticity": {
+    "title": "",
+    "body": "Echtheit: Unsere Prüfung hat Hinweise auf gekaufte Follower oder koordinierte Fake-Interaktion gefunden."
+  },
+  "program.reason.safety": {
+    "title": "",
+    "body": "Sicherheit und Rechtmäßigkeit: Die Inhalte verstoßen gegen Gesetze oder die Regeln von Zrzur."
+  },
+  "program.reason.honesty": {
+    "title": "",
+    "body": "Ehrlichkeit: systematisch irreführender Clickbait, Identitätsmissbrauch oder falsche Behauptungen."
+  },
+  "program.reason.rights": {
+    "title": "",
+    "body": "Rechte: wiederholte Rechtsverletzungen, gestohlene Inhalte oder nicht erlaubte Reuploads."
+  },
+  "program.end.badge_removed": {
+    "title": "",
+    "body": "das Team hat das Abzeichen entzogen."
   }
 }

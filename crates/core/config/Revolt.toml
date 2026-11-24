@@ -198,6 +198,18 @@ appeal_days = 30
 evidence_days = 90
 record_days = 365
 draft_days = 30
+# Content Creator (owner's brief, section 6): followers on ONE platform as a
+# reviewer saw them (never added up), days active, original works in the
+# window (or an equivalent livestream schedule). Zrzur never calls the
+# platform: a reviewer checks the public page and the profile code by hand.
+creator_followers = 100000
+creator_active_days = 90
+creator_works = 5
+creator_window_days = 90
+# a follower figure older than this is looked at again before approving
+creator_figures_fresh_days = 30
+# the code in the channel description or pinned post is accepted this long
+creator_code_days = 90
 
 [api.users]
 # Minimum allowed length of usernames
@@ -659,6 +671,14 @@ effect_min_frame_ms = 33
 # stored. It may be this big going in; ffmpeg is killed after this long.
 webm_max_bytes = 8_000_000
 webm_timeout_ms = 20_000
+
+[features.badge_applications]
+# Applying for Partner, Verified Server, Verified Bot Developer and Content
+# Creator from the app. Off, the applicant routes answer FeatureDisabled and
+# the app shows no "Check and apply" or "Your applications"; the team still
+# reviews applications already made in the admin console. Turn on only after
+# the legal texts are published (privacy T3, Terms T5/T6) and the DPIA is done.
+enabled = false
 
 [features.server_import]
 # "Copy a server setup": builds a server from the layout in a Discord server
