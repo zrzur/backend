@@ -3012,6 +3012,9 @@ mod delete_tests;
 #[path = "test_badge_programs.rs"]
 mod badge_program_tests;
 
+#[path = "test_badge_creator.rs"]
+mod badge_creator_tests;
+
 /// A step-up refusal on a permission that is not on the step-up list
 /// (official confirm) is audited exactly once
 #[rocket::async_test]
