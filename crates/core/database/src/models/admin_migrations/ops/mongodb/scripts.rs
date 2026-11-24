@@ -65,6 +65,10 @@ const PENDING_TEAM_VOLUNTEER_INDEXES: i32 = 92;
 const PENDING_ACTIVITY_BLOCKS_INDEX: i32 = -1;
 // Stream zrzur-desk-full: the coordinator gives the number at merge; -1 never runs
 const PENDING_DESK_PENDING_INDEXES: i32 = -1;
+/// TTL on `purge_at` (a BSON date) for interactions and OAuth codes and
+/// tokens. Index only: existing rows get no `purge_at` here (deleting them
+/// needs the owner's approval; the backfill is a separate admin script).
+const PENDING_PURGE_AT_INDEXES: i32 = -1;
 
 /// The earliest day a session from before expiry can expire. At least 30
 /// days out, also with expiry switched off (0), for the day it is switched on.
@@ -2676,6 +2680,11 @@ pub async fn run_migrations(db: &MongoDb, revision: i32) -> i32 {
         create_desk_pending_indexes(&db.db()).await;
     }
 
+    if revision <= PENDING_PURGE_AT_INDEXES {
+        info!("Running migration [revision {PENDING_PURGE_AT_INDEXES} / 24-11-2026]: TTL on purge_at for interactions and OAuth codes and tokens");
+        create_purge_at_indexes(&db.db()).await;
+    }
+
     // Reminder to update LATEST_REVISION when adding new migrations.
     LATEST_REVISION.max(revision)
 }
@@ -2723,6 +2732,25 @@ pub async fn create_desk_pending_indexes(db: &mongodb::Database) {
     })
     .await
     .expect("Failed to create the desk pending index");
+}
+
+/// Interactions and OAuth codes and tokens disappear when they expire: a
+/// TTL index on `purge_at`, the BSON date copy every new row carries (the
+/// old `expires_at_ttl` never fired: `expires_at` is stored as text). Rows
+/// from before carry no `purge_at` and stay until the owner approves the
+/// backfill. Only indexes, no data moves. Safe to run twice: creating an
+/// index that exists is a no-op.
+pub async fn create_purge_at_indexes(db: &mongodb::Database) {
+    for collection in ["interactions", "oauth_codes", "oauth_tokens"] {
+        db.run_command(doc! {
+            "createIndexes": collection,
+            "indexes": [
+                { "key": { "purge_at": 1_i32 }, "name": "purge_at_ttl", "expireAfterSeconds": 0_i32 }
+            ]
+        })
+        .await
+        .unwrap_or_else(|error| panic!("Failed to create the purge_at index on {collection}: {error}"));
+    }
 }
 
 /// Activity blocks (Trust & Safety) are looked up by value on every
@@ -3844,6 +3872,87 @@ mod statement_migration_tests {
                 .unwrap();
             assert_eq!(names.len(), wanted, "{collection}: {names:?}");
         }
+    }
+
+    /// MongoDB only: the purge_at indexes can be made twice, and new
+    /// interactions and OAuth codes and tokens carry `purge_at` as a date
+    #[tokio::test]
+    async fn purge_at_indexes_and_new_rows_on_mongodb() {
+        use crate::{AbstractInteractions, AbstractOAuth, Interaction, OAuthCode, OAuthToken};
+        use iso8601_timestamp::{Duration, Timestamp};
+        let db = crate::DatabaseInfo::Test("purge_at_indexes".to_string())
+            .connect()
+            .await
+            .expect("Database connection failed.");
+        let crate::Database::MongoDb(mongo) = &db else {
+            return;
+        };
+        for _ in 0..2 {
+            super::create_purge_at_indexes(&mongo.db()).await;
+        }
+        for collection in ["interactions", "oauth_codes", "oauth_tokens"] {
+            let names = mongo
+                .db()
+                .collection::<Document>(collection)
+                .list_index_names()
+                .await
+                .unwrap();
+            assert_eq!(names.iter().filter(|n| *n == "purge_at_ttl").count(), 1, "{collection}: {names:?}");
+        }
+
+        let (interaction, _) = Interaction::new(
+            revolt_models::v0::InteractionType::Command,
+            ulid::Ulid::new().to_string(),
+            ulid::Ulid::new().to_string(),
+            None,
+            ulid::Ulid::new().to_string(),
+            ulid::Ulid::new().to_string(),
+        );
+        mongo.insert_interaction(&interaction).await.unwrap();
+        let later = Timestamp::now_utc() + Duration::minutes(10);
+        let code = OAuthCode {
+            code_hash: ulid::Ulid::new().to_string(),
+            application_id: "app".to_string(),
+            user_id: "user".to_string(),
+            redirect_uri: "https://example.org/cb".to_string(),
+            scopes: vec![],
+            code_challenge: "c".to_string(),
+            expires_at: later,
+        };
+        mongo.insert_oauth_code(&code).await.unwrap();
+        let token = OAuthToken {
+            id: ulid::Ulid::new().to_string(),
+            family: ulid::Ulid::new().to_string(),
+            application_id: "app".to_string(),
+            user_id: "user".to_string(),
+            scopes: vec![],
+            access_hash: ulid::Ulid::new().to_string(),
+            refresh_hash: ulid::Ulid::new().to_string(),
+            access_expires_at: later,
+            expires_at: later,
+            revoked: false,
+        };
+        mongo.insert_oauth_token(&token).await.unwrap();
+        for (collection, id, expires) in [
+            ("interactions", interaction.id.clone(), interaction.expires_at),
+            ("oauth_codes", code.code_hash.clone(), code.expires_at),
+            ("oauth_tokens", token.id.clone(), token.expires_at),
+        ] {
+            let row = mongo
+                .db()
+                .collection::<Document>(collection)
+                .find_one(doc! { "_id": &id })
+                .await
+                .unwrap()
+                .unwrap();
+            let purge_at = row.get_datetime("purge_at").expect("purge_at is a BSON date");
+            let wanted = expires
+                .duration_since(Timestamp::UNIX_EPOCH)
+                .whole_milliseconds() as i64;
+            assert_eq!(purge_at.timestamp_millis(), wanted, "{collection}");
+        }
+        // the rows still read as the models
+        assert_eq!(mongo.fetch_interaction(&interaction.id).await.unwrap().id, interaction.id);
     }
 
     /// MongoDB only: the desk pending index can be made twice
