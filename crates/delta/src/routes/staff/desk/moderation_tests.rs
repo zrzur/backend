@@ -17,13 +17,13 @@ use super::session::STEP_UP_MODAL;
 use super::test_settings;
 use super::tests::{Kind, Person, Stage, code, error_type, stage};
 
-fn all_areas(s: &Stage) {
+pub(super) fn all_areas(s: &Stage) {
     test_settings::register(FeaturesStaffDesk {
         enabled: true,
         bot: s.bot.id.clone(),
         places: vec![s.place.id().to_string()],
         allow_dms: false,
-        areas: ["overview", "lookup", "audit", "moderation"]
+        areas: ["overview", "lookup", "audit", "moderation", "support"]
             .map(str::to_string)
             .to_vec(),
     });
@@ -37,7 +37,7 @@ async fn register_offered(s: &Stage) -> ApplicationCommand {
         .unwrap()
 }
 
-async fn press(
+pub(super) async fn press(
     s: &Stage,
     who: &Person,
     command: &ApplicationCommand,
@@ -67,14 +67,14 @@ async fn press(
 }
 
 /// A card the bot showed exactly as served, ready to confirm
-struct Card {
-    run: String,
-    message: String,
-    view: Value,
+pub(super) struct Card {
+    pub(super) run: String,
+    pub(super) message: String,
+    pub(super) view: Value,
 }
 
 impl Card {
-    fn id(&self) -> String {
+    pub(super) fn id(&self) -> String {
         self.view["buttons"][0]["action_id"]
             .as_str()
             .unwrap()
@@ -83,13 +83,13 @@ impl Card {
             .to_string()
     }
 
-    fn danger(&self) -> bool {
+    pub(super) fn danger(&self) -> bool {
         self.view["buttons"][0]["style"] == json!("danger")
     }
 }
 
 /// `/desk <group> <name>`: the card, shown by the bot as served
-async fn card(
+pub(super) async fn card(
     s: &Stage,
     who: &Person,
     command: &ApplicationCommand,
@@ -144,7 +144,7 @@ async fn card(
     }
 }
 
-async fn confirm(s: &Stage, who: &Person, card: &Card) -> (Status, Value) {
+pub(super) async fn confirm(s: &Stage, who: &Person, card: &Card) -> (Status, Value) {
     let (mut interaction, token) = Interaction::new(
         InteractionType::Component,
         s.bot.id.clone(),
@@ -163,14 +163,14 @@ async fn confirm(s: &Stage, who: &Person, card: &Card) -> (Status, Value) {
     s.hand("confirm", &(interaction.id, token)).await
 }
 
-async fn step_up(s: &Stage, who: &Person, offset: i64) {
+pub(super) async fn step_up(s: &Stage, who: &Person, offset: i64) {
     let code = code(offset);
     let pressed = s.press(who, Kind::Modal(STEP_UP_MODAL, &code)).await;
     let (status, body) = s.hand("step-up", &pressed).await;
     assert_eq!(status, Status::Ok, "{body}");
 }
 
-async fn as_user(s: &Stage, session: &str, path: &str, body: Value) -> Value {
+pub(super) async fn as_user(s: &Stage, session: &str, path: &str, body: Value) -> Value {
     let response = s
         .harness
         .client
@@ -186,6 +186,12 @@ async fn as_user(s: &Stage, session: &str, path: &str, body: Value) -> Value {
 
 /// A report about a fresh message of a fresh author; gives (case id, author)
 async fn reported(s: &Stage) -> (String, User) {
+    let (case, author, _) = reported_message(s).await;
+    (case, author)
+}
+
+/// The same, with the reported message's id
+async fn reported_message(s: &Stage) -> (String, User, String) {
     let server = s.harness.db.fetch_server(&s.server_id).await.unwrap();
     let (_, reporter_session, reporter) = s.harness.new_user().await;
     let (_, _, author) = s.harness.new_user().await;
@@ -206,11 +212,15 @@ async fn reported(s: &Stage) -> (String, User) {
         }),
     )
     .await;
-    (report["_id"].as_str().unwrap().to_string(), author)
+    (
+        report["_id"].as_str().unwrap().to_string(),
+        author,
+        message.id,
+    )
 }
 
 /// The console's record, Success, on the presser's desk session
-async fn recorded(s: &Stage, who: &Person, action: &str) {
+pub(super) async fn recorded(s: &Stage, who: &Person, action: &str) {
     let session = s.desk_sessions(who).await.remove(0);
     let found =
         s.record_sessions(who).await.into_iter().any(|r| {
@@ -223,11 +233,11 @@ async fn recorded(s: &Stage, who: &Person, action: &str) {
     );
 }
 
-fn user_opt(id: &str) -> Value {
+pub(super) fn user_opt(id: &str) -> Value {
     json!({ "type": "User", "name": "user", "value": id })
 }
 
-fn text(name: &str, value: &str) -> Value {
+pub(super) fn text(name: &str, value: &str) -> Value {
     json!({ "type": "String", "name": name, "value": value })
 }
 
@@ -543,7 +553,7 @@ async fn desk_moderation_runs_the_consoles_actions() {
     );
 }
 
-async fn console_token(s: &Stage, who: &Person, offset: i64) -> String {
+pub(super) async fn console_token(s: &Stage, who: &Person, offset: i64) -> String {
     let response = s
         .harness
         .client
@@ -675,7 +685,7 @@ async fn desk_moderation_irreversible_needs_fresh_step_up() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|l| l.as_str().unwrap().contains("cannot be undone"))
+            .any(|l| l.as_str().unwrap() == super::registry::texts::FRESH_CODE.en)
     );
     let warn = card(
         &s,
@@ -704,5 +714,348 @@ async fn desk_moderation_irreversible_needs_fresh_step_up() {
             .unwrap()
             .len(),
         1
+    );
+}
+
+/// Sets who a case names as the target's owner, as an old or public
+/// report may
+async fn name_owner(s: &Stage, case_id: &str, owner: Option<String>) {
+    let mut case = s.harness.db.fetch_safety_case(case_id).await.unwrap();
+    let version = case.version;
+    case.target_owner_id = owner;
+    case.version = version + 1;
+    assert!(
+        s.harness
+            .db
+            .update_safety_case(&case, version)
+            .await
+            .unwrap()
+    );
+}
+
+async fn run_card(
+    s: &Stage,
+    who: &Person,
+    command: &ApplicationCommand,
+    group: &str,
+    name: &str,
+    options: Value,
+) -> (Status, Value) {
+    let pressed = press(s, who, command, group, name, options).await;
+    s.hand("run", &pressed).await
+}
+
+/// The case action card names the account the action will really concern,
+/// resolved as the action resolves it: a report naming nobody, or naming
+/// the bot that posted the message, shows the message's author; when the
+/// account changes between the card and the press, the press is refused
+#[rocket::async_test]
+async fn desk_case_action_names_the_real_subject() {
+    let s = stage().await;
+    all_areas(&s);
+    let owner = s.person(vec![StaffRole::Owner]).await;
+    s.sign_in(&owner, -1).await;
+    let command = register_offered(&s).await;
+    let warn = |case: &str| {
+        json!([
+            text("case", case),
+            text("kind", "Warning"),
+            text("reason", "Mind your words")
+        ])
+    };
+
+    // a report naming nobody yet
+    let (nobody_case, author, message_id) = reported_message(&s).await;
+    name_owner(&s, &nobody_case, None).await;
+    let c = card(&s, &owner, &command, "case", "action", warn(&nobody_case)).await;
+    assert!(
+        c.view["content"].as_str().unwrap().contains(&author.id),
+        "{}",
+        c.view
+    );
+
+    // a report naming the bot that posted the message
+    let (bot_case, bot_author) = reported(&s).await;
+    name_owner(&s, &bot_case, Some(s.bot.id.clone())).await;
+    let c2 = card(&s, &owner, &command, "case", "action", warn(&bot_case)).await;
+    let content = c2.view["content"].as_str().unwrap();
+    assert!(
+        content.contains(&bot_author.id) && !content.contains(&s.bot.id),
+        "{content}"
+    );
+
+    // the message goes away: the action would now concern nobody, so the
+    // card no longer says what would happen
+    s.harness.db.delete_message(&message_id).await.unwrap();
+    let (status, body) = confirm(&s, &owner, &c).await;
+    assert_eq!(
+        (status, error_type(&body)),
+        (Status::BadRequest, "InvalidOperation"),
+        "{body}"
+    );
+    let records = s.records(&owner).await;
+    assert!(
+        records
+            .iter()
+            .any(|r| r.1 == "Denied" && r.2 == "desk: the report now concerns another account"),
+        "{records:?}"
+    );
+    assert!(
+        s.harness
+            .db
+            .fetch_safety_actions_for_user(&author.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+/// The cards refuse at once what the console would refuse anyway, ask for
+/// days on a suspension, never cut the text, and say only what is true:
+/// a removed message cannot be undone; disabling a bot needs a fresh code
+/// either way; a ban lasts until revoked; an appeal card names the appealed
+/// action; choices show their own names
+#[rocket::async_test]
+async fn desk_moderation_cards_are_honest() {
+    let s = stage().await;
+    all_areas(&s);
+    let owner = s.person(vec![StaffRole::Owner]).await;
+    let other_staff = s.person(vec![StaffRole::Support]).await;
+    s.sign_in(&owner, -1).await;
+    let command = register_offered(&s).await;
+    let warn = |user: &str| {
+        json!([
+            user_opt(user),
+            text("category", "Spam"),
+            text("reason", "Please stop that")
+        ])
+    };
+
+    // yourself, a bot, another staff member
+    let (_, body) = run_card(&s, &owner, &command, "user", "warn", warn(&owner.user.id)).await;
+    assert_eq!(error_type(&body), "CannotReportYourself", "{body}");
+    let (_, body) = run_card(&s, &owner, &command, "user", "warn", warn(&s.bot.id)).await;
+    assert_eq!(error_type(&body), "IsBot", "{body}");
+    let (_, body) = run_card(
+        &s,
+        &owner,
+        &command,
+        "user",
+        "warn",
+        warn(&other_staff.user.id),
+    )
+    .await;
+    assert_eq!(error_type(&body), "NotPrivileged", "{body}");
+    let (_, body) = run_card(
+        &s,
+        &owner,
+        &command,
+        "user",
+        "sessions-end",
+        json!([user_opt(&s.bot.id), text("reason", "test it")]),
+    )
+    .await;
+    assert_eq!(error_type(&body), "IsBot", "{body}");
+
+    // a text that would be cut is refused, not cut
+    let (_, _, someone) = s.harness.new_user().await;
+    let long = "*".repeat(500);
+    let (status, body) = run_card(
+        &s,
+        &owner,
+        &command,
+        "user",
+        "warn",
+        json!([
+            user_opt(&someone.id),
+            text("category", "Spam"),
+            text("reason", &long),
+            text("note", &long)
+        ]),
+    )
+    .await;
+    assert_eq!(
+        (status, error_type(&body)),
+        (Status::BadRequest, "FailedValidation"),
+        "{body}"
+    );
+
+    // a suspension on a report says for how long
+    let (case_id, _) = reported(&s).await;
+    let (_, body) = run_card(
+        &s,
+        &owner,
+        &command,
+        "case",
+        "action",
+        json!([
+            text("case", &case_id),
+            text("kind", "SuspendAccount"),
+            text("reason", "Spam again")
+        ]),
+    )
+    .await;
+    assert_eq!(error_type(&body), "FailedValidation", "{body}");
+
+    let lines_of = |c: &Card| -> Vec<String> {
+        c.view["lines"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|l| l.as_str().unwrap().to_string())
+            .collect()
+    };
+    let permanent = super::registry::texts::PERMANENT.en.to_string();
+    let fresh = super::registry::texts::FRESH_CODE.en.to_string();
+
+    // removing a message: Danger, a fresh code, and it cannot be undone
+    let c = card(
+        &s,
+        &owner,
+        &command,
+        "case",
+        "action",
+        json!([
+            text("case", &case_id),
+            text("kind", "RemoveMessage"),
+            text("reason", "Not allowed here")
+        ]),
+    )
+    .await;
+    assert!(c.danger());
+    assert!(
+        lines_of(&c).contains(&permanent) && lines_of(&c).contains(&fresh),
+        "{:?}",
+        lines_of(&c)
+    );
+    let (_, body) = confirm(&s, &owner, &c).await;
+    assert_eq!(error_type(&body), "NotElevated", "{body}");
+
+    // disabling a bot: Danger and a fresh code, from a report or directly,
+    // and it can be undone
+    let c = card(
+        &s,
+        &owner,
+        &command,
+        "case",
+        "action",
+        json!([
+            text("case", &case_id),
+            text("kind", "DisableBot"),
+            text("reason", "Bot floods")
+        ]),
+    )
+    .await;
+    assert!(c.danger());
+    assert!(
+        !lines_of(&c).contains(&permanent) && lines_of(&c).contains(&fresh),
+        "{:?}",
+        lines_of(&c)
+    );
+    let (_, _, bot_owner) = s.harness.new_user().await;
+    let (bot, _) = s.harness.new_bot(&bot_owner).await;
+    let c = card(
+        &s,
+        &owner,
+        &command,
+        "bot",
+        "disable",
+        json!([
+            text("bot", &bot.id),
+            text("category", "BotAbuse"),
+            text("reason", "The bot floods channels")
+        ]),
+    )
+    .await;
+    assert!(c.danger());
+    assert!(
+        !lines_of(&c).contains(&permanent) && lines_of(&c).contains(&fresh),
+        "{:?}",
+        lines_of(&c)
+    );
+    let (_, body) = confirm(&s, &owner, &c).await;
+    assert_eq!(error_type(&body), "NotElevated", "{body}");
+
+    // the ban lasts until it is revoked
+    let c = card(
+        &s,
+        &owner,
+        &command,
+        "user",
+        "ban",
+        json!([
+            user_opt(&someone.id),
+            text("category", "Spam"),
+            text("reason", "Spam everywhere")
+        ]),
+    )
+    .await;
+    assert!(
+        c.view["content"]
+            .as_str()
+            .unwrap()
+            .contains("until the ban is revoked"),
+        "{}",
+        c.view
+    );
+
+    // choices by their own names; the appeal card names what is appealed
+    let (_, warned_session, warned) = s.harness.new_user().await;
+    let c = card(
+        &s,
+        &owner,
+        &command,
+        "user",
+        "warn",
+        json!([
+            user_opt(&warned.id),
+            text("category", "HateOrThreats"),
+            text("reason", "Threats are not allowed")
+        ]),
+    )
+    .await;
+    assert!(
+        c.view["content"]
+            .as_str()
+            .unwrap()
+            .contains("Hate or threats"),
+        "{}",
+        c.view
+    );
+    let (status, done) = confirm(&s, &owner, &c).await;
+    assert_eq!(status, Status::Ok, "{done}");
+    let action_id = done["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["name"] == json!("ID"))
+        .unwrap()["value"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let appeal = as_user(
+        &s,
+        &warned_session.token,
+        &format!("/safety/standing/{action_id}/appeal"),
+        json!({ "statement": "I never threatened anyone at all." }),
+    )
+    .await;
+    let c = card(
+        &s,
+        &owner,
+        &command,
+        "appeal",
+        "decide",
+        json!([
+            text("appeal", appeal["_id"].as_str().unwrap()),
+            text("decision", "uphold"),
+            text("note", "The messages are clear.")
+        ]),
+    )
+    .await;
+    let content = c.view["content"].as_str().unwrap();
+    assert!(
+        content.contains(&action_id) && content.contains("Warning") && content.contains(&warned.id),
+        "{content}"
     );
 }

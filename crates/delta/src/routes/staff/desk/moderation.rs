@@ -110,9 +110,9 @@ mod w {
         "Sperrt {user} ({id}) für {days} Tage wegen {category}; bis dahin keine Anmeldung möglich.",
     );
     pub const BAN: Text = t(
-        "Bans {user} ({id}) permanently for {category}; the account can no longer be used.",
-        "يحظر {user} ({id}) نهائيًا بسبب {category}؛ لا يعود الحساب قابلًا للاستخدام.",
-        "Bannt {user} ({id}) dauerhaft wegen {category}; das Konto ist nicht mehr nutzbar.",
+        "Bans {user} ({id}) for {category}; the account cannot be used until the ban is revoked.",
+        "يحظر {user} ({id}) بسبب {category}؛ لا يمكن استخدام الحساب حتى يُلغى الحظر.",
+        "Bannt {user} ({id}) wegen {category}; das Konto ist bis zur Aufhebung des Banns nicht nutzbar.",
     );
     pub const THEY_SEE: Text = t(
         "They see this reason: {reason}",
@@ -207,6 +207,12 @@ mod w {
         "Deaktiviert den Bot {bot} ({id}) von {owner}: er kann sich nicht anmelden und wird ausgeblendet.",
     );
     pub const NOBODY: Text = t("nobody", "لا أحد", "niemanden");
+    pub const APPEALED: Text = t(
+        "The appealed action: {kind} ({action}) on {subject}.",
+        "الإجراء المطعون فيه: {kind} ({action}) على {subject}.",
+        "Die angefochtene Maßnahme: {kind} ({action}) gegen {subject}.",
+    );
+    pub const OTHER_SUBJECT: &str = "the report now concerns another account";
 }
 
 // ---- helpers ----
@@ -310,14 +316,49 @@ fn prepared(
     }
 }
 
+/// A fixed choice's name in `lang`; the raw value when it has none
+fn named(option: &DeskOption, value: &str, lang: Lang) -> String {
+    option
+        .choices
+        .iter()
+        .find(|choice| choice.value == value)
+        .map(|choice| choice.name.get(lang).to_string())
+        .unwrap_or_else(|| value.to_string())
+}
+
+/// The console's refusals that cost nothing, before a card is made: not
+/// yourself, not a bot, not staff or a privileged account
+async fn refuse_protected(db: &Database, staff: &StaffContext, user: &User) -> Result<()> {
+    if user.id == staff.user.id {
+        return Err(create_error!(CannotReportYourself));
+    }
+    if user.bot.is_some() {
+        return Err(create_error!(IsBot));
+    }
+    let staff_member = db
+        .fetch_staff_grant(&user.id)
+        .await?
+        .is_some_and(|grant| grant.is_active(staff.now));
+    if user.privileged || staff_member {
+        return Err(create_error!(NotPrivileged));
+    }
+    Ok(())
+}
+
 // ---- users ----
 
 /// The lines of a warn, suspend or ban card
-async fn user_card(db: &Database, input: &DeskInput, kind: SafetyActionKind) -> Result<Prepared> {
+async fn user_card(
+    db: &Database,
+    staff: &StaffContext,
+    input: &DeskInput,
+    kind: SafetyActionKind,
+) -> Result<Prepared> {
     let lang = input.lang;
     let id = required_user(input, "user")?;
     let user = db.fetch_user(&id).await?;
-    let category = required(input, "category")?;
+    refuse_protected(db, staff, &user).await?;
+    let category = named(&CATEGORY, &required(input, "category")?, lang);
     let reason = required(input, "reason")?;
     let (title, text) = match kind {
         SafetyActionKind::Warning => (w::T_WARN, w::WARN),
@@ -367,20 +408,20 @@ async fn user_act(
     Ok(done(json(&action), ACTION_DONE, input.lang))
 }
 
-async fn warn_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Result<Prepared> {
-    user_card(db, input, SafetyActionKind::Warning).await
+async fn warn_card(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<Prepared> {
+    user_card(db, staff, input, SafetyActionKind::Warning).await
 }
 async fn warn_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
     user_act(db, staff, input, SafetyActionKind::Warning).await
 }
-async fn suspend_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Result<Prepared> {
-    user_card(db, input, SafetyActionKind::SuspendAccount).await
+async fn suspend_card(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<Prepared> {
+    user_card(db, staff, input, SafetyActionKind::SuspendAccount).await
 }
 async fn suspend_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
     user_act(db, staff, input, SafetyActionKind::SuspendAccount).await
 }
-async fn ban_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Result<Prepared> {
-    user_card(db, input, SafetyActionKind::BanAccount).await
+async fn ban_card(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<Prepared> {
+    user_card(db, staff, input, SafetyActionKind::BanAccount).await
 }
 async fn ban_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
     user_act(db, staff, input, SafetyActionKind::BanAccount).await
@@ -392,10 +433,21 @@ boxed!(user_suspend, suspend_run, DeskView);
 boxed!(user_ban_card, ban_card, Prepared);
 boxed!(user_ban, ban_run, DeskView);
 
-async fn sessions_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Result<Prepared> {
+async fn sessions_card(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<Prepared> {
     let lang = input.lang;
     let id = required_user(input, "user")?;
     let user = db.fetch_user(&id).await?;
+    // the console's refusals: no bots; an Owner's sessions only by an Owner
+    if user.bot.is_some() {
+        return Err(create_error!(IsBot));
+    }
+    let owner = db
+        .fetch_staff_grant(&user.id)
+        .await?
+        .is_some_and(|grant| grant.is_owner(staff.now));
+    if owner && !staff.grant.is_owner(staff.now) {
+        return Err(create_error!(NotPrivileged));
+    }
     let count = db
         .fetch_sessions(&user.id)
         .await
@@ -461,8 +513,8 @@ async fn status_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Resu
         &[
             ("reference", &reference(&case)),
             ("id", &id),
-            ("from", &from),
-            ("to", &to),
+            ("from", &named(&STATUS, &from, lang)),
+            ("to", &named(&STATUS, &to, lang)),
         ],
     )];
     if let Some(note) = input.text("public_note").filter(|n| !n.is_empty()) {
@@ -471,7 +523,18 @@ async fn status_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Resu
     if let Some(note) = input.text("note").filter(|n| !n.is_empty()) {
         lines.push(w::INTERNAL.fill(lang, &[("note", &note)]));
     }
-    Ok(case_prepared(&id, &case, w::T_STATUS, lang, lines))
+    let mut prepared = case_prepared(&id, &case, w::T_STATUS, lang, lines);
+    // the console's senior decisions (escalated cases, reopening decided
+    // ones) need a step-up: asked for before anything is recorded
+    let senior = match (
+        parse::<revolt_models::v0::SafetyStatus>(&from),
+        parse::<revolt_models::v0::SafetyStatus>(&to),
+    ) {
+        (Ok(from), Ok(to)) => crate::routes::safety::review::senior_transition(from, to),
+        _ => false,
+    };
+    prepared.irreversible = senior;
+    Ok(prepared)
 }
 
 async fn status_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
@@ -572,8 +635,8 @@ async fn priority_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Re
         &[
             ("reference", &reference(&case)),
             ("id", &id),
-            ("from", &from),
-            ("to", &to),
+            ("from", &named(&PRIORITY, &from, lang)),
+            ("to", &named(&PRIORITY, &to, lang)),
         ],
     );
     Ok(case_prepared(&id, &case, w::T_PRIORITY, lang, vec![line]))
@@ -625,13 +688,32 @@ fn affects_account(kind: SafetyActionKind) -> bool {
     )
 }
 
+/// The name of the stored account an action would concern
+const SUBJECT: &str = "_subject";
+
+/// The account an action on the case would concern, as `take_as` will
+/// resolve it (read only)
+async fn subject_of(db: &Database, id: &str) -> Result<Option<String>> {
+    let case = db.fetch_safety_case(id).await?;
+    Ok(crate::routes::safety::actions::resolved_owner(db, &case).await)
+}
+
 async fn action_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Result<Prepared> {
     let lang = input.lang;
     let (id, case) = case_of(db, input).await?;
     let kind_name = required(input, "kind")?;
     let kind: SafetyActionKind = parse(&kind_name)?;
     let reason = required(input, "reason")?;
-    let subject = match case["target_owner_id"].as_str() {
+    // a suspension says for how long, like the console asks
+    if kind == SafetyActionKind::SuspendAccount && input.integer("days").is_none() {
+        return Err(create_error!(FailedValidation {
+            error: "a suspension needs days".to_string()
+        }));
+    }
+    // the account the action will really concern, resolved as `take_as`
+    // does: a public report names nobody yet, an old one may name a bot
+    let owner = subject_of(db, &id).await?;
+    let subject = match &owner {
         Some(owner) => match db.fetch_user(owner).await {
             Ok(user) => format!("{} ({owner})", handle(&user)),
             Err(_) => owner.to_string(),
@@ -641,7 +723,7 @@ async fn action_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Resu
     let mut lines = vec![w::ACTION.fill(
         lang,
         &[
-            ("kind", &kind_name),
+            ("kind", &named(&KIND, &kind_name, lang)),
             ("reference", &reference(&case)),
             ("id", &id),
             ("subject", &subject),
@@ -655,10 +737,39 @@ async fn action_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Resu
         lines.push(w::INTERNAL.fill(lang, &[("note", &note)]));
     }
     let mut prepared = case_prepared(&id, &case, w::T_ACTION, lang, lines);
-    // suspending or banning an account cannot be undone from the card
-    prepared.irreversible = affects_account(kind);
+    prepared.stored.push(InteractionDataOption {
+        name: SUBJECT.to_string(),
+        kind: CommandOptionType::String,
+        value: Some(InteractionOptionValue::String(owner.unwrap_or_default())),
+        options: None,
+    });
+    // a fresh code for: an account's suspension or ban, a removed message
+    // (gone for good), disabling a bot (as `bot disable`), and anything on
+    // an escalated case (a senior decision)
+    let escalated = case["status"].as_str() == Some("Escalated");
+    prepared.irreversible = affects_account(kind)
+        || matches!(
+            kind,
+            SafetyActionKind::RemoveMessage | SafetyActionKind::DisableBot
+        )
+        || escalated;
+    prepared.permanent = kind == SafetyActionKind::RemoveMessage;
     Ok(prepared)
 }
+
+/// Right before the action: the report still concerns the account the card
+/// named
+async fn action_check(
+    db: &Database,
+    _: &StaffContext,
+    input: &DeskInput,
+) -> Result<Option<&'static str>> {
+    let id = required(input, "case")?;
+    let stored = input.text(SUBJECT).unwrap_or_default();
+    let now = subject_of(db, &id).await?.unwrap_or_default();
+    Ok((stored != now).then_some(w::OTHER_SUBJECT))
+}
+boxed!(case_action_verify, action_check, Option<&'static str>);
 
 async fn action_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
     let id = required(input, "case")?;
@@ -699,7 +810,14 @@ async fn revoke_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Resu
         w::T_REVOKE,
         lang,
         vec![
-            w::REVOKE.fill(lang, &[("kind", &kind), ("id", &id), ("subject", &subject)]),
+            w::REVOKE.fill(
+                lang,
+                &[
+                    ("kind", &named(&KIND, &kind, lang)),
+                    ("id", &id),
+                    ("subject", &subject),
+                ],
+            ),
             w::REASON.fill(lang, &[("reason", &reason)]),
         ],
     );
@@ -735,6 +853,15 @@ async fn appeal_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Resu
     let overturn = required(input, "decision")? == "overturn";
     let note = required(input, "note")?;
     let text = if overturn { w::OVERTURN } else { w::UPHOLD };
+    let action = db.fetch_safety_action(&appeal.action_id).await?;
+    let kind = json(&action.kind).as_str().unwrap_or_default().to_string();
+    let subject = match &action.subject_user_id {
+        Some(subject) => match db.fetch_user(subject).await {
+            Ok(person) => format!("{} ({subject})", handle(&person)),
+            Err(_) => subject.clone(),
+        },
+        None => w::NOBODY.get(lang).to_string(),
+    };
     Ok(prepared(
         "safety_appeal",
         &id,
@@ -742,6 +869,14 @@ async fn appeal_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Resu
         lang,
         vec![
             text.fill(lang, &[("id", &id), ("user", &user)]),
+            w::APPEALED.fill(
+                lang,
+                &[
+                    ("kind", &named(&KIND, &kind, lang)),
+                    ("action", &action.id),
+                    ("subject", &subject),
+                ],
+            ),
             w::THEY_READ.fill(lang, &[("note", &note)]),
         ],
     ))
@@ -759,10 +894,18 @@ async fn appeal_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> R
 boxed!(appeal_decide_card, appeal_card, Prepared);
 boxed!(appeal_decide, appeal_run, DeskView);
 
-async fn bot_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Result<Prepared> {
+async fn bot_card(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<Prepared> {
     let lang = input.lang;
     let id = required(input, "bot")?;
     let bot = db.fetch_bot(&id).await?;
+    // the console's refusal: not your own bot, not a staff member's
+    let staff_owner = db
+        .fetch_staff_grant(&bot.owner)
+        .await?
+        .is_some_and(|grant| grant.is_active(staff.now));
+    if bot.owner == staff.user.id || staff_owner {
+        return Err(create_error!(NotPrivileged));
+    }
     let bot_user = db.fetch_user(&bot.id).await?;
     let owner = match db.fetch_user(&bot.owner).await {
         Ok(user) => format!("{} ({})", handle(&user), user.id),
@@ -815,6 +958,8 @@ const fn opt(
         description,
         choices: &[],
         max_length: None,
+        min_value: None,
+        max_value: None,
     }
 }
 
@@ -863,18 +1008,26 @@ const NOTE: DeskOption = DeskOption {
         t("Internal note", "ملاحظة داخلية", "Interne Notiz"),
     )
 };
-const DAYS: DeskOption = opt(
-    "days",
-    CommandOptionType::Integer,
-    true,
-    t("Days", "الأيام", "Tage"),
-);
-const DAYS_OPTIONAL: DeskOption = opt(
-    "days",
-    CommandOptionType::Integer,
-    false,
-    t("Days", "الأيام", "Tage"),
-);
+const DAYS: DeskOption = DeskOption {
+    min_value: Some(1.0),
+    max_value: Some(365.0),
+    ..opt(
+        "days",
+        CommandOptionType::Integer,
+        true,
+        t("Days", "الأيام", "Tage"),
+    )
+};
+const DAYS_OPTIONAL: DeskOption = DeskOption {
+    min_value: Some(1.0),
+    max_value: Some(365.0),
+    ..opt(
+        "days",
+        CommandOptionType::Integer,
+        false,
+        t("Days", "الأيام", "Tage"),
+    )
+};
 const fn id(name: &'static str) -> DeskOption {
     DeskOption {
         max_length: Some(64),
@@ -1043,12 +1196,6 @@ const KIND: DeskOption = DeskOption {
             "إيقاف التصميم",
             "Design sperren",
         ),
-        choice(
-            "SuspendCreator",
-            "Suspend creator",
-            "إيقاف المبدع",
-            "Creator sperren",
-        ),
     ],
     ..opt(
         "kind",
@@ -1093,6 +1240,7 @@ const fn change(
         plugins: false,
         prepare: Some(prepare),
         handler,
+        verify: None,
     }
 }
 
@@ -1239,16 +1387,19 @@ pub static ENTRIES: &[DeskCommand] = &[
         case_hold_card,
         case_hold,
     ),
-    change(
-        "case",
-        "action",
-        t("Take action", "اتخاذ إجراء", "Maßnahme ergreifen"),
-        &[id("case"), KIND, REASON, DAYS_OPTIONAL, NOTE],
-        P::ReportsResolve,
-        false,
-        case_action_card,
-        case_action,
-    ),
+    DeskCommand {
+        verify: Some(case_action_verify),
+        ..change(
+            "case",
+            "action",
+            t("Take action", "اتخاذ إجراء", "Maßnahme ergreifen"),
+            &[id("case"), KIND, REASON, DAYS_OPTIONAL, NOTE],
+            P::ReportsResolve,
+            false,
+            case_action_card,
+            case_action,
+        )
+    },
     change(
         "action",
         "revoke",

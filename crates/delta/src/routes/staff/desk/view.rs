@@ -117,6 +117,18 @@ pub fn escape_markdown(text: &str) -> String {
     out
 }
 
+/// Whether the text of a card fits the message limit as it is, nothing cut
+pub fn fits(title: &str, lines: &[String]) -> bool {
+    let full = 2
+        + escape_markdown(title).chars().count()
+        + 2
+        + lines
+            .iter()
+            .map(|l| escape_markdown(l).chars().count() + 1)
+            .sum::<usize>();
+    full <= CONTENT_MAX
+}
+
 /// Cuts `part` to `keep` characters and ends it with `…` (never right after
 /// an escaping backslash)
 fn cut(part: &str, keep: usize) -> String {

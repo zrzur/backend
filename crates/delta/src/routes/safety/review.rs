@@ -37,6 +37,12 @@ fn decided(status: SafetyStatus) -> bool {
 }
 
 /// Check one reviewer state change, including who may make it
+/// Whether moving a case from `from` to `to` is a senior decision:
+/// anything on an escalated case, and reopening a decided one
+pub(crate) fn senior_transition(from: SafetyStatus, to: SafetyStatus) -> bool {
+    from == SafetyStatus::Escalated || (decided(from) && to == SafetyStatus::UnderReview)
+}
+
 fn check_transition(
     perms: &revolt_database::PlatformPermissions,
     case: &SafetyCase,
@@ -46,8 +52,7 @@ fn check_transition(
         return Err(create_error!(InvalidOperation));
     }
     // escalated cases and reopening decided ones are for senior reviewers
-    if case.status == SafetyStatus::Escalated || (decided(case.status) && to == SafetyStatus::UnderReview)
-    {
+    if senior_transition(case.status, to) {
         require(perms, PlatformPermission::SafetyManage)?;
     }
     // deciding a case needs the right to act

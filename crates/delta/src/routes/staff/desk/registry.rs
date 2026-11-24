@@ -138,6 +138,9 @@ pub struct DeskOption {
     pub description: Text,
     pub choices: &'static [DeskChoice],
     pub max_length: Option<u32>,
+    /// Bounds of an `Integer` option
+    pub min_value: Option<f64>,
+    pub max_value: Option<f64>,
 }
 
 /// What a handler gets besides the presser: the chosen sub-command's
@@ -215,9 +218,11 @@ pub struct Prepared {
     /// Values the server read when the card was made (a case's version),
     /// stored with the options and given to the handler on confirmation
     pub stored: Vec<InteractionDataOption>,
-    /// This card cannot be undone (a suspension among case actions), even
-    /// if the command can be
+    /// This card needs a fresh step-up (a suspension among case actions),
+    /// even if the command does not
     pub irreversible: bool,
+    /// What it does cannot be undone (a removed message): the card says so
+    pub permanent: bool,
 }
 
 /// A command's handler. It runs as the presser and must call the
@@ -226,6 +231,13 @@ pub struct Prepared {
 /// own checks are an extra layer, never the only one.
 pub type Handler =
     for<'a> fn(&'a Database, &'a StaffContext, &'a DeskInput) -> BoxFuture<'a, Result<DeskView>>;
+/// See [`DeskCommand::verify`]
+pub type Verify = for<'a> fn(
+    &'a Database,
+    &'a StaffContext,
+    &'a DeskInput,
+) -> BoxFuture<'a, Result<Option<&'static str>>>;
+
 pub type Prepare =
     for<'a> fn(&'a Database, &'a StaffContext, &'a DeskInput) -> BoxFuture<'a, Result<Prepared>>;
 
@@ -252,11 +264,16 @@ pub struct DeskCommand {
     /// For changing commands: what the confirmation card says
     pub prepare: Option<Prepare>,
     pub handler: Handler,
+    /// For changing commands: checked again right before the confirmed
+    /// change, with the stored options; `Some(reason)` refuses it (Denied,
+    /// `InvalidOperation`) before anything is recorded as done
+    pub verify: Option<Verify>,
 }
 
 impl DeskCommand {
     /// `group.name`, or `name`: the action key of audit records and
-    /// pending actions
+    /// pending actions. Unique across all the desk's commands (checked by
+    /// `desk_registry_is_consistent`), so it needs no command name.
     pub fn key(&self) -> String {
         match self.group {
             Some(group) => format!("{group}.{}", self.name),
@@ -341,6 +358,7 @@ static ENTRIES: &[DeskCommand] = &[
         plugins: false,
         prepare: None,
         handler: me,
+        verify: None,
     },
     DeskCommand {
         area: Some("overview"),
@@ -358,6 +376,7 @@ static ENTRIES: &[DeskCommand] = &[
         plugins: false,
         prepare: None,
         handler: stats,
+        verify: None,
     },
 ];
 
@@ -400,15 +419,17 @@ pub async fn plugins_on() -> bool {
 /// command 25 options and 8000 characters of names, descriptions and
 /// choices; one command for every area would not fit. The reading areas
 /// stay in `/desk`.
-const AREA_COMMANDS: &[(&str, &str, Text)] = &[(
-    "moderation",
-    "desk-mod",
-    Text {
-        en: "Zrzur Desk: moderation",
-        ar: "مكتب زرزور: الإشراف",
-        de: "Zrzur Desk: Moderation",
-    },
-)];
+const AREA_COMMANDS: &[(&str, &str, Text)] = &[
+    (
+        "moderation",
+        "desk-mod",
+        Text {
+            en: "Zrzur Desk: moderation",
+            ar: "مكتب زرزور: الإشراف",
+            de: "Zrzur Desk: Moderation",
+        },
+    ),
+];
 
 /// The top-level command an area's commands are under
 pub fn command_of(area: Option<&str>) -> &'static str {
@@ -503,8 +524,8 @@ fn parameter(option: &DeskOption) -> ApplicationCommandOption {
         choices: (!choices.is_empty()).then_some(choices),
         options: None,
         channel_types: None,
-        min_value: None,
-        max_value: None,
+        min_value: option.min_value,
+        max_value: option.max_value,
         min_length: None,
         max_length: option.max_length,
         autocomplete: false,
@@ -846,11 +867,17 @@ pub mod texts {
         ar: "تأكيد",
         de: "Bestätigen",
     };
-    pub const IRREVERSIBLE: Text = Text {
-        en: "This cannot be undone. You will be asked for a fresh code.",
-        ar: "لا يمكن التراجع عن هذا الإجراء. سيُطلب منك رمز جديد.",
-        de: "Das lässt sich nicht rückgängig machen. Du wirst nach einem neuen Code gefragt.",
+    pub const FRESH_CODE: Text = Text {
+        en: "You will be asked for a fresh code before this runs.",
+        ar: "سيُطلب منك رمز جديد قبل التنفيذ.",
+        de: "Vor der Ausführung wirst du nach einem neuen Code gefragt.",
     };
+    pub const PERMANENT: Text = Text {
+        en: "This cannot be undone.",
+        ar: "لا يمكن التراجع عن هذا الإجراء.",
+        de: "Das lässt sich nicht rückgängig machen.",
+    };
+    pub const TOO_LONG: &str = "the card would be cut: shorten the text";
     pub const WITHIN: Text = Text {
         en: "Press Confirm within 10 minutes.",
         ar: "اضغط «تأكيد» خلال 10 دقائق.",
@@ -1004,6 +1031,8 @@ pub(crate) mod test_entries {
             },
             choices: &[],
             max_length: None,
+            min_value: None,
+            max_value: None,
         },
         DeskOption {
             name: "note",
@@ -1016,6 +1045,8 @@ pub(crate) mod test_entries {
             },
             choices: &[],
             max_length: Some(200),
+            min_value: None,
+            max_value: None,
         },
     ];
 
@@ -1037,6 +1068,7 @@ pub(crate) mod test_entries {
             plugins: false,
             prepare: Some(prepare),
             handler: done,
+            verify: None,
         },
         // reversible, but its core asks for a step-up itself
         DeskCommand {
@@ -1055,6 +1087,7 @@ pub(crate) mod test_entries {
             plugins: false,
             prepare: Some(prepare),
             handler: guarded,
+            verify: None,
         },
         // reading, behind a permission some roles lack (Support)
         DeskCommand {
@@ -1073,6 +1106,7 @@ pub(crate) mod test_entries {
             plugins: false,
             prepare: None,
             handler: peek,
+            verify: None,
         },
     ];
 

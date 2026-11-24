@@ -248,10 +248,19 @@ async fn propose(
     let prepared = prepare(db, staff, &input).await?;
     let irreversible = entry.irreversible || prepared.irreversible;
     let mut lines = prepared.lines;
+    if prepared.permanent {
+        lines.push(texts::PERMANENT.get(input.lang).to_string());
+    }
     if irreversible {
-        lines.push(texts::IRREVERSIBLE.get(input.lang).to_string());
+        lines.push(texts::FRESH_CODE.get(input.lang).to_string());
     }
     lines.push(texts::WITHIN.get(input.lang).to_string());
+    // a card is never cut: what the person confirms is all of it
+    if !super::view::fits(&prepared.title, &lines) {
+        return Err(create_error!(FailedValidation {
+            error: texts::TOO_LONG.to_string()
+        }));
+    }
     let pending = DeskPending {
         id: Ulid::new().to_string(),
         actor: staff.user.id.clone(),
@@ -471,6 +480,21 @@ pub async fn confirm(
             record.summary = Some(staff.path.clone());
             record_platform_audit(db, record, AuditOutcome::Denied).await?;
             return Err(create_error!(NotElevated));
+        }
+    }
+    // the entry's own last check, on the stored options
+    if let Some(verify) = entry.verify {
+        let check = DeskInput {
+            options: pending.options.clone(),
+            areas: settings.areas.clone(),
+            lang: Lang::from_locale(pending.locale.as_deref()),
+            pending: Some(pending.id.clone()),
+            page: 1,
+            origin: pending.card_interaction.clone(),
+        };
+        if let Some(why) = verify(db, &staff, &check).await? {
+            record_platform_audit(db, deny(why), AuditOutcome::Denied).await?;
+            return Err(create_error!(InvalidOperation));
         }
     }
     // once, and only before it expires: a second press (or a race) finds it used

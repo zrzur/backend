@@ -21,6 +21,15 @@ const SECRET: &str = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
 
 /// A TOTP code `offset` steps from now (-1, 0 and +1 are accepted)
 pub(super) fn code(offset: i64) -> String {
+    // close to the end of a 30-second step the server may check the code
+    // in the next one, where it is out of the window: wait for the step to
+    // turn first
+    let into_step = staff_now() % 30_000;
+    if into_step > 25_000 {
+        std::thread::sleep(std::time::Duration::from_millis(
+            (30_000 - into_step + 50) as u64,
+        ));
+    }
     let key = base32::decode(base32::Alphabet::RFC4648 { padding: false }, SECRET).unwrap();
     let step = (staff_now() / 1000) as u64 / 30;
     let step = (step as i64 + offset) as u64;

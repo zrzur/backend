@@ -139,7 +139,10 @@ pub(crate) async fn hides_field_from_bot(bot: &str, form: &str) -> bool {
 
 /// Whether every answer to `interaction` must be private: a desk command,
 /// or a `zd:` button or form, of the configured desk bot (also while the
-/// desk is off). Staff data never goes to a channel.
+/// desk is off). This guards against a mistake in the bot, not against the
+/// bot: a bot holding the data could post it anywhere with its own token.
+/// The privacy boundary is the server answering only what the presser may
+/// see, in the bot's private answer.
 pub(crate) async fn answers_privately(interaction: &revolt_database::Interaction) -> bool {
     let bot = interaction.application_id.trim();
     let desk = interaction

@@ -1289,6 +1289,8 @@ const fn opt(
         description,
         choices: &[],
         max_length: None,
+        min_value: None,
+        max_value: None,
     }
 }
 
@@ -1408,6 +1410,7 @@ const fn read(
         plugins: false,
         prepare: None,
         handler,
+        verify: None,
     }
 }
 
