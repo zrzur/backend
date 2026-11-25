@@ -780,6 +780,19 @@ mod tests {
         };
         account.save(&harness.db).await.unwrap();
 
+        // both codes below belong to one time step: started in a step's last
+        // seconds, the "step before" would become the code just used, which
+        // the server rightly refuses as a replay (beta CI, 2026-11-25)
+        let into_step = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            % totp_lite::DEFAULT_STEP;
+        if into_step + 12 >= totp_lite::DEFAULT_STEP {
+            let wait = totp_lite::DEFAULT_STEP - into_step + 1;
+            tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
+        }
+
         // the code of the moment, which the ticket already knows
         let code = account.mfa.totp_token.generate_code().unwrap();
         let ticket = mfa_ticket(&harness, &account.email).await;
