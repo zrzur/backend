@@ -42,6 +42,7 @@ use super::registry::{
     DeskChoice, DeskCommand, DeskGroup, DeskInput, DeskOption, Lang, Prepare, Prepared, Text,
 };
 use super::view::DeskView;
+use crate::util::on_heap::on_heap;
 
 const fn t(en: &'static str, ar: &'static str, de: &'static str) -> Text {
     Text { en, ar, de }
@@ -442,7 +443,8 @@ async fn discover_run(db: &Database, staff: &StaffContext, input: &DeskInput) ->
         reason: optional(input, "reason"),
     };
     let id = required(input, "id")?;
-    decide_core(db, staff, &required(input, "kind")?, &id, data).await?;
+    let kind = required(input, "kind")?;
+    on_heap(|| decide_core(db, staff, &kind, &id, data)).await?;
     Ok(DeskView::new(w::DONE.get(input.lang)).field(w::ID.get(input.lang), id))
 }
 async fn discover_self(
@@ -547,7 +549,8 @@ async fn verify_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> R
         approve: required(input, "decision")? == "approve",
         note: optional(input, "note"),
     };
-    let view = decide_verification_core(db, staff, &required(input, "request")?, data).await?;
+    let request = required(input, "request")?;
+    let view = on_heap(|| decide_verification_core(db, staff, &request, data)).await?;
     Ok(done(json(&view), STATUS_DONE, input.lang))
 }
 boxed!(verification_decide_card, verify_card, Prepared);
@@ -572,15 +575,10 @@ async fn unverify_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Re
 
 async fn unverify_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
     let id = required(input, "bot")?;
-    unverify_core(
-        db,
-        staff,
-        &id,
-        DataUnverify {
-            reason: required(input, "reason")?,
-        },
-    )
-    .await?;
+    let data = DataUnverify {
+        reason: required(input, "reason")?,
+    };
+    on_heap(|| unverify_core(db, staff, &id, data)).await?;
     Ok(DeskView::new(w::DONE.get(input.lang)).field(w::ID.get(input.lang), id))
 }
 boxed!(bot_unverify_card, unverify_card, Prepared);
@@ -638,7 +636,8 @@ async fn design_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> R
             .integer(VERSION)
             .ok_or_else(|| create_error!(InvalidOperation))?,
     };
-    let item = design_decide_core(db, staff, &required(input, "design")?, data).await?;
+    let design = required(input, "design")?;
+    let item = on_heap(|| design_decide_core(db, staff, &design, data)).await?;
     Ok(done(json(&item), STATUS_DONE, input.lang))
 }
 boxed!(design_review_card, design_card, Prepared);
@@ -728,7 +727,7 @@ async fn plugin_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> R
         acknowledge_high_risk: input.boolean("acknowledge_high_risk") == Some(true),
     };
     let id = required(input, "id")?;
-    plugin_decide_core(db, staff, &id, data).await?;
+    on_heap(|| plugin_decide_core(db, staff, &id, data)).await?;
     Ok(DeskView::new(w::DONE.get(input.lang)).field(w::ID.get(input.lang), id))
 }
 boxed!(plugin_review_card, plugin_card, Prepared);
@@ -769,7 +768,8 @@ async fn creator_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> 
         action: required(input, "action")?,
         reason: required(input, "reason")?,
     };
-    let record = change_core(db, staff, &required_user(input, "user")?, data).await?;
+    let user = required_user(input, "user")?;
+    let record = on_heap(|| change_core(db, staff, &user, data)).await?;
     Ok(done(json(&record), CREATOR_DONE, input.lang))
 }
 boxed!(creator_change_card, creator_card, Prepared);
@@ -1021,7 +1021,8 @@ async fn give_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> Res
         reason: required(input, "reason")?,
         expires_at: input.integer("_expires_at"),
     };
-    let grant = grant_core(db, staff, &required_user(input, "user")?, data).await?;
+    let user = required_user(input, "user")?;
+    let grant = on_heap(|| grant_core(db, staff, &user, data)).await?;
     Ok(done(json(&grant), BADGE_DONE, input.lang))
 }
 async fn remove_badge_run(
@@ -1034,7 +1035,8 @@ async fn remove_badge_run(
         reason: required(input, "reason")?,
         expires_at: None,
     };
-    let grant = revoke_core(db, staff, &required_user(input, "user")?, data).await?;
+    let user = required_user(input, "user")?;
+    let grant = on_heap(|| revoke_core(db, staff, &user, data)).await?;
     Ok(done(json(&grant), BADGE_DONE, input.lang))
 }
 boxed!(badge_give_card, give_card, Prepared);
@@ -1091,7 +1093,8 @@ async fn propose_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> 
         grant: required(input, "action")? == "give",
         reason: required(input, "reason")?,
     };
-    let view = propose_core(db, staff, &required_user(input, "user")?, data).await?;
+    let user = required_user(input, "user")?;
+    let view = on_heap(|| propose_core(db, staff, &user, data)).await?;
     Ok(done(json(&view), OFFICIAL_DONE, input.lang))
 }
 boxed!(official_propose_card, propose_card, Prepared);
@@ -1146,7 +1149,8 @@ async fn confirm_card(db: &Database, staff: &StaffContext, input: &DeskInput) ->
 }
 
 async fn confirm_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
-    let view = confirm_core(db, staff, &required(input, "request")?).await?;
+    let request = required(input, "request")?;
+    let view = on_heap(|| confirm_core(db, staff, &request)).await?;
     Ok(done(json(&view), OFFICIAL_DONE, input.lang))
 }
 boxed!(official_confirm_card, confirm_card, Prepared);

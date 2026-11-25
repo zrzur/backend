@@ -39,6 +39,7 @@ use super::registry::{
     DeskChoice, DeskCommand, DeskGroup, DeskInput, DeskOption, Lang, Prepare, Prepared, Text,
 };
 use super::view::DeskView;
+use crate::util::on_heap::on_heap;
 
 const fn t(en: &'static str, ar: &'static str, de: &'static str) -> Text {
     Text { en, ar, de }
@@ -451,7 +452,8 @@ async fn refund_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> R
         reason: required(input, "reason")?,
         revoke: input.boolean("revoke"),
     };
-    let order = refund_core(db, staff, &required(input, "order")?, data).await?;
+    let order = required(input, "order")?;
+    let order = on_heap(|| refund_core(db, staff, &order, data)).await?;
     Ok(fields(
         DeskView::new(w::DONE.get(input.lang)),
         &json(&order),
@@ -486,7 +488,8 @@ async fn deliver_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Res
 }
 
 async fn deliver_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
-    let order = deliver_core(db, staff, &required(input, "order")?).await?;
+    let order = required(input, "order")?;
+    let order = on_heap(|| deliver_core(db, staff, &order)).await?;
     Ok(fields(
         DeskView::new(w::DONE.get(input.lang)),
         &json(&order),
@@ -527,7 +530,8 @@ async fn retry_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Resul
 }
 
 async fn retry_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
-    let event = retry_webhook_core(db, staff, &required(input, "event")?).await?;
+    let event = required(input, "event")?;
+    let event = on_heap(|| retry_webhook_core(db, staff, &event)).await?;
     Ok(fields(
         DeskView::new(w::DONE.get(input.lang)),
         &json(&event),
@@ -547,7 +551,7 @@ async fn reconcile_card(_: &Database, _: &StaffContext, input: &DeskInput) -> Re
 }
 
 async fn reconcile_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
-    let issues = reconcile_now_core(db, staff).await?;
+    let issues = on_heap(|| reconcile_now_core(db, staff)).await?;
     Ok(DeskView::new(w::DONE.get(input.lang))
         .field(w::ISSUES.get(input.lang), issues.len().to_string()))
 }
@@ -606,7 +610,7 @@ async fn grant_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> Re
         days: input.integer("days").unwrap_or_default() as u32,
         reason: required(input, "reason")?,
     };
-    grant_core(db, staff, data).await?;
+    on_heap(|| grant_core(db, staff, data)).await?;
     Ok(DeskView::new(w::DONE.get(input.lang)).field(w::USER.get(input.lang), user))
 }
 boxed!(billing_grant_card, grant_card, Prepared);
@@ -709,7 +713,7 @@ async fn member_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> R
         features: feature_list(input),
         note: optional(input, "note"),
     };
-    let record = member_core(db, staff, data).await?;
+    let record = on_heap(|| member_core(db, staff, data)).await?;
     Ok(fields(
         DeskView::new(w::DONE.get(input.lang)),
         &json(&record),
@@ -953,7 +957,8 @@ async fn roles_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> Re
         reason: required(input, "reason")?,
         version: (version >= 0).then_some(version),
     };
-    let member = set_member_core(db, staff, &required_user(input, "user")?, data).await?;
+    let user = required_user(input, "user")?;
+    let member = on_heap(|| set_member_core(db, staff, &user, data)).await?;
     Ok(DeskView::new(w::DONE.get(input.lang))
         .field(w::USER.get(input.lang), member.user_id)
         .field(w::ROLES.get(input.lang), role_names(&member.roles)))
@@ -1003,15 +1008,10 @@ async fn disable_card(db: &Database, staff: &StaffContext, input: &DeskInput) ->
 
 async fn disable_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
     let id = required_user(input, "user")?;
-    disable_member_core(
-        db,
-        staff,
-        &id,
-        DataReason {
-            reason: required(input, "reason")?,
-        },
-    )
-    .await?;
+    let data = DataReason {
+        reason: required(input, "reason")?,
+    };
+    on_heap(|| disable_member_core(db, staff, &id, data)).await?;
     Ok(DeskView::new(w::DONE.get(input.lang)).field(w::USER.get(input.lang), id))
 }
 boxed!(staff_disable_card, disable_card, Prepared);
