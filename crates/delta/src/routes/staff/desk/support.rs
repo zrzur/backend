@@ -32,6 +32,7 @@ use super::registry::{
     DeskChoice, DeskCommand, DeskGroup, DeskInput, DeskOption, Lang, Prepare, Prepared, Text,
 };
 use super::view::DeskView;
+use crate::util::on_heap::on_heap;
 
 const fn t(en: &'static str, ar: &'static str, de: &'static str) -> Text {
     Text { en, ar, de }
@@ -508,7 +509,7 @@ async fn reply_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> Re
         internal: false,
         close: input.boolean("close") == Some(true),
     };
-    let ticket = reply_core(db, staff, &id, data).await?;
+    let ticket = on_heap(|| reply_core(db, staff, &id, data)).await?;
     Ok(done(json(&ticket), TICKET_DONE, input.lang))
 }
 boxed!(ticket_reply_card, reply_card, Prepared);
@@ -537,7 +538,7 @@ async fn ticket_note_run(
         internal: true,
         close: false,
     };
-    let ticket = reply_core(db, staff, &id, data).await?;
+    let ticket = on_heap(|| reply_core(db, staff, &id, data)).await?;
     Ok(done(json(&ticket), TICKET_DONE, input.lang))
 }
 boxed!(ticket_note_card, ticket_note_card_fn, Prepared);
@@ -688,7 +689,8 @@ async fn send_card(db: &Database, _staff: &StaffContext, input: &DeskInput) -> R
 
 async fn send_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
     let user = required_user(input, "user")?;
-    let notice = send_core(db, staff, notice_data(input, Some(user))?).await?;
+    let data = notice_data(input, Some(user))?;
+    let notice = on_heap(|| send_core(db, staff, data)).await?;
     Ok(done(json(&notice), NOTICE_DONE, input.lang))
 }
 boxed!(notice_send_card, send_card, Prepared);
@@ -708,7 +710,8 @@ async fn everyone_card(_: &Database, _: &StaffContext, input: &DeskInput) -> Res
 }
 
 async fn everyone_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
-    let notice = send_core(db, staff, notice_data(input, None)?).await?;
+    let data = notice_data(input, None)?;
+    let notice = on_heap(|| send_core(db, staff, data)).await?;
     Ok(done(json(&notice), NOTICE_DONE, input.lang))
 }
 boxed!(notice_everyone_card, everyone_card, Prepared);
@@ -804,7 +807,7 @@ async fn change_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> R
         changes: changes(input),
         reason: required(input, "reason")?,
     };
-    let request = create_core(db, staff, &user, data).await?;
+    let request = on_heap(|| create_core(db, staff, &user, data)).await?;
     Ok(done(json(&request), REQUEST_DONE, input.lang))
 }
 boxed!(change_create_card, change_card, Prepared);
@@ -863,7 +866,7 @@ async fn security_run(db: &Database, staff: &StaffContext, input: &DeskInput) ->
         new_email: optional(input, "new_email"),
         reason: required(input, "reason")?,
     };
-    let request = security_core(db, staff, &user, data).await?;
+    let request = on_heap(|| security_core(db, staff, &user, data)).await?;
     Ok(done(json(&request), REQUEST_DONE, input.lang))
 }
 boxed!(security_request_card, security_card, Prepared);
@@ -932,7 +935,7 @@ async fn bug_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> Resu
             .integer(UPDATED)
             .ok_or_else(|| create_error!(InvalidOperation))?,
     };
-    let reviewed = bug_review_core(db, staff, &id, data).await?;
+    let reviewed = on_heap(|| bug_review_core(db, staff, &id, data)).await?;
     Ok(done(json(&reviewed), BUG_DONE, input.lang))
 }
 boxed!(bug_review_card, bug_card, Prepared);
@@ -1086,7 +1089,8 @@ async fn away_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> Res
     let days = input
         .integer("days")
         .ok_or_else(|| create_error!(InvalidOperation))?;
-    let person = away_core(db, staff, &required(input, "member")?, DataAway { days }).await?;
+    let member = required(input, "member")?;
+    let person = on_heap(|| away_core(db, staff, &member, DataAway { days })).await?;
     Ok(fields(
         DeskView::new(w::DONE.get(input.lang)),
         &json(&person),
@@ -1135,13 +1139,9 @@ async fn remove_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Resu
 }
 async fn remove_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
     let reason = required(input, "reason")?;
-    let person = remove_core(
-        db,
-        staff,
-        &required(input, "member")?,
-        DataRemoveVolunteer { reason },
-    )
-    .await?;
+    let member = required(input, "member")?;
+    let person =
+        on_heap(|| remove_core(db, staff, &member, DataRemoveVolunteer { reason })).await?;
     Ok(fields(
         DeskView::new(w::DONE.get(input.lang)),
         &json(&person),

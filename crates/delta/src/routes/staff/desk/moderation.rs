@@ -31,6 +31,7 @@ use super::registry::{
     DeskChoice, DeskCommand, DeskGroup, DeskInput, DeskOption, Lang, Prepare, Prepared, Text,
 };
 use super::view::DeskView;
+use crate::util::on_heap::on_heap;
 
 const fn t(en: &'static str, ar: &'static str, de: &'static str) -> Text {
     Text { en, ar, de }
@@ -404,7 +405,7 @@ async fn user_act(
             _ => None,
         },
     };
-    let action = user_action_core(db, staff, &id, data).await?;
+    let action = on_heap(|| user_action_core(db, staff, &id, data)).await?;
     Ok(done(json(&action), ACTION_DONE, input.lang))
 }
 
@@ -477,7 +478,8 @@ async fn sessions_card(db: &Database, staff: &StaffContext, input: &DeskInput) -
 async fn sessions_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
     let id = required_user(input, "user")?;
     let reason = required(input, "reason")?;
-    let count = revoke_user_sessions_core(db, staff, &id, DataReason { reason }).await?;
+    let count =
+        on_heap(|| revoke_user_sessions_core(db, staff, &id, DataReason { reason })).await?;
     Ok(DeskView::new(w::DONE.get(input.lang))
         .field(w::SESSIONS_ENDED.get(input.lang), count.to_string()))
 }
@@ -545,7 +547,7 @@ async fn status_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> R
         note: input.text("note").filter(|n| !n.is_empty()),
         version: version(input)?,
     };
-    let case = set_status_core(db, staff, &id, data).await?;
+    let case = on_heap(|| set_status_core(db, staff, &id, data)).await?;
     Ok(done(json(&case), CASE_DONE, input.lang))
 }
 boxed!(case_status_card, status_card, Prepared);
@@ -568,15 +570,10 @@ async fn note_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Result
 
 async fn note_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
     let id = required(input, "case")?;
-    let case = note_core(
-        db,
-        staff,
-        &id,
-        DataSafetyNote {
-            text: required(input, "text")?,
-        },
-    )
-    .await?;
+    let data = DataSafetyNote {
+        text: required(input, "text")?,
+    };
+    let case = on_heap(|| note_core(db, staff, &id, data)).await?;
     Ok(done(json(&case), CASE_DONE, input.lang))
 }
 boxed!(case_note_card, note_card, Prepared);
@@ -619,7 +616,7 @@ async fn assign_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> R
         assignee_id: Some(input.user("user").unwrap_or_default()),
         ..edit(version(input)?)
     };
-    let case = edit_core(db, staff, &id, data).await?;
+    let case = on_heap(|| edit_core(db, staff, &id, data)).await?;
     Ok(done(json(&case), CASE_DONE, input.lang))
 }
 boxed!(case_assign_card, assign_card, Prepared);
@@ -648,7 +645,7 @@ async fn priority_run(db: &Database, staff: &StaffContext, input: &DeskInput) ->
         priority: Some(parse(&required(input, "priority")?)?),
         ..edit(version(input)?)
     };
-    let case = edit_core(db, staff, &id, data).await?;
+    let case = on_heap(|| edit_core(db, staff, &id, data)).await?;
     Ok(done(json(&case), CASE_DONE, input.lang))
 }
 boxed!(case_priority_card, priority_card, Prepared);
@@ -675,7 +672,7 @@ async fn hold_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> Res
         ),
         ..edit(version(input)?)
     };
-    let case = edit_core(db, staff, &id, data).await?;
+    let case = on_heap(|| edit_core(db, staff, &id, data)).await?;
     Ok(done(json(&case), CASE_DONE, input.lang))
 }
 boxed!(case_hold_card, hold_card, Prepared);
@@ -783,7 +780,7 @@ async fn action_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> R
         reporter_note: None,
         version: version(input)?,
     };
-    let action = take_core(db, staff, &id, data).await?;
+    let action = on_heap(|| take_core(db, staff, &id, data)).await?;
     Ok(done(json(&action), ACTION_DONE, input.lang))
 }
 boxed!(case_action_card, action_card, Prepared);
@@ -828,15 +825,10 @@ async fn revoke_card(db: &Database, _: &StaffContext, input: &DeskInput) -> Resu
 
 async fn revoke_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> Result<DeskView> {
     let id = required(input, "action")?;
-    let action = revoke_core(
-        db,
-        staff,
-        &id,
-        DataSafetyRevoke {
-            reason: required(input, "reason")?,
-        },
-    )
-    .await?;
+    let data = DataSafetyRevoke {
+        reason: required(input, "reason")?,
+    };
+    let action = on_heap(|| revoke_core(db, staff, &id, data)).await?;
     Ok(done(json(&action), ACTION_DONE, input.lang))
 }
 boxed!(action_revoke_card, revoke_card, Prepared);
@@ -888,7 +880,7 @@ async fn appeal_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> R
         overturn: required(input, "decision")? == "overturn",
         note: required(input, "note")?,
     };
-    let appeal = decide_core(db, staff, &id, data).await?;
+    let appeal = on_heap(|| decide_core(db, staff, &id, data)).await?;
     Ok(done(json(&appeal), APPEAL_DONE, input.lang))
 }
 boxed!(appeal_decide_card, appeal_card, Prepared);
@@ -937,7 +929,7 @@ async fn bot_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> Resu
         public_reason: required(input, "reason")?,
         internal_note: input.text("note").filter(|n| !n.is_empty()),
     };
-    let action = disable_core(db, staff, &id, data).await?;
+    let action = on_heap(|| disable_core(db, staff, &id, data)).await?;
     Ok(done(json(&action), ACTION_DONE, input.lang))
 }
 boxed!(bot_disable_card, bot_card, Prepared);
@@ -1448,3 +1440,29 @@ pub static ENTRIES: &[DeskCommand] = &[
         bot_disable,
     ),
 ];
+
+#[cfg(test)]
+mod future_sizes {
+    use crate::routes::safety::actions::{action_future_sizes, future_size};
+
+    /// Largest future allowed on the confirmation path of an account action
+    const BOUND: usize = 12 * 1024;
+
+    /// The futures from the desk handler down to the action's own work stay
+    /// small (they were 34 to 76 KB each when a confirmed suspension
+    /// overflowed a worker thread's stack)
+    #[test]
+    fn desk_action_futures_stay_small() {
+        use super::super::super::safety::{take_core, user_action_core};
+        let mut all = vec![
+            ("desk::moderation::suspend_run", future_size!(super::suspend_run; A, B, C)),
+            ("desk::moderation::ban_run", future_size!(super::ban_run; A, B, C)),
+            ("desk::moderation::action_run", future_size!(super::action_run; A, B, C)),
+            ("staff::safety::user_action_core", future_size!(user_action_core; A, B, C, D)),
+            ("staff::safety::take_core", future_size!(take_core; A, B, C, D)),
+        ];
+        all.extend(action_future_sizes());
+        let large: Vec<_> = all.iter().filter(|(_, size)| *size > BOUND).collect();
+        assert!(large.is_empty(), "futures over {BOUND} bytes: {large:?}");
+    }
+}

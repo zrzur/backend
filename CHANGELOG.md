@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Zrzur Desk: confirming a suspension no longer stops the API (2026-11-25)
+
+- Confirming `/desk-mod user suspend` (and in debug builds also warn, ban and case actions) built one very large future on the worker thread's stack. In a debug build it went past the 2 MiB worker stack and the API aborted. The safety `enforce` is split into one function per action kind, and the action path, the staff console cores and every desk handler now build their futures on the heap (`util/on_heap.rs`). The behaviour is unchanged. Tests confirm warn, suspend, ban and a case action on a 2 MiB worker thread, and keep every desk future under 12 KiB.
+
 ## 26.3.0-beta.8 (2026-11-25)
 
 ### Badges: Verified Server Owner cancelled (2026-11-24)

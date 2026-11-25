@@ -1070,3 +1070,120 @@ async fn desk_moderation_cards_are_honest() {
         "{content}"
     );
 }
+
+/// The stack a request gets in production: a tokio worker thread keeps
+/// tokio's default of 2 MiB. The test runner raises every thread to
+/// 16 MiB (`RUST_MIN_STACK`), which hid an overflow on this path.
+const WORKER_STACK: usize = 2 * 1024 * 1024;
+
+/// Desk changes confirmed on a worker thread of production size, in a
+/// debug build: `user warn`, `user suspend`, `user ban` and `case action`
+/// with SuspendAccount all complete. Confirming a suspension once
+/// overflowed the stack and aborted the whole API (about 2.2 MB used; the
+/// others were close behind).
+#[test]
+fn desk_irreversible_confirms_fit_a_worker_stack() {
+    let runtime = rocket::tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .thread_stack_size(WORKER_STACK)
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let s: &'static Stage = Box::leak(Box::new(stage().await));
+        all_areas(s);
+        let owner: &'static Person = Box::leak(Box::new(s.person(vec![StaffRole::Owner]).await));
+        s.sign_in(owner, -1).await;
+        let command = register_offered(s).await;
+        let (_, _, to_suspend) = s.harness.new_user().await;
+        let (_, _, to_ban) = s.harness.new_user().await;
+        let (_, _, to_warn) = s.harness.new_user().await;
+        let (case, author) = reported(s).await;
+        let suspend = card(
+            s,
+            owner,
+            &command,
+            "user",
+            "suspend",
+            json!([
+                user_opt(&to_suspend.id),
+                text("category", "Spam"),
+                json!({ "type": "Integer", "name": "days", "value": 3 }),
+                text("reason", "Repeated spam after a warning")
+            ]),
+        )
+        .await;
+        let ban = card(
+            s,
+            owner,
+            &command,
+            "user",
+            "ban",
+            json!([
+                user_opt(&to_ban.id),
+                text("category", "ScamFraud"),
+                text("reason", "Scamming other members")
+            ]),
+        )
+        .await;
+        let action = card(
+            s,
+            owner,
+            &command,
+            "case",
+            "action",
+            json!([
+                text("case", &case),
+                text("kind", "SuspendAccount"),
+                json!({ "type": "Integer", "name": "days", "value": 2 }),
+                text("reason", "Keeps insulting people")
+            ]),
+        )
+        .await;
+        let warn = card(
+            s,
+            owner,
+            &command,
+            "user",
+            "warn",
+            json!([
+                user_opt(&to_warn.id),
+                text("category", "Spam"),
+                text("reason", "Please stop posting links")
+            ]),
+        )
+        .await;
+        step_up(s, owner, 1).await;
+        for (name, c) in [
+            ("warn", warn),
+            ("suspend", suspend),
+            ("ban", ban),
+            ("case action", action),
+        ] {
+            // where a request runs: on a worker thread (an overflow aborts
+            // the test process, so the test fails)
+            let (status, body) = rocket::tokio::spawn(async move { confirm(s, owner, &c).await })
+                .await
+                .expect("the confirmation completed on a worker thread");
+            assert_eq!(status, Status::Ok, "{name}: {body}");
+        }
+        for id in [&to_suspend.id, &author.id] {
+            let user = s.harness.db.fetch_user(id).await.unwrap();
+            assert!(user.suspended_until.is_some(), "{id} suspended");
+        }
+        let banned = s.harness.db.fetch_user(&to_ban.id).await.unwrap();
+        assert_ne!(
+            banned.flags.unwrap_or_default() & revolt_models::v0::UserFlags::Banned as i32,
+            0
+        );
+        assert!(
+            !s.harness
+                .db
+                .fetch_safety_actions_for_user(&to_warn.id)
+                .await
+                .unwrap()
+                .is_empty(),
+            "the warning was recorded"
+        );
+    });
+}

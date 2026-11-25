@@ -23,6 +23,7 @@ use super::registry::{
     DeskChoice, DeskCommand, DeskGroup, DeskInput, DeskOption, Lang, Text, when,
 };
 use super::view::{DeskButton, DeskButtonStyle, DeskView};
+use crate::util::on_heap::on_heap;
 
 /// Rows on one page of a list
 pub const PAGE_SIZE: usize = 8;
@@ -494,7 +495,7 @@ async fn user_badges_view(
     input: &DeskInput,
 ) -> Result<DeskView> {
     let id = required(input, "user", CommandOptionType::User)?;
-    let record = json(&badges::user_badges_core(db, staff, &id).await?);
+    let record = json(&on_heap(|| badges::user_badges_core(db, staff, &id)).await?);
     let view = fields(
         DeskView::new(w::T_BADGES.get(input.lang)),
         &record["user"],
