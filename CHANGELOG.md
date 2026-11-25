@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 26.3.0-beta.8 (2026-11-25)
+
+### Badges: Verified Server Owner cancelled (2026-11-24)
+
+- **Verified Server Owner** (`verified_server_owner`, bit 16777216) is retired for good: rule `historical`, `retired: true`. No path gives it any more: the admin console, `/badge`, `zrzur-staff badge` and the system (`badge.system.grant` is refused as `retired` and audited). People who hold it keep it; taking one away is an Owner change with a step-up and a second person, as for Saha Champion. The bit stays reserved and is never reused.
+- The **Verified Server** program stays: the ownership check and the review still give a server its Verified mark (the official-entity exception too, Owner first and a second person). Approving an application no longer gives the server's owner anything, and handing a server over, unverifying or deleting it no longer touches the owner's badges. The crond safety net checks Verified Bot Developer only.
+- `GET /badges/catalogue` no longer lists `verified_server_owner`; `GET /staff/badges/catalogue` still does (old holders). Its names stay in en, ar and de for old holders and history notices.
+- Removed: `sync_verified_server_owner` and `owns_verified_server`; `server_programs_gone` takes no owner.
+
+### Two-factor codes with spaces (2026-11-24, owner's report)
+
+- A time code at `POST /auth/session/login` and `PUT /auth/mfa/ticket` is checked without its white space: `123 456`, a leading or trailing space and a pasted line break are the code `123456`. Any other character still makes it wrong. Replay protection, three tries per ticket and the 15-minute pause after five wrong answers are unchanged; a wrong code with spaces counts like any other.
+
 ## 26.3.0-beta.7 (2026-11-24)
 
 ### Badges: Content Creator and the switch for applying (2026-11-24, badge plan phase 5)

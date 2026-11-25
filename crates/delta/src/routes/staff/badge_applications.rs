@@ -30,7 +30,7 @@ use revolt_database::{
     application_audit, application_checklist, approve_badge_request, approve_dates, checked_decision,
     end_application, mutate_badge, record_creator_figures, record_review, refuse_badge_request,
     refuse_dates, reviewer_confirm_profile, reviewer_conflict, save_application,
-    sync_verified_server_owner, target_owner, AppealStatus, ApplicationStatus, AuditOutcome, BadgeActor,
+    target_owner, AppealStatus, ApplicationStatus, AuditOutcome, BadgeActor,
     BadgeApplication, BadgeChange, BadgeMutation, BadgeOutcome, BadgePath, BadgeProgram,
     BadgeRequestStatus, Database, FiguresInput, PartialServer, StaffPermission, IMPROVE_DAYS,
     SERVER_FLAG_PARTNER, SERVER_FLAG_VERIFIED,
@@ -404,7 +404,7 @@ async fn require_decision_rights(db: &Database, staff: &StaffContext, program: B
 }
 
 /// The application is approved: the mark is set (Verified Server, Verified
-/// Bot) and the record closed. Partner's and Content Creator's badges were
+/// Bot; a verified server's owner gets no badge) and the record closed. Partner's and Content Creator's badges were
 /// given by the gate already.
 async fn finish_approval(
     db: &Database,
@@ -419,11 +419,9 @@ async fn finish_approval(
             let mut server = db.fetch_server(&application.target_id).await?;
             let flag = if application.program == BadgeProgram::Partner { SERVER_FLAG_PARTNER } else { SERVER_FLAG_VERIFIED };
             let flags = server.flags.unwrap_or_default() | flag;
+            // the server gets its mark; its owner gets no badge (Verified
+            // Server Owner was cancelled on 2026-11-24)
             server.update(db, PartialServer { flags: Some(flags), ..Default::default() }, vec![]).await?;
-            if application.program == BadgeProgram::VerifiedServer {
-                // the owner's badge follows the mark, through the gate
-                sync_verified_server_owner(db, &server.owner).await?;
-            }
         }
         BadgeProgram::VerifiedBot => {
             super::bots::set_verified(db, &application.target_id, true, 0).await?;

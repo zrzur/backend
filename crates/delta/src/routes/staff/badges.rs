@@ -27,7 +27,7 @@ use rocket::{serde::json::Json, State};
 use serde::{Deserialize, Serialize};
 
 use super::StaffContext;
-use crate::routes::badges::{admin_grant_view, catalogue, now_ms, user_record};
+use crate::routes::badges::{admin_grant_view, catalogue_view, now_ms, user_record};
 
 /// The badge rights of this staff session in the console
 fn actor(staff: &StaffContext) -> BadgeActor {
@@ -50,7 +50,8 @@ pub(super) fn actor_on(staff: &StaffContext, path: BadgePath) -> BadgeActor {
 #[get("/badges/catalogue")]
 pub async fn badge_catalogue(db: &State<Database>, staff: StaffContext) -> Result<Json<Vec<BadgeInfo>>> {
     staff.require(db, StaffPermission::UsersRead).await?;
-    Ok(catalogue().await)
+    // staff also see the cancelled badges old holders still have
+    Ok(catalogue_view(true))
 }
 
 /// # A user's badges

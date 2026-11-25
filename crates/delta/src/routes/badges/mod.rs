@@ -20,7 +20,7 @@ use revolt_database::{
     creator_eligibility, creator_program_since, days_since, epoch_ms, mutate_badge, platform_permissions, set_badge_hidden,
     sync_creator_badge, sync_user_badges, BadgeActor, BadgeChange, BadgeDenial, BadgeGrant,
     BadgeGrantRule, BadgeMutation, BadgeOutcome, BadgePath, BadgeSource, BetaMember, Database,
-    PlatformPermission, StaffPermission, User, BADGE_CATALOGUE, ELITE_MIN_VERIFIED,
+    publicly_listed, PlatformPermission, StaffPermission, User, BADGE_CATALOGUE, ELITE_MIN_VERIFIED,
     SUPER_CREATOR_MIN_DAYS, SUPER_CREATOR_MIN_DESIGNS,
 };
 use revolt_models::v0;
@@ -136,12 +136,20 @@ pub(crate) fn beta_view(member: &BetaMember, features: Vec<String>) -> v0::BetaM
 /// # Badge catalogue
 ///
 /// Every badge, its bit in `User.badges`, tier and how it is given out.
+/// Cancelled badges (Verified Server Owner) are not listed; their bits stay
+/// reserved.
 #[openapi(tag = "Badges")]
 #[get("/catalogue")]
 pub async fn catalogue() -> Json<Vec<v0::BadgeInfo>> {
+    catalogue_view(false)
+}
+
+/// The catalogue; `all` also lists the cancelled badges (staff)
+pub(crate) fn catalogue_view(all: bool) -> Json<Vec<v0::BadgeInfo>> {
     Json(
         BADGE_CATALOGUE
             .iter()
+            .filter(|b| all || publicly_listed(b))
             .map(|b| v0::BadgeInfo {
                 id: b.id.to_string(),
                 bit: b.bit,

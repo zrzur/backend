@@ -725,9 +725,9 @@ impl Server {
         // its events are called off and kept for their retention time
         crate::ServerEvent::close_all_of_server(db, &self.id).await?;
         db.delete_server(&self.id).await?;
-        // its Partner and Verified Server programs end; the owner's Verified
-        // Server Owner badge follows (through the badge gate)
-        crate::server_programs_gone(db, &self.id, &self.owner).await;
+        // its Partner and Verified Server programs end (no owner badge
+        // follows: Verified Server Owner was cancelled, holders keep it)
+        crate::server_programs_gone(db, &self.id).await;
         Ok(())
     }
 

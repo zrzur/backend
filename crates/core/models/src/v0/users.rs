@@ -300,7 +300,9 @@ auto_derived!(
         CommunityBuilder = 4194304,
         /// Owns a server that reached 1000 members
         BigCommunity = 8388608,
-        /// Owns a verified server
+        /// Verified Server Owner: cancelled for good (2026-11-24), never
+        /// given again; holders keep it, the bit stays reserved and is never
+        /// reused. Verified servers carry their own mark instead.
         VerifiedServerOwner = 16777216,
         /// Owns a verified bot
         VerifiedBotDeveloper = 33554432,
