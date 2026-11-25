@@ -16,6 +16,12 @@ The official release of everything tested in 26.3.0-beta.1 to 26.3.0-beta.11, fo
 - The Arabic title of the creator's takedown notice says «أزلنا أحد تصاميمك» (we removed one of your designs) instead of «أوقفنا» (we suspended), so it is true for a takedown and for an erasure; English and German already said that.
 - New route and a new response field: the OpenAPI snapshot and the SDK route table and types need regenerating (the web calls the route directly and reads the field through its own type until then). No migration.
 
+### Profile frames may move (2026-11-25, owner's request)
+
+- `POST /community/frames` and editing a frame accept an animated file (GIF, WebP, APNG) of the template's size; the `frame_still` refusal is no longer sent. The size rule (`frame_size`) is unchanged.
+- autumn checks the safe zone on every frame of a moving frame (`check_frame_safe_area`), decoding one frame at a time and no more than the count the file was inspected with (at most `max_frames`, 240): a file that decodes to more is refused as `unreadable`. A frame-sized design has no length limit (`inspect_design`); the frame count, the 1024 px dimension cap and the 2.5 MB `decorations` limit still hold. The flash check judges a moving frame at the full profile's size (541 x 690 CSS px) instead of the avatar's.
+- No migration, no config change and no change to the shape of the API.
+
 - Docker images build with Rust 1.92 again, the version in `rust-toolchain.toml` that CI tests with. The Dependabot bump to 1.100 (#15) broke the image build (a type-inference change in Rust 1.100 stops the redis library compiling); Dependabot no longer moves the Rust image on its own.
 
 ## 26.3.0-beta.11 (2026-11-25)

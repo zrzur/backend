@@ -202,8 +202,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "8b673fcbd8c831e3a2562bcfa2d8df48e5d060612c11985f39fe95fc4b1d36b2",
-      "bytes": 180858,
+      "sha256": "9205e8a78dd05b16b5c2234e722097e5c9de543ed3adbc9d8895b1d1a3201c88",
+      "bytes": 181710,
       "category": "public-documentation"
     },
     {
@@ -5386,14 +5386,14 @@
     },
     {
       "path": "crates/delta/src/routes/community/mod.rs",
-      "sha256": "1f11636915718ca511751743b103e27bbe462b70df7bb6cfac50c550170282e0",
-      "bytes": 62526,
+      "sha256": "bd6305fcbb6afdb9d3f8a5ebba757a5fa30cfba10bbd85caf63a81bba82ddcec",
+      "bytes": 62412,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/delta/src/routes/community/test.rs",
-      "sha256": "8bdbbdb59c403397d8d9aca4769f06ae080979af3365a0629e2300e9a3dc753f",
-      "bytes": 103429,
+      "sha256": "703a17042bc24cb23e63d1370ef59354160c5c4b005c5a6a7a89ee5d2b83cc1e",
+      "bytes": 103919,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -7276,8 +7276,8 @@
     },
     {
       "path": "crates/services/autumn/src/api.rs",
-      "sha256": "1c49d510da56cbbb2c2ced268b04d19afe70c410abefb59d880f02f90444f2d8",
-      "bytes": 51981,
+      "sha256": "7e4088d3cb56b17c263cfacad24dfd948201450acd5c4919f6ec0c2338804f2a",
+      "bytes": 51969,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -7300,8 +7300,8 @@
     },
     {
       "path": "crates/services/autumn/src/effects.rs",
-      "sha256": "121fe9b12e5d104a831d5242fa9c4f34041a2fe1d839e5e4c48aa24c3b0723b1",
-      "bytes": 56027,
+      "sha256": "8124e9912c8c39a2e7c57149b402d3e8d301f0dda640b7c53e63423e8edd471d",
+      "bytes": 66082,
       "category": "product-source-or-build-manifest"
     },
     {
