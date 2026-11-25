@@ -18,7 +18,9 @@ use image::{
     codecs::{gif::GifDecoder, png::PngDecoder},
     imageops::{self, FilterType},
 };
-use revolt_database::CommunityImageInfo;
+use revolt_database::{
+    CommunityImageError, CommunityImageInfo, CommunityImageLimits, inspect_community_image,
+};
 use revolt_models::v0::{PROFILE_FRAME_FILE_SIZE, PROFILE_FRAME_TEMPLATE};
 
 /// Where a file is tested: the grid for the largest size it is ever shown at.
@@ -43,9 +45,21 @@ const AVATAR: Stage = Stage { columns: 39, rows: 39, cell: 8 };
 /// because which part stays depends on the screen.
 const NAMEPLATE: Stage = Stage { columns: 160, rows: 30, cell: 10 };
 
-/// Decorations and nameplates share a tag, so the shape says which it is
+/// A profile frame round the full profile, its largest size: the card is
+/// 460 px wide there, so the 400 x 510 template is shown at 460 / 340, about
+/// 541 x 690
+const FRAME: Stage = Stage { columns: 54, rows: 69, cell: 10 };
+
+/// Decorations, nameplates and profile frames share a tag, so the shape says
+/// which it is
 fn design_stage(width: u32, height: u32) -> Stage {
-    if width >= height * 2 { NAMEPLATE } else { AVATAR }
+    if (width as usize, height as usize) == PROFILE_FRAME_FILE_SIZE {
+        FRAME
+    } else if width >= height * 2 {
+        NAMEPLATE
+    } else {
+        AVATAR
+    }
 }
 
 /// A file that loops plays at least this long in the test, and at least twice,
@@ -336,7 +350,14 @@ impl<'a> WebpFrames<'a> {
 
     /// One ANMF chunk as a WebP file of its own
     fn still(payload: &[u8], width: u32, height: u32) -> Option<RgbaImage> {
-        let has_alpha = payload.starts_with(b"ALPH");
+        // a lossy frame has its alpha in an ALPH chunk; a lossless one (VP8L)
+        // in its own pixels, marked by the `alpha_is_used` bit of its header.
+        // Without the flag the decoder drops that alpha and the frame looks
+        // solid: a transparent lossless frame would cover the whole card.
+        let lossless_alpha = payload.starts_with(b"VP8L")
+            && payload.get(8) == Some(&0x2F)
+            && payload.get(12).is_some_and(|bits| bits & 0x10 != 0);
+        let has_alpha = payload.starts_with(b"ALPH") || lossless_alpha;
         let mut vp8x = vec![if has_alpha { 0x10u8 } else { 0 }, 0, 0, 0];
         vp8x.extend_from_slice(&(width - 1).to_le_bytes()[..3]);
         vp8x.extend_from_slice(&(height - 1).to_le_bytes()[..3]);
@@ -518,7 +539,7 @@ pub fn check_upload(
 /// are meant to fill their picture, so solid and blank files pass.
 pub fn check_design(bytes: &[u8], info: &CommunityImageInfo) -> Result<(), EffectRefusal> {
     if is_profile_frame(info) {
-        check_frame_safe_area(bytes)?;
+        check_frame_safe_area(bytes, info.frames)?;
     }
     if info.frames < 2 {
         return Ok(());
@@ -527,6 +548,26 @@ pub fn check_design(bytes: &[u8], info: &CommunityImageInfo) -> Result<(), Effec
         return Err(EffectRefusal::Flashing);
     }
     Ok(())
+}
+
+/// Inspect a design's bytes by the tag's limits. A profile frame may play as
+/// long as it likes (people who turn motion off see a still of it), so only
+/// its frame count, size and bytes are limited; every other design keeps its
+/// length limit.
+pub fn inspect_design(
+    tag: &Tag,
+    bytes: &[u8],
+    limits: &CommunityImageLimits,
+) -> Result<CommunityImageInfo, CommunityImageError> {
+    if !matches!(tag, Tag::decorations) {
+        return inspect_community_image(bytes, limits);
+    }
+    let any_length = CommunityImageLimits { max_duration_ms: u32::MAX, ..*limits };
+    let info = inspect_community_image(bytes, &any_length)?;
+    if !is_profile_frame(&info) && info.duration_ms > limits.max_duration_ms {
+        return Err(CommunityImageError::TooLong);
+    }
+    Ok(info)
 }
 
 /// A file of a profile frame's size. Decorations are square and nameplates
@@ -542,9 +583,13 @@ const FRAME_ALPHA_LIMIT: u8 = 16;
 
 /// A profile frame is laid over the card as it is, so the card's content
 /// area must be transparent: only the crest window over the middle of the
-/// banner may be drawn on. Every frame of the file counts (delta takes only
-/// still frames; this keeps the rule true for any file of this shape).
-pub fn check_frame_safe_area(bytes: &[u8]) -> Result<(), EffectRefusal> {
+/// banner may be drawn on. A frame may move, so every frame of the file
+/// counts, or the art could pass over the name later in the loop.
+///
+/// The frames are decoded one at a time and dropped (an 800 x 1020 frame is
+/// 3.3 MB), and no more than `max_frames`, the count the file was already
+/// inspected and limited by: a file that decodes to more is refused.
+pub fn check_frame_safe_area(bytes: &[u8], max_frames: u32) -> Result<(), EffectRefusal> {
     let t = PROFILE_FRAME_TEMPLATE;
     let scale = PROFILE_FRAME_FILE_SIZE.0 as u32 / t.width;
     let inside = |(l, t, r, b): (u32, u32, u32, u32), x: u32, y: u32| {
@@ -555,16 +600,20 @@ pub fn check_frame_safe_area(bytes: &[u8]) -> Result<(), EffectRefusal> {
             pixel[3] <= FRAME_ALPHA_LIMIT || !inside(t.safe, x, y) || inside(t.crest, x, y)
         })
     };
-    let mut checked = false;
+    let mut checked = 0u32;
     if let Some(frames) = frames_of(bytes) {
         for frame in frames {
+            if checked >= max_frames.max(1) {
+                return Err(EffectRefusal::Unreadable);
+            }
             let (buffer, _) = frame.map_err(|_| EffectRefusal::Unreadable)?;
             if !clear(&buffer) {
                 return Err(EffectRefusal::CoversContent);
             }
-            checked = true;
+            checked += 1;
         }
     }
+    let checked = checked > 0;
     if !checked {
         let still = image::load_from_memory(bytes).map_err(|_| EffectRefusal::Unreadable)?;
         if !clear(&still.to_rgba8()) {
@@ -794,6 +843,201 @@ mod tests {
             .write_to(&mut Cursor::new(&mut out), image::ImageFormat::Png)
             .unwrap();
         assert_eq!(design(&out), Ok(()));
+    }
+
+    /// One picture of a moving frame: the band round the card, a spark that
+    /// travels along the top above the card, and optionally one pixel at `over`
+    fn frame_art(n: u32, over: Option<(u32, u32)>) -> RgbaImage {
+        let mut image = image::load_from_memory(&frame_png(over)).unwrap().to_rgba8();
+        for x in 0..16 {
+            for y in 0..16 {
+                image.put_pixel(40 + n * 40 + x, 20 + y, Rgba([255, 214, 107, 255]));
+            }
+        }
+        image
+    }
+
+    fn frame_gif(pictures: &[RgbaImage], delay_ms: u32) -> Vec<u8> {
+        let mut out = vec![];
+        {
+            let mut encoder = GifEncoder::new_with_speed(&mut out, 30);
+            encoder.set_repeat(Repeat::Infinite).unwrap();
+            for picture in pictures {
+                encoder
+                    .encode_frame(Frame::from_parts(
+                        picture.clone(),
+                        0,
+                        0,
+                        Delay::from_numer_denom_ms(delay_ms, 1),
+                    ))
+                    .unwrap();
+            }
+        }
+        out
+    }
+
+    /// An APNG that loops, one whole picture per frame, 100 ms each
+    fn frame_apng(pictures: &[RgbaImage]) -> Vec<u8> {
+        let (w, h) = pictures[0].dimensions();
+        let mut out = b"\x89PNG\r\n\x1a\n".to_vec();
+        let mut sequence = 0u32;
+        for (n, picture) in pictures.iter().enumerate() {
+            let mut png = vec![];
+            DynamicImage::ImageRgba8(picture.clone())
+                .write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png)
+                .unwrap();
+            let chunks = png_chunks(&png);
+            if n == 0 {
+                out.extend(chunk(b"IHDR", &chunks[0].1));
+                let mut actl = (pictures.len() as u32).to_be_bytes().to_vec();
+                actl.extend(0u32.to_be_bytes());
+                out.extend(chunk(b"acTL", &actl));
+            }
+            let mut control = sequence.to_be_bytes().to_vec();
+            sequence += 1;
+            control.extend(w.to_be_bytes());
+            control.extend(h.to_be_bytes());
+            control.extend([0u8; 8]);
+            control.extend(100u16.to_be_bytes());
+            control.extend(1000u16.to_be_bytes());
+            control.extend([0u8, 0]);
+            out.extend(chunk(b"fcTL", &control));
+            for (_, data) in chunks.iter().filter(|(kind, _)| kind == b"IDAT") {
+                if n == 0 {
+                    out.extend(chunk(b"IDAT", data));
+                } else {
+                    let mut body = sequence.to_be_bytes().to_vec();
+                    sequence += 1;
+                    body.extend_from_slice(data);
+                    out.extend(chunk(b"fdAT", &body));
+                }
+            }
+        }
+        out.extend(chunk(b"IEND", &[]));
+        out
+    }
+
+    /// An animated WebP that loops, one whole picture per frame, 100 ms each
+    fn frame_webp(pictures: &[RgbaImage]) -> Vec<u8> {
+        let (w, h) = pictures[0].dimensions();
+        let le24 = |v: u32| v.to_le_bytes()[..3].to_vec();
+        let mut body = b"WEBPVP8X".to_vec();
+        body.extend(10u32.to_le_bytes());
+        body.extend([0x12, 0, 0, 0]);
+        body.extend(le24(w - 1));
+        body.extend(le24(h - 1));
+        body.extend(b"ANIM");
+        body.extend(6u32.to_le_bytes());
+        body.extend([0, 0, 0, 0, 0, 0]);
+        for picture in pictures {
+            let mut still = vec![];
+            DynamicImage::ImageRgba8(picture.clone())
+                .write_to(&mut Cursor::new(&mut still), image::ImageFormat::WebP)
+                .unwrap();
+            let at = still.windows(4).position(|w| w == b"VP8L").unwrap();
+            let image_chunk = &still[at..];
+            let mut frame = [le24(0), le24(0), le24(w - 1), le24(h - 1), le24(100)].concat();
+            frame.push(0);
+            frame.extend_from_slice(image_chunk);
+            if image_chunk.len() % 2 == 1 {
+                frame.push(0);
+            }
+            body.extend(b"ANMF");
+            body.extend((frame.len() as u32).to_le_bytes());
+            body.extend(frame);
+        }
+        let mut out = b"RIFF".to_vec();
+        out.extend((body.len() as u32).to_le_bytes());
+        out.extend(body);
+        out
+    }
+
+    /// A moving frame's three pictures; if `over` is set, the last one puts a
+    /// pixel there
+    fn moving_frame(over: Option<(u32, u32)>) -> Vec<RgbaImage> {
+        vec![frame_art(0, None), frame_art(1, None), frame_art(2, over)]
+    }
+
+    #[test]
+    fn a_moving_profile_frame_passes_in_every_format() {
+        let pictures = moving_frame(None);
+        for (format, file) in [
+            ("gif", frame_gif(&pictures, 100)),
+            ("apng", frame_apng(&pictures)),
+            ("webp", frame_webp(&pictures)),
+        ] {
+            let info = seen(&file);
+            assert_eq!(info.frames, 3, "{format}");
+            assert_eq!((info.width, info.height), (800, 1020), "{format}");
+            assert_eq!(design(&file), Ok(()), "{format}");
+        }
+    }
+
+    #[test]
+    fn a_frame_whose_later_picture_covers_the_name_is_refused() {
+        let t = PROFILE_FRAME_TEMPLATE;
+        // clear in its first two pictures, over the name in the third
+        let pictures = moving_frame(Some((t.safe.0 * 2 + 40, t.safe.1 * 2 + 200)));
+        for (format, file) in [
+            ("gif", frame_gif(&pictures, 100)),
+            ("apng", frame_apng(&pictures)),
+            ("webp", frame_webp(&pictures)),
+        ] {
+            assert_eq!(design(&file), Err(EffectRefusal::CoversContent), "{format}");
+        }
+    }
+
+    #[test]
+    fn a_frame_is_decoded_no_further_than_its_frame_limit() {
+        let file = frame_gif(&moving_frame(None), 100);
+        assert_eq!(check_frame_safe_area(&file, 3), Ok(()));
+        // a file that decodes to more frames than it was inspected with
+        assert_eq!(check_frame_safe_area(&file, 2), Err(EffectRefusal::Unreadable));
+        assert_eq!(design_claiming(&file, 2), Err(EffectRefusal::Unreadable));
+    }
+
+    #[test]
+    fn a_frame_may_play_any_length_but_keeps_its_frame_count_limit() {
+        let limits = CommunityImageLimits {
+            max_bytes: 2_500_000,
+            max_dimension: 1024,
+            max_frames: 240,
+            max_duration_ms: 12_000,
+        };
+        // three pictures of 10 s each: 30 s, longer than a decoration may be
+        let long_frame = frame_gif(&moving_frame(None), 10_000);
+        let info = inspect_design(&Tag::decorations, &long_frame, &limits).unwrap();
+        assert_eq!(info.duration_ms, 30_000);
+        let long_decoration = gif_of(128, 128, 3, 10_000, dot);
+        assert_eq!(
+            inspect_design(&Tag::decorations, &long_decoration, &limits),
+            Err(CommunityImageError::TooLong)
+        );
+        // the frame count and the file size still hold for a frame
+        let few = CommunityImageLimits { max_frames: 2, ..limits };
+        assert_eq!(
+            inspect_design(&Tag::decorations, &long_frame, &few),
+            Err(CommunityImageError::TooManyFrames)
+        );
+        let small = CommunityImageLimits { max_bytes: long_frame.len() - 1, ..limits };
+        assert_eq!(
+            inspect_design(&Tag::decorations, &long_frame, &small),
+            Err(CommunityImageError::TooLarge)
+        );
+        // effects keep their own length limit
+        assert_eq!(
+            inspect_design(&Tag::effects, &long_frame, &limits),
+            Err(CommunityImageError::TooLong)
+        );
+    }
+
+    #[test]
+    fn a_moving_frame_is_tested_for_flashing_at_the_full_profile_size() {
+        let (w, h) = PROFILE_FRAME_FILE_SIZE;
+        let stage = design_stage(w as u32, h as u32);
+        assert_eq!((stage.columns, stage.rows, stage.cell), (54, 69, 10));
+        assert_eq!(design_stage(128, 128).columns, AVATAR.columns);
+        assert_eq!(design_stage(256, 48).columns, NAMEPLATE.columns);
     }
 
     fn effect(bytes: &[u8]) -> Result<(), EffectRefusal> {

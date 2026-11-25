@@ -112,10 +112,10 @@ fn tag_of(kind: &CommunityItemKind) -> &'static str {
     }
 }
 
-/// A community frame is one still picture of the template's size: it is laid
-/// over the card as it is, and a moving one could not be stopped for people
-/// who ask for less motion. The media server has already checked that the
-/// card's content area is transparent (autumn `check_frame_safe_area`).
+/// A community frame is a picture of the template's size, still or moving:
+/// it is laid over the card as it is, and people who turn motion off see a
+/// still of it. The media server has already checked that the card's content
+/// area is transparent in every frame (autumn `check_frame_safe_area`).
 fn check_frame_file(file: &File) -> Result<()> {
     let refused = |code: &str| {
         Err(revolt_result::failed_validation(vec![revolt_result::ValidationProblem::new(
@@ -124,12 +124,9 @@ fn check_frame_file(file: &File) -> Result<()> {
     };
     let (width, height) = v0::PROFILE_FRAME_FILE_SIZE;
     match &file.metadata {
-        revolt_database::Metadata::Image { width: w, height: h, animated, .. } => {
+        revolt_database::Metadata::Image { width: w, height: h, .. } => {
             if (*w as usize, *h as usize) != (width, height) {
                 return refused("frame_size");
-            }
-            if animated.unwrap_or(false) {
-                return refused("frame_still");
             }
             Ok(())
         }

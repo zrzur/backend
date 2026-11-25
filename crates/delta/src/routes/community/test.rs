@@ -2121,7 +2121,7 @@ async fn a_creator_deletes_a_withdrawn_design() {
 }
 
 
-/// A community frame: an upload of the template's size, still
+/// A community frame: an upload of the given size, still or moving
 async fn upload_frame(harness: &TestHarness, user: &User, width: isize, height: isize, animated: bool) -> String {
     let id = upload(harness, user).await;
     let mut file = harness.db.fetch_attachment("decorations", &id).await.unwrap();
@@ -2150,13 +2150,13 @@ async fn wear_frame(harness: &TestHarness, session: &Session, value: &str) -> St
 }
 
 #[rocket::async_test]
-async fn a_frame_must_be_one_still_picture_of_the_template_size() {
+async fn a_frame_must_be_a_picture_of_the_template_size() {
     let harness = TestHarness::new().await;
     let (session, user) = creator(&harness).await;
     let (w, h) = v0::PROFILE_FRAME_FILE_SIZE;
     let (w, h) = (w as isize, h as isize);
 
-    for (width, height, animated) in [(128, 128, false), (w, h + 2, false), (w / 2, h / 2, false), (w, h, true)] {
+    for (width, height, animated) in [(128, 128, false), (w, h + 2, false), (w / 2, h / 2, false), (w, h + 2, true)] {
         let file = upload_frame(&harness, &user, width, height, animated).await;
         let body = json!({ "name": "Arch", "file": file, "submit": true, "rights": promise() });
         assert_eq!(
@@ -2183,6 +2183,16 @@ async fn a_frame_must_be_one_still_picture_of_the_template_size() {
     assert_eq!(frames.items.len(), 1);
     assert_eq!(frames.items[0].kind, v0::CommunityItemKind::Frame);
     assert!(public_list(&harness, &session).await.items.is_empty());
+}
+
+#[rocket::async_test]
+async fn a_moving_frame_of_the_template_size_is_published() {
+    let harness = TestHarness::new().await;
+    let (session, user) = creator(&harness).await;
+    let (w, h) = v0::PROFILE_FRAME_FILE_SIZE;
+    let file = upload_frame(&harness, &user, w as isize, h as isize, true).await;
+    let body = json!({ "name": "Lantern", "file": file, "submit": true, "rights": promise() });
+    assert_eq!(post_design(&harness, &session, "frames", body).await, Status::Ok);
 }
 
 #[rocket::async_test]
