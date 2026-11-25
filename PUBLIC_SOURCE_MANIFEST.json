@@ -58,8 +58,8 @@
     },
     {
       "path": ".github/workflows/source-check.yml",
-      "sha256": "863f24e66b8e6ce796aaa432f79b1d7c2a10f5c3466f99e2e14c467a241097be",
-      "bytes": 963,
+      "sha256": "11e925a915c4119a4d4488354b493e8f555ab061b755d96e7d8a248a81ded340",
+      "bytes": 964,
       "category": "reviewed-build-and-ci"
     },
     {
@@ -202,8 +202,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "74ad41e002e547bfeb10cb5e700e526941efb10b74e1d04a71de63953d13f554",
-      "bytes": 177150,
+      "sha256": "6b29aa8d12a65ab0f78436c99eaf3ccf8a293565875a03c87b6f42c2d0805fed",
+      "bytes": 177931,
       "category": "public-documentation"
     },
     {
@@ -274,8 +274,8 @@
     },
     {
       "path": "RELEASE.json",
-      "sha256": "47018346c903fbfcee9b0d39294fef901691a5bd123584241c7312b2d0e8623d",
-      "bytes": 299,
+      "sha256": "21aa1e7ef1ec05ceae62782dbdaaf153bd1386e47349439a647594c71c20853e",
+      "bytes": 301,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -298,14 +298,14 @@
     },
     {
       "path": "ZRZUR_RELEASE.md",
-      "sha256": "e539afae3c79b66683ab3d6fbd43daaabb8bc4738bf0582a189e10d5fbe5bdbf",
-      "bytes": 1612,
+      "sha256": "a5ff2db51c01ea019bed3774ad7416f0f649755a6702bd1b57dedd09d0fe7fbc",
+      "bytes": 1615,
       "category": "public-documentation"
     },
     {
       "path": "ZRZUR_VERSION",
-      "sha256": "45fb69841599a3bcaa2e1e522416cbf3c2076fc03750e1f2133ce7270582b70f",
-      "bytes": 351,
+      "sha256": "bd9bd915c688bad5ba3a15dd3c3dcaeef1226be00980b6c326d5e849f8cc5d11",
+      "bytes": 352,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4072,8 +4072,8 @@
     },
     {
       "path": "crates/core/models/src/v0/users.rs",
-      "sha256": "63fc3d43bc69d3dd6bc1de0deb9f89a70adb2ddaaa508db0eb77a2063885e4db",
-      "bytes": 47351,
+      "sha256": "696d5754327e9f3c72ac3721989ebc21a4a3bf8f01d308a914610af753c3f0b3",
+      "bytes": 48051,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -6226,8 +6226,8 @@
     },
     {
       "path": "crates/delta/src/routes/session/login.rs",
-      "sha256": "438e5b973203bbf55d92d54da9bc7762e11cd242040aad93605ee45cb2e62459",
-      "bytes": 31261,
+      "sha256": "dccacf7e86babe9af36d2d9ef14c780145044297f73e5ba8f0ff19a1a41ea6cf",
+      "bytes": 31882,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -7798,8 +7798,8 @@
     },
     {
       "path": "scripts/check-version-selftest.sh",
-      "sha256": "ce6f127188129f667bf869523c9c54bd93cb661f3e45aa3259f63f7b403df984",
-      "bytes": 1327,
+      "sha256": "2cc0400b34dc43d5ee34f96f899a69d5ddf7b4fed61970c4596c4b2fa82f05b7",
+      "bytes": 1331,
       "category": "reviewed-build-and-ci"
     },
     {
