@@ -42,6 +42,7 @@ use super::actor::{DataDeskInteraction, Expect, desk_actor};
 use super::lookup::PAGE_PREFIX;
 use super::registry::{self, DeskCommand, DeskCommandTree, DeskInput, Lang, texts};
 use super::view::{DeskButton, DeskButtonStyle, DeskView};
+use crate::util::on_heap::on_heap;
 
 const PATH_RUN: &str = "/staff/desk/run";
 const PATH_CONFIRM: &str = "/staff/desk/confirm";
@@ -528,15 +529,18 @@ pub async fn confirm(
     let mut record = base();
     record.summary = Some(format!("desk: confirmed {}", pending.action));
     let db: &Database = db;
-    execute(
-        db,
-        &staff,
-        entry,
-        &pending,
-        &input,
-        record,
-        |record, change| audited(db, record, change),
-    )
+    // on the heap: the change is the deepest call of the API (see on_heap)
+    on_heap(|| {
+        execute(
+            db,
+            &staff,
+            entry,
+            &pending,
+            &input,
+            record,
+            |record, change| audited(db, record, change),
+        )
+    })
     .await
     .map(Json)
 }

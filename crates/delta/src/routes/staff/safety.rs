@@ -26,6 +26,7 @@ use revolt_result::{Error, ErrorType, Result, create_error};
 use rocket::{State, serde::json::Json};
 
 use super::StaffContext;
+use crate::util::on_heap::on_heap;
 use crate::routes::safety::{
     actions::{revoke_as, take_as},
     appeals::{appeals_of, decide_as},
@@ -229,11 +230,12 @@ pub(super) async fn case_core(
         StaffPermission::ReportsRead,
         id,
     );
+    let perms = bridged(&staff);
     audited(
         db,
         &staff,
         record,
-        case_as(db, &staff.user, &bridged(&staff), id),
+        on_heap(|| case_as(db, &staff.user, &perms, id)),
     )
     .await
 }
@@ -268,11 +270,12 @@ pub(super) async fn set_status_core(
     );
     record.summary = Some(format!("{:?}", data.status));
     record.reason = note_reason(data.note.as_deref().or(data.public_note.as_deref()));
+    let perms = bridged(&staff);
     audited(
         db,
         &staff,
         record,
-        set_status_as(db, &staff.user, &bridged(&staff), id, data),
+        on_heap(|| set_status_as(db, &staff.user, &perms, id, data)),
     )
     .await
 }
@@ -322,11 +325,12 @@ pub(super) async fn edit_core(
         parts.push(format!("legal_hold={h}"));
     }
     record.summary = Some(parts.join(" "));
+    let perms = bridged(&staff);
     audited(
         db,
         &staff,
         record,
-        edit_as(db, &staff.user, &bridged(&staff), id, data),
+        on_heap(|| edit_as(db, &staff.user, &perms, id, data)),
     )
     .await
 }
@@ -358,11 +362,12 @@ pub(super) async fn note_core(
         StaffPermission::ReportsResolve,
         id,
     );
+    let perms = bridged(&staff);
     audited(
         db,
         &staff,
         record,
-        note_as(db, &staff.user, &bridged(&staff), id, data),
+        on_heap(|| note_as(db, &staff.user, &perms, id, data)),
     )
     .await
 }
@@ -425,11 +430,12 @@ pub(super) async fn take_core(
             case.target_owner_id.as_deref().unwrap_or("-")
         ),
     });
+    let perms = bridged(&staff);
     audited(
         db,
         &staff,
         record,
-        take_as(db, &staff.user, &bridged(&staff), id, data),
+        on_heap(|| take_as(db, &staff.user, &perms, id, data)),
     )
     .await
 }
@@ -475,11 +481,12 @@ pub(super) async fn revoke_core(
         action.subject_user_id.as_deref().unwrap_or("-")
     ));
     let note = data.reason.clone();
+    let perms = bridged(&staff);
     let revoked = audited(
         db,
         &staff,
         record,
-        revoke_as(db, &staff.user, &bridged(&staff), id, data),
+        on_heap(|| revoke_as(db, &staff.user, &perms, id, data)),
     )
     .await?;
     if let Some(subject) = &revoked.subject_user_id {
@@ -545,11 +552,12 @@ pub(super) async fn decide_core(
     record.target_id = Some(id.to_string());
     record.reason = note_reason(Some(&data.note));
     record.summary = Some(if data.overturn { "overturn" } else { "uphold" }.to_string());
+    let perms = bridged(&staff);
     audited(
         db,
         &staff,
         record,
-        decide_as(db, &staff.user, &bridged(&staff), id, data),
+        on_heap(|| decide_as(db, &staff.user, &perms, id, data)),
     )
     .await
 }
@@ -664,7 +672,7 @@ pub(super) async fn user_action_core(
 
     let perms = bridged(&staff);
     let user = staff.user.clone();
-    audited(db, &staff, record, async {
+    audited(db, &staff, record, on_heap(move || async move {
         let case = open_staff_case(
             db,
             &user,
@@ -692,6 +700,6 @@ pub(super) async fn user_action_core(
             },
         )
         .await
-    })
+    }))
     .await
 }

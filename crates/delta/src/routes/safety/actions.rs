@@ -21,6 +21,7 @@ use ulid::Ulid;
 
 use super::{clean_text, log, require, safety_permissions, save_case, targets, validate};
 use crate::util::official::ReportOutcome;
+use crate::util::on_heap::on_heap;
 use crate::routes::discover::listing::set_discoverable;
 
 const BANNED: i32 = UserFlags::Banned as i32;
@@ -55,7 +56,54 @@ async fn check_subject(db: &Database, actor: &User, subject: &str) -> Result<Use
     Ok(user)
 }
 
+/// Suspend or ban the account `owner` (part of [`enforce`])
+async fn restrict_account(
+    db: &Database,
+    actor: &User,
+    owner: Option<String>,
+    kind: SafetyActionKind,
+    duration_days: Option<u32>,
+    now: i64,
+) -> Result<(Option<String>, Option<i64>)> {
+    let owner = owner.ok_or_else(|| create_error!(InvalidOperation))?;
+    let mut user = check_subject(db, actor, &owner).await?;
+    if user.bot.is_some() {
+        // bots are disabled, not suspended
+        return Err(create_error!(IsBot));
+    }
+    if kind == SafetyActionKind::SuspendAccount {
+        let days = duration_days.ok_or_else(|| create_error!(FailedValidation {
+            error: "duration_days required".to_string()
+        }))?;
+        // no email: the user sees the reason in their account standing
+        on_heap(|| user.suspend(db, Some(days as usize), None)).await?;
+        on_heap(|| log_out_bots_of(db, &user.id)).await;
+        Ok((Some(owner), Some(now + days as i64 * 24 * 60 * 60 * 1000)))
+    } else {
+        let mut account = db.fetch_account(&user.id).await?;
+        on_heap(|| account.disable(db)).await?;
+        let flags = Some(user.flags.unwrap_or_default() | BANNED);
+        on_heap(|| {
+            user.update(
+                db,
+                PartialUser {
+                    flags,
+                    ..Default::default()
+                },
+                vec![],
+            )
+        })
+        .await?;
+        on_heap(|| log_out_bots_of(db, &user.id)).await;
+        Ok((Some(owner), None))
+    }
+}
+
 /// Carry out an action. Returns the account whose standing it affects.
+///
+/// Each kind runs in a function of its own, built on the heap: in a debug
+/// build one poll frame holds the places of every arm's futures, and with
+/// all of them here it took about 390 KB of stack.
 async fn enforce(
     db: &Database,
     actor: &User,
@@ -73,169 +121,191 @@ async fn enforce(
         SafetyActionKind::ClearActivity
         | SafetyActionKind::BlockActivityApp
         | SafetyActionKind::BlockActivityPicture => {
-            let owner = owner.ok_or_else(|| create_error!(InvalidOperation))?;
-            let subject = check_subject(db, actor, &owner).await?;
-            if kind != SafetyActionKind::ClearActivity {
-                let value = activity_value
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .ok_or_else(|| create_error!(FailedValidation {
-                        error: "activity_value required".to_string()
-                    }))?;
-                revolt_database::util::activity::block(
-                    db,
-                    if kind == SafetyActionKind::BlockActivityApp {
-                        revolt_models::v0::ActivityBlockKind::Application
-                    } else {
-                        revolt_models::v0::ActivityBlockKind::Picture
-                    },
-                    value,
-                    Some(&case.id),
-                    &actor.id,
-                    now,
-                )
-                .await?;
-            }
-            if revolt_database::util::activity::forget_all(&subject.id).await {
-                revolt_database::util::activity::publish(db, &subject).await;
-            }
-            Ok((Some(owner), None))
+            on_heap(move || clear_activity(db, actor, case, owner, kind, activity_value, now)).await
         }
         // recorded by the creator routes, never taken on a case
         SafetyActionKind::SuspendCreator => Err(create_error!(InvalidOperation)),
         SafetyActionKind::Warning => {
             let owner = owner.ok_or_else(|| create_error!(InvalidOperation))?;
-            check_subject(db, actor, &owner).await?;
+            on_heap(|| check_subject(db, actor, &owner)).await?;
             Ok((Some(owner), None))
         }
         SafetyActionKind::RemoveMessage => {
-            let message_id = match case.target.kind {
-                SafetyTargetKind::Message => Some(case.target.id.clone()),
-                _ => case.target.message_id.clone(),
-            }
-            .ok_or_else(|| create_error!(InvalidOperation))?;
-            // already gone is fine: the evidence snapshot keeps it
-            if let Ok(message) = db.fetch_message(&message_id).await {
-                if let Some(owner) = &owner {
-                    check_subject(db, actor, owner).await?;
-                }
-                // the same files forwarded elsewhere, or the original a
-                // removed copy came from, go as well
-                let mut files = message.attachments.clone().unwrap_or_default();
-                for id in revolt_database::Message::embed_file_ids(message.embeds.as_deref()) {
-                    if let Ok(file) = db.fetch_attachment("attachments", &id).await {
-                        files.push(file);
-                    }
-                }
-                revolt_database::File::remove_with_copies(db, &files).await?;
-                message.delete(db).await?;
-            }
-            Ok((owner, None))
+            on_heap(move || remove_message(db, actor, case, owner)).await
         }
         SafetyActionKind::SuspendAccount | SafetyActionKind::BanAccount => {
-            let owner = owner.ok_or_else(|| create_error!(InvalidOperation))?;
-            let mut user = check_subject(db, actor, &owner).await?;
-            if user.bot.is_some() {
-                // bots are disabled, not suspended
-                return Err(create_error!(IsBot));
-            }
-            if kind == SafetyActionKind::SuspendAccount {
-                let days = duration_days.ok_or_else(|| create_error!(FailedValidation {
-                    error: "duration_days required".to_string()
-                }))?;
-                // no email: the user sees the reason in their account standing
-                user.suspend(db, Some(days as usize), None).await?;
-                log_out_bots_of(db, &user.id).await;
-                Ok((Some(owner), Some(now + days as i64 * 24 * 60 * 60 * 1000)))
-            } else {
-                let mut account = db.fetch_account(&user.id).await?;
-                account.disable(db).await?;
-                user.update(
-                    db,
-                    PartialUser {
-                        flags: Some(user.flags.unwrap_or_default() | BANNED),
-                        ..Default::default()
-                    },
-                    vec![],
-                )
-                .await?;
-                log_out_bots_of(db, &user.id).await;
-                Ok((Some(owner), None))
-            }
+            on_heap(move || restrict_account(db, actor, owner, kind, duration_days, now)).await
         }
-        SafetyActionKind::DisableBot => {
-            let id = bot_id(case).ok_or_else(|| create_error!(InvalidOperation))?;
-            let mut bot = db.fetch_bot(&id).await?;
-            check_subject(db, actor, &bot.owner).await?;
-            bot.update(
-                db,
-                PartialBot {
-                    flags: Some(bot.flags.unwrap_or_default() | BOT_FLAG_SUSPENDED),
-                    ..Default::default()
-                },
-                vec![],
-            )
-            .await?;
-            if bot.discoverable {
-                set_discoverable(db, DiscoverRequestType::Bot, &id, false).await?;
-            }
-            // drop the bot's open connections; its token stops working
-            EventV1::Logout.p(id.clone()).await;
-            // a suspended bot's Verified Bot application ends, and the owner's
-            // Verified Bot Developer badge goes (through the badge gate)
-            revolt_database::bot_programs_ended(db, &id, &bot.owner, "bot_suspended").await;
-            Ok((Some(bot.owner), None))
-        }
+        SafetyActionKind::DisableBot => on_heap(|| disable_bot(db, actor, case)).await,
         SafetyActionKind::RemoveDiscoverListing => {
-            let request_type = match case.target.kind {
-                SafetyTargetKind::Server | SafetyTargetKind::DiscoverServer => {
-                    DiscoverRequestType::Server
-                }
-                SafetyTargetKind::Bot
-                | SafetyTargetKind::Application
-                | SafetyTargetKind::DiscoverBot => DiscoverRequestType::Bot,
-                _ => return Err(create_error!(InvalidOperation)),
-            };
-            set_discoverable(db, request_type.clone(), &case.target.id, false).await?;
-            if let Ok(mut request) = db
-                .fetch_discover_request_by_item_id(request_type, &case.target.id)
-                .await
-            {
-                request.status = DiscoverRequestStatus::Removed(Some(reason.to_string()));
-                request.featured = false;
-                db.save_discover_request(&request).await?;
-            }
-            Ok((owner, None))
+            on_heap(move || remove_listing(db, case, owner, reason)).await
         }
         SafetyActionKind::SuspendCommunityItem => {
-            if case.target.kind != SafetyTargetKind::CommunityItem {
-                return Err(create_error!(InvalidOperation));
-            }
-            let before = db.fetch_community_item(&case.target.id).await?;
-            let status = community_transition(&before.status, &CommunityReviewAction::Suspend)
-                .ok_or_else(|| create_error!(InvalidOperation))?;
-            let mut after = before.clone();
-            after.status = status;
-            after.review_note = Some(reason.to_string());
-            after.version = before.version + 1;
-            if !db.update_community_item(&after, before.version, false).await? {
-                return Err(create_error!(CommunityItemConflict));
-            }
-            take_off_wearers(db, &after, 2000).await?;
-            revolt_database::util::cdn_purge::purge_files_later(vec![after.file.clone()]);
-            db.insert_community_review(&CommunityReview {
-                id: Ulid::new().to_string(),
-                item_id: after.id.clone(),
-                revision: after.revision,
-                actor_id: actor.id.clone(),
-                action: CommunityReviewAction::Suspend,
-                reason: Some(format!("Trust & Safety {}", case.reference)),
-                created_at: now,
-            })
-            .await?;
-            Ok((Some(after.creator_id), None))
+            on_heap(|| suspend_item(db, actor, case, reason, now)).await
         }
     }
+}
+
+/// Take a profile's activity off, and stop an app id or picture everywhere
+/// (part of [`enforce`])
+async fn clear_activity(
+    db: &Database,
+    actor: &User,
+    case: &SafetyCase,
+    owner: Option<String>,
+    kind: SafetyActionKind,
+    activity_value: Option<&str>,
+    now: i64,
+) -> Result<(Option<String>, Option<i64>)> {
+    let owner = owner.ok_or_else(|| create_error!(InvalidOperation))?;
+    let subject = check_subject(db, actor, &owner).await?;
+    if kind != SafetyActionKind::ClearActivity {
+        let value = activity_value
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| create_error!(FailedValidation {
+                error: "activity_value required".to_string()
+            }))?;
+        revolt_database::util::activity::block(
+            db,
+            if kind == SafetyActionKind::BlockActivityApp {
+                revolt_models::v0::ActivityBlockKind::Application
+            } else {
+                revolt_models::v0::ActivityBlockKind::Picture
+            },
+            value,
+            Some(&case.id),
+            &actor.id,
+            now,
+        )
+        .await?;
+    }
+    if revolt_database::util::activity::forget_all(&subject.id).await {
+        revolt_database::util::activity::publish(db, &subject).await;
+    }
+    Ok((Some(owner), None))
+}
+
+/// Remove the reported message and its files (part of [`enforce`])
+async fn remove_message(
+    db: &Database,
+    actor: &User,
+    case: &SafetyCase,
+    owner: Option<String>,
+) -> Result<(Option<String>, Option<i64>)> {
+    let message_id = match case.target.kind {
+        SafetyTargetKind::Message => Some(case.target.id.clone()),
+        _ => case.target.message_id.clone(),
+    }
+    .ok_or_else(|| create_error!(InvalidOperation))?;
+    // already gone is fine: the evidence snapshot keeps it
+    if let Ok(message) = db.fetch_message(&message_id).await {
+        if let Some(owner) = &owner {
+            check_subject(db, actor, owner).await?;
+        }
+        // the same files forwarded elsewhere, or the original a
+        // removed copy came from, go as well
+        let mut files = message.attachments.clone().unwrap_or_default();
+        for id in revolt_database::Message::embed_file_ids(message.embeds.as_deref()) {
+            if let Ok(file) = db.fetch_attachment("attachments", &id).await {
+                files.push(file);
+            }
+        }
+        revolt_database::File::remove_with_copies(db, &files).await?;
+        message.delete(db).await?;
+    }
+    Ok((owner, None))
+}
+
+/// Suspend the reported bot (part of [`enforce`])
+async fn disable_bot(
+    db: &Database,
+    actor: &User,
+    case: &SafetyCase,
+) -> Result<(Option<String>, Option<i64>)> {
+    let id = bot_id(case).ok_or_else(|| create_error!(InvalidOperation))?;
+    let mut bot = db.fetch_bot(&id).await?;
+    check_subject(db, actor, &bot.owner).await?;
+    bot.update(
+        db,
+        PartialBot {
+            flags: Some(bot.flags.unwrap_or_default() | BOT_FLAG_SUSPENDED),
+            ..Default::default()
+        },
+        vec![],
+    )
+    .await?;
+    if bot.discoverable {
+        set_discoverable(db, DiscoverRequestType::Bot, &id, false).await?;
+    }
+    // drop the bot's open connections; its token stops working
+    EventV1::Logout.p(id.clone()).await;
+    // a suspended bot's Verified Bot application ends, and the owner's
+    // Verified Bot Developer badge goes (through the badge gate)
+    revolt_database::bot_programs_ended(db, &id, &bot.owner, "bot_suspended").await;
+    Ok((Some(bot.owner), None))
+}
+
+/// Take the reported server or bot off Discover (part of [`enforce`])
+async fn remove_listing(
+    db: &Database,
+    case: &SafetyCase,
+    owner: Option<String>,
+    reason: &str,
+) -> Result<(Option<String>, Option<i64>)> {
+    let request_type = match case.target.kind {
+        SafetyTargetKind::Server | SafetyTargetKind::DiscoverServer => DiscoverRequestType::Server,
+        SafetyTargetKind::Bot | SafetyTargetKind::Application | SafetyTargetKind::DiscoverBot => {
+            DiscoverRequestType::Bot
+        }
+        _ => return Err(create_error!(InvalidOperation)),
+    };
+    set_discoverable(db, request_type.clone(), &case.target.id, false).await?;
+    if let Ok(mut request) = db
+        .fetch_discover_request_by_item_id(request_type, &case.target.id)
+        .await
+    {
+        request.status = DiscoverRequestStatus::Removed(Some(reason.to_string()));
+        request.featured = false;
+        db.save_discover_request(&request).await?;
+    }
+    Ok((owner, None))
+}
+
+/// Suspend the reported community design (part of [`enforce`])
+async fn suspend_item(
+    db: &Database,
+    actor: &User,
+    case: &SafetyCase,
+    reason: &str,
+    now: i64,
+) -> Result<(Option<String>, Option<i64>)> {
+    if case.target.kind != SafetyTargetKind::CommunityItem {
+        return Err(create_error!(InvalidOperation));
+    }
+    let before = db.fetch_community_item(&case.target.id).await?;
+    let status = community_transition(&before.status, &CommunityReviewAction::Suspend)
+        .ok_or_else(|| create_error!(InvalidOperation))?;
+    let mut after = before.clone();
+    after.status = status;
+    after.review_note = Some(reason.to_string());
+    after.version = before.version + 1;
+    if !db.update_community_item(&after, before.version, false).await? {
+        return Err(create_error!(CommunityItemConflict));
+    }
+    take_off_wearers(db, &after, 2000).await?;
+    revolt_database::util::cdn_purge::purge_files_later(vec![after.file.clone()]);
+    db.insert_community_review(&CommunityReview {
+        id: Ulid::new().to_string(),
+        item_id: after.id.clone(),
+        revision: after.revision,
+        actor_id: actor.id.clone(),
+        action: CommunityReviewAction::Suspend,
+        reason: Some(format!("Trust & Safety {}", case.reference)),
+        created_at: now,
+    })
+    .await?;
+    Ok((Some(after.creator_id), None))
 }
 
 /// A reviewer or the report counter took a design down outside the Safety
@@ -607,7 +677,7 @@ pub(crate) async fn take_as(
     id: &str,
     data: DataSafetyAction,
 ) -> Result<SafetyAction> {
-    take_with_statement(db, user, perms, id, data, None).await
+    on_heap(|| take_with_statement(db, user, perms, id, data, None)).await
 }
 
 pub(crate) async fn take_with_statement(
@@ -669,17 +739,20 @@ pub(crate) async fn take_with_statement(
 
     let public_reason = clean_text(&data.public_reason);
     let (subject, expires_at) =
-        // boxed: every action is one big future, and on the stack it overflowed
-        // the 2 MB of a test thread once account deletion grew (linked accounts)
-        Box::pin(enforce(
-            db,
-            user,
-            &before,
-            data.kind,
-            data.duration_days,
-            data.activity_value.as_deref(),
-            &public_reason,
-        ))
+        // on the heap: every action is one big future, and on the stack it
+        // overflowed the 2 MB of a test thread once account deletion grew
+        // (linked accounts), later a worker thread on a desk suspension
+        on_heap(|| {
+            enforce(
+                db,
+                user,
+                &before,
+                data.kind,
+                data.duration_days,
+                data.activity_value.as_deref(),
+                &public_reason,
+            )
+        })
         .await?;
 
     let now = safety_now();
@@ -765,14 +838,16 @@ pub(crate) async fn take_with_statement(
 
     // tell the person affected, and answer the reporter, in their private messages
     if let Some(subject) = &action.subject_user_id {
-        crate::util::official::action_taken(db, subject, &action).await;
+        on_heap(|| crate::util::official::action_taken(db, subject, &action)).await;
     }
     // tell the person who reported, whatever the reviewer wrote (Art. 16(5))
     let note = data.reporter_note.as_deref().map(clean_text).filter(|n| !n.is_empty());
     if before.public_reporter.is_some()
         || (before.reporter_id != user.id && action.subject_user_id.as_deref() != Some(before.reporter_id.as_str()))
     {
-        crate::util::official::report_outcome(db, &before, ReportOutcome::Action(&action), note.as_deref()).await;
+        let outcome = ReportOutcome::Action(&action);
+        let note = note.as_deref();
+        on_heap(|| crate::util::official::report_outcome(db, &before, outcome, note)).await;
     }
     Ok(action)
 }
@@ -1056,4 +1131,31 @@ async fn log_out_bots_of(db: &revolt_database::Database, owner: &str) {
         }
         Err(error) => log::warn!("could not read the bots of {owner}: {error:?}"),
     }
+}
+
+/// The size of the future a function returns, without calling it:
+/// `future_size!(f; A, B)` for a function of two arguments
+#[cfg(test)]
+macro_rules! future_size {
+    ($f:expr; $($t:ident),+) => {{
+        #[allow(non_camel_case_types, clippy::extra_unused_type_parameters)]
+        fn size<$($t,)+ Fut: std::future::Future>(_: impl FnOnce($($t),+) -> Fut) -> usize {
+            std::mem::size_of::<Fut>()
+        }
+        size($f)
+    }};
+}
+#[cfg(test)]
+pub(crate) use future_size;
+
+/// The futures of the action path that callers build, by name: kept small
+/// by building the heavy work on the heap (see `crate::util::on_heap`)
+#[cfg(test)]
+pub(crate) fn action_future_sizes() -> Vec<(&'static str, usize)> {
+    vec![
+        ("actions::take_as", future_size!(take_as; A, B, C, D, E)),
+        ("actions::take_with_statement", future_size!(take_with_statement; A, B, C, D, E, F)),
+        ("actions::enforce", future_size!(enforce; A, B, C, D, E, F, G)),
+        ("actions::restrict_account", future_size!(restrict_account; A, B, C, D, E, F)),
+    ]
 }
