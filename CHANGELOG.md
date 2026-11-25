@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 26.3.0-beta.11 (2026-11-25)
+
+- Sign-in test `a_code_with_spaces_signs_in` keeps both codes in one time step (it failed on beta CI when it crossed a 30 s step).
+
 ### Profile frames: eight more built-in frames (2026-11-25, owner's request)
 
 - `USER_STYLE_PROFILE_FRAMES` (`UserStyle.profile_frame`) now accepts nine built-in frames: `crystal` and the set of 2026-11-25, `desert-lanterns`, `damascus-jasmine`, `autumn-maple`, `coral-reef`, `mushroom-forest`, `zrzur-neon`, `zrzur-arcade` and `zrzur-flock` (the client draws them). Any other id is still refused as `unknown profile_frame`; `c:<id>` community frames are unchanged. No migration and no change to the shape of the API; the OpenAPI snapshot lists the field as a string, so the SDK needs no regeneration.

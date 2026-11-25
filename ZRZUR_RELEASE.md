@@ -1,6 +1,6 @@
 # Zrzur 26 — release 26.3.0 Beta
 
-This repository is one component of Zrzur. The shared product version is **26.3.0-beta.8** (shown as "26.3.0 Beta 8"), on **beta** and **main** (tag `v26.3.0-beta.8`). It is a public beta: what runs on app.zrzur.com, with features that may still change. The last stable release is 26.2.0 (tag `v26.2.0`). Original dependency, SDK and protocol versions remain compatibility identifiers.
+This repository is one component of Zrzur. The shared product version is **26.3.0-beta.11** (shown as "26.3.0 Beta 11"), on **beta** and **main** (tag `v26.3.0-beta.11`). It is a public beta: what runs on app.zrzur.com, with features that may still change. The last stable release is 26.2.0 (tag `v26.2.0`). Original dependency, SDK and protocol versions remain compatibility identifiers.
 
 | Component | Source |
 |---|---|
