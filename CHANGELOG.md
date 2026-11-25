@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Docker images build with Rust 1.92 again, the version in `rust-toolchain.toml` that CI tests with. The Dependabot bump to 1.100 (#15) broke the image build (a type-inference change in Rust 1.100 stops the redis library compiling); Dependabot no longer moves the Rust image on its own.
+
 ## 26.3.0-beta.11 (2026-11-25)
 
 - Sign-in test `a_code_with_spaces_signs_in` keeps both codes in one time step (it failed on beta CI when it crossed a 30 s step).
