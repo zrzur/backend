@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Profile frames: eight more built-in frames (2026-11-25, owner's request)
+
+- `USER_STYLE_PROFILE_FRAMES` (`UserStyle.profile_frame`) now accepts nine built-in frames: `crystal` and the set of 2026-11-25, `desert-lanterns`, `damascus-jasmine`, `autumn-maple`, `coral-reef`, `mushroom-forest`, `zrzur-neon`, `zrzur-arcade` and `zrzur-flock` (the client draws them). Any other id is still refused as `unknown profile_frame`; `c:<id>` community frames are unchanged. No migration and no change to the shape of the API; the OpenAPI snapshot lists the field as a string, so the SDK needs no regeneration.
+
 ### Zrzur Desk: confirming a suspension no longer stops the API (2026-11-25)
 
 - Confirming `/desk-mod user suspend` (and in debug builds also warn, ban and case actions) built one very large future on the worker thread's stack. In a debug build it went past the 2 MiB worker stack and the API aborted. The safety `enforce` is split into one function per action kind, and the action path, the staff console cores and every desk handler now build their futures on the heap (`util/on_heap.rs`). The behaviour is unchanged. Tests confirm warn, suspend, ban and a case action on a 2 MiB worker thread, and keep every desk future under 12 KiB.
@@ -77,7 +81,7 @@
 
 ### Profile frames (2026-11-21, owner's request)
 
-- `UserStyle.profile_frame`: a frame drawn round the whole profile card, one of `USER_STYLE_PROFILE_FRAMES` (`crystal` for now: frames are added one at a time) or `c:<id>` for a community frame; `profile_frame_file` is filled in by the server. Validated like the other style fields; saving checks that a `c:<id>` is a published `Frame`.
+- `UserStyle.profile_frame`: a frame drawn round the whole profile card, one of `USER_STYLE_PROFILE_FRAMES` (`crystal` at first; eight more since 2026-11-25, see Unreleased) or `c:<id>` for a community frame; `profile_frame_file` is filled in by the server. Validated like the other style fields; saving checks that a `c:<id>` is a published `Frame`.
 - `CommunityItemKind::Frame`, listed and created under `/community/frames` (creator rate limit as decorations). A frame file is one still PNG or WebP of exactly 800 x 1020 px with transparency, on the 400 x 510 template in `PROFILE_FRAME_TEMPLATE` (card 30,70 .. 370,470). It shares the `decorations` upload tag, so no new file-server setting is needed. Refused: another size (`frame_size`), a moving file (`frame_still`), and, in the file server, any pixel over the card's content: the card less 10 px on every side, except the crest window over the middle of the banner (`covers_content`). User-made SVG is not accepted: it can carry script; the built-in frames are drawn by the client.
 - A takedown takes a frame off its wearers like the other kinds, with its own notice in ar, en and de.
 

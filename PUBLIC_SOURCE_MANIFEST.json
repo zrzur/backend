@@ -202,8 +202,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "74ad41e002e547bfeb10cb5e700e526941efb10b74e1d04a71de63953d13f554",
-      "bytes": 177150,
+      "sha256": "bda293799bd3672ba9062735e20b12a5d53b14f765f848d8f102908a929dfd40",
+      "bytes": 177767,
       "category": "public-documentation"
     },
     {
@@ -4072,8 +4072,8 @@
     },
     {
       "path": "crates/core/models/src/v0/users.rs",
-      "sha256": "63fc3d43bc69d3dd6bc1de0deb9f89a70adb2ddaaa508db0eb77a2063885e4db",
-      "bytes": 47351,
+      "sha256": "696d5754327e9f3c72ac3721989ebc21a4a3bf8f01d308a914610af753c3f0b3",
+      "bytes": 48051,
       "category": "product-source-or-build-manifest"
     },
     {

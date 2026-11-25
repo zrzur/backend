@@ -782,8 +782,19 @@ pub const USER_STYLE_NAMEPLATES: &[&str] = &[
 ];
 
 /// Built-in profile frames (drawn by the client). Hand-made pixel art, added
-/// one at a time after the owner has seen each on a real card.
-pub const USER_STYLE_PROFILE_FRAMES: &[&str] = &["crystal"];
+/// after the owner has seen each on a real card: Crystal cave (2026-11-21)
+/// and the set of eight of 2026-11-25.
+pub const USER_STYLE_PROFILE_FRAMES: &[&str] = &[
+    "crystal",
+    "desert-lanterns",
+    "damascus-jasmine",
+    "autumn-maple",
+    "coral-reef",
+    "mushroom-forest",
+    "zrzur-neon",
+    "zrzur-arcade",
+    "zrzur-flock",
+];
 
 /// Size of a community frame file, in pixels: twice the template the client
 /// lays over the card (see [PROFILE_FRAME_TEMPLATE])
@@ -1025,6 +1036,24 @@ mod style_tests {
             for id in list {
                 assert!(seen.insert(*id), "{id} is listed twice");
             }
+        }
+    }
+
+    #[test]
+    fn the_frames_of_2026_11_25_are_accepted() {
+        for id in [
+            "desert-lanterns",
+            "damascus-jasmine",
+            "autumn-maple",
+            "coral-reef",
+            "mushroom-forest",
+            "zrzur-neon",
+            "zrzur-arcade",
+            "zrzur-flock",
+        ] {
+            let mut s = style();
+            s.profile_frame = Some(id.into());
+            assert!(s.validate_style().is_ok(), "{id}");
         }
     }
 
