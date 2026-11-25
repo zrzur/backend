@@ -184,7 +184,7 @@ pub(super) async fn act_core(
 
     // a failure here never undoes the action
     if transfer {
-        server.flags = crate::routes::badges::programs::after_server_transfer(db, &server, &previous_owner).await;
+        server.flags = crate::routes::badges::programs::after_server_transfer(db, &server).await;
     } else if matches!(data.action.as_str(), "unverify" | "unpartner") {
         // the approved application ends with its mark (Partner: the badge too)
         let program = if data.action == "unverify" {
@@ -204,9 +204,6 @@ pub(super) async fn act_core(
         .await
         {
             log::error!("programs of server {}: {:?}", server.id, error.error_type);
-        }
-        if let Err(error) = revolt_database::sync_verified_server_owner(db, &server.owner).await {
-            log::error!("verified server owner badge for {}: {error:?}", server.owner);
         }
     }
 

@@ -284,6 +284,7 @@ async fn retired_badges_are_never_given_again() {
             "reserved_1",
             "reserved_2",
             "saha_champion",
+            "verified_server_owner",
         ] {
             let result = try_change(&harness, &strongest(&actor, path), &target, badge, BadgeChange::Grant).await;
             assert!(result.is_err(), "{path:?} {badge}");
@@ -291,8 +292,85 @@ async fn retired_badges_are_never_given_again() {
     }
     assert!(held_badges(&harness.db, &target.id).await.unwrap().is_empty());
     let records = audit(&harness, &target).await;
-    assert_eq!(denied(&records, "retired"), 28);
-    assert_eq!(denied(&records, "route_retired"), 7);
+    assert_eq!(denied(&records, "retired"), 32);
+    assert_eq!(denied(&records, "route_retired"), 8);
+}
+
+/// Verified Server Owner, cancelled by the owner on 2026-11-24: retired the
+/// way Saha Champion was. No path gives it (console, `/badge`, the line, the
+/// system sync of a verified or official server); a holder keeps it; taking
+/// it away needs the Owner, a step-up and a second person; its bit stays.
+#[rocket::async_test]
+async fn verified_server_owner_is_historical_no_path_gives_it_and_holders_keep_it() {
+    let harness = TestHarness::new().await;
+    let (_, _, actor) = harness.new_user().await;
+    let (_, _, second) = harness.new_user().await;
+    let (_, _, holder) = harness.new_user().await;
+    let (_, _, owner) = harness.new_user().await;
+    let definition = revolt_database::badge_definition("verified_server_owner").unwrap();
+    assert_eq!(definition.rule, revolt_database::BadgeGrantRule::Historical);
+    assert!(definition.retired);
+    assert_eq!(definition.bit, UserBadges::VerifiedServerOwner as u32);
+
+    // the owner of a verified and of an official server: the system gives nothing
+    let (server, _) = harness.new_server(&owner).await;
+    for flags in [revolt_database::SERVER_FLAG_VERIFIED, revolt_database::SERVER_FLAG_OFFICIAL] {
+        harness
+            .db
+            .update_server(&server.id, &revolt_database::PartialServer { flags: Some(flags), ..Default::default() }, vec![])
+            .await
+            .unwrap();
+        let given = revolt_database::grant_by_system(&harness.db, &owner.id, "verified_server_owner", "server", "the record backs it").await;
+        assert!(matches!(given, Ok(false) | Err(_)), "{flags}");
+        assert!(try_change(&harness, &BadgeActor::system(), &owner, "verified_server_owner", BadgeChange::Grant).await.is_err());
+    }
+    assert!(!held_badges(&harness.db, &owner.id).await.unwrap().contains("verified_server_owner"));
+    let bits = harness.db.fetch_user(&owner.id).await.unwrap().get_badges().await;
+    assert_eq!(bits & UserBadges::VerifiedServerOwner as u32, 0);
+    // every refusal of the system path is written down as retired
+    assert!(denied(&audit(&harness, &owner).await, "retired") >= 2);
+
+    // someone who held it before keeps it, also after the crond safety net
+    // and while owning no verified server
+    grant_badge(&harness.db, &holder.id, "verified_server_owner", BadgeSource::System, Some("server".into()), revolt_database::BADGE_SYSTEM_ACTOR, Some("the record backs it".into()), None)
+        .await
+        .unwrap();
+    revolt_database::resync_verified_badges(&harness.db).await.unwrap();
+    assert!(held_badges(&harness.db, &holder.id).await.unwrap().contains("verified_server_owner"));
+    let bits = harness.db.fetch_user(&holder.id).await.unwrap().get_badges().await;
+    assert_ne!(bits & UserBadges::VerifiedServerOwner as u32, 0);
+
+    // taking it away is an Owner change with a step-up and a second person
+    let staff_only = BadgeActor { owner: false, ..strongest(&actor, BadgePath::StaffConsole) };
+    assert_eq!(
+        try_change(&harness, &staff_only, &holder, "verified_server_owner", BadgeChange::Revoke).await.map(|_| ()),
+        Err("NotPrivileged".to_string())
+    );
+    let no_step_up = BadgeActor { step_up: false, ..strongest(&actor, BadgePath::StaffConsole) };
+    assert!(try_change(&harness, &no_step_up, &holder, "verified_server_owner", BadgeChange::Revoke).await.is_err());
+    assert!(held_badges(&harness.db, &holder.id).await.unwrap().contains("verified_server_owner"));
+    let pending = try_change(&harness, &strongest(&actor, BadgePath::StaffConsole), &holder, "verified_server_owner", BadgeChange::Revoke)
+        .await
+        .unwrap();
+    let BadgeOutcome::Pending(request) = pending else {
+        panic!("a second person must approve");
+    };
+    assert!(held_badges(&harness.db, &holder.id).await.unwrap().contains("verified_server_owner"));
+    approve_badge_request(&harness.db, &strongest(&second, BadgePath::StaffConsole), &request.id).await.unwrap();
+    assert!(!held_badges(&harness.db, &holder.id).await.unwrap().contains("verified_server_owner"));
+    let grants = harness.db.fetch_badge_grants(&holder.id).await.unwrap();
+    assert!(grants.iter().any(|g| g.badge == "verified_server_owner" && g.revoked_at.is_some()));
+
+    // gone from the public catalogue, kept for staff; names stay for old holders
+    let res = harness.client.get("/badges/catalogue").dispatch().await;
+    assert_eq!(res.status(), Status::Ok);
+    let catalogue = res.into_json::<Vec<revolt_models::v0::BadgeInfo>>().await.unwrap();
+    assert!(!catalogue.iter().any(|b| b.id == "verified_server_owner"));
+    assert!(!catalogue.iter().any(|b| b.bit == UserBadges::VerifiedServerOwner as u32), "the bit stays reserved, unlisted");
+    let names = crate::util::official::badge_names("verified_server_owner");
+    for (code, name) in [("en", "Verified Server Owner"), ("ar", "مالك سيرفر موثّق"), ("de", "Verifizierter Serverinhaber")] {
+        assert_eq!(names[code], name, "{code}");
+    }
 }
 
 #[rocket::async_test]

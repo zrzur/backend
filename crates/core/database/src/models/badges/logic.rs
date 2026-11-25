@@ -112,7 +112,6 @@ pub static BADGE_CATALOGUE: &[BadgeDefinition] = &[
     def("plus", UserBadges::Plus as u32, Dynamic, "subscription", 1, 70),
     def("early_supporter", UserBadges::Supporter as u32, Staff, "history", 1, 75),
     def("early_adopter", UserBadges::EarlyAdopter as u32, Dynamic, "history", 0, 80),
-    def("verified_server_owner", UserBadges::VerifiedServerOwner as u32, Automatic, "community", 1, 46),
     def("verified_bot_developer", UserBadges::VerifiedBotDeveloper as u32, Automatic, "community", 1, 47),
     def("community_helper", UserBadges::CommunityHelper as u32, Staff, "contribution", 1, 52),
     def("big_community", UserBadges::BigCommunity as u32, Automatic, "community", 1, 57),
@@ -141,6 +140,13 @@ pub static BADGE_CATALOGUE: &[BadgeDefinition] = &[
         retired: true,
         ..def("saha_champion", UserBadges::SahaChampion as u32, Historical, "community", 1, 48)
     },
+    // cancelled by the owner (2026-11-24): the Verified Server program stays
+    // (the server gets its mark), the owner's personal badge is gone. Never
+    // given on any path, the bit stays reserved, holders keep it
+    BadgeDefinition {
+        retired: true,
+        ..def("verified_server_owner", UserBadges::VerifiedServerOwner as u32, Historical, "community", 1, 46)
+    },
     BadgeDefinition {
         retired: true,
         ..def("paw", UserBadges::Paw as u32, Historical, "history", 0, 93)
@@ -154,6 +160,16 @@ pub static BADGE_CATALOGUE: &[BadgeDefinition] = &[
         ..def("reserved_2", UserBadges::ReservedRelevantJokeBadge2 as u32, Privileged, "history", 0, 95)
     },
 ];
+
+/// Badges the public catalogue (`GET /badges/catalogue`) no longer lists:
+/// cancelled outright, so apps don't explain or offer them. Old holders
+/// still show them from their bit; staff still see them.
+pub const UNLISTED_BADGES: [&str; 1] = ["verified_server_owner"];
+
+/// Whether the public catalogue lists the badge
+pub fn publicly_listed(definition: &BadgeDefinition) -> bool {
+    !UNLISTED_BADGES.contains(&definition.id)
+}
 
 /// Look up a badge by id
 pub fn badge_definition(id: &str) -> Option<&'static BadgeDefinition> {
@@ -587,8 +603,6 @@ pub async fn badge_eligibility(db: &Database, user_id: &str, badge: &str) -> Res
         // figures and the quality review back it (Phase 5)
         "content_creator" => (!crate::program_application_backs(db, user_id, crate::BadgeProgram::ContentCreator).await?)
             .then(|| "needs a content creator application approved by a reviewer".to_string()),
-        "verified_server_owner" => (!crate::owns_verified_server(db, user_id).await?)
-            .then(|| "needs a verified server they own".to_string()),
         "verified_bot_developer" => (!crate::owns_verified_bot(db, user_id).await?)
             .then(|| "needs a verified bot they own that is not suspended".to_string()),
         "elite_bug_hunter" => {

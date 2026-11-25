@@ -1123,15 +1123,13 @@ fn now_ms() -> i64 {
     crate::epoch_ms(iso8601_timestamp::Timestamp::now_utc())
 }
 
-/// A server is gone (deleted): its programs end and its owner's Verified
-/// Server Owner badge follows. Failures are logged, never stop the deletion.
-pub async fn server_programs_gone(db: &Database, server_id: &str, owner: &str) {
+/// A server is gone (deleted): its programs end. No badge follows (the
+/// owner's Verified Server Owner badge was cancelled; holders keep it).
+/// Failures are logged, never stop the deletion.
+pub async fn server_programs_gone(db: &Database, server_id: &str) {
     let programs = revolt_config::config().await.api.badge_programs;
     if let Err(error) = end_programs_for_target(db, &programs, server_id, None, "server_deleted", now_ms()).await {
         log::error!("programs of deleted server {server_id}: {:?}", error.error_type);
-    }
-    if let Err(error) = crate::sync_verified_server_owner(db, owner).await {
-        log::error!("verified server owner badge for {owner}: {:?}", error.error_type);
     }
 }
 

@@ -1101,11 +1101,11 @@ async fn platform_permissions_are_guarded() {
 mod automatic_badges {
     use revolt_database::{
         account_age_badges, check_server_community, community_badge_pass, decide_community_check,
-        from_epoch_ms, held_badges, retire_stored_time_badges, sync_verified_bot_developer,
-        sync_verified_server_owner, Account, AuditOutcome, BadgeActor, BadgePath, CommunityCheckOutcome,
-        CommunityCheckStatus, CommunityThresholds, EmailVerification, Member, MemberCompositeKey,
+        from_epoch_ms, grant_badge, held_badges, resync_verified_badges, retire_stored_time_badges,
+        sync_verified_bot_developer, Account, AuditOutcome, BadgeActor, BadgePath, BadgeSource,
+        CommunityCheckOutcome, CommunityCheckStatus, CommunityThresholds, EmailVerification, Member, MemberCompositeKey,
         PartialBot, PartialServer, PartialUser, PlatformAuditQuery, Session, User,
-        TIME_BADGE_RETIRED_REASON,
+        TIME_BADGE_RETIRED_REASON, BADGE_SYSTEM_ACTOR,
     };
     use revolt_models::v0::{self, BotFlags, UserBadges, UserFlags};
     use rocket::http::{ContentType, Header, Status};
@@ -1452,7 +1452,9 @@ mod automatic_badges {
     }
 
     #[rocket::async_test]
-    async fn the_owner_badge_follows_the_verified_server() {
+    async fn a_verified_server_gives_its_owner_no_badge_and_holders_keep_theirs() {
+        // Verified Server Owner was cancelled (2026-11-24): the server's mark
+        // no longer gives or takes the owner's badge, the safety net included
         let harness = TestHarness::new().await;
         let (_, _, owner) = harness.new_user().await;
         let (server, _) = harness.new_server(&owner).await;
@@ -1473,16 +1475,16 @@ mod automatic_badges {
             }
         };
 
-        sync_verified_server_owner(&harness.db, &owner.id).await.unwrap();
-        assert!(!held_badges(&harness.db, &owner.id).await.unwrap().contains("verified_server_owner"));
-
         set(2).await;
-        sync_verified_server_owner(&harness.db, &owner.id).await.unwrap();
-        assert!(held_badges(&harness.db, &owner.id).await.unwrap().contains("verified_server_owner"));
-
-        set(0).await;
-        sync_verified_server_owner(&harness.db, &owner.id).await.unwrap();
+        resync_verified_badges(&harness.db).await.unwrap();
         assert!(!held_badges(&harness.db, &owner.id).await.unwrap().contains("verified_server_owner"));
+
+        grant_badge(&harness.db, &owner.id, "verified_server_owner", BadgeSource::System, Some("server".into()), BADGE_SYSTEM_ACTOR, None, None)
+            .await
+            .unwrap();
+        set(0).await;
+        resync_verified_badges(&harness.db).await.unwrap();
+        assert!(held_badges(&harness.db, &owner.id).await.unwrap().contains("verified_server_owner"));
     }
 
     #[rocket::async_test]
