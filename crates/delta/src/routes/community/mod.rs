@@ -16,8 +16,8 @@ use iso8601_timestamp::Timestamp;
 use revolt_config::config;
 use revolt_database::{
     community_tags, community_text_blocked, community_transition, creator_is_active, is_declared_adult,
-    creator_is_suspended, epoch_ms, erase_community_item,
-    platform_permissions, util::cdn_purge::purge_files_later, CommunityItem, CommunityItemKind,
+    creator_is_suspended, epoch_ms, erase_community_item, record_platform_audit, AuditOutcome,
+    AuditRecord, platform_permissions, util::cdn_purge::purge_files_later, CommunityItem, CommunityItemKind,
     CommunityItemQuery, CommunityItemStatus, CommunityReview, CommunityReviewAction,
     CommunityRevision, CommunityRights, CommunitySort, CreatorStanding, Database, File,
     PlatformPermission, PlatformPermissions, PlatformRole, User, COMMUNITY_REPORTS_TO_HIDE,
@@ -60,6 +60,7 @@ pub fn routes() -> (Vec<Route>, OpenApi) {
         archive,
         restore,
         delete_item,
+        erase,
         override_review,
         favourite,
         unfavourite,
@@ -1498,6 +1499,69 @@ pub async fn delete_item(db: &State<Database>, user: User, id: &str) -> Result<E
         return Err(create_error!(InvalidOperation));
     }
     erase_community_item(db, &item.id).await?;
+    Ok(EmptyResponse)
+}
+
+/// # Erase (staff)
+///
+/// Staff delete any creator's design for good, in any state, one a reviewer
+/// already took down included. Needs `cosmetics.manage_all` and a `reason`;
+/// send the `version` you looked at to fail if the design changed since.
+/// It leaves the gallery and everyone wearing it, and its files leave the
+/// CDN. The creator gets a statement of reasons and can appeal; the image
+/// is kept only as evidence for that case. The platform audit log records
+/// who erased what and why. Creators delete their own designs with
+/// `DELETE /community/items/{id}`.
+#[openapi(tag = "Community")]
+#[post("/items/<id>/erase", data = "<data>")]
+pub async fn erase(
+    db: &State<Database>,
+    user: User,
+    id: &str,
+    data: Json<v0::DataCommunityDecision>,
+) -> Result<EmptyResponse> {
+    let perms = platform_permissions(db, &user).await?;
+    require(&perms, PlatformPermission::CosmeticsManageAll)?;
+    let data = validated(data.into_inner())?;
+    let reason = clean_description(data.reason).ok_or_else(|| {
+        revolt_result::failed_validation(vec![revolt_result::ValidationProblem::new("reason", "required")])
+    })?;
+    let item = db.fetch_community_item(id).await?;
+    if data.version.is_some_and(|version| version != item.version) {
+        return Err(create_error!(CommunityItemConflict));
+    }
+
+    // the record first: no record, no erasure
+    let mut record = AuditRecord {
+        actor_id: user.id.clone(),
+        action: "community.item.erase".to_string(),
+        target_kind: Some("community_item".to_string()),
+        target_id: Some(item.id.clone()),
+        reason: Some(reason.clone()),
+        // ids and states only: the design's name and text are the creator's
+        summary: Some(format!(
+            "{:?} by {}, was {:?}",
+            item.kind, item.creator_id, item.status
+        )),
+        ..Default::default()
+    };
+    record_platform_audit(db, record.clone(), AuditOutcome::Success).await?;
+    let erased = async {
+        // statement of reasons, appeal and evidence first: the case keeps the
+        // image (as reported) once the design is gone; wearers are told
+        took_down(db, &user.id, &item, &reason, false).await?;
+        erase_community_item(db, &item.id).await
+    }
+    .await;
+    if let Err(error) = erased {
+        record.summary = Some(format!("{:?}", error.error_type).chars().take(200).collect());
+        // best effort: the first record already shows the attempt
+        let _ = record_platform_audit(db, record, AuditOutcome::Failed).await;
+        return Err(error);
+    }
+    if item.status == CommunityItemStatus::Published {
+        sync_creator_badge(db, &item.creator_id).await;
+    }
     Ok(EmptyResponse)
 }
 

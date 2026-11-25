@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Designs: staff delete any design for good (2026-11-25, owner's request)
+
+- New `POST /community/items/{id}/erase` with `DataCommunityDecision` (`reason` required, optional `version`): staff with `cosmetics.manage_all` (privileged staff have it) delete any creator's design for good, in any state, one a reviewer took down included. Without the permission: `MissingPlatformPermission`; without a reason: `FailedValidation`; a stale `version`: `CommunityItemConflict`.
+- The design leaves the gallery and everyone wearing it (wearers get the usual notice), its files are marked deleted and leave the CDN. The creator gets the same Trust & Safety case, `SuspendCommunityItem` action, statement of reasons and appeal as any takedown, with the staff reason; the image is kept as that case's evidence (reported files are never released for deletion).
+- The platform audit log records `community.item.erase` (actor, design id, reason, kind, creator and former state) before anything changes, and a Failed record if the erasure stops half way.
+- The creator's own `DELETE /community/items/{id}` is unchanged. New route: the SDK route table needs regenerating from the OpenAPI snapshot (the web calls it directly until then). No migration.
+
 - Docker images build with Rust 1.92 again, the version in `rust-toolchain.toml` that CI tests with. The Dependabot bump to 1.100 (#15) broke the image build (a type-inference change in Rust 1.100 stops the redis library compiling); Dependabot no longer moves the Rust image on its own.
 
 ## 26.3.0-beta.11 (2026-11-25)
