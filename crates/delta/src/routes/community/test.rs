@@ -2091,8 +2091,6 @@ async fn a_creator_deletes_a_withdrawn_design() {
     let (_, live) = submit_design(&harness, &session, &user, "Ring").await;
     let live = live.unwrap();
 
-    // still published: withdraw first
-    assert_eq!(delete(&harness, &session, &live.id).await, Status::BadRequest);
     assert_eq!(act(&harness, &session, &live.id, "archive", None).await, Status::Ok);
     // not someone else's to delete
     assert_eq!(delete(&harness, &other_session, &live.id).await, Status::NotFound);
@@ -2358,16 +2356,163 @@ async fn staff_erasing_needs_a_reason_and_the_permission() {
     assert!(harness.db.fetch_safety_actions_for_user(&user.id).await.unwrap().is_empty());
 }
 
-/// The creator's own delete is unchanged by the staff path: a published
-/// design is still refused, and staff use `erase`, not the creator's route
+/// Platform audit records of creators deleting their own design
+async fn delete_records(harness: &TestHarness, id: &str) -> Vec<revolt_database::PlatformAuditEntry> {
+    harness
+        .db
+        .fetch_platform_audit(revolt_database::PlatformAuditQuery {
+            limit: 100,
+            target_id: Some(id.to_string()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|entry| entry.action == "community.item.delete")
+        .collect()
+}
+
+/// A creator deletes their own published design in one step (owner,
+/// 2026-11-25: "anything they publish, they can delete"), without a reason.
+/// It leaves the gallery and everyone wearing it, its file goes, and staff can
+/// see who deleted what. Nobody else can delete it this way.
 #[rocket::async_test]
-async fn the_creators_own_delete_is_unchanged() {
+async fn a_creator_deletes_their_own_published_design() {
     let harness = TestHarness::new().await;
     let (session, user) = creator(&harness).await;
+    let (other_creator, _) = creator(&harness).await;
     let (staff, _) = manager(&harness).await;
+    let (_, wearer_session, wearer) = harness.new_user().await;
     let live = submit_design(&harness, &session, &user, "Ring").await.1.unwrap();
+    assert_eq!(wear(&harness, &wearer_session, &live.id).await, Status::Ok);
 
-    assert_eq!(delete(&harness, &session, &live.id).await, Status::BadRequest);
-    assert_eq!(delete(&harness, &staff, &live.id).await, Status::NotFound);
+    // not anyone else's to delete through the creator's route, staff included
+    for who in [&other_creator, &staff, &wearer_session] {
+        assert_eq!(delete(&harness, who, &live.id).await, Status::NotFound);
+    }
+    assert!(delete_records(&harness, &live.id).await.is_empty(), "a refusal was logged");
+
+    assert_eq!(delete(&harness, &session, &live.id).await, Status::NoContent);
+    assert!(harness.db.fetch_community_item(&live.id).await.is_err());
+    assert!(!listed(&public_list(&harness, &wearer_session).await, &live.id));
+    let worn = harness.db.fetch_user(&wearer.id).await.unwrap();
+    assert!(worn
+        .style
+        .is_none_or(|style| style.decoration.is_none() && style.decoration_file.is_none()));
+    let released = harness.db.fetch_deleted_attachments().await.unwrap();
+    assert!(released.iter().any(|file| file.id == live.file.id), "the file stays");
+    // their own choice: no takedown, no statement of reasons
+    assert!(harness.db.fetch_safety_actions_for_user(&user.id).await.unwrap().is_empty());
+
+    let records = delete_records(&harness, &live.id).await;
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].actor_id, user.id);
+    assert_eq!(records[0].outcome, revolt_database::AuditOutcome::Success);
+    let summary = records[0].summary.as_deref().unwrap_or_default();
+    assert!(summary.contains("Published") && !summary.contains("Ring"), "{summary}");
+
+    assert_eq!(delete(&harness, &session, &live.id).await, Status::NotFound);
+}
+
+/// A creator's own delete keeps a file held as Safety evidence stored
+#[rocket::async_test]
+async fn a_creators_delete_keeps_a_file_held_as_evidence() {
+    let harness = TestHarness::new().await;
+    let (session, user) = creator(&harness).await;
+    let live = submit_design(&harness, &session, &user, "Held").await.1.unwrap();
+    harness.db.mark_attachment_as_reported(&live.file.id).await.unwrap();
+
+    assert_eq!(delete(&harness, &session, &live.id).await, Status::NoContent);
+    let file = harness.db.fetch_attachment("decorations", &live.file.id).await.unwrap();
+    assert_eq!((file.deleted, file.reported), (Some(true), Some(true)));
+    let released = harness.db.fetch_deleted_attachments().await.unwrap();
+    assert!(!released.iter().any(|f| f.id == live.file.id), "evidence released");
+}
+
+/// Give someone a rank (a badge grant), held, revoked or expired
+async fn give_rank(harness: &TestHarness, user: &User, badge: &str, revoked: bool, expires_at: Option<i64>) {
+    harness
+        .db
+        .save_badge_grant(&revolt_database::BadgeGrant {
+            id: format!("{}:{badge}", user.id),
+            user_id: user.id.clone(),
+            badge: badge.to_string(),
+            source: revolt_database::BadgeSource::Admin,
+            source_ref: None,
+            granted_by: "test".to_string(),
+            granted_at: 0,
+            reason: None,
+            expires_at,
+            revoked_at: revoked.then_some(1),
+            revoked_by: revoked.then(|| "test".to_string()),
+            revoke_reason: None,
+            hidden: false,
+        })
+        .await
+        .unwrap();
+}
+
+async fn may_delete_any(harness: &TestHarness, session: &Session) -> bool {
+    harness
+        .client
+        .get("/community/permissions")
+        .header(Header::new("x-session-token", session.token.clone()))
+        .dispatch()
+        .await
+        .into_json::<v0::CommunityPermissions>()
+        .await
+        .unwrap()
+        .can_delete_any
+}
+
+/// The owner decided (2026-11-25) that Founder, Zrzur Staff and Platform
+/// Moderator may delete anyone's design: held now, not revoked, not expired
+#[rocket::async_test]
+async fn the_owners_ranks_delete_anyones_design() {
+    let harness = TestHarness::new().await;
+    let (session, user) = creator(&harness).await;
+    let (_, wearer_session, wearer) = harness.new_user().await;
+    let (_, normal, _) = harness.new_user().await;
+    let (rs, _) = reviewer(&harness).await;
+    assert!(!may_delete_any(&harness, &normal).await);
+    assert!(!may_delete_any(&harness, &rs).await);
+    let (manager_session, _) = manager(&harness).await;
+    assert!(may_delete_any(&harness, &manager_session).await);
+
+    for rank in ["founder", "staff", "platform_moderator"] {
+        let (_, holder, holder_user) = harness.new_user().await;
+        give_rank(&harness, &holder_user, rank, false, None).await;
+        assert!(may_delete_any(&harness, &holder).await, "{rank}");
+        let live = submit_design(&harness, &session, &user, rank).await.1.unwrap();
+        assert_eq!(wear(&harness, &wearer_session, &live.id).await, Status::Ok);
+        assert_eq!(erase(&harness, &holder, &live.id, Some("Copied art")).await, Status::NoContent, "{rank}");
+        assert!(harness.db.fetch_community_item(&live.id).await.is_err(), "{rank}");
+        let worn = harness.db.fetch_user(&wearer.id).await.unwrap();
+        assert!(worn.style.is_none_or(|style| style.decoration.is_none()), "{rank}");
+        assert_eq!(erase_records(&harness, &live.id).await[0].actor_id, holder_user.id);
+    }
+    // every one came with a statement of reasons for the creator
+    assert_eq!(harness.db.fetch_safety_actions_for_user(&user.id).await.unwrap().len(), 3);
+
+    // a taken-down design too
+    let (_, holder, holder_user) = harness.new_user().await;
+    give_rank(&harness, &holder_user, "platform_moderator", false, Some(i64::MAX)).await;
+    let taken = submit_design(&harness, &session, &user, "Taken").await.1.unwrap();
+    assert_eq!(act(&harness, &rs, &taken.id, "suspend", Some("reported")).await, Status::Ok);
+    assert_eq!(erase(&harness, &holder, &taken.id, Some("Rules")).await, Status::NoContent);
+
+    // a rank taken away or run out gives nothing; nor does any other badge
+    let live = submit_design(&harness, &session, &user, "Kept").await.1.unwrap();
+    for (badge, revoked, expires) in [
+        ("staff", true, None),
+        ("founder", false, Some(1)),
+        ("creator", false, None),
+        ("verified_bot_developer", false, None),
+    ] {
+        let (_, who, who_user) = harness.new_user().await;
+        give_rank(&harness, &who_user, badge, revoked, expires).await;
+        assert!(!may_delete_any(&harness, &who).await, "{badge}");
+        assert_eq!(erase(&harness, &who, &live.id, Some("Rules")).await, Status::Forbidden, "{badge}");
+    }
     assert!(harness.db.fetch_community_item(&live.id).await.is_ok());
 }
