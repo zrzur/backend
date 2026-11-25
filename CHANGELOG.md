@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 26.3.0 (2026-11-25)
+
+The official release of everything tested in 26.3.0-beta.1 to 26.3.0-beta.11, for everyone.
+
 - Docker images build with Rust 1.92 again, the version in `rust-toolchain.toml` that CI tests with. The Dependabot bump to 1.100 (#15) broke the image build (a type-inference change in Rust 1.100 stops the redis library compiling); Dependabot no longer moves the Rust image on its own.
 
 ## 26.3.0-beta.11 (2026-11-25)

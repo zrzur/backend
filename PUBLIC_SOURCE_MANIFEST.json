@@ -58,8 +58,8 @@
     },
     {
       "path": ".github/workflows/source-check.yml",
-      "sha256": "11e925a915c4119a4d4488354b493e8f555ab061b755d96e7d8a248a81ded340",
-      "bytes": 964,
+      "sha256": "f587f8d2c1d68ba23998ea3b8b755eb72af5a868a6b5460cf926035585fa63a4",
+      "bytes": 956,
       "category": "reviewed-build-and-ci"
     },
     {
@@ -202,8 +202,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "4072ed5cb3140c31b576b624d067c5f22f0afebdd00cd48b70d48a35ce9d1068",
-      "bytes": 178219,
+      "sha256": "f783355ca93dde559fc3bfa85cb0e06863bd35e5f428857ea3f13f3974107d49",
+      "bytes": 178336,
       "category": "public-documentation"
     },
     {
@@ -274,8 +274,8 @@
     },
     {
       "path": "RELEASE.json",
-      "sha256": "21aa1e7ef1ec05ceae62782dbdaaf153bd1386e47349439a647594c71c20853e",
-      "bytes": 301,
+      "sha256": "233ef95eb549df58e2455846d4a11205a2059e57b726ff459794a695616b45d8",
+      "bytes": 285,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -298,14 +298,14 @@
     },
     {
       "path": "ZRZUR_RELEASE.md",
-      "sha256": "a5ff2db51c01ea019bed3774ad7416f0f649755a6702bd1b57dedd09d0fe7fbc",
-      "bytes": 1615,
+      "sha256": "bbae20dd25ccb00b7bd59c4f844c428287ecddf16efd12ec221d3517dca43659",
+      "bytes": 1488,
       "category": "public-documentation"
     },
     {
       "path": "ZRZUR_VERSION",
-      "sha256": "bd9bd915c688bad5ba3a15dd3c3dcaeef1226be00980b6c326d5e849f8cc5d11",
-      "bytes": 352,
+      "sha256": "9acafd63b1e2d989b4f778bb6bb49df9e9c598142b7a1cd27ddafa26f26e9812",
+      "bytes": 344,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -7798,8 +7798,8 @@
     },
     {
       "path": "scripts/check-version-selftest.sh",
-      "sha256": "2cc0400b34dc43d5ee34f96f899a69d5ddf7b4fed61970c4596c4b2fa82f05b7",
-      "bytes": 1331,
+      "sha256": "44edf9a10fa4a7645542c324d14beaa40fdf72885503b05023963316488b540e",
+      "bytes": 1299,
       "category": "reviewed-build-and-ci"
     },
     {
