@@ -28,7 +28,7 @@
     "body": "{statement}"
   },
   "action.suspend_design": {
-    "title": "أوقفنا أحد تصاميمك",
+    "title": "أزلنا أحد تصاميمك",
     "body": "{statement}"
   },
   "action.activity": {
