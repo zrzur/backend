@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 26.3.0-beta.8 (2026-11-25)
+
 ### Badges: Verified Server Owner cancelled (2026-11-24)
 
 - **Verified Server Owner** (`verified_server_owner`, bit 16777216) is retired for good: rule `historical`, `retired: true`. No path gives it any more: the admin console, `/badge`, `zrzur-staff badge` and the system (`badge.system.grant` is refused as `retired` and audited). People who hold it keep it; taking one away is an Owner change with a step-up and a second person, as for Saha Champion. The bit stays reserved and is never reused.
