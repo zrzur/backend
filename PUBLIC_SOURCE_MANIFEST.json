@@ -34,8 +34,8 @@
     },
     {
       "path": ".github/dependabot.yml",
-      "sha256": "ce096ba9a118742f159788c37814b3fa23b082bdeab6fe1b3fe805ae11725d6b",
-      "bytes": 837,
+      "sha256": "66146487c1395a426d47f366630d144d601791bc8db56a6b87ae259b72f447ae",
+      "bytes": 1032,
       "category": "reviewed-build-and-ci"
     },
     {
@@ -202,8 +202,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "6b29aa8d12a65ab0f78436c99eaf3ccf8a293565875a03c87b6f42c2d0805fed",
-      "bytes": 177931,
+      "sha256": "4072ed5cb3140c31b576b624d067c5f22f0afebdd00cd48b70d48a35ce9d1068",
+      "bytes": 178219,
       "category": "public-documentation"
     },
     {
@@ -232,14 +232,14 @@
     },
     {
       "path": "Dockerfile",
-      "sha256": "50451fd2c2b6dc2900babde7be9b346b97b333edb3b78926a2ac52ef86f82aa5",
-      "bytes": 2318,
+      "sha256": "d99844c8ee3f859f6c744a82ebdd60323c5d241b90df47ec78498b8d0f54f087",
+      "bytes": 2317,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "Dockerfile.useCurrentArch",
-      "sha256": "1640b06c1920585c8c6bdcd2557818acb30cf971b612b9058a43a7f02acc8691",
-      "bytes": 1923,
+      "sha256": "ff10d644c71a3dcff1c5dfc9f23dd23aa23609cb64d33d12d36c8e343c588112",
+      "bytes": 1922,
       "category": "product-source-or-build-manifest"
     },
     {
