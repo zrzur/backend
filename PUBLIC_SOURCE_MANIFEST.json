@@ -202,8 +202,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "1043d9cba2425329b740d3796c04c562081e9772249750e9e246d50111985190",
-      "bytes": 179455,
+      "sha256": "0ef88344daa6229f88540afef5d6293ae7211217f73b175267a8684df282436a",
+      "bytes": 179713,
       "category": "public-documentation"
     },
     {
@@ -4624,8 +4624,8 @@
     },
     {
       "path": "crates/delta/assets/official/ar.json",
-      "sha256": "175bea7ef6f0f2290311dd33a40adc174debb367b0e4a9c8167b8ca536959a55",
-      "bytes": 32120,
+      "sha256": "792bc59e8178a6ff96186047e92ecb78204c9e1308b0138ab6a5948a154fb20b",
+      "bytes": 32118,
       "category": "product-source-or-build-manifest"
     },
     {
