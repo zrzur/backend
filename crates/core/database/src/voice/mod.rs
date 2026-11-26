@@ -540,11 +540,16 @@ pub async fn update_voice_state_tracks(
             is_publishing: Some(added && !is_self_muted(channel, user_id).await?),
             ..Default::default()
         },
-        /* TrackSource::ScreenShare | TrackSource::ScreenShareAudio */
-        3 | 4 => PartialUserVoiceState {
+        /* TrackSource::ScreenShare */
+        3 => PartialUserVoiceState {
             screensharing: Some(added),
             ..Default::default()
         },
+        /* TrackSource::ScreenShareAudio */
+        // only the picture says whether someone is sharing: the share's
+        // sound starts, stops and mutes on its own, and a late event for
+        // it (after the picture stopped) left the share icon on for good
+        4 => PartialUserVoiceState::default(),
         _ => unreachable!(),
     };
 
