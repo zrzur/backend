@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 26.3.1 (2026-11-26)
+
+The designs that were built into the app leave it (owner, 2026-11-26): only designs uploaded through Designs remain. The owner uploads the former built-in designs himself.
+
+### Built-in designs leave the server's lists (owner, 2026-11-26)
+
+- `USER_STYLE_DECORATIONS`, `USER_STYLE_NAMEPLATES`, `USER_STYLE_EFFECTS`, `USER_STYLE_PROFILE_FRAMES` and the retired decoration and nameplate lists are gone. `validate_style` takes only `c:<id>` of a community design in `decoration`, `nameplate`, `effect` and `profile_frame`; a built-in id (or a retired one) is `FailedValidation` ("unknown decoration" and so on). Fonts, name colours and name effects are unchanged. The owner uploads the former built-in designs through the Creator Studio as community designs.
+- New migration `clear_builtin_style` (`PENDING_CLEAR_BUILTIN_STYLE`, number given at release): in `users`, every `style.decoration`, `style.nameplate`, `style.effect` and `style.profile_frame` that does not start with `c:` is unset together with its `_file`. Community designs and the rest of the style stay. Safe to run twice. The deploy script backs up the database first.
+- No route, event or response shape changes.
+
 ## 26.3.0 (2026-11-25)
 
 The official release of everything tested in 26.3.0-beta.1 to 26.3.0-beta.11, for everyone.
