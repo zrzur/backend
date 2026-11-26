@@ -279,6 +279,12 @@ auto_derived!(
         /// Named to visitors, with an open page of their work (default off)
         #[cfg_attr(feature = "serde", serde(default))]
         pub show_public_name: bool,
+        /// May delete anyone's design for good, with a reason
+        /// (`POST /community/items/{id}/erase`): a held Founder, Zrzur Staff or
+        /// Platform Moderator rank (owner's decision, 2026-11-25), or
+        /// `cosmetics.manage_all`
+        #[cfg_attr(feature = "serde", serde(default))]
+        pub can_delete_any: bool,
     }
 
     /// Creator's own choice about the public Designs site

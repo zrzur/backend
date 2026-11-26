@@ -58,8 +58,8 @@
     },
     {
       "path": ".github/workflows/source-check.yml",
-      "sha256": "11e925a915c4119a4d4488354b493e8f555ab061b755d96e7d8a248a81ded340",
-      "bytes": 964,
+      "sha256": "f587f8d2c1d68ba23998ea3b8b755eb72af5a868a6b5460cf926035585fa63a4",
+      "bytes": 956,
       "category": "reviewed-build-and-ci"
     },
     {
@@ -202,8 +202,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "4072ed5cb3140c31b576b624d067c5f22f0afebdd00cd48b70d48a35ce9d1068",
-      "bytes": 178219,
+      "sha256": "9205e8a78dd05b16b5c2234e722097e5c9de543ed3adbc9d8895b1d1a3201c88",
+      "bytes": 181710,
       "category": "public-documentation"
     },
     {
@@ -274,8 +274,8 @@
     },
     {
       "path": "RELEASE.json",
-      "sha256": "21aa1e7ef1ec05ceae62782dbdaaf153bd1386e47349439a647594c71c20853e",
-      "bytes": 301,
+      "sha256": "233ef95eb549df58e2455846d4a11205a2059e57b726ff459794a695616b45d8",
+      "bytes": 285,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -298,14 +298,14 @@
     },
     {
       "path": "ZRZUR_RELEASE.md",
-      "sha256": "a5ff2db51c01ea019bed3774ad7416f0f649755a6702bd1b57dedd09d0fe7fbc",
-      "bytes": 1615,
+      "sha256": "bbae20dd25ccb00b7bd59c4f844c428287ecddf16efd12ec221d3517dca43659",
+      "bytes": 1488,
       "category": "public-documentation"
     },
     {
       "path": "ZRZUR_VERSION",
-      "sha256": "bd9bd915c688bad5ba3a15dd3c3dcaeef1226be00980b6c326d5e849f8cc5d11",
-      "bytes": 352,
+      "sha256": "9acafd63b1e2d989b4f778bb6bb49df9e9c598142b7a1cd27ddafa26f26e9812",
+      "bytes": 344,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -3910,8 +3910,8 @@
     },
     {
       "path": "crates/core/models/src/v0/community.rs",
-      "sha256": "8a6b30e83990bdf0d64177067991b0104baffe45edc1acd3094af82a08a38e00",
-      "bytes": 16041,
+      "sha256": "d368b84c5887cbf909530818ede0b05fe4a61b83a71bda80250ff088eb5d9b48",
+      "bytes": 16380,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4624,8 +4624,8 @@
     },
     {
       "path": "crates/delta/assets/official/ar.json",
-      "sha256": "175bea7ef6f0f2290311dd33a40adc174debb367b0e4a9c8167b8ca536959a55",
-      "bytes": 32120,
+      "sha256": "792bc59e8178a6ff96186047e92ecb78204c9e1308b0138ab6a5948a154fb20b",
+      "bytes": 32118,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -5386,14 +5386,14 @@
     },
     {
       "path": "crates/delta/src/routes/community/mod.rs",
-      "sha256": "dca8385f2395d407919d039c9629d98f597aa4fd319692ea2abbd12e13a0f180",
-      "bytes": 56900,
+      "sha256": "bd6305fcbb6afdb9d3f8a5ebba757a5fa30cfba10bbd85caf63a81bba82ddcec",
+      "bytes": 62412,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/delta/src/routes/community/test.rs",
-      "sha256": "f508672cc2519ea108775343dd324126f3ccca0619fd4a3218acc2b943f96d4f",
-      "bytes": 89278,
+      "sha256": "703a17042bc24cb23e63d1370ef59354160c5c4b005c5a6a7a89ee5d2b83cc1e",
+      "bytes": 103919,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -7276,8 +7276,8 @@
     },
     {
       "path": "crates/services/autumn/src/api.rs",
-      "sha256": "1c49d510da56cbbb2c2ced268b04d19afe70c410abefb59d880f02f90444f2d8",
-      "bytes": 51981,
+      "sha256": "7e4088d3cb56b17c263cfacad24dfd948201450acd5c4919f6ec0c2338804f2a",
+      "bytes": 51969,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -7300,8 +7300,8 @@
     },
     {
       "path": "crates/services/autumn/src/effects.rs",
-      "sha256": "121fe9b12e5d104a831d5242fa9c4f34041a2fe1d839e5e4c48aa24c3b0723b1",
-      "bytes": 56027,
+      "sha256": "8124e9912c8c39a2e7c57149b402d3e8d301f0dda640b7c53e63423e8edd471d",
+      "bytes": 66082,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -7798,8 +7798,8 @@
     },
     {
       "path": "scripts/check-version-selftest.sh",
-      "sha256": "2cc0400b34dc43d5ee34f96f899a69d5ddf7b4fed61970c4596c4b2fa82f05b7",
-      "bytes": 1331,
+      "sha256": "44edf9a10fa4a7645542c324d14beaa40fdf72885503b05023963316488b540e",
+      "bytes": 1299,
       "category": "reviewed-build-and-ci"
     },
     {

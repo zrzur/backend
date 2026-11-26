@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+## 26.3.0 (2026-11-25)
+
+The official release of everything tested in 26.3.0-beta.1 to 26.3.0-beta.11, for everyone.
+
+### Designs: who may delete a design (2026-11-25, owner's decision)
+
+- **Creators delete their own designs in one step, published ones included** (`DELETE /community/items/{id}`, no reason): it leaves the gallery and everyone wearing it, its files are marked deleted and leave the CDN, and a file held as Safety evidence stays until its case is over. Still refused: a design a reviewer took down (`Suspended`, held until the review is over) and anything while the creator is suspended. The platform audit log records `community.item.delete` (actor, design id, kind, former state) before anything changes; the design is claimed by its `version` first, so a reviewer's takedown in the same moment wins (`CommunityItemConflict`). Someone else's design is `NotFound` here.
+- New `POST /community/items/{id}/erase` with `DataCommunityDecision` (`reason` required, optional `version`): the owner decided that the ranks **Founder** (`founder`), **Zrzur Staff** (`staff`) and **Platform Moderator** (`platform_moderator`), held now (not revoked, not expired), grant the power to delete any creator's design for good; `cosmetics.manage_all` (privileged staff included) may too. Any state, one a reviewer took down included. Without the permission: `MissingPlatformPermission`; without a reason: `FailedValidation`; a stale `version`: `CommunityItemConflict`.
+- `GET /community/permissions` has a new `can_delete_any` boolean (default `false`): whether the signed-in person may use `erase`.
+- The design leaves the gallery and everyone wearing it (wearers get the usual notice), its files are marked deleted and leave the CDN. The creator gets the same Trust & Safety case, `SuspendCommunityItem` action, statement of reasons and appeal as any takedown, with the staff reason; the image is kept as that case's evidence (reported files are never released for deletion).
+- The platform audit log records `community.item.erase` (actor, design id, reason, kind, creator and former state) before anything changes, and a Failed record if the erasure stops half way.
+- The Arabic title of the creator's takedown notice says «أزلنا أحد تصاميمك» (we removed one of your designs) instead of «أوقفنا» (we suspended), so it is true for a takedown and for an erasure; English and German already said that.
+- New route and a new response field: the OpenAPI snapshot and the SDK route table and types need regenerating (the web calls the route directly and reads the field through its own type until then). No migration.
+
+### Profile frames may move (2026-11-25, owner's request)
+
+- `POST /community/frames` and editing a frame accept an animated file (GIF, WebP, APNG) of the template's size; the `frame_still` refusal is no longer sent. The size rule (`frame_size`) is unchanged.
+- autumn checks the safe zone on every frame of a moving frame (`check_frame_safe_area`), decoding one frame at a time and no more than the count the file was inspected with (at most `max_frames`, 240): a file that decodes to more is refused as `unreadable`. A frame-sized design has no length limit (`inspect_design`); the frame count, the 1024 px dimension cap and the 2.5 MB `decorations` limit still hold. The flash check judges a moving frame at the full profile's size (541 x 690 CSS px) instead of the avatar's.
+- No migration, no config change and no change to the shape of the API.
+
 - Docker images build with Rust 1.92 again, the version in `rust-toolchain.toml` that CI tests with. The Dependabot bump to 1.100 (#15) broke the image build (a type-inference change in Rust 1.100 stops the redis library compiling); Dependabot no longer moves the Rust image on its own.
 
 ## 26.3.0-beta.11 (2026-11-25)
