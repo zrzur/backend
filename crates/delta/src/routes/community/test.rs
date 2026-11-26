@@ -2212,8 +2212,9 @@ async fn a_community_frame_is_worn_and_comes_off_with_a_takedown() {
     assert_eq!(res.status(), Status::Ok);
     let item = res.into_json::<v0::CommunityItem>().await.unwrap();
 
-    // a built-in frame, an unknown one and a decoration in the frame field
-    assert_eq!(wear_frame(&harness, &wearer_session, "crystal").await, Status::Ok);
+    // a former built-in frame, an unknown one and a decoration in the frame
+    // field (the built-in frames became community designs on 2026-11-26)
+    assert_eq!(wear_frame(&harness, &wearer_session, "crystal").await, Status::BadRequest);
     assert_eq!(wear_frame(&harness, &wearer_session, "golden").await, Status::BadRequest);
     let decoration = post_kind(&harness, &session, &user, "decorations").await;
     assert_ne!(wear_frame(&harness, &wearer_session, &format!("c:{}", decoration.id)).await, Status::Ok);
