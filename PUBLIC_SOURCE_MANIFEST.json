@@ -58,7 +58,7 @@
     },
     {
       "path": ".github/workflows/source-check.yml",
-      "sha256": "f587f8d2c1d68ba23998ea3b8b755eb72af5a868a6b5460cf926035585fa63a4",
+      "sha256": "960366b80a3e8e59803817b6c578e1c31f3b4d408d8aedea9e93310061f23580",
       "bytes": 956,
       "category": "reviewed-build-and-ci"
     },
@@ -202,8 +202,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "f9a4c5cdeaf34373dc867a58b1626bc1f61ee2373f15c1aaefeccb4bb44cf2b3",
-      "bytes": 182714,
+      "sha256": "c5715742bb300b4e52de9cc02c3998108d6a141e82db75dfe6ebf8bdfc2dc02d",
+      "bytes": 182911,
       "category": "public-documentation"
     },
     {
@@ -274,7 +274,7 @@
     },
     {
       "path": "RELEASE.json",
-      "sha256": "233ef95eb549df58e2455846d4a11205a2059e57b726ff459794a695616b45d8",
+      "sha256": "9ef4aa0ec8001cb0d1e6b7ad3fd9710db6ff414f0f996a68d28e807a3fc9009f",
       "bytes": 285,
       "category": "product-source-or-build-manifest"
     },
@@ -298,13 +298,13 @@
     },
     {
       "path": "ZRZUR_RELEASE.md",
-      "sha256": "bbae20dd25ccb00b7bd59c4f844c428287ecddf16efd12ec221d3517dca43659",
-      "bytes": 1488,
+      "sha256": "baef7cf5c36403bc157674c4529811a3b48e6c768c2005e63f1c2c4acd1e843d",
+      "bytes": 1417,
       "category": "public-documentation"
     },
     {
       "path": "ZRZUR_VERSION",
-      "sha256": "9acafd63b1e2d989b4f778bb6bb49df9e9c598142b7a1cd27ddafa26f26e9812",
+      "sha256": "6051d1a2d24292dfc391ab0557ab5cdea3441fc821837ba8dbd7d2d1e2cb3502",
       "bytes": 344,
       "category": "product-source-or-build-manifest"
     },
@@ -1588,8 +1588,8 @@
     },
     {
       "path": "crates/core/database/src/models/admin_migrations/ops/mongodb/scripts.rs",
-      "sha256": "bc5fa9ecb14cda80903c227929b2c0014f13a4a93b0d06fde1e86eb3e787c9d3",
-      "bytes": 202574,
+      "sha256": "0a8ba37164ef24d9123a84e665534fe6746bd355622ba91641fc6346b697a3c1",
+      "bytes": 202633,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -7798,7 +7798,7 @@
     },
     {
       "path": "scripts/check-version-selftest.sh",
-      "sha256": "44edf9a10fa4a7645542c324d14beaa40fdf72885503b05023963316488b540e",
+      "sha256": "9923feb4b1c1c3eba8ae978fc0e30e3c3ae06b5990f44fa92e127de7a73ff72a",
       "bytes": 1299,
       "category": "reviewed-build-and-ci"
     },

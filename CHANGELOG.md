@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 26.3.1 (2026-11-26)
+
+The designs that were built into the app leave it (owner, 2026-11-26): only designs uploaded through Designs remain. The owner uploads the former built-in designs himself.
+
 ### Built-in designs leave the server's lists (owner, 2026-11-26)
 
 - `USER_STYLE_DECORATIONS`, `USER_STYLE_NAMEPLATES`, `USER_STYLE_EFFECTS`, `USER_STYLE_PROFILE_FRAMES` and the retired decoration and nameplate lists are gone. `validate_style` takes only `c:<id>` of a community design in `decoration`, `nameplate`, `effect` and `profile_frame`; a built-in id (or a retired one) is `FailedValidation` ("unknown decoration" and so on). Fonts, name colours and name effects are unchanged. The owner uploads the former built-in designs through the Creator Studio as community designs.

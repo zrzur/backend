@@ -26,7 +26,7 @@ struct MigrationInfo {
     revision: i32,
 }
 
-pub const LATEST_REVISION: i32 = 100; // MUST BE +1 to last migration
+pub const LATEST_REVISION: i32 = 101; // MUST BE +1 to last migration
 // Number given only in the release after the one above, once no old delta runs:
 // a session an old delta wrote during the rollout has no date and never expires.
 const PENDING_SESSION_EXPIRY_FILL: i32 = -1;
@@ -79,7 +79,7 @@ const PENDING_DESK_PENDING_INDEXES: i32 = 98;
 /// needs the owner's approval; the backfill is a separate admin script).
 const PENDING_PURGE_AT_INDEXES: i32 = 99;
 // Stream remove-builtin-designs: the coordinator gives the number at merge; -1 never runs
-const PENDING_CLEAR_BUILTIN_STYLE: i32 = -1;
+const PENDING_CLEAR_BUILTIN_STYLE: i32 = 100; // numbered at the 26.3.1 merge (coordinator, 2026-11-26)
 
 /// The earliest day a session from before expiry can expire. At least 30
 /// days out, also with expiry switched off (0), for the day it is switched on.
