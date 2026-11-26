@@ -3544,8 +3544,8 @@
     },
     {
       "path": "crates/core/database/src/voice/mod.rs",
-      "sha256": "1363cac969be110f86a1af30eed39e6cd46e6cf69d7356b5628a0337ccb40dc9",
-      "bytes": 32033,
+      "sha256": "006557c4b3d87956378ac452db61d71213921bbf20c933e314a4a23a698314c1",
+      "bytes": 32309,
       "category": "product-source-or-build-manifest"
     },
     {
