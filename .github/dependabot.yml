@@ -30,3 +30,7 @@ updates:
       docker:
         patterns: ["*"]
     open-pull-requests-limit: 2
+    # the Rust image moves only together with rust-toolchain.toml (CI and the
+    # tests use that one); 1.100 alone broke the image build on 2026-11-25
+    ignore:
+      - dependency-name: rust

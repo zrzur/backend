@@ -5,8 +5,9 @@
 //!   past their dates are deleted;
 //! - rechecks: partnerships past their 180 days are flagged for a person
 //!   (never ended automatically);
-//! - a safety net for Verified Server Owner and Verified Bot Developer: each
-//!   holder is checked against the records again (through the badge gate).
+//! - a safety net for Verified Bot Developer: each holder is checked against
+//!   the records again (through the badge gate). Verified Server Owner is
+//!   historical: its holders are left alone.
 
 use std::time::Duration;
 

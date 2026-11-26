@@ -1,5 +1,5 @@
-//! Badge programs people apply for: Zrzur Partner, Verified Server (with
-//! Verified Server Owner), Verified Bot Developer and Content Creator.
+//! Badge programs people apply for: Zrzur Partner, Verified Server (a mark
+//! on the server; no owner badge), Verified Bot Developer and Content Creator.
 //!
 //! Behind `[features.badge_applications] enabled` (off by default): off,
 //! every route here answers `FeatureDisabled`; the team's review in the
@@ -20,7 +20,7 @@ use revolt_config::config;
 use revolt_database::{
     add_evidence, appeal_application, application_blocker, confirm_challenge, create_application,
     edit_application, end_programs_for_target, issue_challenge, own_application, program_eligibility,
-    submit_application, sync_verified_server_owner, withdraw_application, ApplicationInput,
+    submit_application, withdraw_application, ApplicationInput,
     BadgeApplication, BadgeProgram, CreatorChannel, Database, EligibilityItem, OwnershipMethod,
     PartialServer, Server, User, DNS_RECORD_PREFIX, SERVER_FLAG_OFFICIAL, SERVER_FLAG_PARTNER,
     SERVER_FLAG_VERIFIED, WEBSITE_PATH,
@@ -156,10 +156,10 @@ pub(crate) async fn application_view(db: &Database, application: &BadgeApplicati
 
 /// A server changed hands: Partner and Verified Server end and their marks
 /// go (the new owner applies again; the official mark stays), the old
-/// applicant hears why, and both owners' Verified Server Owner badges
-/// follow. Returns the server's flags after. Failures are logged and never
-/// undo the transfer.
-pub(crate) async fn after_server_transfer(db: &Database, server: &Server, previous_owner: &str) -> Option<i32> {
+/// applicant hears why. No badge follows (Verified Server Owner was
+/// cancelled; holders keep it). Returns the server's flags after. Failures
+/// are logged and never undo the transfer.
+pub(crate) async fn after_server_transfer(db: &Database, server: &Server) -> Option<i32> {
     let mut flags = server.flags;
     let current = server.flags.unwrap_or_default();
     if current & (SERVER_FLAG_VERIFIED | SERVER_FLAG_PARTNER) != 0 && current & SERVER_FLAG_OFFICIAL == 0 {
@@ -188,11 +188,6 @@ pub(crate) async fn after_server_transfer(db: &Database, server: &Server, previo
             }
         }
         Err(error) => log::error!("programs of transferred server {}: {:?}", server.id, error.error_type),
-    }
-    for owner in [previous_owner, server.owner.as_str()] {
-        if let Err(error) = sync_verified_server_owner(db, owner).await {
-            log::error!("verified server owner badge for {owner}: {:?}", error.error_type);
-        }
     }
     flags
 }

@@ -349,6 +349,13 @@ impl MultiFactorAuthentication {
     }
 }
 
+/// A time code as the person typed or pasted it, without white space:
+/// authenticator apps show `123 456`, and a paste can bring a space or a
+/// line break. Any other character stays and makes the code wrong.
+pub fn normalise_totp_code(code: &str) -> String {
+    code.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
 impl Totp {
     /// Whether TOTP information is empty
     pub fn is_empty(&self) -> bool {
@@ -887,6 +894,8 @@ impl Account {
                 }
             }
             v0::MFAResponse::Totp { totp_code } => {
+                // the digits count, not the spaces around or between them
+                let totp_code = normalise_totp_code(&totp_code);
                 if allowed_methods.contains(&MFAMethod::Totp) {
                     if let Totp::Enabled { .. } = &self.mfa.totp_token {
                         // Use TOTP code at generation if applicable
@@ -896,7 +905,7 @@ impl Account {
                                 return Err(create_error!(InvalidToken));
                             }
                             if let Some(code) = &ticket.last_totp_code {
-                                if code == &totp_code {
+                                if normalise_totp_code(code) == totp_code {
                                     db.delete_ticket(&ticket.id).await?;
                                     return Ok(());
                                 }
@@ -1135,6 +1144,22 @@ mod totp_tests {
         assert!(!totp.accepts_code(&code_at(now() - 90)));
         assert!(!totp.accepts_code("000000x"));
         assert!(!Totp::Disabled.accepts_code(&code_at(now())));
+    }
+
+    #[test]
+    fn spaces_and_line_breaks_are_not_part_of_a_code() {
+        assert_eq!(super::normalise_totp_code("123 456"), "123456");
+        assert_eq!(super::normalise_totp_code(" 123456\n"), "123456");
+        assert_eq!(super::normalise_totp_code("12\t34 56\r\n"), "123456");
+        assert_eq!(super::normalise_totp_code("123456"), "123456");
+        // only white space goes: other characters still make it a wrong code
+        assert_eq!(super::normalise_totp_code("123-456"), "123-456");
+        let totp = Totp::Enabled {
+            secret: SECRET.to_string(),
+        };
+        let code = code_at(now());
+        let spaced = format!("{} {}", &code[..3], &code[3..]);
+        assert!(totp.accepts_code(&super::normalise_totp_code(&spaced)));
     }
 }
 

@@ -758,6 +758,85 @@ mod tests {
         clear_mfa_failures(&account.id).await;
     }
 
+    async fn send_code(harness: &TestHarness, ticket: &str, code: &str) -> Status {
+        harness
+            .client
+            .post("/auth/session/login")
+            .json(&json!({ "mfa_ticket": ticket, "mfa_response": { "totp_code": code } }))
+            .dispatch()
+            .await
+            .status()
+    }
+
+    /// Authenticator apps show a code as `123 456`, and a paste can bring a
+    /// space or a line break: the digits are what counts
+    #[rocket::async_test]
+    async fn a_code_with_spaces_signs_in() {
+        const SECRET: &str = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
+        let harness = TestHarness::new().await;
+        let (mut account, _, _) = harness.new_user().await;
+        account.mfa.totp_token = Totp::Enabled {
+            secret: SECRET.to_string(),
+        };
+        account.save(&harness.db).await.unwrap();
+
+        // both codes below belong to one time step: started in a step's last
+        // seconds, the "step before" would become the code just used, which
+        // the server rightly refuses as a replay (beta CI, 2026-11-25)
+        let into_step = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            % totp_lite::DEFAULT_STEP;
+        if into_step + 12 >= totp_lite::DEFAULT_STEP {
+            let wait = totp_lite::DEFAULT_STEP - into_step + 1;
+            tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
+        }
+
+        // the code of the moment, which the ticket already knows
+        let code = account.mfa.totp_token.generate_code().unwrap();
+        let ticket = mfa_ticket(&harness, &account.email).await;
+        let spaced = format!(" {} {}\n", &code[..3], &code[3..]);
+        assert_eq!(send_code(&harness, &ticket, &spaced).await, Status::Ok);
+
+        // the code of the step before, checked against the secret
+        let key = base32::decode(base32::Alphabet::RFC4648 { padding: false }, SECRET).unwrap();
+        let before = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            - totp_lite::DEFAULT_STEP;
+        let earlier =
+            totp_lite::totp_custom::<totp_lite::Sha1>(totp_lite::DEFAULT_STEP, 6, &key, before);
+        let ticket = mfa_ticket(&harness, &account.email).await;
+        let spaced = format!("{}\t{}", &earlier[..3], &earlier[3..]);
+        assert_eq!(send_code(&harness, &ticket, &spaced).await, Status::Ok);
+
+        clear_mfa_failures(&account.id).await;
+    }
+
+    /// Spaces don't open a way round the limits: a wrong code with spaces
+    /// still counts, and a ticket still takes three tries
+    #[rocket::async_test]
+    async fn a_wrong_code_with_spaces_still_counts() {
+        let harness = TestHarness::new().await;
+        let (mut account, _, _) = harness.new_user().await;
+        account.mfa.totp_token = Totp::Enabled {
+            secret: "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP".to_string(),
+        };
+        account.save(&harness.db).await.unwrap();
+
+        let ticket = mfa_ticket(&harness, &account.email).await;
+        for _ in 0..3 {
+            assert_eq!(send_code(&harness, &ticket, "000 000").await, Status::Unauthorized);
+        }
+        // the ticket is gone after three tries, even for the right code
+        let code = account.mfa.totp_token.generate_code().unwrap();
+        assert_eq!(send_code(&harness, &ticket, &code).await, Status::Unauthorized);
+
+        clear_mfa_failures(&account.id).await;
+    }
+
     /// Without a captcha the wait holds for the network the wrong passwords
     /// came from (IPv4 /24): someone guessing elsewhere does not lock the
     /// owner out at home

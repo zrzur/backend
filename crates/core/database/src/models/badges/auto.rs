@@ -1,5 +1,4 @@
-//! Badges the system gives from its own records (a verified server or bot;
-//! the size of a server is counted by crond, see `community.rs`), and the ones computed from the
+//! Badges the system gives from its own records (a verified bot; the size of a server is counted by crond, see `community.rs`), and the ones computed from the
 //! account's age (Early Adopter, One Year … Ten Years). Each rule is safe to
 //! run again: a badge already held is left alone.
 
@@ -15,19 +14,6 @@ use crate::{
 
 /// Grants read in one go
 const BATCH: usize = 500;
-
-/// Server `flags` values
-const SERVER_OFFICIAL: i32 = 1;
-const SERVER_VERIFIED: i32 = 2;
-
-/// Whether the person owns a verified (or Zrzur official) server
-pub async fn owns_verified_server(db: &Database, user_id: &str) -> Result<bool> {
-    Ok(db
-        .fetch_owned_servers(user_id)
-        .await?
-        .iter()
-        .any(|server| server.flags.unwrap_or_default() & (SERVER_OFFICIAL | SERVER_VERIFIED) != 0))
-}
 
 /// Whether the person owns a verified bot that isn't suspended
 pub async fn owns_verified_bot(db: &Database, user_id: &str) -> Result<bool> {
@@ -68,12 +54,9 @@ async fn follow(db: &Database, user_id: &str, badge: &str, earned: bool, source_
     Ok(())
 }
 
-/// The badge follows owning a verified server: after verifying, unverifying,
-/// handing a server over or deleting it
-pub async fn sync_verified_server_owner(db: &Database, user_id: &str) -> Result<()> {
-    let earned = owns_verified_server(db, user_id).await?;
-    follow(db, user_id, "verified_server_owner", earned, "server").await
-}
+// Verified Server Owner no longer follows a verified server (cancelled by
+// the owner, 2026-11-24): nothing gives it or takes it on verifying,
+// unverifying, handing a server over or deleting it; holders keep it.
 
 /// The badge follows owning a verified bot that isn't suspended (deleted
 /// and suspended bots end it)
@@ -82,26 +65,20 @@ pub async fn sync_verified_bot_developer(db: &Database, user_id: &str) -> Result
     follow(db, user_id, "verified_bot_developer", earned, "bot").await
 }
 
-/// Safety net for crond: every holder of the two badges is checked against
-/// the records again (a deletion path that missed the sync). Returns how
-/// many were checked.
+/// Safety net for crond: every holder of Verified Bot Developer is checked
+/// against the records again (a deletion path that missed the sync).
+/// Verified Server Owner is historical: its holders are left alone. Returns
+/// how many were checked.
 pub async fn resync_verified_badges(db: &Database) -> Result<usize> {
     let now = crate::epoch_ms(iso8601_timestamp::Timestamp::now_utc());
     let mut checked = 0;
-    for badge in ["verified_server_owner", "verified_bot_developer"] {
-        for grant in db.fetch_all_badge_holders(badge).await? {
-            if !grant.held(now) {
-                continue;
-            }
-            checked += 1;
-            let result = if badge == "verified_server_owner" {
-                sync_verified_server_owner(db, &grant.user_id).await
-            } else {
-                sync_verified_bot_developer(db, &grant.user_id).await
-            };
-            if let Err(error) = result {
-                log::warn!("{badge} of {}: {:?}", grant.user_id, error.error_type);
-            }
+    for grant in db.fetch_all_badge_holders("verified_bot_developer").await? {
+        if !grant.held(now) {
+            continue;
+        }
+        checked += 1;
+        if let Err(error) = sync_verified_bot_developer(db, &grant.user_id).await {
+            log::warn!("verified_bot_developer of {}: {:?}", grant.user_id, error.error_type);
         }
     }
     Ok(checked)

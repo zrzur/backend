@@ -26,7 +26,7 @@ struct MigrationInfo {
     revision: i32,
 }
 
-pub const LATEST_REVISION: i32 = 98; // MUST BE +1 to last migration
+pub const LATEST_REVISION: i32 = 100; // MUST BE +1 to last migration
 // Number given only in the release after the one above, once no old delta runs:
 // a session an old delta wrote during the rollout has no date and never expires.
 const PENDING_SESSION_EXPIRY_FILL: i32 = -1;
@@ -73,11 +73,11 @@ const PENDING_COMMUNITY_BADGE_INDEXES: i32 = 96;
 /// (number given by the coordinator at merge)
 const PENDING_BADGE_PROGRAM_INDEXES: i32 = 97;
 // Stream zrzur-desk-full: the coordinator gives the number at merge; -1 never runs
-const PENDING_DESK_PENDING_INDEXES: i32 = -1;
+const PENDING_DESK_PENDING_INDEXES: i32 = 98;
 /// TTL on `purge_at` (a BSON date) for interactions and OAuth codes and
 /// tokens. Index only: existing rows get no `purge_at` here (deleting them
 /// needs the owner's approval; the backfill is a separate admin script).
-const PENDING_PURGE_AT_INDEXES: i32 = -1;
+const PENDING_PURGE_AT_INDEXES: i32 = 99;
 
 /// The earliest day a session from before expiry can expire. At least 30
 /// days out, also with expiry switched off (0), for the day it is switched on.

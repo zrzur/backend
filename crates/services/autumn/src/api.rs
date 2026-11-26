@@ -16,7 +16,7 @@ use lazy_static::lazy_static;
 use revolt_config::{config, report_internal_error, CorsOrigins, FilesLimit};
 use revolt_database::{
     CommunityFileAccess, CommunityImageError, CommunityImageLimits, Database, FileHash, Metadata,
-    PlatformPermission, User, check_effect_image, community_file_access, inspect_community_image,
+    PlatformPermission, User, check_effect_image, community_file_access,
     iso8601_timestamp::Timestamp,
 };
 use revolt_files::{
@@ -39,7 +39,7 @@ use crate::{
         PRIVATE_CACHE_CONTROL, file_cache_control, if_range_allows, not_modified,
         not_modified_response, preview_variant, public_etag, seal_response,
     },
-    effects::{check_upload, still_of, strip_hidden_data},
+    effects::{check_upload, inspect_design, still_of, strip_hidden_data},
     webm::{WebmLimits, convert_webm, is_webm},
     exif::strip_metadata, metadata::generate_metadata, mime_type::determine_mime_type,
     preview::PREVIEWS,
@@ -630,7 +630,7 @@ async fn store_upload(
                 max_duration_ms: community.max_duration_ms,
             }
         };
-        let inspected = inspect_community_image(&buf, &limits).and_then(|info| {
+        let inspected = inspect_design(&tag, &buf, &limits).and_then(|info| {
             if matches!(tag, Tag::effects) {
                 check_effect_image(&info, community.effect_min_frame_ms)?;
             }

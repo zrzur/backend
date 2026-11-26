@@ -30,6 +30,7 @@ use super::registry::{
     counted,
 };
 use super::view::DeskView;
+use crate::util::on_heap::on_heap;
 
 const fn t(en: &'static str, ar: &'static str, de: &'static str) -> Text {
     Text { en, ar, de }
@@ -360,7 +361,9 @@ async fn mark_run(db: &Database, staff: &StaffContext, input: &DeskInput) -> Res
         reason: required(input, "reason")?,
         to: None,
     };
-    let result = act_core(db, &voice().await, staff, &required(input, "server")?, data).await?;
+    let voice = voice().await;
+    let server = required(input, "server")?;
+    let result = on_heap(|| act_core(db, &voice, staff, &server, data)).await?;
     Ok(fields(
         DeskView::new(w::DONE.get(input.lang)),
         &json(&result),
@@ -440,7 +443,9 @@ async fn transfer_run(db: &Database, staff: &StaffContext, input: &DeskInput) ->
         reason: required(input, "reason")?,
         to: Some(required_user(input, "user")?),
     };
-    let result = act_core(db, &voice().await, staff, &required(input, "server")?, data).await?;
+    let voice = voice().await;
+    let server = required(input, "server")?;
+    let result = on_heap(|| act_core(db, &voice, staff, &server, data)).await?;
     Ok(fields(
         DeskView::new(w::DONE.get(input.lang)),
         &json(&result),
@@ -556,7 +561,9 @@ async fn delete_server_run(
         reason: required(input, "reason")?,
         to: None,
     };
-    let result = act_core(db, &voice().await, staff, &required(input, "server")?, data).await?;
+    let voice = voice().await;
+    let server = required(input, "server")?;
+    let result = on_heap(|| act_core(db, &voice, staff, &server, data)).await?;
     Ok(fields(
         DeskView::new(w::DONE.get(input.lang)),
         &json(&result),
@@ -659,8 +666,9 @@ async fn delete_bot_run(
     let data = DataDeleteBot {
         reason: required(input, "reason")?,
     };
-    let deleted =
-        delete_bot_core(db, &voice().await, staff, &required(input, "bot")?, data).await?;
+    let voice = voice().await;
+    let bot = required(input, "bot")?;
+    let deleted = on_heap(|| delete_bot_core(db, &voice, staff, &bot, data)).await?;
     Ok(fields(
         DeskView::new(w::DONE.get(input.lang)),
         &json(&deleted),
@@ -762,15 +770,10 @@ async fn delete_owned_run(
     let data = DataDeleteOwned {
         reason: required(input, "reason")?,
     };
-    let result = delete_owned_core(
-        db,
-        &voice().await,
-        staff,
-        &required_user(input, "user")?,
-        data,
-        Some(&expected),
-    )
-    .await?;
+    let voice = voice().await;
+    let user = required_user(input, "user")?;
+    let result =
+        on_heap(|| delete_owned_core(db, &voice, staff, &user, data, Some(&expected))).await?;
     let lang = input.lang;
     let result = json(&result);
     let count = |key: &str| {
@@ -909,14 +912,9 @@ async fn delete_request_run(
         category: Some(category_of(input)?),
     };
     let expected = stored_plan(input);
-    let scheduled = delete_request_core(
-        db,
-        staff,
-        &required_user(input, "user")?,
-        data,
-        Some(&expected),
-    )
-    .await?;
+    let user = required_user(input, "user")?;
+    let scheduled =
+        on_heap(|| delete_request_core(db, staff, &user, data, Some(&expected))).await?;
     Ok(fields(
         DeskView::new(w::DONE.get(input.lang)),
         &json(&scheduled),
@@ -985,8 +983,8 @@ async fn delete_cancel_run(
         reason: required(input, "reason")?,
         category: None,
     };
-    let cancelled =
-        cancel_delete_request_core(db, staff, &required_user(input, "user")?, data).await?;
+    let user = required_user(input, "user")?;
+    let cancelled = on_heap(|| cancel_delete_request_core(db, staff, &user, data)).await?;
     Ok(fields(
         DeskView::new(w::DONE.get(input.lang)),
         &json(&cancelled),

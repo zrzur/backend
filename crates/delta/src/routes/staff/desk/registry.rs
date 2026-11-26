@@ -1487,4 +1487,65 @@ mod unit_tests {
                 .unwrap_or_else(|e| panic!("{}: {e}", tree.name));
         }
     }
+
+    /// Every handler, card and check of the registry, as the size of the
+    /// future it boxes (built, never run)
+    fn handler_future_sizes() -> Vec<(String, usize)> {
+        let db = Database::Reference(Default::default());
+        let user = revolt_database::User::default();
+        let session: revolt_database::StaffSession = serde_json::from_value(serde_json::json!({
+            "_id": "s", "token_hash": "", "user_id": "staff", "session_id": "s",
+            "created_at": 0, "last_seen_at": 0, "expires_at": 0
+        }))
+        .unwrap();
+        let grant: revolt_database::StaffGrant = serde_json::from_value(serde_json::json!({
+            "_id": "staff", "updated_at": 0, "updated_by": "system:cli"
+        }))
+        .unwrap();
+        let staff = StaffContext {
+            user,
+            session,
+            grant,
+            permissions: Default::default(),
+            now: 0,
+            path: String::new(),
+        };
+        let input = DeskInput {
+            options: vec![],
+            areas: vec![],
+            lang: Lang::En,
+            pending: None,
+            page: 1,
+            origin: String::new(),
+        };
+        let mut sizes = Vec::new();
+        for entry in entries() {
+            let key = entry.key();
+            let handler = (entry.handler)(&db, &staff, &input);
+            sizes.push((format!("{key} (handler)"), std::mem::size_of_val(&*handler)));
+            if let Some(prepare) = entry.prepare {
+                let card = prepare(&db, &staff, &input);
+                sizes.push((format!("{key} (card)"), std::mem::size_of_val(&*card)));
+            }
+            if let Some(verify) = entry.verify {
+                let check = verify(&db, &staff, &input);
+                sizes.push((format!("{key} (check)"), std::mem::size_of_val(&*check)));
+            }
+        }
+        sizes
+    }
+
+    /// Every desk handler, card and check builds a small future: each is
+    /// polled on a worker thread's 2 MiB stack, and in a debug build a
+    /// large future (up to 239 KB before, `user delete-owned`) costs its
+    /// size several times over in the poll frames. Heavy work is built on
+    /// the heap (`crate::util::on_heap`).
+    #[test]
+    fn desk_handler_futures_stay_small() {
+        const BOUND: usize = 12 * 1024;
+        let sizes = handler_future_sizes();
+        assert!(sizes.len() > 100, "every entry measured: {}", sizes.len());
+        let large: Vec<_> = sizes.iter().filter(|(_, size)| *size > BOUND).collect();
+        assert!(large.is_empty(), "futures over {BOUND} bytes: {large:?}");
+    }
 }

@@ -473,12 +473,17 @@ async fn a_verified_server_comes_from_an_application_and_ends_with_its_owner() {
     assert_eq!(body["status"], "Approved");
     let flags = harness.db.fetch_server(&server.id).await.unwrap().flags.unwrap_or_default();
     assert_ne!(flags & revolt_database::SERVER_FLAG_VERIFIED, 0);
-    assert!(held_badges(&harness.db, &owner.id).await.unwrap().contains("verified_server_owner"));
-    // the owner's badge came through the gate, naming its record
-    let records = audit(&harness, "badge.system.grant").await;
-    assert!(records.iter().any(|e| e.summary.as_deref().unwrap_or_default().contains("verified_server_owner via system")));
+    // the server gets its mark; the owner gets no badge (Verified Server
+    // Owner was cancelled on 2026-11-24) and nothing tried to give one
+    assert!(!held_badges(&harness.db, &owner.id).await.unwrap().contains("verified_server_owner"));
+    let records = audit(&harness, "badge.system.").await;
+    assert!(!records.iter().any(|e| e.summary.as_deref().unwrap_or_default().contains("verified_server_owner")));
 
-    // handed over: the mark and the program end, the old owner's badge goes
+    // someone who held the badge before keeps it when the server changes hands
+    revolt_database::grant_badge(&harness.db, &owner.id, "verified_server_owner", revolt_database::BadgeSource::System,
+        Some("server".into()), revolt_database::BADGE_SYSTEM_ACTOR, Some("the record backs it".into()), None).await.unwrap();
+
+    // handed over: the mark and the program end, the old owner keeps the badge
     let heir = genuine(&harness, 40, 9).await;
     join(&harness, &server.id, &heir.id, 30).await;
     let (status, body) = send(&harness, &boss, &boss_token, Post, &format!("/staff/servers/{}/actions", server.id),
@@ -489,8 +494,65 @@ async fn a_verified_server_comes_from_an_application_and_ends_with_its_owner() {
     let ended = harness.db.fetch_badge_application(&id).await.unwrap();
     assert_eq!(ended.status, ApplicationStatus::Ended);
     assert_eq!(ended.end_reason.as_deref(), Some("ownership_transferred"));
-    assert!(!held_badges(&harness.db, &owner.id).await.unwrap().contains("verified_server_owner"));
+    assert!(held_badges(&harness.db, &owner.id).await.unwrap().contains("verified_server_owner"));
     assert!(!held_badges(&harness.db, &heir.id).await.unwrap().contains("verified_server_owner"));
+
+    // a holder keeps it when their verified server is deleted, too
+    let (other, _) = harness.new_server(&owner).await;
+    harness.db.update_server(&other.id, &revolt_database::PartialServer {
+        flags: Some(revolt_database::SERVER_FLAG_VERIFIED), ..Default::default() }, vec![]).await.unwrap();
+    let other = harness.db.fetch_server(&other.id).await.unwrap();
+    other.delete(&harness.db).await.unwrap();
+    assert!(held_badges(&harness.db, &owner.id).await.unwrap().contains("verified_server_owner"));
+    let records = audit(&harness, "badge.system.").await;
+    assert!(!records.iter().any(|e| e.summary.as_deref().unwrap_or_default().contains("verified_server_owner")));
+}
+
+/// The official-entity exception (a staff Owner first, a second person
+/// after): the server gets its Verified mark, its owner no badge.
+#[rocket::async_test]
+async fn the_official_entity_exception_gives_the_mark_and_no_owner_badge() {
+    let harness = TestHarness::new().await;
+    let (_, session, owner) = harness.new_user().await;
+    // below the test numbers (4 members): only the exception can carry it
+    let (server, _) = harness.new_server(&owner).await;
+    let boss = member(&harness, vec![StaffRole::Owner]).await;
+    let boss_token = sign_in(&harness, &boss, 0).await;
+    step_up(&harness, &boss, &boss_token).await;
+    let second = member(&harness, vec![StaffRole::Owner]).await;
+    let second_token = sign_in(&harness, &second, 0).await;
+    step_up(&harness, &second, &second_token).await;
+
+    let (status, draft) = as_user(&harness, &session, Post, "/badges/applications", json!({
+        "program": "verified_server",
+        "target_id": server.id,
+        "statement": "The official community of a public university library.",
+        "links": ["https://library.example.net/zrzur"],
+        "authorized": true,
+        "exception": true,
+    })).await;
+    assert_eq!(status, Status::Ok, "{draft}");
+    let id = draft["_id"].as_str().unwrap().to_string();
+    let (_, issued) = as_user(&harness, &session, Post, &format!("/badges/applications/{id}/ownership"),
+        json!({ "method": "website", "domain": "library.example.net" })).await;
+    set_test_answer("web:library.example.net", vec![issued["value"].as_str().unwrap().to_string()]);
+    let (status, _) = as_user(&harness, &session, Post, &format!("/badges/applications/{id}/ownership/verify"), json!({})).await;
+    assert_eq!(status, Status::Ok);
+    let (status, body) = as_user(&harness, &session, Post, &format!("/badges/applications/{id}/submit"), json!({})).await;
+    assert_eq!(status, Status::Ok, "{body}");
+
+    let decide = format!("/staff/badges/applications/{id}/decide");
+    let (status, body) = send(&harness, &boss, &boss_token, Post, &decide, json!({ "decision": "approve", "reasons": ["criteria_met"] })).await;
+    assert_eq!(status, Status::Ok, "{body}");
+    assert_ne!(body["status"], "Approved", "an exception needs a second person");
+    let (status, body) = send(&harness, &second, &second_token, Post, &decide, json!({ "decision": "approve", "reasons": ["criteria_met"] })).await;
+    assert_eq!(status, Status::Ok, "{body}");
+    assert_eq!(body["status"], "Approved");
+    let flags = harness.db.fetch_server(&server.id).await.unwrap().flags.unwrap_or_default();
+    assert_ne!(flags & revolt_database::SERVER_FLAG_VERIFIED, 0);
+    assert!(!held_badges(&harness.db, &owner.id).await.unwrap().contains("verified_server_owner"));
+    let bits = harness.db.fetch_user(&owner.id).await.unwrap().get_badges().await;
+    assert_eq!(bits & revolt_models::v0::UserBadges::VerifiedServerOwner as u32, 0);
 }
 
 #[rocket::async_test]

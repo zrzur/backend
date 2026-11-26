@@ -306,7 +306,7 @@ pub async fn edit(
     }
 
     // 5. Transfer ownership
-    let previous_owner = owner.is_some().then(|| server.owner.clone());
+    let transferred = owner.is_some();
     if let Some(owner) = owner {
         let owner_reference = Reference::from_unchecked(&owner);
         // Check if member exists
@@ -344,10 +344,10 @@ pub async fn edit(
 
     server.update(db, partial.clone(), remove).await?;
 
-    // a new owner applies again: Partner and Verified Server end, their
-    // marks go, and the verified owner badge follows the server
-    if let Some(previous_owner) = previous_owner {
-        server.flags = crate::routes::badges::programs::after_server_transfer(db, &server, &previous_owner).await;
+    // a new owner applies again: Partner and Verified Server end and their
+    // marks go (no owner badge follows: Verified Server Owner was cancelled)
+    if transferred {
+        server.flags = crate::routes::badges::programs::after_server_transfer(db, &server).await;
     }
 
     AuditLogEntryAction::ServerEdit {

@@ -1,5 +1,6 @@
-//! Applications for the badge programs: Zrzur Partner, Verified Server (and
-//! Verified Server Owner), Verified Bot Developer and Content Creator.
+//! Applications for the badge programs: Zrzur Partner, Verified Server (a
+//! mark on the server; no owner badge), Verified Bot Developer and Content
+//! Creator.
 //!
 //! The numbers of each program only let someone apply; a person on the team
 //! reviews every application and decides with a statement of reasons. Data
@@ -39,7 +40,8 @@ auto_derived!(
     pub enum BadgeProgram {
         /// Zrzur Partner (badge `partner`, on the server's owner)
         Partner,
-        /// Verified Server mark and the Verified Server Owner badge
+        /// Verified Server mark on the server (no badge for its owner:
+        /// Verified Server Owner was cancelled on 2026-11-24)
         VerifiedServer,
         /// Verified mark on a bot and the Verified Bot Developer badge
         VerifiedBot,

@@ -2,6 +2,53 @@
 
 ## Unreleased
 
+## 26.3.0 (2026-11-25)
+
+The official release of everything tested in 26.3.0-beta.1 to 26.3.0-beta.11, for everyone.
+
+### Designs: who may delete a design (2026-11-25, owner's decision)
+
+- **Creators delete their own designs in one step, published ones included** (`DELETE /community/items/{id}`, no reason): it leaves the gallery and everyone wearing it, its files are marked deleted and leave the CDN, and a file held as Safety evidence stays until its case is over. Still refused: a design a reviewer took down (`Suspended`, held until the review is over) and anything while the creator is suspended. The platform audit log records `community.item.delete` (actor, design id, kind, former state) before anything changes; the design is claimed by its `version` first, so a reviewer's takedown in the same moment wins (`CommunityItemConflict`). Someone else's design is `NotFound` here.
+- New `POST /community/items/{id}/erase` with `DataCommunityDecision` (`reason` required, optional `version`): the owner decided that the ranks **Founder** (`founder`), **Zrzur Staff** (`staff`) and **Platform Moderator** (`platform_moderator`), held now (not revoked, not expired), grant the power to delete any creator's design for good; `cosmetics.manage_all` (privileged staff included) may too. Any state, one a reviewer took down included. Without the permission: `MissingPlatformPermission`; without a reason: `FailedValidation`; a stale `version`: `CommunityItemConflict`.
+- `GET /community/permissions` has a new `can_delete_any` boolean (default `false`): whether the signed-in person may use `erase`.
+- The design leaves the gallery and everyone wearing it (wearers get the usual notice), its files are marked deleted and leave the CDN. The creator gets the same Trust & Safety case, `SuspendCommunityItem` action, statement of reasons and appeal as any takedown, with the staff reason; the image is kept as that case's evidence (reported files are never released for deletion).
+- The platform audit log records `community.item.erase` (actor, design id, reason, kind, creator and former state) before anything changes, and a Failed record if the erasure stops half way.
+- The Arabic title of the creator's takedown notice says «أزلنا أحد تصاميمك» (we removed one of your designs) instead of «أوقفنا» (we suspended), so it is true for a takedown and for an erasure; English and German already said that.
+- New route and a new response field: the OpenAPI snapshot and the SDK route table and types need regenerating (the web calls the route directly and reads the field through its own type until then). No migration.
+
+### Profile frames may move (2026-11-25, owner's request)
+
+- `POST /community/frames` and editing a frame accept an animated file (GIF, WebP, APNG) of the template's size; the `frame_still` refusal is no longer sent. The size rule (`frame_size`) is unchanged.
+- autumn checks the safe zone on every frame of a moving frame (`check_frame_safe_area`), decoding one frame at a time and no more than the count the file was inspected with (at most `max_frames`, 240): a file that decodes to more is refused as `unreadable`. A frame-sized design has no length limit (`inspect_design`); the frame count, the 1024 px dimension cap and the 2.5 MB `decorations` limit still hold. The flash check judges a moving frame at the full profile's size (541 x 690 CSS px) instead of the avatar's.
+- No migration, no config change and no change to the shape of the API.
+
+- Docker images build with Rust 1.92 again, the version in `rust-toolchain.toml` that CI tests with. The Dependabot bump to 1.100 (#15) broke the image build (a type-inference change in Rust 1.100 stops the redis library compiling); Dependabot no longer moves the Rust image on its own.
+
+## 26.3.0-beta.11 (2026-11-25)
+
+- Sign-in test `a_code_with_spaces_signs_in` keeps both codes in one time step (it failed on beta CI when it crossed a 30 s step).
+
+### Profile frames: eight more built-in frames (2026-11-25, owner's request)
+
+- `USER_STYLE_PROFILE_FRAMES` (`UserStyle.profile_frame`) now accepts nine built-in frames: `crystal` and the set of 2026-11-25, `desert-lanterns`, `damascus-jasmine`, `autumn-maple`, `coral-reef`, `mushroom-forest`, `zrzur-neon`, `zrzur-arcade` and `zrzur-flock` (the client draws them). Any other id is still refused as `unknown profile_frame`; `c:<id>` community frames are unchanged. No migration and no change to the shape of the API; the OpenAPI snapshot lists the field as a string, so the SDK needs no regeneration.
+
+### Zrzur Desk: confirming a suspension no longer stops the API (2026-11-25)
+
+- Confirming `/desk-mod user suspend` (and in debug builds also warn, ban and case actions) built one very large future on the worker thread's stack. In a debug build it went past the 2 MiB worker stack and the API aborted. The safety `enforce` is split into one function per action kind, and the action path, the staff console cores and every desk handler now build their futures on the heap (`util/on_heap.rs`). The behaviour is unchanged. Tests confirm warn, suspend, ban and a case action on a 2 MiB worker thread, and keep every desk future under 12 KiB.
+
+## 26.3.0-beta.8 (2026-11-25)
+
+### Badges: Verified Server Owner cancelled (2026-11-24)
+
+- **Verified Server Owner** (`verified_server_owner`, bit 16777216) is retired for good: rule `historical`, `retired: true`. No path gives it any more: the admin console, `/badge`, `zrzur-staff badge` and the system (`badge.system.grant` is refused as `retired` and audited). People who hold it keep it; taking one away is an Owner change with a step-up and a second person, as for Saha Champion. The bit stays reserved and is never reused.
+- The **Verified Server** program stays: the ownership check and the review still give a server its Verified mark (the official-entity exception too, Owner first and a second person). Approving an application no longer gives the server's owner anything, and handing a server over, unverifying or deleting it no longer touches the owner's badges. The crond safety net checks Verified Bot Developer only.
+- `GET /badges/catalogue` no longer lists `verified_server_owner`; `GET /staff/badges/catalogue` still does (old holders). Its names stay in en, ar and de for old holders and history notices.
+- Removed: `sync_verified_server_owner` and `owns_verified_server`; `server_programs_gone` takes no owner.
+
+### Two-factor codes with spaces (2026-11-24, owner's report)
+
+- A time code at `POST /auth/session/login` and `PUT /auth/mfa/ticket` is checked without its white space: `123 456`, a leading or trailing space and a pasted line break are the code `123456`. Any other character still makes it wrong. Replay protection, three tries per ticket and the 15-minute pause after five wrong answers are unchanged; a wrong code with spaces counts like any other.
+
 ## 26.3.0-beta.7 (2026-11-24)
 
 ### Badges: Content Creator and the switch for applying (2026-11-24, badge plan phase 5)
@@ -60,7 +107,7 @@
 
 ### Profile frames (2026-11-21, owner's request)
 
-- `UserStyle.profile_frame`: a frame drawn round the whole profile card, one of `USER_STYLE_PROFILE_FRAMES` (`crystal` for now: frames are added one at a time) or `c:<id>` for a community frame; `profile_frame_file` is filled in by the server. Validated like the other style fields; saving checks that a `c:<id>` is a published `Frame`.
+- `UserStyle.profile_frame`: a frame drawn round the whole profile card, one of `USER_STYLE_PROFILE_FRAMES` (`crystal` at first; eight more since 2026-11-25, see Unreleased) or `c:<id>` for a community frame; `profile_frame_file` is filled in by the server. Validated like the other style fields; saving checks that a `c:<id>` is a published `Frame`.
 - `CommunityItemKind::Frame`, listed and created under `/community/frames` (creator rate limit as decorations). A frame file is one still PNG or WebP of exactly 800 x 1020 px with transparency, on the 400 x 510 template in `PROFILE_FRAME_TEMPLATE` (card 30,70 .. 370,470). It shares the `decorations` upload tag, so no new file-server setting is needed. Refused: another size (`frame_size`), a moving file (`frame_still`), and, in the file server, any pixel over the card's content: the card less 10 px on every side, except the crest window over the middle of the banner (`covers_content`). User-made SVG is not accepted: it can carry script; the built-in frames are drawn by the client.
 - A takedown takes a frame off its wearers like the other kinds, with its own notice in ar, en and de.
 
