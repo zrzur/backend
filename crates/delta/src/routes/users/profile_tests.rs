@@ -283,13 +283,13 @@ async fn a_bad_link_is_refused_and_a_stored_one_never_leaves() {
 }
 
 #[rocket::async_test]
-async fn an_effect_is_one_of_our_own_or_a_real_community_effect() {
+async fn an_effect_is_a_real_community_effect() {
     let harness = TestHarness::new().await;
     let (_, session, _) = person(&harness, Some(30)).await;
+    // the built-in effects became community designs on 2026-11-26
     let (status, body) = call(&harness, Method::Patch, &session, "/users/@me",
         Some(serde_json::json!({ "style": { "effect": "snow" } }))).await;
-    assert_eq!(status, Status::Ok, "{body}");
-    assert!(body.contains("snow"));
+    assert_eq!(status, Status::BadRequest, "{body}");
     let (status, _) = call(&harness, Method::Patch, &session, "/users/@me",
         Some(serde_json::json!({ "style": { "effect": "c:01ARZ3NDEKTSV4RRFFQ69G5FAV" } }))).await;
     assert_eq!(status, Status::NotFound);

@@ -26,7 +26,7 @@ struct MigrationInfo {
     revision: i32,
 }
 
-pub const LATEST_REVISION: i32 = 100; // MUST BE +1 to last migration
+pub const LATEST_REVISION: i32 = 101; // MUST BE +1 to last migration
 // Number given only in the release after the one above, once no old delta runs:
 // a session an old delta wrote during the rollout has no date and never expires.
 const PENDING_SESSION_EXPIRY_FILL: i32 = -1;
@@ -78,6 +78,8 @@ const PENDING_DESK_PENDING_INDEXES: i32 = 98;
 /// tokens. Index only: existing rows get no `purge_at` here (deleting them
 /// needs the owner's approval; the backfill is a separate admin script).
 const PENDING_PURGE_AT_INDEXES: i32 = 99;
+// Stream remove-builtin-designs: the coordinator gives the number at merge; -1 never runs
+const PENDING_CLEAR_BUILTIN_STYLE: i32 = 100; // numbered at the 26.3.1 merge (coordinator, 2026-11-26)
 
 /// The earliest day a session from before expiry can expire. At least 30
 /// days out, also with expiry switched off (0), for the day it is switched on.
@@ -2714,8 +2716,47 @@ pub async fn run_migrations(db: &MongoDb, revision: i32) -> i32 {
         create_purge_at_indexes(&db.db()).await;
     }
 
+    if revision <= PENDING_CLEAR_BUILTIN_STYLE {
+        info!("Running migration [revision {PENDING_CLEAR_BUILTIN_STYLE} / 26-11-2026]: Clear built-in designs from users' styles");
+        clear_builtin_style(&db.db()).await;
+    }
+
     // Reminder to update LATEST_REVISION when adding new migrations.
     LATEST_REVISION.max(revision)
+}
+
+/// The design fields of a user's style, each with the file the server fills
+/// in for a community design
+const STYLE_DESIGN_FIELDS: [(&str, &str); 4] = [
+    ("decoration", "decoration_file"),
+    ("nameplate", "nameplate_file"),
+    ("effect", "effect_file"),
+    ("profile_frame", "profile_frame_file"),
+];
+
+/// Zrzur's built-in decorations, nameplates, effects and profile frames
+/// became community designs on 2026-11-26 (the owner uploads them through
+/// the Creator Studio), and the server takes only `c:<id>` in these fields
+/// now. Every field that holds anything else (a built-in id, or one retired
+/// before) is unset with its file, so the person wears nothing there. A
+/// community design (`c:...`) and the rest of the style stay. Safe to run
+/// twice: a second run finds nothing to unset.
+pub async fn clear_builtin_style(db: &mongodb::Database) {
+    let users = db.collection::<Document>("users");
+    let community = bson::Regex {
+        pattern: "^c:".to_string(),
+        options: String::new(),
+    };
+    for (field, file) in STYLE_DESIGN_FIELDS {
+        let key = format!("style.{field}");
+        users
+            .update_many(
+                doc! { &key: { "$exists": true, "$not": community.clone() } },
+                doc! { "$unset": { &key: 1_i32, format!("style.{file}"): 1_i32 } },
+            )
+            .await
+            .expect("Failed to clear built-in designs from users' styles");
+    }
 }
 
 /// Team volunteers: one membership per person and role, activity days by
@@ -5057,6 +5098,85 @@ mod server_event_answer_migration_tests {
         assert_eq!(rows.count_documents(doc! { "_id.user": "USER_DELETED" }).await.unwrap(), 0);
         assert_eq!(rows.count_documents(doc! {}).await.unwrap(), 4);
         assert_eq!(super::remove_orphaned_server_event_data(&handle, true).await, (0, 0));
+        db.drop_database().await;
+    }
+}
+
+#[cfg(test)]
+mod builtin_style_tests {
+    use crate::mongodb::bson::{doc, Document};
+
+    /// MongoDB only: a built-in design in any field is unset with its file,
+    /// a community design and the rest of the style stay, and a second run
+    /// changes nothing
+    #[tokio::test]
+    async fn built_in_designs_are_cleared_twice_on_mongodb() {
+        let db = crate::DatabaseInfo::Test(format!("clear_builtin_style_{}", ulid::Ulid::new()))
+            .connect()
+            .await
+            .expect("Database connection failed.");
+        let crate::Database::MongoDb(mongo) = &db else {
+            return;
+        };
+        let users = mongo.db().collection::<Document>("users");
+        let community = "c:01M5TGZFE80SKMC8JVGJKBHS2A";
+        users
+            .insert_many([
+                doc! { "_id": "BUILT_IN", "username": "a", "style": {
+                    "decoration": "laurel", "decoration_file": "f1",
+                    "nameplate": "flag-sy", "nameplate_file": "f2",
+                    "effect": "snow", "effect_file": "f3",
+                    "profile_frame": "crystal", "profile_frame_file": "f4",
+                    "name_font": "serif", "theme": ["#112233"],
+                } },
+                doc! { "_id": "COMMUNITY", "username": "b", "style": {
+                    "decoration": community, "decoration_file": "g1",
+                    "nameplate": community, "nameplate_file": "g2",
+                    "effect": community, "effect_file": "g3",
+                    "profile_frame": community, "profile_frame_file": "g4",
+                } },
+                doc! { "_id": "MIXED", "username": "c", "style": {
+                    "decoration": "headphones", "nameplate": community, "nameplate_file": "h2",
+                    "effect": "rank-up",
+                } },
+                doc! { "_id": "PLAIN", "username": "d", "style": { "name_font": "bold" } },
+                doc! { "_id": "NONE", "username": "e" },
+            ])
+            .await
+            .unwrap();
+        let before_community = users.find_one(doc! { "_id": "COMMUNITY" }).await.unwrap();
+
+        for _ in 0..2 {
+            super::clear_builtin_style(&mongo.db()).await;
+        }
+
+        let style = |id: &'static str| {
+            let users = users.clone();
+            async move {
+                users
+                    .find_one(doc! { "_id": id })
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .get_document("style")
+                    .cloned()
+                    .ok()
+            }
+        };
+        assert_eq!(
+            style("BUILT_IN").await,
+            Some(doc! { "name_font": "serif", "theme": ["#112233"] })
+        );
+        assert_eq!(
+            users.find_one(doc! { "_id": "COMMUNITY" }).await.unwrap(),
+            before_community
+        );
+        assert_eq!(
+            style("MIXED").await,
+            Some(doc! { "nameplate": community, "nameplate_file": "h2" })
+        );
+        assert_eq!(style("PLAIN").await, Some(doc! { "name_font": "bold" }));
+        assert_eq!(style("NONE").await, None);
         db.drop_database().await;
     }
 }

@@ -419,30 +419,28 @@ auto_derived!(
         /// Effect drawn on the display name, one of [USER_STYLE_NAME_EFFECTS]
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
         pub name_effect: Option<String>,
-        /// Avatar decoration: one of [USER_STYLE_DECORATIONS], or c:<id>
-        /// for a community decoration
+        /// Avatar decoration: c:<id> of a community decoration
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
         pub decoration: Option<String>,
         /// Image of a community decoration (set by the server, read-only)
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
         pub decoration_file: Option<String>,
-        /// Nameplate behind the name in member lists: one of
-        /// [USER_STYLE_NAMEPLATES], or c:<id> for a community nameplate
+        /// Nameplate behind the name in member lists: c:<id> of a community
+        /// nameplate
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
         pub nameplate: Option<String>,
         /// Image of a community nameplate (set by the server, read-only)
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
         pub nameplate_file: Option<String>,
-        /// Profile effect: one of [USER_STYLE_EFFECTS], or c:<id> for a
-        /// community effect. It plays once when a profile opens; nobody
-        /// records who saw it.
+        /// Profile effect: c:<id> of a community effect. It plays once when a
+        /// profile opens; nobody records who saw it.
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
         pub effect: Option<String>,
         /// File of a community effect (set by the server, read-only)
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
         pub effect_file: Option<String>,
-        /// Frame drawn around the whole profile card: one of
-        /// [USER_STYLE_PROFILE_FRAMES], or c:<id> for a community frame
+        /// Frame drawn around the whole profile card: c:<id> of a community
+        /// frame
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
         pub profile_frame: Option<String>,
         /// Image of a community frame (set by the server, read-only)
@@ -683,119 +681,6 @@ pub const PROFILE_INTERESTS: &[&str] = &[
     "technology", "programming", "science", "nature", "pets", "fashion", "history", "cars",
 ];
 
-/// Zrzur's own profile effects. Each is drawn by the client, plays once for
-/// at most 4 seconds, and is flash-tested (see the web `effects` folder).
-pub const USER_STYLE_EFFECTS: &[&str] = &[
-    "snow", "rain", "confetti", "sparks", "petals", "bubbles", "leaves", "fireflies", "ripples",
-    "kites", "aurora", "starfall", "lanterns", "sakura", "embers", "planes", "butterflies",
-    "ink", "shards", "comet", "glass-rain", "dust", "sunrays", "moons", "bloom", "waves",
-    "burst", "feathers", "dandelions", "hearts",
-    // design pack 2026-11 (generated)
-    "rank-up", "coin-rush", "level-rise", "victory", "arcane", "liftoff", "boo", "cash-rain",
-    "doubloons", "key-rain", "loot-drop", "laser-run", "paw-hop", "snack-rain", "reef-swim",
-    "dino-dash", "coast-cruise", "photo-finish", "tyre-smoke", "goal-bounce", "firefly-dance",
-    "pixel-snowfall", "pixel-notes", "power-up", "pixel-hearts", "cat-parade", "pixel-petals",
-    "pixel-rain", "pixel-sprinkles", "jasmine-rain", "damascus-petals", "ghouta-blossom",
-    "pistachio-rain", "baklava-shower", "jasmine-fall", "rose-fall", "fanous-glow", "blizzard",
-    "school", "wildfire", "spring-day", "umbrellas", "citrus-splash", "jelly-rise", "tropic-fall",
-    "edelweiss-drift", "balloon-rise", "melody", "sugar-rush", "lucky-roll", "rewind", "gift-drop",
-    "sweet-scoops", "snapshots", "clockwork-fall", "crane-flight", "pulse-beat", "pixel-zrzur-rise",
-];
-
-/// Built-in avatar decorations (drawn by the client)
-pub const USER_STYLE_DECORATIONS: &[&str] = &[
-    "laurel", "light-crown", "rings", "ivy", "thorn-roses", "ice-crystal", "flame-ring",
-    "lightning", "moon-halo", "sun-rays", "star-orbit", "sakura-branch", "geometric-hex",
-    "neon", "wings", "feathers", "gear", "circuit", "waves", "leaves", "snow", "hearts",
-    "music-notes", "shield-frame",
-    // design pack 2026-11 (generated)
-    "rank-bronze", "rank-silver", "rank-gold", "rank-platinum", "rank-diamond", "rank-master",
-    "hud-crosshair", "hud-vitals", "hud-radar", "cat-ears-black", "cat-ears-ginger",
-    "cat-ears-snow", "pointed-fox-ears", "lop-bunny-ears", "teddy-ears", "headphones-midnight",
-    "headphones-pink", "headphones-cloud", "gamer-headset", "tilted-crown", "floating-halo",
-    "silver-tiara", "flower-crown", "heart-orbit", "sleepy-moon", "note-orbit", "pixel-frame",
-    "health-bar", "pad-ring", "xp-ring", "arena-hud", "winners-cup", "crossed-blades",
-    "rune-circle", "tyre-ring", "rev-gauge", "planet-rings", "astro-helmet", "ghost-pals",
-    "helm-wheel", "anchor-rope", "quest-frame", "loot-ring", "star-fighter", "warp-ring",
-    "pet-parade", "paw-ring", "snack-frame", "picnic-ring", "reef-frame", "dino-frame",
-    "city-frame", "ring-road", "coast-frame", "neon-flicker", "checker-ring", "race-track",
-    "marquee-bulbs", "speedometer", "pitch-ring", "scarf-ring", "woods-frame", "firefly-ring",
-    "snow-frame", "equaliser-ring", "mixtape-frame", "pocket-frame", "love-frame", "heart-chain",
-    "cat-frame", "bloom-frame", "tulip-ring", "rainbow-ring", "rain-and-sun", "sweet-frame",
-    "sprinkle-ring", "syria-flag-ring", "syria-jasmine", "syria-hearts", "damascus-sword",
-    "damask-roses", "old-city-lanterns", "ghouta-orchard", "apricot-ring", "ghouta-grapevine",
-    "citadel-frame", "pistachio-ring", "pixel-noria", "orontes-ring", "palmyra-arch",
-    "colonnade-ring", "sufra-frame", "baklava-ring", "jasmine-ring", "ablaq-arch", "water-wheel",
-    "damask-rose", "olive-wreath", "stitch-ring", "dune-moon", "caravan", "lantern-pair",
-    "crescent-seat", "sadu-ring", "snow-cap", "reef-ring", "tulip-crown", "daisy-chain",
-    "bamboo-ring", "koi-pond", "campfire-ring", "compass-ring", "sunflower", "citrus-slice",
-    "lavender-wreath", "big-leaves", "hibiscus-ring", "snow-peaks", "edelweiss-ring", "rainbow-arc",
-    "ribbon-bow", "pulse-ring", "zrzur-crest", "pixel-zrzur-badge", "pixel-zrzur-crew",
-];
-
-/// Built-in nameplates (files in the client): countries, themes, zodiac signs
-pub const USER_STYLE_NAMEPLATES: &[&str] = &[
-    "flag-af", "flag-al", "flag-dz", "flag-ad", "flag-ao", "flag-ag", "flag-ar", "flag-am",
-    "flag-au", "flag-at", "flag-az", "flag-bs", "flag-bh", "flag-bb", "flag-by",
-    "flag-be", "flag-bz", "flag-bj", "flag-bt", "flag-bo", "flag-ba", "flag-bw", "flag-br",
-    "flag-bn", "flag-bg", "flag-bf", "flag-bi", "flag-cv", "flag-kh", "flag-cm", "flag-ca",
-    "flag-cf", "flag-td", "flag-cl", "flag-cn", "flag-co", "flag-km", "flag-cg", "flag-cd",
-    "flag-cr", "flag-ci", "flag-hr", "flag-cu", "flag-cy", "flag-cz", "flag-dk", "flag-dj",
-    "flag-dm", "flag-do", "flag-ec", "flag-eg", "flag-sv", "flag-gq", "flag-er", "flag-ee",
-    "flag-sz", "flag-et", "flag-fj", "flag-fi", "flag-fr", "flag-ga", "flag-gm", "flag-ge",
-    "flag-de", "flag-gh", "flag-gr", "flag-gd", "flag-gt", "flag-gn", "flag-gw", "flag-gy",
-    "flag-ht", "flag-hn", "flag-hu", "flag-is", "flag-in", "flag-id", "flag-ir", "flag-iq",
-    "flag-ie", "flag-it", "flag-jm", "flag-jo", "flag-kz", "flag-ke",
-    "flag-ki", "flag-kw", "flag-kg", "flag-lv", "flag-lb",
-    "flag-ls", "flag-lr", "flag-ly", "flag-li", "flag-lt", "flag-lu", "flag-mg", "flag-mw",
-    "flag-my", "flag-mv", "flag-ml", "flag-mt", "flag-mh", "flag-mr", "flag-mu", "flag-mx",
-    "flag-md", "flag-mc", "flag-mn", "flag-me", "flag-ma", "flag-mz", "flag-mm",
-    "flag-na", "flag-nr", "flag-nl", "flag-nz", "flag-ni", "flag-ng",
-    "flag-mk", "flag-no", "flag-om", "flag-pk", "flag-ps", "flag-pg",
-    "flag-py", "flag-pe", "flag-ph", "flag-pl", "flag-pt", "flag-qa", "flag-ro", "flag-ru",
-    "flag-rw", "flag-kn", "flag-lc", "flag-vc", "flag-ws", "flag-sm", "flag-st", "flag-sa",
-    "flag-sn", "flag-rs", "flag-sc", "flag-sl", "flag-sg", "flag-sk", "flag-si", "flag-sb",
-    "flag-so", "flag-za", "flag-ss", "flag-es", "flag-lk", "flag-sd", "flag-sr", "flag-se",
-    "flag-sy", "flag-tj", "flag-tz", "flag-th", "flag-tl", "flag-tg", "flag-to",
-    "flag-tt", "flag-tn", "flag-tr", "flag-tm", "flag-tv", "flag-ug", "flag-ua", "flag-ae",
-    "flag-gb", "flag-us", "flag-uy", "flag-uz", "flag-vu", "flag-va", "flag-ve", "flag-vn",
-    "flag-ye", "flag-zm", "flag-zw", "flag-gb-eng", "flag-gb-sct", "flag-kurdistan", "flag-bd",
-    "flag-jp", "flag-la", "flag-ne", "flag-pw", "flag-kp", "flag-kr", "flag-ch", "flag-fm",
-    "flag-np", "flag-pa", "aurora",
-    "autumn", "sakura", "ocean", "clouds", "sunset", "midnight", "mint", "zodiac-aries",
-    "zodiac-taurus", "zodiac-gemini", "zodiac-cancer", "zodiac-leo", "zodiac-virgo",
-    "zodiac-libra", "zodiac-scorpio", "zodiac-sagittarius", "zodiac-capricorn",
-    "zodiac-aquarius", "zodiac-pisces",
-    // design pack 2026-11 (generated)
-    "rank-gold-plate", "rank-diamond-plate", "rank-master-plate", "hud-overlay", "arcade-night",
-    "level-up", "arena-lights", "castle-moon", "start-grid", "far-orbit", "haunted-hill",
-    "coast-drive", "saucer-night", "dungeon-hall", "pixel-orbit", "pixel-meadow", "pixel-diner",
-    "pixel-reef", "pixel-valley", "pixel-skyline", "sunset-boulevard", "arcade-row", "drift-night",
-    "goal-net", "campfire-night", "snowy-village", "boombox-night", "game-shelf", "love-letter",
-    "cat-rooftops", "pixel-garden", "after-rain", "moon-roofs", "qasioun-night", "syria-flag-plate",
-    "umayyad-square", "ghouta-spring", "apricot-season", "aleppo-citadel", "hama-wheels",
-    "palmyra-sunset", "sham-table", "damascus-night", "citadel-night", "columns-dusk", "old-walls",
-    "desert-night", "fanous-night", "majlis-night", "sadu-weave", "frost-pines", "deep-blue",
-    "magma-flow", "spring-meadow", "rain-street", "bamboo-mist", "camp-night", "beach-day",
-    "lavender-field", "deep-glow", "jungle-dusk", "alpine-lake", "balloon-sky", "oud-night",
-    "midnight-pulse", "pulse-wave", "pixel-zrzur-home",
-];
-
-/// Built-in profile frames (drawn by the client). Hand-made pixel art, added
-/// after the owner has seen each on a real card: Crystal cave (2026-11-21)
-/// and the set of eight of 2026-11-25.
-pub const USER_STYLE_PROFILE_FRAMES: &[&str] = &[
-    "crystal",
-    "desert-lanterns",
-    "damascus-jasmine",
-    "autumn-maple",
-    "coral-reef",
-    "mushroom-forest",
-    "zrzur-neon",
-    "zrzur-arcade",
-    "zrzur-flock",
-];
-
 /// Size of a community frame file, in pixels: twice the template the client
 /// lays over the card (see [PROFILE_FRAME_TEMPLATE])
 pub const PROFILE_FRAME_FILE_SIZE: (usize, usize) = (800, 1020);
@@ -824,16 +709,6 @@ pub const PROFILE_FRAME_TEMPLATE: ProfileFrameTemplate = ProfileFrameTemplate {
     safe: (40, 80, 360, 460),
     crest: (120, 80, 280, 110),
 };
-
-/// Decorations that are no longer offered. Saved profiles may still hold one:
-/// clients show nothing for it, and a save that sends it back must not fail.
-const USER_STYLE_RETIRED_DECORATIONS: &[&str] = &[
-    "flames", "headphones", "stars", "glow", "fire", "ice", "gold", "sparkle", "galaxy",
-    "heartbeat", "toxic",
-];
-
-/// Nameplates that are no longer offered, as above
-const USER_STYLE_RETIRED_NAMEPLATES: &[&str] = &["galaxy", "ember"];
 
 static RE_HEX_COLOUR: Lazy<Regex> = Lazy::new(|| Regex::new(r"^#[0-9a-fA-F]{6}$").unwrap());
 
@@ -871,34 +746,18 @@ impl UserStyle {
                 return Err("unknown name_font");
             }
         }
-        if let Some(decoration) = &self.decoration {
-            if !USER_STYLE_DECORATIONS.contains(&decoration.as_str())
-                && !USER_STYLE_RETIRED_DECORATIONS.contains(&decoration.as_str())
-                && community_item_ref(decoration).is_none()
-            {
-                return Err("unknown decoration");
-            }
-        }
-        if let Some(effect) = &self.effect {
-            if !USER_STYLE_EFFECTS.contains(&effect.as_str())
-                && community_item_ref(effect).is_none()
-            {
-                return Err("unknown effect");
-            }
-        }
-        if let Some(nameplate) = &self.nameplate {
-            if !USER_STYLE_NAMEPLATES.contains(&nameplate.as_str())
-                && !USER_STYLE_RETIRED_NAMEPLATES.contains(&nameplate.as_str())
-                && community_item_ref(nameplate).is_none()
-            {
-                return Err("unknown nameplate");
-            }
-        }
-        if let Some(frame) = &self.profile_frame {
-            if !USER_STYLE_PROFILE_FRAMES.contains(&frame.as_str())
-                && community_item_ref(frame).is_none()
-            {
-                return Err("unknown profile_frame");
+        // Every design is a creator's: c:<id>. The built-in ones became
+        // community designs on 2026-11-26, and a stored one was cleared
+        // (migration `clear_builtin_style`), so their ids are refused.
+        let designs = [
+            (&self.decoration, "unknown decoration"),
+            (&self.effect, "unknown effect"),
+            (&self.nameplate, "unknown nameplate"),
+            (&self.profile_frame, "unknown profile_frame"),
+        ];
+        for (value, error) in designs {
+            if value.as_deref().is_some_and(|value| community_item_ref(value).is_none()) {
+                return Err(error);
             }
         }
         Ok(())
@@ -921,13 +780,15 @@ impl UserStyle {
 mod style_tests {
     use super::UserStyle;
 
+    const DESIGN: &str = "c:01M5TGZFE80SKMC8JVGJKBHS2A";
+
     fn style() -> UserStyle {
         UserStyle {
             theme: vec!["#ff7a45".into(), "#1d1f2b".into()],
             name_font: Some("serif".into()),
             name_colour: vec!["#ffffff".into()],
-            decoration: Some("lightning".into()),
-            nameplate: Some("aurora".into()),
+            decoration: Some(DESIGN.into()),
+            nameplate: Some(DESIGN.into()),
             ..Default::default()
         }
     }
@@ -997,83 +858,42 @@ mod style_tests {
         assert!(!only_effect.is_empty());
     }
 
+    /// The built-in designs became community designs on 2026-11-26: none of
+    /// their ids is taken any more, in any design field
     #[test]
-    fn a_saved_retired_design_does_not_block_a_save() {
-        let mut s = style();
-        s.decoration = Some("headphones".into());
-        s.nameplate = Some("galaxy".into());
-        assert!(s.validate_style().is_ok());
-    }
-
-    #[test]
-    fn accepts_the_new_designs() {
-        let mut s = style();
-        s.decoration = Some("shield-frame".into());
-        s.nameplate = Some("flag-sy".into());
-        s.name_font = Some("kufi".into());
-        s.effect = Some("glass-rain".into());
-        assert!(s.validate_style().is_ok());
-    }
-
-    #[test]
-    fn accepts_the_design_pack() {
-        let mut s = style();
-        s.decoration = Some("rank-gold".into());
-        s.nameplate = Some("arcade-night".into());
-        s.effect = Some("coin-rush".into());
-        assert!(s.validate_style().is_ok());
-    }
-
-    #[test]
-    fn no_design_is_listed_twice() {
-        for list in [
-            super::USER_STYLE_DECORATIONS,
-            super::USER_STYLE_NAMEPLATES,
-            super::USER_STYLE_EFFECTS,
-            super::USER_STYLE_PROFILE_FRAMES,
-        ] {
-            let mut seen = std::collections::HashSet::new();
-            for id in list {
-                assert!(seen.insert(*id), "{id} is listed twice");
+    fn a_built_in_design_is_refused() {
+        let built_in = [
+            "lightning", "laurel", "rank-gold", "shield-frame", "headphones", "aurora",
+            "flag-sy", "zodiac-leo", "arcade-night", "galaxy", "ember", "snow", "glass-rain",
+            "coin-rush", "crystal", "zrzur-neon", "coral-reef",
+        ];
+        for id in built_in {
+            for field in 0..4 {
+                let mut s = style();
+                let value = Some(id.to_string());
+                match field {
+                    0 => s.decoration = value,
+                    1 => s.nameplate = value,
+                    2 => s.effect = value,
+                    _ => s.profile_frame = value,
+                }
+                assert!(s.validate_style().is_err(), "{id} in field {field}");
             }
         }
     }
 
     #[test]
-    fn the_frames_of_2026_11_25_are_accepted() {
-        for id in [
-            "desert-lanterns",
-            "damascus-jasmine",
-            "autumn-maple",
-            "coral-reef",
-            "mushroom-forest",
-            "zrzur-neon",
-            "zrzur-arcade",
-            "zrzur-flock",
-        ] {
-            let mut s = style();
-            s.profile_frame = Some(id.into());
-            assert!(s.validate_style().is_ok(), "{id}");
-        }
-    }
-
-    #[test]
     fn profile_frames_are_checked() {
-        for id in super::USER_STYLE_PROFILE_FRAMES {
-            let mut s = style();
-            s.profile_frame = Some((*id).into());
-            assert!(s.validate_style().is_ok(), "{id}");
-        }
         let mut s = style();
-        s.profile_frame = Some("c:01M5TGZFE80SKMC8JVGJKBHS2A".into());
+        s.profile_frame = Some(DESIGN.into());
         assert!(s.validate_style().is_ok());
-        for bad in ["gold", "c:not-an-id", "crystal; x", "khatam", ""] {
+        for bad in ["gold", "c:not-an-id", "crystal; x", "khatam", "", "crystal"] {
             let mut s = style();
             s.profile_frame = Some(bad.into());
             assert!(s.validate_style().is_err(), "{bad}");
         }
         let s = super::UserStyle {
-            profile_frame: Some("crystal".into()),
+            profile_frame: Some(DESIGN.into()),
             ..Default::default()
         };
         assert!(!s.is_empty());
@@ -1099,35 +919,15 @@ mod style_tests {
     #[test]
     fn accepts_community_references() {
         let mut s = style();
-        s.decoration = Some("c:01M5TGZFE80SKMC8JVGJKBHS2A".into());
-        s.nameplate = Some("c:01M5TGZFE80SKMC8JVGJKBHS2A".into());
+        s.decoration = Some(DESIGN.into());
+        s.nameplate = Some(DESIGN.into());
+        s.effect = Some(DESIGN.into());
+        s.profile_frame = Some(DESIGN.into());
         assert!(s.validate_style().is_ok());
         assert_eq!(
             super::community_item_ref("c:01M5TGZFE80SKMC8JVGJKBHS2A"),
             Some("01M5TGZFE80SKMC8JVGJKBHS2A")
         );
-    }
-}
-
-#[cfg(test)]
-mod nameplate_list_tests {
-    use super::{USER_STYLE_NAMEPLATES, USER_STYLE_RETIRED_NAMEPLATES};
-
-    #[test]
-    fn the_flags_the_app_offers_are_on_the_list() {
-        for flag in [
-            "flag-bd", "flag-jp", "flag-la", "flag-ne", "flag-pw", "flag-kp", "flag-kr", "flag-ch",
-            "flag-fm", "flag-np", "flag-pa",
-        ] {
-            assert!(USER_STYLE_NAMEPLATES.contains(&flag), "{flag}");
-            assert!(!USER_STYLE_RETIRED_NAMEPLATES.contains(&flag), "{flag}");
-        }
-    }
-
-    #[test]
-    fn a_removed_flag_is_on_neither_list() {
-        assert!(!USER_STYLE_NAMEPLATES.contains(&"flag-il"));
-        assert!(!USER_STYLE_RETIRED_NAMEPLATES.contains(&"flag-il"));
     }
 }
 

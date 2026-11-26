@@ -1,6 +1,6 @@
-# Zrzur 26 — release 26.3.0
+# Zrzur 26 — release 26.3.1
 
-This repository is one component of Zrzur. The shared product version is **26.3.0**, the official release for everyone, on **main** (tag `v26.3.0`). The previous official release is 26.2.0 (tag `v26.2.0`); the test versions before this one are 26.3.0-beta.1 to 26.3.0-beta.11. Original dependency, SDK and protocol versions remain compatibility identifiers.
+This repository is one component of Zrzur. The shared product version is **26.3.1**, the official release for everyone, on **main** (tag `v26.3.1`). The previous official release is 26.3.0 (tag `v26.3.0`). Original dependency, SDK and protocol versions remain compatibility identifiers.
 
 | Component | Source |
 |---|---|
@@ -13,7 +13,7 @@ This repository is one component of Zrzur. The shared product version is **26.3.
 
 Upstream licences, copyright notices and attribution are retained (see NOTICE). Git history was not carried over: this repository starts with a single initial commit.
 
-## Known limits of 26.3.0
+## Known limits of 26.3.1
 
 - Desktop apps are not code-signed yet: Windows SmartScreen and macOS Gatekeeper ask before the first start. Downloads and checksums are on zrzur.com/download and GitHub Releases.
 - Voice clips and recorded rooms are built but switched off on zrzur.com. Team applications and volunteer care run only where the server settings switch them on (`[features.team_applications]`, `[features.team_applications.volunteers]`).
