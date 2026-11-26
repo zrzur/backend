@@ -91,6 +91,20 @@ impl AbstractCommunityItems for ReferenceDb {
             .count())
     }
 
+    async fn count_community_items_created_since(
+        &self,
+        creator_id: &str,
+        since_id: &str,
+    ) -> Result<usize> {
+        Ok(self
+            .community_items
+            .lock()
+            .await
+            .values()
+            .filter(|item| item.creator_id == creator_id && item.id.as_str() >= since_id)
+            .count())
+    }
+
     async fn report_community_item(&self, id: &str, user_id: &str) -> Result<usize> {
         let mut items = self.community_items.lock().await;
         let item = items.get_mut(id).ok_or_else(|| create_error!(NotFound))?;

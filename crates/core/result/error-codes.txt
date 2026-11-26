@@ -33,6 +33,7 @@ CannotTimeoutYourself
 CantCreateServers
 CaptchaFailed
 CommandAlreadyExists
+CommunityDailyLimit
 CommunityItemConflict
 CompromisedPassword
 ContactSupport

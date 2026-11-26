@@ -112,6 +112,21 @@ impl AbstractCommunityItems for MongoDb {
             .map_err(|_| create_database_error!("count_documents", COL))
     }
 
+    async fn count_community_items_created_since(
+        &self,
+        creator_id: &str,
+        since_id: &str,
+    ) -> Result<usize> {
+        self.col::<CommunityItem>(COL)
+            .count_documents(doc! {
+                "creator_id": creator_id,
+                "_id": { "$gte": since_id },
+            })
+            .await
+            .map(|count| count as usize)
+            .map_err(|_| create_database_error!("count_documents", COL))
+    }
+
     async fn report_community_item(&self, id: &str, user_id: &str) -> Result<usize> {
         self.col::<CommunityItem>(COL)
             .update_one(doc! { "_id": id }, doc! { "$addToSet": { "reports": user_id } })

@@ -2269,6 +2269,11 @@ pub struct FeaturesCommunity {
     /// Designs one creator may have that are not archived or rejected
     #[serde(default = "community_max_items")]
     pub max_items_per_creator: usize,
+    /// New designs one creator may make in 24 hours (0: no daily limit).
+    /// Holders of the project's top ranks have neither limit
+    /// (`UNLIMITED_RANKS` in delta's community routes)
+    #[serde(default = "community_max_items_per_day")]
+    pub max_items_per_day: usize,
     /// Largest width or height of an image in pixels
     #[serde(default = "community_max_dimension")]
     pub max_dimension: u32,
@@ -2313,6 +2318,9 @@ pub struct FeaturesCommunity {
 fn community_max_items() -> usize {
     50
 }
+fn community_max_items_per_day() -> usize {
+    20
+}
 fn community_max_dimension() -> u32 {
     1024
 }
@@ -2348,6 +2356,7 @@ impl Default for FeaturesCommunity {
     fn default() -> Self {
         Self {
             max_items_per_creator: community_max_items(),
+            max_items_per_day: community_max_items_per_day(),
             max_dimension: community_max_dimension(),
             max_frames: community_max_frames(),
             max_duration_ms: community_max_duration_ms(),

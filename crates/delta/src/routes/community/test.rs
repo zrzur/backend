@@ -2527,3 +2527,68 @@ async fn the_owners_ranks_delete_anyones_design() {
     }
     assert!(harness.db.fetch_community_item(&live.id).await.is_ok());
 }
+
+/// Fill a creator's last 24 hours with `count` designs, archived ones too
+/// (archiving does not give a day's design back)
+async fn made_today(harness: &TestHarness, template: &v0::CommunityItem, count: usize) {
+    let stored = harness.db.fetch_community_item(&template.id).await.unwrap();
+    for _ in 0..count {
+        let mut copy = stored.clone();
+        copy.id = ulid::Ulid::new().to_string();
+        copy.status = revolt_database::CommunityItemStatus::Archived;
+        harness.db.insert_community_item(&copy).await.unwrap();
+    }
+}
+
+#[rocket::async_test]
+async fn creators_have_a_daily_limit() {
+    let harness = TestHarness::new().await;
+    let (session, user) = creator(&harness).await;
+    let (status, first) = create_design(&harness, &session, &user, "First", false).await;
+    assert_eq!(status, Status::Ok);
+    let per_day = revolt_config::config().await.features.community.max_items_per_day;
+    made_today(&harness, &first.unwrap(), per_day - 1).await;
+
+    let (status, _) = create_design(&harness, &session, &user, "One more", false).await;
+    assert_eq!(status, Status::TooManyRequests);
+
+    // the studio shows how many are left today
+    let perms = harness
+        .client
+        .get("/community/permissions")
+        .header(Header::new("x-session-token", session.token.clone()))
+        .dispatch()
+        .await
+        .into_json::<v0::CommunityPermissions>()
+        .await
+        .unwrap();
+    assert!(!perms.unlimited_designs);
+    assert_eq!(perms.max_designs_per_day, Some(per_day));
+    assert_eq!(perms.designs_today, Some(per_day));
+}
+
+#[rocket::async_test]
+async fn top_ranks_have_no_limits() {
+    let harness = TestHarness::new().await;
+    let (session, user) = creator(&harness).await;
+    harness.make_privileged(&user.id).await;
+    let (_, first) = create_design(&harness, &session, &user, "First", false).await;
+    let per_day = revolt_config::config().await.features.community.max_items_per_day;
+    made_today(&harness, &first.unwrap(), per_day + 5).await;
+
+    let (status, _) = create_design(&harness, &session, &user, "Still fine", false).await;
+    assert_eq!(status, Status::Ok);
+
+    let perms = harness
+        .client
+        .get("/community/permissions")
+        .header(Header::new("x-session-token", session.token.clone()))
+        .dispatch()
+        .await
+        .into_json::<v0::CommunityPermissions>()
+        .await
+        .unwrap();
+    assert!(perms.unlimited_designs);
+    assert_eq!(perms.max_designs, None);
+    assert_eq!(perms.designs_today, None);
+}

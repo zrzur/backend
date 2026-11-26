@@ -98,6 +98,7 @@ impl<'r> Responder<'r, 'static> for Error {
             ErrorType::SoundLibraryUnavailable => Status::ServiceUnavailable,
             ErrorType::TooManySpeakers { .. } => Status::BadRequest,
             ErrorType::TooManyCommunityItems { .. } => Status::BadRequest,
+            ErrorType::CommunityDailyLimit { .. } => Status::TooManyRequests,
             ErrorType::MissingPlatformPermission { .. } => Status::Forbidden,
             ErrorType::CommunityItemConflict => Status::Conflict,
             ErrorType::ProfileTextFiltered { .. } => Status::UnprocessableEntity,

@@ -455,12 +455,89 @@ pub async fn permissions(db: &State<Database>, user: User) -> Result<Json<v0::Co
     let role = db.fetch_platform_role(&user.id).await?;
     let perms = platform_permissions(db, &user).await?;
     let can_delete_any = may_delete_any(db, &user, &perms).await?;
+    let unlimited = has_unlimited_designs(db, &user).await?;
+    let limits = config().await.features.community;
+    let creating = perms.has(PlatformPermission::CosmeticsSubmit);
+    let made_today = if creating && !unlimited && limits.max_items_per_day > 0 {
+        Some(
+            db.count_community_items_created_since(&user.id, &day_start_id())
+                .await?,
+        )
+    } else {
+        None
+    };
     Ok(Json(v0::CommunityPermissions {
         permissions: perms.names(),
         show_public_name: role.as_ref().map(|r| r.show_public_name).unwrap_or(false),
         creator: role.and_then(|r| r.creator).map(|c| format!("{c:?}")),
         can_delete_any,
+        unlimited_designs: unlimited,
+        max_designs: (!unlimited).then_some(limits.max_items_per_creator),
+        max_designs_per_day: made_today.map(|_| limits.max_items_per_day),
+        designs_today: made_today,
     }))
+}
+
+/// Ranks that run the project and upload as much as they need: no design
+/// limit and no daily limit (owner's decision, 2026-11-26). Ids from the
+/// badge catalogue (`badges/logic.rs`).
+const UNLIMITED_RANKS: [&str; 4] = ["founder", "staff", "developer", "platform_moderator"];
+
+/// Whether this person holds one of [`UNLIMITED_RANKS`] now, or is
+/// privileged staff. Bots never.
+async fn has_unlimited_designs(db: &Database, user: &User) -> Result<bool> {
+    if user.bot.is_some() {
+        return Ok(false);
+    }
+    if user.privileged {
+        return Ok(true);
+    }
+    let held = revolt_database::held_badges(db, &user.id).await?;
+    Ok(UNLIMITED_RANKS.iter().any(|rank| held.contains(*rank)))
+}
+
+/// The start of the last 24 hours as the smallest ULID of that moment: ids
+/// sort by creation time, so items with an id at or above it are this
+/// day's
+fn day_start_id() -> String {
+    let since = std::time::SystemTime::now() - std::time::Duration::from_secs(24 * 60 * 60);
+    Ulid::from_parts(
+        since
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or_default(),
+        0,
+    )
+    .to_string()
+}
+
+/// Designs a creator may still keep and make: the total of designs that are
+/// not archived and, for a new one (`new`), the new designs of the last 24
+/// hours. Holders of [`UNLIMITED_RANKS`] have neither limit.
+async fn check_design_limits(db: &Database, user: &User, new: bool) -> Result<()> {
+    if has_unlimited_designs(db, user).await? {
+        return Ok(());
+    }
+    let limits = config().await.features.community;
+    let max = limits.max_items_per_creator;
+    if db
+        .count_community_items_by_creator(&user.id, &ACTIVE_STATUSES)
+        .await?
+        >= max
+    {
+        return Err(create_error!(TooManyCommunityItems { max }));
+    }
+    let per_day = limits.max_items_per_day;
+    if new
+        && per_day > 0
+        && db
+            .count_community_items_created_since(&user.id, &day_start_id())
+            .await?
+            >= per_day
+    {
+        return Err(create_error!(CommunityDailyLimit { max: per_day }));
+    }
+    Ok(())
 }
 
 /// Ranks that may delete any creator's design for good. The owner decided
@@ -651,14 +728,7 @@ pub async fn create(
         return Err(rights_required());
     }
 
-    let max = config().await.features.community.max_items_per_creator;
-    if db
-        .count_community_items_by_creator(&user.id, &ACTIVE_STATUSES)
-        .await?
-        >= max
-    {
-        return Err(create_error!(TooManyCommunityItems { max }));
-    }
+    check_design_limits(db, &user, true).await?;
 
     let id = Ulid::new().to_string();
     let file = claim_file(db, &data.file, &kind, &id, &user).await?;
@@ -1476,14 +1546,7 @@ pub async fn restore(db: &State<Database>, user: User, id: &str) -> Result<Json<
     if withdrawn_by.as_deref() != Some(user.id.as_str()) {
         return Err(create_error!(InvalidOperation));
     }
-    let max = config().await.features.community.max_items_per_creator;
-    if db
-        .count_community_items_by_creator(&user.id, &ACTIVE_STATUSES)
-        .await?
-        >= max
-    {
-        return Err(create_error!(TooManyCommunityItems { max }));
-    }
+    check_design_limits(db, &user, false).await?;
     after.review_note = None;
     after.pending = None;
     let after = save(db, &before, after, false).await?;

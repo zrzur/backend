@@ -63,6 +63,14 @@ pub trait AbstractCommunityItems: Sync + Send {
         statuses: &[CommunityItemStatus],
     ) -> Result<usize>;
 
+    /// Count a creator's items made at or after `since_id` (a ULID, so ids
+    /// sort by creation time), in any status
+    async fn count_community_items_created_since(
+        &self,
+        creator_id: &str,
+        since_id: &str,
+    ) -> Result<usize>;
+
     /// Record a report (once per user); returns the number of reports
     async fn report_community_item(&self, id: &str, user_id: &str) -> Result<usize>;
 

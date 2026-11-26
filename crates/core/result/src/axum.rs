@@ -84,6 +84,7 @@ impl IntoResponse for Error {
             ErrorType::SoundLibraryUnavailable => StatusCode::SERVICE_UNAVAILABLE,
             ErrorType::TooManySpeakers { .. } => StatusCode::BAD_REQUEST,
             ErrorType::TooManyCommunityItems { .. } => StatusCode::BAD_REQUEST,
+            ErrorType::CommunityDailyLimit { .. } => StatusCode::TOO_MANY_REQUESTS,
             ErrorType::MissingPlatformPermission { .. } => StatusCode::FORBIDDEN,
             ErrorType::CommunityItemConflict => StatusCode::CONFLICT,
             ErrorType::ProfileTextFiltered { .. } => StatusCode::UNPROCESSABLE_ENTITY,

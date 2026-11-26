@@ -384,6 +384,10 @@ pub enum ErrorType {
     TooManyCommunityItems {
         max: usize,
     },
+    /// A creator made as many designs today as one day allows; try tomorrow
+    CommunityDailyLimit {
+        max: usize,
+    },
     /// Needs a platform permission (creator, reviewer, admin)
     MissingPlatformPermission {
         permission: String,

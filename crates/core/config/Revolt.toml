@@ -652,6 +652,9 @@ keep_delivered_days = 30
 # designs are published straight away (reviewers can still suspend them).
 # The file size limit is the `decorations` upload limit.
 max_items_per_creator = 50
+# New designs a creator may make in 24 hours (0: none). Founder, Zrzur Staff,
+# Developer and Platform Moderator have neither this nor the limit above.
+max_items_per_day = 20
 max_dimension = 1024
 max_frames = 240
 max_duration_ms = 12_000

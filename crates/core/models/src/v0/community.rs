@@ -285,6 +285,20 @@ auto_derived!(
         /// `cosmetics.manage_all`
         #[cfg_attr(feature = "serde", serde(default))]
         pub can_delete_any: bool,
+        /// Holds a top rank (Founder, Zrzur Staff, Developer, Platform
+        /// Moderator): no design limit and no daily limit
+        #[cfg_attr(feature = "serde", serde(default))]
+        pub unlimited_designs: bool,
+        /// Designs one may keep (not archived); absent when unlimited
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub max_designs: Option<usize>,
+        /// New designs one may make in 24 hours; absent when there is no
+        /// daily limit for this person
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub max_designs_per_day: Option<usize>,
+        /// New designs made in the last 24 hours, with `max_designs_per_day`
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none", default))]
+        pub designs_today: Option<usize>,
     }
 
     /// Creator's own choice about the public Designs site
