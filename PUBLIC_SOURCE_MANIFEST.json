@@ -550,8 +550,8 @@
     },
     {
       "path": "crates/core/config/Revolt.toml",
-      "sha256": "50e4d6c0a769778abe3165174d14d747a3b71bbe790b072fe718a368787b830e",
-      "bytes": 38572,
+      "sha256": "68acfa7ffbfe34749d270dfc43e4ed87b618a3b6145baace28168733da79b84e",
+      "bytes": 38747,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -580,8 +580,8 @@
     },
     {
       "path": "crates/core/config/src/settings.rs",
-      "sha256": "a14f5767107d0649616879c7dab32b3a01e31be985d9afb4c3188997af501157",
-      "bytes": 126004,
+      "sha256": "c06a73a1ae777d6c3ffc81f21e98823ec474964c5ba5bf9e24fe7b7266701945",
+      "bytes": 126399,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -2044,20 +2044,20 @@
     },
     {
       "path": "crates/core/database/src/models/community_items/ops.rs",
-      "sha256": "9097df5393663e72597030f2a331d627d8f29326faa6938aee5a12d0dbebe061",
-      "bytes": 5079,
+      "sha256": "6537c89340ebcd740422ac50b4806e011ec68819e694caaa94edcb921447094a",
+      "bytes": 5341,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/database/src/models/community_items/ops/mongodb.rs",
-      "sha256": "f01cdaddca815aac6480f51e4ffa7ba8b6d8b91022c38c8539c71d81c07462c8",
-      "bytes": 15167,
+      "sha256": "a50fc46ae3eb3c2e85eb180c207b22ea0f4c57ede803a2c154d1315704abba5c",
+      "bytes": 15624,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/database/src/models/community_items/ops/reference.rs",
-      "sha256": "234d53eff737c6f3a756fbd5170e4c1c4b64f2a6b22cdd4dbc1df84f21b9f338",
-      "bytes": 11802,
+      "sha256": "8edbb9b6d50fce723c4f27f1773d536c2eff64ae81d42ce73e4d9a0b0e8bf2b1",
+      "bytes": 12167,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -3910,8 +3910,8 @@
     },
     {
       "path": "crates/core/models/src/v0/community.rs",
-      "sha256": "d368b84c5887cbf909530818ede0b05fe4a61b83a71bda80250ff088eb5d9b48",
-      "bytes": 16380,
+      "sha256": "bc1eb310cb6d076726ca93d06cbc31a3799660f0f7b6465c0ce5bb4e12561b91",
+      "bytes": 17284,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4234,20 +4234,20 @@
     },
     {
       "path": "crates/core/result/error-codes.txt",
-      "sha256": "10b690b455575371204afa5f0f68257c32a84ca00a5aa812e8097e442a07f329",
-      "bytes": 3142,
+      "sha256": "81a09b31a0793b200c7d0acf7527290d4fb7ea5e8f3e2c58884e3a3f2d3a95a2",
+      "bytes": 3162,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/result/src/axum.rs",
-      "sha256": "33d9e03c35d38bb84a2418cbfd9d14f5050c4e193c80fd0d0c5328e096661340",
-      "bytes": 12595,
+      "sha256": "1b472a0a6c4158a1e1ead6c221fc6d9af668bd5c11ecae52803193ae5c8a5bf0",
+      "bytes": 12679,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/core/result/src/lib.rs",
-      "sha256": "206864eede6a3af954993c7a65aef620d099eb8a925576291c7f10963095aaee",
-      "bytes": 24964,
+      "sha256": "62abf68354b35f7032ebd5e8d5b2b270b58ed0548be7eb59659eaf8f20aca7ff",
+      "bytes": 25094,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -4258,8 +4258,8 @@
     },
     {
       "path": "crates/core/result/src/rocket.rs",
-      "sha256": "1f86fe3d71327690816ba403c4ccb101b26d0eb2e13779c969ec23d673cf5188",
-      "bytes": 12602,
+      "sha256": "ac8a8dde4afe57441747bc2fdba85fe037de50884ce03df599fa204df170801b",
+      "bytes": 12680,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -5386,14 +5386,14 @@
     },
     {
       "path": "crates/delta/src/routes/community/mod.rs",
-      "sha256": "bd6305fcbb6afdb9d3f8a5ebba757a5fa30cfba10bbd85caf63a81bba82ddcec",
-      "bytes": 62412,
+      "sha256": "5d273a969561c0309a74df2b19db46389256c45d0902e20709794f92572f560b",
+      "bytes": 64797,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "crates/delta/src/routes/community/test.rs",
-      "sha256": "c840996b64dbf17cd43d0e4da443037b0ad8ef5165906834b99265520e937719",
-      "bytes": 104002,
+      "sha256": "578405dce8dcadbf3a50e7f16425d76491ab110eb086fce5ca1ee47b0a888601",
+      "bytes": 106545,
       "category": "product-source-or-build-manifest"
     },
     {
