@@ -1411,6 +1411,8 @@ mod unit_tests {
             bot: "bot".to_string(),
             places: vec![],
             allow_dms: true,
+            inbox: String::new(),
+            inbox_channels: Default::default(),
             areas: AREAS.iter().map(|a| a.to_string()).collect(),
         }
     }

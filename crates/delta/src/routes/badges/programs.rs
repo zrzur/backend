@@ -418,6 +418,15 @@ pub async fn submit(db: &State<Database>, user: User, id: &str) -> Result<Json<v
     let application = own_application(db, &user, id).await?;
     let programs = config().await.api.badge_programs;
     let (application, _) = submit_application(db, &programs, &user, application, now_ms()).await?;
+    revolt_database::util::staff_inbox::announce(
+        db,
+        "badges",
+        format!(
+            "🏅 New application · {:?} for `{}` — `/desk queue verifications`",
+            application.program, application.target_id
+        ),
+    )
+    .await;
     application_view(db, &application).await.map(Json)
 }
 

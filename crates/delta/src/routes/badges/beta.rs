@@ -67,6 +67,12 @@ pub async fn request(db: &State<Database>, user: User) -> Result<Json<v0::BetaMe
         contributions: 0,
     };
     db.save_beta_member(&member).await?;
+    revolt_database::util::staff_inbox::announce(
+        db,
+        "beta",
+        format!("🧪 Asked to join the beta · <@{}>", member.id),
+    )
+    .await;
     membership(db, &member).await
 }
 

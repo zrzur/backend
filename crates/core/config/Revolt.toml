@@ -749,6 +749,10 @@ bot = ""
 # places = []       # channel ids where desk interactions are accepted
 # allow_dms = false
 # areas = []        # Phase 0 knows only "overview"
+# inbox = ""        # channel id: a line for each new report, ticket, bug, feedback
+# [features.staff_desk.inbox_channels]   # optional: a kind to its own channel
+# verification = ""  # reports, appeals, support, bugs, feedback, security,
+#                    # badges, beta, verification, discover, designs, plugins, team
 
 [features.team_applications]
 # "Join the Zrzur team": people apply for a team role through one bot in one

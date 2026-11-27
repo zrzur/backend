@@ -894,6 +894,12 @@ pub async fn submit(
         review_note: None,
     };
     db.insert_plugin_release(&release).await?;
+    revolt_database::util::staff_inbox::announce(
+        db,
+        "plugins",
+        format!("🧩 Plugin release sent for review `{}` — `/desk queue plugins`", release.id),
+    )
+    .await;
     audit(
         db,
         &plugin.id,

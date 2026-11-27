@@ -1693,6 +1693,15 @@ pub struct FeaturesStaffDesk {
     /// Areas the desk offers; Phase 0 knows only `overview`
     #[serde(default)]
     pub areas: Vec<String>,
+    /// Channel id of the staff inbox: one line there for every new report,
+    /// support ticket, bug and feedback (ids and kinds only). Empty: none.
+    #[serde(default)]
+    pub inbox: String,
+    /// One channel per kind, for kinds that go elsewhere than `inbox`:
+    /// reports, appeals, support, bugs, feedback, security, badges, beta,
+    /// verification, discover, designs, plugins, team
+    #[serde(default)]
+    pub inbox_channels: std::collections::BTreeMap<String, String>,
 }
 
 impl FeaturesStaffDesk {

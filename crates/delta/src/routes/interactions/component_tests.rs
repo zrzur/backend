@@ -1122,6 +1122,8 @@ async fn bot_payloads_never_carry_the_sign_in_or_the_desk_code() {
         bot: s.bot.id.clone(),
         places: vec![s.channel.id().to_string()],
         allow_dms: false,
+        inbox: String::new(),
+        inbox_channels: Default::default(),
         areas: vec!["overview".to_string()],
     });
     let mut bot_events = PubSubTestHelper::new(&format!("{}!", s.bot.id)).await;

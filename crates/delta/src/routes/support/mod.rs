@@ -279,6 +279,15 @@ pub async fn open_ticket(db: &State<Database>, user: User, data: Json<DataOpenTi
         closed_at: None,
     };
     db.insert_support_ticket(&ticket).await?;
+    revolt_database::util::staff_inbox::announce(
+        db,
+        "support",
+        format!(
+            "🎫 New support ticket · {} — `/desk ticket view ticket:{}`",
+            ticket.category, ticket.id
+        ),
+    )
+    .await;
     Ok(Json(view(&ticket, now)))
 }
 

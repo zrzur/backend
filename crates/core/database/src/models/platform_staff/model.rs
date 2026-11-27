@@ -24,6 +24,10 @@ auto_derived!(
         Analyst,
         #[serde(rename = "auditor")]
         Auditor,
+        /// Reviews what people ask for: bot verification, Discover
+        /// listings, designs. Can't punish anyone or delete anything.
+        #[serde(rename = "reviewer")]
+        Reviewer,
     }
 
     /// A platform administration permission. Server roles, server
@@ -91,6 +95,9 @@ auto_derived!(
         /// The volunteer team: list, notes, identity, confirm, away, remove
         #[serde(rename = "platform.team.manage")]
         TeamManage,
+        /// Decide on bot verification, Discover listings and designs
+        #[serde(rename = "platform.reviews.decide")]
+        ReviewsDecide,
     }
 
     /// Staff roles of one user (`platform_staff`)
