@@ -5506,8 +5506,8 @@
     },
     {
       "path": "crates/delta/src/routes/interactions/command_permission_tests.rs",
-      "sha256": "61e99246aaa81db4d215c10299898bccb7029437a0abe8d905fb8988600cf730",
-      "bytes": 30370,
+      "sha256": "6a94a79834acf511486d483bfcb92dcdaf7e44523b8f029b29771a137a2d1fd5",
+      "bytes": 30412,
       "category": "product-source-or-build-manifest"
     },
     {
