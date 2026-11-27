@@ -837,7 +837,7 @@ async fn every_team_route_refuses_without_team_manage() {
             denied += 1;
         }
     }
-    assert_eq!(denied, 8 * TEAM_ROUTES.len());
+    assert_eq!(denied, (StaffRole::ALL.len() - 1) * TEAM_ROUTES.len());
     // nothing changed
     let after = stored(&harness, &m.id).await;
     assert_eq!(after.status, TeamMemberStatus::Trial);
