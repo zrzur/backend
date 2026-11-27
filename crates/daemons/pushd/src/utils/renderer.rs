@@ -124,7 +124,16 @@ pub async fn render_notification_content(
         );
     }
 
-    Ok(body.to_string())
+    Ok(without_colour_codes(&body))
+}
+
+/// A notification shows text only: the ANSI colour codes of an `ansi` code
+/// block (ESC [ 31 m…) would be stray characters there, so they go
+fn without_colour_codes(body: &str) -> String {
+    Regex::new(r"\x1b\[[0-9;]*m")
+        .unwrap()
+        .replace_all(body, "")
+        .into_owned()
 }
 
 async fn get_items<F>(
@@ -268,5 +277,19 @@ fn replace_all_in_place<R: regex::Replacer>(regex: Regex, s: &mut Cow<'_, str>, 
     let new = regex.replace_all(s, replacer);
     if let Cow::Owned(o) = new {
         *s = Cow::Owned(o);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::without_colour_codes;
+
+    #[test]
+    fn colour_codes_leave_the_notification_text() {
+        assert_eq!(
+            without_colour_codes("```ansi\n\u{1b}[1;31mFailed\u{1b}[0m 2\n```"),
+            "```ansi\nFailed 2\n```"
+        );
+        assert_eq!(without_colour_codes("plain [31m text"), "plain [31m text");
     }
 }

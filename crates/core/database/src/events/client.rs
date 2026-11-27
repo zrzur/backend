@@ -616,6 +616,18 @@ pub enum EventV1 {
         application_id: String,
         server_id: String,
     },
+
+    /// A design joined the public Designs gallery (published or approved).
+    /// Sent on the `designs` topic to every signed-in person; `favourite` is
+    /// always false here, so keep your own.
+    CommunityItemCreate(revolt_models::v0::CommunityItem),
+    /// A design in the public gallery changed (name, image, tags...)
+    CommunityItemUpdate(revolt_models::v0::CommunityItem),
+    /// A design left the public gallery (suspended, archived, deleted).
+    /// Ids of designs you never saw can arrive too: ignore them.
+    CommunityItemDelete { id: String },
+    /// More people applied a public design
+    CommunityItemPopularity { id: String, popularity: i64 },
 }
 
 /// People named in one queue message of `EventV1::private_broadcast`

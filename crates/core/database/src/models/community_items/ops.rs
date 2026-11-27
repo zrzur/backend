@@ -98,8 +98,9 @@ pub trait AbstractCommunityItems: Sync + Send {
 
     async fn set_community_item_file_on_users(&self, id: &str, file_id: &str) -> Result<()>;
 
-    /// Count a user applying an item (once per user ever)
-    async fn record_community_item_use(&self, id: &str, user_id: &str) -> Result<()>;
+    /// Count a user applying an item (once per user ever). The item's new
+    /// popularity when this use counted, `None` when it was counted before.
+    async fn record_community_item_use(&self, id: &str, user_id: &str) -> Result<Option<i64>>;
 
     /// Append to the review log
     async fn insert_community_review(&self, review: &CommunityReview) -> Result<()>;

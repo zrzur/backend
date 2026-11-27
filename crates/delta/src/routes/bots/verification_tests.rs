@@ -214,7 +214,6 @@ async fn the_links_go_on_the_request_and_the_bot() {
     let harness = TestHarness::new().await;
     let (_, session, owner) = harness.new_user().await;
     let (bot, _) = harness.new_bot(&owner).await;
-    // the Verified Bot Developer numbers unlock asking (one legitimate server here)
     harness.legitimate_server_for(&bot.id).await;
 
     let status = apply(
@@ -236,4 +235,52 @@ async fn the_links_go_on_the_request_and_the_bot() {
     let saved = harness.db.fetch_bot(&bot.id).await.unwrap();
     assert_eq!(saved.privacy_policy_url, "https://example.org/privacy");
     assert_eq!(saved.terms_of_service_url, "https://example.org/terms");
+}
+
+/// Any bot may ask, whatever its size (owner, 2026-11-27: a bot in 25
+/// servers could not apply because fewer of them counted). The state shows
+/// the checklist the team looks at; servers and age wait for a person.
+#[rocket::async_test]
+async fn a_bot_in_no_server_that_counts_can_still_ask() {
+    let harness = TestHarness::new().await;
+    let (_, session, owner) = harness.new_user().await;
+    let (bot, _) = harness.new_bot(&owner).await;
+    fill_servers(&harness, &bot.id, 30).await;
+
+    let response = harness
+        .client
+        .get(format!("/bots/{}/verification", bot.id))
+        .header(Header::new("x-session-token", session.token.clone()))
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Ok);
+    let body: serde_json::Value = serde_json::from_str(&response.into_string().await.unwrap()).unwrap();
+    let line = |code: &str| {
+        body["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|line| line["code"] == code)
+            .cloned()
+            .unwrap_or_else(|| panic!("{code} in {body}"))
+    };
+    // none of the 30 servers counts, and that blocks nothing
+    assert_eq!(line("legit_servers")["value"], 0);
+    assert!(line("legit_servers")["met"].is_null());
+    assert_eq!(line("email")["met"], true);
+
+    let status = apply(
+        &harness,
+        &session,
+        &bot,
+        json!({
+            "statement": STATEMENT,
+            "privacy_policy_url": "https://example.org/privacy",
+            "terms_of_service_url": "https://example.org/terms",
+        }),
+    )
+    .await;
+    assert_eq!(status, Status::Ok);
+    let request = harness.db.fetch_bot_verifications_for_bot(&bot.id).await.unwrap().remove(0);
+    assert!(matches!(request.status, revolt_database::BotVerificationStatus::Pending));
 }

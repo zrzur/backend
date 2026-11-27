@@ -134,6 +134,9 @@ auto_derived!(
         pub limit: Option<i64>,
         /// Return members whose user id comes after this one
         pub after: Option<String>,
+        /// The members who joined last, newest first (`limit` of them,
+        /// default 100); `after` is not used with it
+        pub newest: Option<bool>,
     }
 
     /// Response with all members

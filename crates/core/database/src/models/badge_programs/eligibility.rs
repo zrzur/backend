@@ -199,9 +199,15 @@ pub async fn program_eligibility(
         let flags = bot.flags.unwrap_or_default();
         items.push(line("owner", Some(bot.owner == applicant.id), None, None));
         items.push(line("bot_active", Some(flags & BotFlags::Suspended as i32 == 0), None, None));
-        items.push(threshold_line("bot_age", days_old(&bot.id, now), programs.bot_age_days));
-        let servers = legit_bot_servers(db, &bot.id, &bot.owner, programs, now).await?;
-        items.push(threshold_line("legit_servers", servers as i64, programs.bot_servers as i64));
+        // the bot's age and servers never stop anyone from asking (owner,
+        // 2026-11-27: a bot in 25 servers could not apply because fewer of
+        // them counted): reached, they show as met; below, the team weighs
+        // them in the review with the numbers in front of it
+        let age = days_old(&bot.id, now);
+        items.push(line("bot_age", (age >= programs.bot_age_days).then_some(true), Some(age), Some(programs.bot_age_days)));
+        let servers = legit_bot_servers(db, &bot.id, &bot.owner, programs, now).await? as i64;
+        let needed = programs.bot_servers as i64;
+        items.push(line("legit_servers", (servers >= needed).then_some(true), Some(servers), Some(needed)));
     } else {
         let server = match db.fetch_server(target_id).await {
             Ok(server) => server,

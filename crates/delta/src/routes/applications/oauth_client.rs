@@ -29,6 +29,9 @@ async fn load(db: &Database, application_id: &str) -> Result<OAuthClient> {
 }
 
 /// # Fetch OAuth2 Settings
+///
+/// The application's OAuth2 redirect URIs, and whether it has a client
+/// secret (the secret itself is never shown again).
 #[openapi(tag = "OAuth2")]
 #[get("/<application_id>/oauth")]
 pub async fn fetch_oauth_settings(

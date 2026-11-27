@@ -493,27 +493,31 @@ pub async fn ingress(
                 server_id: server_id.clone(),
             };
 
-            let user = Reference::from_unchecked(user_id).as_user(db).await?;
-
-            let mut user_limits = user.limits().await;
-
-            // a supercharged server allows sharper streams for everyone in it
-            if let Some(server_id) = server_id.as_deref() {
-                if let Some(resolution) =
-                    revolt_database::server_supercharge_video(db, server_id).await
-                {
-                    if resolution[0] * resolution[1]
-                        > user_limits.video_resolution[0] * user_limits.video_resolution[1]
-                    {
-                        user_limits.video_resolution = resolution;
-                    }
-                }
-            }
-
             // forbid any size which goes over the limit and also limit the aspect ratio to stop people from making too tall or too wide and bypassing the limit.
             // TODO: figure out how to track audio stream quality
 
+            // Only a new track is checked against the person's limits. A
+            // stopped or muted one needs nothing but the update: a failed
+            // lookup here used to drop it, and the list kept showing a
+            // screen share (or camera) that had ended.
             if event.event == "track_published" {
+                let user = Reference::from_unchecked(user_id).as_user(db).await?;
+
+                let mut user_limits = user.limits().await;
+
+                // a supercharged server allows sharper streams for everyone in it
+                if let Some(server_id) = server_id.as_deref() {
+                    if let Some(resolution) =
+                        revolt_database::server_supercharge_video(db, server_id).await
+                    {
+                        if resolution[0] * resolution[1]
+                            > user_limits.video_resolution[0] * user_limits.video_resolution[1]
+                        {
+                            user_limits.video_resolution = resolution;
+                        }
+                    }
+                }
+
                 let mut disconnect = false;
 
                 if track.r#type == TrackType::Data as i32 {

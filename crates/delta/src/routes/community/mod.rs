@@ -356,10 +356,7 @@ async fn log(
 /// Save a changed item if nobody changed it since `before` was read
 async fn save(db: &Database, before: &CommunityItem, mut after: CommunityItem, clear_reports: bool) -> Result<CommunityItem> {
     after.version = before.version + 1;
-    if !db
-        .update_community_item(&after, before.version, clear_reports)
-        .await?
-    {
+    if !revolt_database::save_community_item(db, before, &after, clear_reports).await? {
         return Err(create_error!(CommunityItemConflict));
     }
     if before.status != after.status {
@@ -759,6 +756,7 @@ pub async fn create(
         rights,
     };
     db.insert_community_item(&item).await?;
+    revolt_database::announce_community_change(db, None, Some(&item)).await;
     if submit {
         log(db, &item, &user.id, sent_action(&item), None).await?;
         sync_creator_badge(db, &item.creator_id).await;

@@ -290,7 +290,7 @@ async fn suspend_item(
     after.status = status;
     after.review_note = Some(reason.to_string());
     after.version = before.version + 1;
-    if !db.update_community_item(&after, before.version, false).await? {
+    if !revolt_database::save_community_item(db, &before, &after, false).await? {
         return Err(create_error!(CommunityItemConflict));
     }
     take_off_wearers(db, &after, 2000).await?;
@@ -514,7 +514,7 @@ async fn reverse(db: &Database, actor: &User, action: &SafetyAction) -> Result<(
                 let mut after = before.clone();
                 after.status = CommunityItemStatus::Published;
                 after.version = before.version + 1;
-                if !db.update_community_item(&after, before.version, false).await? {
+                if !revolt_database::save_community_item(db, &before, &after, false).await? {
                     return Err(create_error!(CommunityItemConflict));
                 }
                 db.insert_community_review(&CommunityReview {

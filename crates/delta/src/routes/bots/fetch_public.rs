@@ -29,8 +29,12 @@ pub async fn fetch_public_bot(
             .await
             .ok()
             .map(|owner| PublicBotCreator {
+                // the owner chose to be shown: their profile opens from here
+                id: owner.id,
                 username: owner.username,
                 display_name: owner.display_name,
+                // their face beside their name, as everywhere else
+                avatar: owner.avatar.map(|file| file.id).unwrap_or_default(),
             })
     } else {
         None
@@ -85,5 +89,36 @@ mod test {
         // the add dialog needs these to ask for the right permissions
         assert_eq!(public_bot.default_permissions, Some(1 << 22));
         assert!(!public_bot.verified);
+    }
+
+    #[rocket::async_test]
+    async fn a_shown_creator_comes_with_their_profile() {
+        let harness = TestHarness::new().await;
+        let (_, _, user) = harness.new_user().await;
+        let (mut bot, _) = Bot::create(&harness.db, TestHarness::rand_string(), &user, None)
+            .await
+            .expect("`Bot`");
+        bot.update(
+            &harness.db,
+            PartialBot {
+                public: Some(true),
+                show_creator: Some(true),
+                ..Default::default()
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
+
+        let response = harness
+            .client
+            .get(format!("/bots/{}/invite", bot.id))
+            .dispatch()
+            .await;
+        let public_bot: v0::PublicBot = response.into_json().await.expect("`PublicBot`");
+        let creator = public_bot.creator.expect("the owner chose to show it");
+        // their id opens their profile from the bot's
+        assert_eq!(creator.id, user.id);
+        assert_eq!(creator.username, user.username);
     }
 }

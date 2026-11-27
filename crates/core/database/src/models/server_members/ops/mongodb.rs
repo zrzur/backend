@@ -53,7 +53,10 @@ impl AbstractServerMembers for MongoDb {
                     },
                     doc! {
                         "$set": {
-                            "joined_at": member.joined_at.duration_since(Timestamp::UNIX_EPOCH).whole_milliseconds() as i64,
+                            // stored as every member's is (text), so the
+                            // newest-first order counts someone who came back
+                            "joined_at": bson::to_bson(&member.joined_at)
+                                .map_err(|_| create_database_error!("to_bson", COL))?,
                         },
                         "$unset": {
                             "pending_deletion_at": ""
@@ -124,6 +127,24 @@ impl AbstractServerMembers for MongoDb {
             .col::<Member>(COL)
             .find(filter)
             .sort(doc! { "_id.user": 1_i32 })
+            .limit(limit)
+            .await
+            .map_err(|_| create_database_error!("find", COL))?
+            .filter_map(|s| async { s.ok() })
+            .collect()
+            .await)
+    }
+
+    async fn fetch_newest_members(&self, server_id: &str, limit: i64) -> Result<Vec<Member>> {
+        // the server's members by the compound_id index, then a top-`limit`
+        // sort: only the newest leave the database
+        Ok(self
+            .col::<Member>(COL)
+            .find(doc! {
+                "_id.server": server_id,
+                "pending_deletion_at": {"$exists": false}
+            })
+            .sort(doc! { "joined_at": -1_i32 })
             .limit(limit)
             .await
             .map_err(|_| create_database_error!("find", COL))?

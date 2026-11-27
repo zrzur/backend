@@ -96,6 +96,9 @@ pub trait AbstractServerMembers: Sync + Send {
         limit: i64,
     ) -> Result<Vec<Member>>;
 
+    /// Fetch the members who joined a server last, newest first
+    async fn fetch_newest_members(&self, server_id: &str, limit: i64) -> Result<Vec<Member>>;
+
     /// Fetch all members in a server as an iterator
     async fn fetch_all_members_chunked(
         &self,

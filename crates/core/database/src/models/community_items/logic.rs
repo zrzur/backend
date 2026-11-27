@@ -75,7 +75,12 @@ pub async fn erase_community_item(db: &crate::Database, id: &str) -> revolt_resu
     let ids: Vec<String> = files.iter().map(|file| file.id.clone()).collect();
     db.mark_attachments_as_deleted(&ids).await?;
     purge_files_later(files);
-    db.delete_community_item(id).await
+    db.delete_community_item(id).await?;
+    // open galleries drop it; a design that was never public is unknown to them
+    crate::events::client::EventV1::CommunityItemDelete { id: id.to_string() }
+        .p(crate::DESIGNS_TOPIC.to_string())
+        .await;
+    Ok(())
 }
 
 /// An account is erased: everything its owner made on Designs goes, whatever

@@ -186,6 +186,8 @@ partner_retention_min_joins = 50
 partner_review_days = 180
 verified_server_members = 10000
 verified_server_age_days = 180
+# a bot's servers that count and its age: shown to the team in the review,
+# never a reason a bot can't ask (owner, 2026-11-27)
 bot_servers = 25
 bot_age_days = 30
 bot_server_min_humans = 10
@@ -519,8 +521,9 @@ voice_quality = 16000
 # Whether the user can use video streams in voice calls
 video = true
 
-# Maximum resolution (width, height) of video streams in voice calls
-video_resolution = [1080, 720]
+# Maximum resolution (width, height) of video streams in voice calls:
+# 720p for everyone (1080 × 720 was a slip that shrank new accounts' shares)
+video_resolution = [1280, 720]
 
 # Minimum and maximum aspect ratio of video streams in voice calls
 video_aspect_ratio = [0.3, 2.5]

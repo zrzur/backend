@@ -272,20 +272,20 @@ impl AbstractCommunityItems for MongoDb {
         Ok(ids)
     }
 
-    async fn record_community_item_use(&self, id: &str, user_id: &str) -> Result<()> {
+    async fn record_community_item_use(&self, id: &str, user_id: &str) -> Result<Option<i64>> {
         let inserted = self
             .col::<bson::Document>(USES)
             .insert_one(doc! { "_id": format!("{id}:{user_id}"), "item": id, "user": user_id })
             .await;
         match inserted {
-            Ok(_) => {
-                self.col::<CommunityItem>(COL)
-                    .update_one(doc! { "_id": id }, doc! { "$inc": { "popularity": 1_i64 } })
-                    .await
-                    .map_err(|_| create_database_error!("update_one", COL))?;
-                Ok(())
-            }
-            Err(error) if is_duplicate(&error) => Ok(()),
+            Ok(_) => Ok(self
+                .col::<CommunityItem>(COL)
+                .find_one_and_update(doc! { "_id": id }, doc! { "$inc": { "popularity": 1_i64 } })
+                .return_document(mongodb::options::ReturnDocument::After)
+                .await
+                .map_err(|_| create_database_error!("find_one_and_update", COL))?
+                .map(|item| item.popularity)),
+            Err(error) if is_duplicate(&error) => Ok(None),
             Err(_) => Err(create_database_error!("insert_one", USES)),
         }
     }

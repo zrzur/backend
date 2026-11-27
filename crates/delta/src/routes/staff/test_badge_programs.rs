@@ -556,7 +556,7 @@ async fn the_official_entity_exception_gives_the_mark_and_no_owner_badge() {
 }
 
 #[rocket::async_test]
-async fn a_bot_needs_legitimate_servers_and_its_badge_ends_with_it() {
+async fn a_bot_asks_at_any_size_and_its_badge_ends_with_it() {
     let harness = TestHarness::new().await;
     let (_, session, owner) = harness.new_user().await;
     let (bot, _) = harness.new_bot(&owner).await;
@@ -566,10 +566,14 @@ async fn a_bot_needs_legitimate_servers_and_its_badge_ends_with_it() {
         "terms_of_service_url": "https://example.org/terms",
     });
 
-    // in no server yet: neither door opens
+    // in no server yet: asking is open all the same, and the line waits for
+    // a person instead of blocking (owner, 2026-11-27)
+    let (_, body) = as_user(&harness, &session, Get, &format!("/badges/programs/verified_bot/eligibility?target={}", bot.id), json!({})).await;
+    assert!(check(&body, "legit_servers")["met"].is_null(), "{body}");
+    assert_eq!(body["can_apply"], true, "{body}");
     let (status, body) = as_user(&harness, &session, Post, &format!("/bots/{}/verification", bot.id), legacy.clone()).await;
-    assert_eq!(status, Status::BadRequest);
-    assert_eq!(body["error"], "not_eligible:legit_servers");
+    assert_eq!(status, Status::Ok, "{body}");
+    assert_eq!(body["request"]["status"], "Pending");
     // the owner's own server never counts
     let (own, _) = harness.new_server(&owner).await;
     grow(&harness, &own.id, 5).await;

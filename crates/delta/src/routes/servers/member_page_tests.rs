@@ -138,3 +138,46 @@ async fn offline_members_left_out_still_give_the_next_page() {
         .await;
     assert_eq!(last, None);
 }
+
+#[rocket::async_test]
+async fn newest_gives_who_joined_last_however_big_the_server() {
+    // "New this week" in the lobby: the newest few, not the whole list
+    let setup = setup(0).await;
+    let now = iso8601_timestamp::Timestamp::now_utc();
+    let mut ids = Vec::new();
+    for hours in 0..6_i64 {
+        let user = ulid::Ulid::new().to_string();
+        setup
+            .harness
+            .db
+            .insert_user(&User {
+                id: user.clone(),
+                username: format!("joined{hours}"),
+                discriminator: "0001".to_string(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        setup
+            .harness
+            .db
+            .insert_or_merge_member(&Member {
+                id: MemberCompositeKey {
+                    server: setup.server.id.clone(),
+                    user: user.clone(),
+                },
+                joined_at: now - iso8601_timestamp::Duration::hours(hours + 1),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        ids.push(user);
+    }
+
+    let newest: HashSet<String> = setup.page("newest=true&limit=3").await.into_iter().collect();
+    // the owner joined just now; then the two who joined 1 and 2 hours ago
+    assert_eq!(newest.len(), 3);
+    assert!(newest.contains(&ids[0]));
+    assert!(newest.contains(&ids[1]));
+    assert!(!newest.contains(&ids[5]));
+}

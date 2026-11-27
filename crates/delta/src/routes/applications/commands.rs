@@ -126,6 +126,8 @@ pub async fn sync_global_commands(
 }
 
 /// # Fetch Global Command
+///
+/// One global command of this application, by its id.
 #[openapi(tag = "Application Commands")]
 #[get("/<application_id>/commands/<command_id>")]
 pub async fn fetch_global_command(
@@ -141,6 +143,9 @@ pub async fn fetch_global_command(
 }
 
 /// # Edit Global Command
+///
+/// Change one global command: only the fields sent change. The command keeps
+/// its id and gets a new version; servers refetch it.
 #[openapi(tag = "Application Commands")]
 #[patch("/<application_id>/commands/<command_id>", data = "<data>")]
 pub async fn edit_global_command(
@@ -158,6 +163,8 @@ pub async fn edit_global_command(
 }
 
 /// # Delete Global Command
+///
+/// Remove one global command from every server the bot is in.
 #[openapi(tag = "Application Commands")]
 #[delete("/<application_id>/commands/<command_id>")]
 pub async fn delete_global_command(
@@ -192,6 +199,9 @@ pub async fn list_server_commands(
 }
 
 /// # Create Server Command
+///
+/// Register a new command in one server only. A command with the same type
+/// and name there is a conflict.
 #[openapi(tag = "Application Commands")]
 #[post("/<application_id>/servers/<server_id>/commands", data = "<data>")]
 pub async fn create_server_command(
@@ -208,6 +218,10 @@ pub async fn create_server_command(
 }
 
 /// # Sync Server Commands
+///
+/// Replace every command of this application in one server with the given
+/// list, matched by type and name. The list is validated as a whole before
+/// anything changes.
 #[openapi(tag = "Application Commands")]
 #[put("/<application_id>/servers/<server_id>/commands", data = "<data>")]
 pub async fn sync_server_commands(
@@ -229,6 +243,8 @@ pub async fn sync_server_commands(
 }
 
 /// # Fetch Server Command
+///
+/// One command of this application in one server, by its id.
 #[openapi(tag = "Application Commands")]
 #[get("/<application_id>/servers/<server_id>/commands/<command_id>")]
 pub async fn fetch_server_command(
@@ -245,6 +261,9 @@ pub async fn fetch_server_command(
 }
 
 /// # Edit Server Command
+///
+/// Change one command of one server: only the fields sent change. The
+/// command keeps its id and gets a new version.
 #[openapi(tag = "Application Commands")]
 #[patch(
     "/<application_id>/servers/<server_id>/commands/<command_id>",
@@ -266,6 +285,8 @@ pub async fn edit_server_command(
 }
 
 /// # Delete Server Command
+///
+/// Remove one command from one server.
 #[openapi(tag = "Application Commands")]
 #[delete("/<application_id>/servers/<server_id>/commands/<command_id>")]
 pub async fn delete_server_command(

@@ -35,6 +35,7 @@ mod account;
 mod session;
 mod mfa;
 mod openapi_security;
+mod openapi_tidy;
 
 /// `revolt_rocket_okapi::mount_endpoints_and_merged_docs`, with the security
 /// section of the merged document set right (see `openapi_security`)
@@ -53,6 +54,7 @@ macro_rules! mount_endpoints_and_fixed_docs {
             Err(err) => panic!("Could not merge OpenAPI spec: {}", err),
         };
         openapi_security::fix_security(&mut openapi_docs);
+        openapi_tidy::tidy(&mut openapi_docs);
         $rocket_builder = $rocket_builder.mount(
             $base_path,
             vec![revolt_rocket_okapi::get_openapi_route(openapi_docs, &$openapi_settings)],
@@ -250,7 +252,7 @@ fn custom_openapi_spec() -> OpenApi {
         info: Info {
             title: "Zrzur API".to_owned(),
             description: Some(
-                "Zrzur 26 chat platform API (fork of Stoat/AGPL — see LICENSE)."
+                "The API of Zrzur, the chat and voice platform. A fork of Stoat, under the AGPL (see the license)."
                     .to_owned(),
             ),
             // Legal pages not yet published — leave unset rather than invent or link upstream.
@@ -272,24 +274,22 @@ fn custom_openapi_spec() -> OpenApi {
             version: env!("CARGO_PKG_VERSION").to_string(),
             ..Default::default()
         },
+        // generators take the first server as the default address
         servers: vec![
             Server {
-                url: "http://127.0.0.1:14702".to_owned(),
-                description: Some("Zrzur local development".to_owned()),
+                url: "https://api.zrzur.com".to_owned(),
+                description: Some("Zrzur".to_owned()),
                 ..Default::default()
             },
             Server {
-                url: "https://api.zrzur.com".to_owned(),
-                description: Some(
-                    "Zrzur planned production (require owner DNS + deploy)"
-                        .to_owned(),
-                ),
+                url: "http://127.0.0.1:14702".to_owned(),
+                description: Some("A server running on this computer".to_owned()),
                 ..Default::default()
             },
         ],
         external_docs: Some(ExternalDocs {
-            url: "https://zrzur.com".to_owned(),
-            description: Some("Zrzur documentation (planned)".to_owned()),
+            url: "https://app.zrzur.com/developers/docs".to_owned(),
+            description: Some("Zrzur developer documentation".to_owned()),
             ..Default::default()
         }),
         extensions,

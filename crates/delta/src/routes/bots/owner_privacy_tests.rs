@@ -1,5 +1,5 @@
 //! Who made a bot is the owner's choice (`show_creator`, on the bot's public
-//! page, by name only). The owner's account id in `User.bot.owner` is sent
+//! page, with their name, picture and profile). Otherwise the owner's account id in `User.bot.owner` is sent
 //! only to the owner, the bot itself and platform staff.
 
 use rocket::http::{Header, Status};

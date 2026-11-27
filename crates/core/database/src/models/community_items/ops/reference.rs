@@ -223,7 +223,7 @@ impl AbstractCommunityItems for ReferenceDb {
             .collect())
     }
 
-    async fn record_community_item_use(&self, id: &str, user_id: &str) -> Result<()> {
+    async fn record_community_item_use(&self, id: &str, user_id: &str) -> Result<Option<i64>> {
         if self
             .community_uses
             .lock()
@@ -232,9 +232,10 @@ impl AbstractCommunityItems for ReferenceDb {
         {
             if let Some(item) = self.community_items.lock().await.get_mut(id) {
                 item.popularity += 1;
+                return Ok(Some(item.popularity));
             }
         }
-        Ok(())
+        Ok(None)
     }
 
     async fn insert_community_review(&self, review: &CommunityReview) -> Result<()> {

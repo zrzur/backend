@@ -405,7 +405,7 @@ fn count_mentions(content: &str) -> usize {
     }
     seen.len()
         + content.contains("@everyone") as usize
-        + content.contains("@online") as usize
+        + (content.contains("@online") || content.contains("@here")) as usize
 }
 
 /// Hosts of the links in a message (http, https or www.), lower case

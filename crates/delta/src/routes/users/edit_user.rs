@@ -262,7 +262,14 @@ pub async fn edit(
                     && !revolt_database::creator_is_suspended(db, &item.creator_id).await?
                 {
                     if worn != value {
-                        db.record_community_item_use(id, &user.id).await?;
+                        if let Some(popularity) = db.record_community_item_use(id, &user.id).await? {
+                            // open galleries sort and show by it
+                            let event = revolt_database::events::client::EventV1::CommunityItemPopularity {
+                                id: id.to_string(),
+                                popularity,
+                            };
+                            event.p(revolt_database::DESIGNS_TOPIC.to_string()).await;
+                        }
                     }
                     *file = Some(item.file.id);
                 } else if worn == value && worn_file.is_some() {

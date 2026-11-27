@@ -17,6 +17,12 @@ impl crate::Bot {
             id: self.id,
             username: user.username,
             avatar: user.avatar.map(|x| x.id).unwrap_or_default(),
+            banner: user
+                .profile
+                .as_ref()
+                .and_then(|profile| profile.background.as_ref())
+                .map(|file| file.id.clone())
+                .unwrap_or_default(),
             description: user
                 .profile
                 .as_ref()

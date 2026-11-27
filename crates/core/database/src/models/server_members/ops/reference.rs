@@ -79,6 +79,18 @@ impl AbstractServerMembers for ReferenceDb {
         Ok(members)
     }
 
+    async fn fetch_newest_members(&self, server_id: &str, limit: i64) -> Result<Vec<Member>> {
+        let server_members = self.server_members.lock().await;
+        let mut members: Vec<Member> = server_members
+            .values()
+            .filter(|member| member.id.server == server_id)
+            .cloned()
+            .collect();
+        members.sort_by(|a, b| b.joined_at.cmp(&a.joined_at));
+        members.truncate(limit.max(0) as usize);
+        Ok(members)
+    }
+
     /// Fetch all members in a server as an iterator
     async fn fetch_all_members_chunked(
         &self,

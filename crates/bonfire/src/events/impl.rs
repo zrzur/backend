@@ -512,6 +512,11 @@ impl State {
         // Set subscription state internally.
         self.reset_state().await;
         self.insert_subscription(self.private_topic.clone()).await;
+        // the public Designs gallery updates live; bots have no gallery
+        if !self.cache.is_bot {
+            self.insert_subscription(revolt_database::DESIGNS_TOPIC.to_string())
+                .await;
+        }
 
         for user in &users {
             self.insert_subscription(user.id.clone()).await;

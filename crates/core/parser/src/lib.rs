@@ -22,7 +22,9 @@ pub enum MessageToken<'a> {
     Emoji(&'a str),
     #[token("@everyone")]
     MentionEveryone,
+    /// `@online`, or `@here` as in Discord: the members who are online
     #[token("@online")]
+    #[token("@here")]
     MentionOnline,
 }
 
@@ -156,6 +158,15 @@ mod tests {
 
         assert_eq!(output.len(), 1);
         assert_eq!(output[0], MessageToken::MentionOnline);
+    }
+
+    #[test]
+    fn test_mention_here_is_online() {
+        let output = parse_message_iter("Hello @here.").collect::<Vec<_>>();
+
+        assert_eq!(output, vec![MessageToken::MentionOnline]);
+        assert!(parse_message("@here").mentions_online);
+        assert!(!parse_message("`@here`").mentions_online);
     }
 
     #[test]

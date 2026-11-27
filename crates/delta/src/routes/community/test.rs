@@ -2592,3 +2592,69 @@ async fn top_ranks_have_no_limits() {
     assert_eq!(perms.max_designs, None);
     assert_eq!(perms.designs_today, None);
 }
+
+/// Open galleries hear about a design joining, changing and leaving the
+/// public gallery on the shared `designs` topic
+#[rocket::async_test]
+async fn open_galleries_hear_designs_come_and_go() {
+    use crate::util::test::PubSubTestHelper;
+    use revolt_database::events::client::EventV1;
+
+    let harness = TestHarness::new().await;
+    let mut designs = PubSubTestHelper::new(revolt_database::DESIGNS_TOPIC).await;
+    let (session, user) = creator(&harness).await;
+    let (rs, _) = reviewer(&harness).await;
+
+    // a draft is nobody's business
+    let (_, draft) = create_design(&harness, &session, &user, "Quiet", false).await;
+    let draft = draft.unwrap();
+
+    let (_, item) = submit_design(&harness, &session, &user, "Live").await;
+    let item = item.unwrap();
+    let id = item.id.clone();
+    let created = designs
+        .wait_for_event(|e| matches!(e, EventV1::CommunityItemCreate(i) if i.id == id))
+        .await;
+    if let EventV1::CommunityItemCreate(public) = created {
+        assert_eq!(public.name, "Live");
+        // only the public view travels
+        assert!(public.version.is_none() && public.rights.is_none());
+    }
+
+    // someone puts it on: the count moves
+    assert_eq!(wear(&harness, &rs, &id).await, Status::Ok);
+    designs
+        .wait_for_event(|e| {
+            matches!(e, EventV1::CommunityItemPopularity { id: i, popularity: 1 } if *i == id)
+        })
+        .await;
+
+    // taken down, then put back by a reviewer
+    assert_eq!(
+        act(&harness, &rs, &id, "suspend", Some("not original")).await,
+        Status::Ok
+    );
+    designs
+        .wait_for_event(|e| matches!(e, EventV1::CommunityItemDelete { id: i } if *i == id))
+        .await;
+    assert_eq!(act(&harness, &rs, &id, "approve", None).await, Status::Ok);
+    designs
+        .wait_for_event(|e| matches!(e, EventV1::CommunityItemCreate(i) if i.id == id))
+        .await;
+
+    // the draft never showed up: look at everything heard so far (a
+    // predicate that never matches reads the buffer, then waits)
+    let draft_id = draft.id.clone();
+    let seen = std::cell::Cell::new(false);
+    let _ = tokio::time::timeout(
+        std::time::Duration::from_millis(300),
+        designs.wait_for_event(|e| {
+            if matches!(e, EventV1::CommunityItemCreate(i) | EventV1::CommunityItemUpdate(i) if i.id == draft_id) {
+                seen.set(true);
+            }
+            false
+        }),
+    )
+    .await;
+    assert!(!seen.get(), "a draft was announced");
+}

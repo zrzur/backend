@@ -83,7 +83,28 @@ fn required_link(value: &str, field: &str) -> Result<String> {
     Ok(value.to_string())
 }
 
-async fn state(db: &Database, bot_id: &str, verified: bool) -> Result<v0::BotVerificationState> {
+/// The Verified Bot Developer checklist for this bot and its owner: what
+/// the team looks at, and the owner's own lines that stop a request
+async fn checklist(db: &Database, user: &User, bot_id: &str) -> Result<revolt_database::ProgramEligibility> {
+    let programs = revolt_config::config().await.api.badge_programs;
+    revolt_database::program_eligibility(
+        db,
+        &programs,
+        revolt_database::BadgeProgram::VerifiedBot,
+        user,
+        bot_id,
+        false,
+        false,
+        now_ms(),
+    )
+    .await
+}
+
+fn check_views(checklist: &revolt_database::ProgramEligibility) -> Vec<v0::ProgramCheck> {
+    checklist.items.iter().map(crate::routes::badges::programs::check_view).collect()
+}
+
+async fn state(db: &Database, bot_id: &str, verified: bool, checks: Vec<v0::ProgramCheck>) -> Result<v0::BotVerificationState> {
     let latest = db.fetch_bot_verifications_for_bot(bot_id).await?.into_iter().next();
     let can_apply_at = latest.as_ref().and_then(|r| match r.status {
         BotVerificationStatus::Denied | BotVerificationStatus::Revoked => r
@@ -96,6 +117,7 @@ async fn state(db: &Database, bot_id: &str, verified: bool) -> Result<v0::BotVer
         verified,
         request: latest.map(owner_view),
         can_apply_at,
+        checks,
     })
 }
 
@@ -114,15 +136,18 @@ pub async fn verification_state(
         return Err(create_error!(NotFound));
     }
     let verified = bot.flags.unwrap_or_default() & VERIFIED != 0;
-    state(db, &bot.id, verified).await.map(Json)
+    // a verified bot has nothing left to ask
+    let checks = if verified { vec![] } else { check_views(&checklist(db, &user, &bot.id).await?) };
+    state(db, &bot.id, verified, checks).await.map(Json)
 }
 
 /// # Apply for verification
 ///
 /// Ask Zrzur to verify your bot, and to approve the privileged intents it
-/// needs past 100 servers. Links to its privacy policy and terms are
-/// required, https only, and also go on the bot. One open request at a time;
-/// after a denial you can apply again a week later.
+/// needs past 100 servers. Any bot may ask, whatever its number of servers;
+/// you need a confirmed e-mail and to be 18 or older. Links to its privacy
+/// policy and terms are required, https only, and also go on the bot. One
+/// open request at a time; after a denial you can apply again a week later.
 #[openapi(tag = "Bots")]
 #[post("/<target>/verification", data = "<data>")]
 pub async fn apply_verification(
@@ -151,7 +176,7 @@ pub async fn apply_verification(
     if flags & SUSPENDED != 0 {
         return Err(create_error!(InvalidOperation));
     }
-    let current = state(db, &bot.id, false).await?;
+    let current = state(db, &bot.id, false, vec![]).await?;
     if current.request.as_ref().is_some_and(|r| r.status == "Pending") || current.can_apply_at.is_some() {
         return Err(create_error!(InvalidOperation));
     }
@@ -166,21 +191,10 @@ pub async fn apply_verification(
     }
     let privacy_policy_url = required_link(&data.privacy_policy_url, "privacy_policy_url")?;
     let terms_of_service_url = required_link(&data.terms_of_service_url, "terms_of_service_url")?;
-    // the Verified Bot Developer numbers only unlock asking: legitimate
-    // servers (not the owner's own, at most two per other owner, each with
-    // genuine members), the bot's age, an adult owner with a confirmed e-mail
-    let programs = revolt_config::config().await.api.badge_programs;
-    let checklist = revolt_database::program_eligibility(
-        db,
-        &programs,
-        revolt_database::BadgeProgram::VerifiedBot,
-        &user,
-        &bot.id,
-        false,
-        false,
-        now_ms(),
-    )
-    .await?;
+    // asking needs the owner, a bot that is not suspended, and an adult with
+    // a confirmed e-mail; the bot's servers and age are for the team to weigh
+    // (they never block asking)
+    let checklist = checklist(db, &user, &bot.id).await?;
     let missing = checklist.missing();
     if !missing.is_empty() {
         return Err(create_error!(FailedValidation {
@@ -214,5 +228,5 @@ pub async fn apply_verification(
         vec![],
     )
     .await?;
-    state(db, &bot.id, false).await.map(Json)
+    state(db, &bot.id, false, check_views(&checklist)).await.map(Json)
 }

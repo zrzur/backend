@@ -99,6 +99,10 @@ pub async fn approve(
 }
 
 /// # Reject Join Request
+///
+/// Refuse someone who asked to join: they do not become a member. Needs
+/// Manage Join Requests. Fails with `InvalidOperation` when the request was
+/// already decided.
 #[openapi(tag = "Server Members")]
 #[post("/<target>/join_requests/<applicant>/reject")]
 pub async fn reject(
@@ -135,6 +139,9 @@ pub async fn fetch_own(
 }
 
 /// # Cancel Own Join Request
+///
+/// Withdraw your own request to join this server, while it waits for a
+/// decision (afterwards: `InvalidOperation`).
 #[openapi(tag = "Server Members")]
 #[delete("/<target>/join_requests/@me")]
 pub async fn cancel_own(

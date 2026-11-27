@@ -39,7 +39,11 @@ pub async fn fetch_all(
     // Paged by user id. The old unpaged call stays for one release, capped
     // at MAX_PAGE, so a member can't copy a huge member list in one request.
     let mut next = None;
-    let mut members = if options.limit.is_some() || options.after.is_some() {
+    let mut members = if options.newest == Some(true) {
+        // who joined last, for "new this week": a page, never the whole list
+        let limit = options.limit.unwrap_or(DEFAULT_PAGE).clamp(1, MAX_PAGE);
+        db.fetch_newest_members(&server.id, limit).await?
+    } else if options.limit.is_some() || options.after.is_some() {
         let limit = options.limit.unwrap_or(DEFAULT_PAGE).clamp(1, MAX_PAGE);
         let page = db
             .fetch_members_page(&server.id, options.after.as_deref(), limit)

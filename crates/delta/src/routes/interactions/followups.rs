@@ -155,6 +155,10 @@ pub async fn delete_interaction_message(
 }
 
 /// # Delete Original Response
+///
+/// Delete the first reply to an interaction, private or public. Needs no
+/// bot token: the interaction's token is the key. Fails with `UnknownMessage`
+/// when nothing was sent yet.
 #[openapi(tag = "Interactions")]
 #[delete("/<interaction_id>/<token>/original")]
 pub async fn delete_original_response(

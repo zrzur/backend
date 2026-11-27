@@ -135,6 +135,12 @@ auto_derived!(
             serde(skip_serializing_if = "String::is_empty", default)
         )]
         pub avatar: String,
+        /// Profile banner (a GIF or animated WebP plays)
+        #[cfg_attr(
+            feature = "serde",
+            serde(skip_serializing_if = "String::is_empty", default)
+        )]
+        pub banner: String,
         /// Profile Description
         #[cfg_attr(
             feature = "serde",
@@ -180,8 +186,11 @@ auto_derived!(
     }
 
     /// The person who made a public bot, shown only when the owner chose so
-    /// (never their id)
+    /// (`show_creator`): then their profile opens from the bot's
     pub struct PublicBotCreator {
+        /// Their user id, to open their profile
+        #[cfg_attr(feature = "serde", serde(rename = "_id"))]
+        pub id: String,
         /// Username
         pub username: String,
         /// Display name
@@ -190,6 +199,12 @@ auto_derived!(
             serde(skip_serializing_if = "Option::is_none", default)
         )]
         pub display_name: Option<String>,
+        /// Their avatar (a file id)
+        #[cfg_attr(
+            feature = "serde",
+            serde(skip_serializing_if = "String::is_empty", default)
+        )]
+        pub avatar: String,
     }
 
     /// Where a bot receives its interactions over HTTP
@@ -359,6 +374,11 @@ auto_derived!(
         /// When the owner may apply (now if absent)
         #[serde(skip_serializing_if = "Option::is_none")]
         pub can_apply_at: Option<i64>,
+        /// What the team looks at, line by line (Verified Bot Developer's
+        /// checklist). Only `owner`, `bot_active`, `email` and `adult` stop
+        /// a request; the bot's servers and age never do
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub checks: Vec<super::ProgramCheck>,
     }
 );
 

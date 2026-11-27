@@ -450,8 +450,8 @@ pub(super) async fn decide_verification_core(
     if bot.owner == staff.user.id {
         return Err(create_error!(NotPrivileged));
     }
-    // the Verified Bot Developer numbers still hold (legitimate servers, age,
-    // an adult owner with a confirmed e-mail): this route is no way around them
+    // the owner's lines still hold (an adult with a confirmed e-mail, a bot
+    // that is not suspended); servers and age are the reviewer's judgement
     if data.approve {
         let owner = db.fetch_user(&bot.owner).await?;
         let programs = revolt_config::config().await.api.badge_programs;
