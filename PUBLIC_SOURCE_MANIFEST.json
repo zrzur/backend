@@ -46,7 +46,7 @@
     },
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "e822d94a6157e373204e89b938a54cdcd98ba5f3ef31f4202550cfd281a63469",
+      "sha256": "201d3fbe6212eb9d2647360d5ba6e588e33cc3ff00508e7fb90c43239dbbc235",
       "bytes": 6444,
       "category": "reviewed-build-and-ci"
     },
@@ -220,14 +220,14 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "cfe9fb1a200e31b20379ef5121e477b6bd908e50b6812e8343f3e279ac6d34b5",
-      "bytes": 266493,
+      "sha256": "62273b2ab18dbda4ee7120ddc39a59497e35e04b06fcd56bf58eaba8195f35b7",
+      "bytes": 274227,
       "category": "product-source-or-build-manifest"
     },
     {
       "path": "Cargo.toml",
-      "sha256": "f8dd673284b68d94da061c086b32131c9d90e145aa6a3d7c2819045f53fa9a52",
-      "bytes": 4744,
+      "sha256": "2f472511d0a48999101b4c5c1463f455be98c2ea744c92839b961acbb542d3af",
+      "bytes": 4742,
       "category": "product-source-or-build-manifest"
     },
     {
@@ -586,7 +586,7 @@
     },
     {
       "path": "crates/core/database/Cargo.toml",
-      "sha256": "676217c7465d99d4131dda58ad9e6f95f90e09833a2a8a6ab179d087f284eead",
+      "sha256": "bcc2cd51e9e97d146228158d6902ad7bea30a320da875608845e588685205472",
       "bytes": 3767,
       "category": "product-source-or-build-manifest"
     },
@@ -7480,7 +7480,7 @@
     },
     {
       "path": "crates/services/january/Cargo.toml",
-      "sha256": "7de2c267b870736db30b27d614ec065fa1389191890bc23554bd3b2b3b42dc53",
+      "sha256": "0314ab11cfcb8b93a5cb2c1885cacbc4ac07b60e00cfd5004f3df0c168cbb36f",
       "bytes": 1354,
       "category": "product-source-or-build-manifest"
     },
