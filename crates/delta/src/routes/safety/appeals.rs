@@ -152,6 +152,12 @@ pub async fn appeal(
         decided_at: None,
     };
     db.insert_safety_appeal(&appeal).await?;
+    revolt_database::util::staff_inbox::announce(
+        db,
+        "appeals",
+        format!("⚖️ New appeal `{}` — `/desk appeal list`", appeal.id),
+    )
+    .await;
 
     if let Some(case_id) = &action.case_id
         && let Ok(before) = db.fetch_safety_case(case_id).await

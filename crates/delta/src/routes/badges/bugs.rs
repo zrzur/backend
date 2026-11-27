@@ -200,6 +200,11 @@ pub async fn submit(
     db.insert_bug_report(&report).await?;
     revolt_database::util::staff_inbox::announce(
         db,
+        match report.kind {
+            BugKind::Security => "security",
+            BugKind::Feedback => "feedback",
+            _ => "bugs",
+        },
         format!(
             "{} New {} — `/desk bug view bug:{}`",
             match report.kind {

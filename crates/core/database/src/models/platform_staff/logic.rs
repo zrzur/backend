@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use crate::{PlatformAuditEntry, StaffGrant, StaffPermission, StaffRole, AUDIT_GENESIS_HASH};
 
 impl StaffRole {
-    pub const ALL: [StaffRole; 9] = [
+    pub const ALL: [StaffRole; 10] = [
         StaffRole::Owner,
         StaffRole::Security,
         StaffRole::Operations,
@@ -19,6 +19,7 @@ impl StaffRole {
         StaffRole::Billing,
         StaffRole::Analyst,
         StaffRole::Auditor,
+        StaffRole::Reviewer,
     ];
 
     /// What a role allows. This table is the permission matrix.
@@ -63,6 +64,7 @@ impl StaffRole {
                 ReportsResolve,
                 SupportRead,
                 CreatorsManage,
+                ReviewsDecide,
             ],
             StaffRole::SeniorSupport => &[
                 DashboardRead,
@@ -87,6 +89,7 @@ impl StaffRole {
             ],
             StaffRole::Analyst => &[DashboardRead, AnalyticsRead],
             StaffRole::Auditor => &[DashboardRead, AuditRead, StaffRead],
+            StaffRole::Reviewer => &[DashboardRead, UsersRead, ServersRead, ReviewsDecide],
         }
     }
 
@@ -101,6 +104,7 @@ impl StaffRole {
             StaffRole::Billing => "billing",
             StaffRole::Analyst => "analyst",
             StaffRole::Auditor => "auditor",
+            StaffRole::Reviewer => "reviewer",
         }
     }
 
@@ -110,7 +114,7 @@ impl StaffRole {
 }
 
 impl StaffPermission {
-    pub const ALL: [StaffPermission; 29] = [
+    pub const ALL: [StaffPermission; 30] = [
         StaffPermission::DashboardRead,
         StaffPermission::AnalyticsRead,
         StaffPermission::UsersRead,
@@ -140,6 +144,7 @@ impl StaffPermission {
         StaffPermission::CreatorsManage,
         StaffPermission::OfficialManage,
         StaffPermission::TeamManage,
+        StaffPermission::ReviewsDecide,
     ];
 
     pub fn name(&self) -> &'static str {
@@ -174,6 +179,7 @@ impl StaffPermission {
             CreatorsManage => "platform.creators.manage",
             OfficialManage => "platform.official.manage",
             TeamManage => "platform.team.manage",
+            ReviewsDecide => "platform.reviews.decide",
         }
     }
 
@@ -440,6 +446,25 @@ mod tests {
             );
         }
         assert_eq!(staff_role_permissions(&[R::Owner]).len(), StaffPermission::ALL.len());
+    }
+
+    #[test]
+    fn a_reviewer_reviews_and_nothing_more() {
+        let reviewer = staff_role_permissions(&[R::Reviewer]);
+        assert!(reviewer.contains(&P::ReviewsDecide));
+        for p in [
+            P::UsersSuspend,
+            P::UsersPiiRead,
+            P::ServersRestrict,
+            P::ServersDeleteRequest,
+            P::ReportsResolve,
+            P::BadgesManage,
+            P::StaffManage,
+            P::BillingRead,
+        ] {
+            assert!(!reviewer.contains(&p), "reviewer must not have {}", p.name());
+        }
+        assert!(staff_role_permissions(&[R::TrustSafety]).contains(&P::ReviewsDecide));
     }
 
     #[test]

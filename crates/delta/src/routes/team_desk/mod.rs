@@ -1355,6 +1355,12 @@ async fn apply(
         purge_at: None,
     };
     db.insert_team_application(&application).await?;
+    revolt_database::util::staff_inbox::announce(
+        db,
+        "team",
+        format!("🙋 New team application `{}`", application.id),
+    )
+    .await;
     if identity.is_some_and(|identity| identity.purge_at.is_some()) {
         keep_identity(db, &person.id).await;
     }

@@ -218,6 +218,15 @@ pub async fn apply_verification(
         decision_note: None,
     };
     db.insert_bot_verification(&request).await?;
+    revolt_database::util::staff_inbox::announce(
+        db,
+        "verification",
+        format!(
+            "✅ Bot verification asked · <@{}> — `/desk-review verification decide request:{}`",
+            request.bot_id, request.id
+        ),
+    )
+    .await;
     bot.update(
         db,
         PartialBot {

@@ -106,6 +106,7 @@ pub(super) fn settings(bot: &Bot, places: Vec<String>, allow_dms: bool) -> Featu
         places,
         allow_dms,
         inbox: String::new(),
+        inbox_channels: Default::default(),
         areas: vec!["overview".to_string()],
     }
 }

@@ -1286,6 +1286,17 @@ pub async fn submit(db: &State<Database>, user: User, id: &str) -> Result<Json<v
         db.set_community_item_file_on_users(id, &file).await?;
     }
     log(db, &after, &user.id, sent_action(&after), None).await?;
+    revolt_database::util::staff_inbox::announce(
+        db,
+        "designs",
+        format!(
+            "🎨 Sent for review · {:?} “{}” by <@{}> — `/desk queue designs`",
+            after.kind,
+            after.name.chars().take(60).collect::<String>(),
+            user.id
+        ),
+    )
+    .await;
     Ok(Json(after.into_v0(true, false)))
 }
 
