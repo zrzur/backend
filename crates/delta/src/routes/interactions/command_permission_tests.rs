@@ -842,7 +842,8 @@ async fn buttons_on_a_commands_answer_follow_its_rules() {
     assert_eq!(press("click-2").await, Status::Forbidden);
 }
 
-/// B3: the maker of a bot is only shown when they chose so, and never by id
+/// B3: the maker of a bot is only shown when they chose so; then their
+/// profile opens from the bot's page
 #[rocket::async_test]
 async fn the_bot_page_shows_its_maker_only_when_asked() {
     let s = setup().await;
@@ -877,5 +878,5 @@ async fn the_bot_page_shows_its_maker_only_when_asked() {
     assert!(edit(json!({ "show_creator": true })).await.code < 300);
     let shown = page().await;
     assert!(shown["creator"]["username"].is_string(), "{shown}");
-    assert!(shown["creator"].get("_id").is_none(), "{shown}");
+    assert_eq!(shown["creator"]["_id"], json!(s.bot.owner), "{shown}");
 }
