@@ -5398,8 +5398,8 @@
     },
     {
       "path": "crates/delta/src/routes/community/mod.rs",
-      "sha256": "9dcb4b5ee3e952beef04d7cc908360c5704a025ba5634c7556544a59b1f7582b",
-      "bytes": 65180,
+      "sha256": "b9b64d96feb9bd68a20bf0b4b3eea956cc5ff33cc5264fae9b1589f908cc28b9",
+      "bytes": 66339,
       "category": "product-source-or-build-manifest"
     },
     {
