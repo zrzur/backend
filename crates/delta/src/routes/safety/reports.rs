@@ -190,6 +190,14 @@ pub(crate) async fn file_report(
     };
     db.insert_safety_case(&case).await?;
     log(db, &case.id, SYSTEM_ACTOR, "Created", None, Some("Queued".into()), None).await?;
+    revolt_database::util::staff_inbox::announce(
+        db,
+        format!(
+            "📥 New report {} · {:?} · {:?} · priority {:?} — `/desk case view case:{}`",
+            case.reference, case.target.kind, case.category, case.priority, case.id
+        ),
+    )
+    .await;
 
     Ok(receipt(&case, false))
 }

@@ -1333,6 +1333,7 @@ async fn desk_people_are_found_by_id_or_name_also_in_a_dm() {
         bot: s.bot.id.clone(),
         places: vec![s.place.id().to_string()],
         allow_dms: true,
+        inbox: String::new(),
         areas: vec!["moderation".to_string()],
     });
     let staff = s.person(vec![StaffRole::Owner]).await;

@@ -198,6 +198,24 @@ pub async fn submit(
         updated_at: now,
     };
     db.insert_bug_report(&report).await?;
+    revolt_database::util::staff_inbox::announce(
+        db,
+        format!(
+            "{} New {} — `/desk bug view bug:{}`",
+            match report.kind {
+                BugKind::Security => "🔐",
+                BugKind::Feedback => "💬",
+                _ => "🐞",
+            },
+            match report.kind {
+                BugKind::Security => "security report",
+                BugKind::Feedback => "feedback",
+                _ => "bug report",
+            },
+            report.id
+        ),
+    )
+    .await;
     if tester {
         db.add_beta_contribution(&user.id).await?;
     }

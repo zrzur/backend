@@ -23,6 +23,7 @@ pub(super) fn all_areas(s: &Stage) {
         bot: s.bot.id.clone(),
         places: vec![s.place.id().to_string()],
         allow_dms: false,
+        inbox: String::new(),
         areas: [
             "overview",
             "lookup",

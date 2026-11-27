@@ -29,6 +29,7 @@ pub mod server_import;
 pub mod server_import_fetch;
 pub mod shield;
 pub mod signed_request;
+pub mod staff_inbox;
 pub mod status_emoji;
 pub mod team_activity;
 pub mod team_texts;

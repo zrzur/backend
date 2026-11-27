@@ -1693,6 +1693,10 @@ pub struct FeaturesStaffDesk {
     /// Areas the desk offers; Phase 0 knows only `overview`
     #[serde(default)]
     pub areas: Vec<String>,
+    /// Channel id of the staff inbox: one line there for every new report,
+    /// support ticket, bug and feedback (ids and kinds only). Empty: none.
+    #[serde(default)]
+    pub inbox: String,
 }
 
 impl FeaturesStaffDesk {

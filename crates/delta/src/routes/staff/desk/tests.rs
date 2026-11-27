@@ -105,6 +105,7 @@ pub(super) fn settings(bot: &Bot, places: Vec<String>, allow_dms: bool) -> Featu
         bot: bot.id.clone(),
         places,
         allow_dms,
+        inbox: String::new(),
         areas: vec!["overview".to_string()],
     }
 }
