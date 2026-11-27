@@ -760,8 +760,42 @@ pub async fn create(
     if submit {
         log(db, &item, &user.id, sent_action(&item), None).await?;
         sync_creator_badge(db, &item.creator_id).await;
+        revolt_database::util::staff_inbox::announce(
+            db,
+            "designs",
+            format!(
+                "{} · {:?} “{}” by <@{}> · `{}` — {}",
+                design_news(&item),
+                item.kind,
+                item.name.chars().take(60).collect::<String>(),
+                user.id,
+                item.id,
+                design_next(&item)
+            ),
+        )
+        .await;
     }
     Ok(Json(item.into_v0(true, false)))
+}
+
+/// The staff inbox line for a design a creator sent: live already (staff
+/// look at it after), or waiting for review (effects)
+fn design_news(item: &CommunityItem) -> &'static str {
+    let waiting = item.status == CommunityItemStatus::PendingReview
+        || item
+            .pending
+            .as_ref()
+            .is_some_and(|revision| revision.status == CommunityItemStatus::PendingReview);
+    if waiting {
+        "🎨 Waiting for review"
+    } else {
+        "🎨 Published, check it"
+    }
+}
+
+/// What staff do next with it, in the desk
+fn design_next(item: &CommunityItem) -> String {
+    format!("`/desk-review design review design:{}`", item.id)
 }
 
 /// # My community items
@@ -1290,10 +1324,13 @@ pub async fn submit(db: &State<Database>, user: User, id: &str) -> Result<Json<v
         db,
         "designs",
         format!(
-            "🎨 Sent for review · {:?} “{}” by <@{}> — `/desk queue designs`",
+            "{} · {:?} “{}” by <@{}> · `{}` — {}",
+            design_news(&after),
             after.kind,
             after.name.chars().take(60).collect::<String>(),
-            user.id
+            user.id,
+            after.id,
+            design_next(&after)
         ),
     )
     .await;
