@@ -30,7 +30,7 @@ mod find_mutual;
 mod get_default_avatar;
 mod open_dm;
 mod privacy;
-mod profile_fields;
+pub(crate) mod profile_fields;
 #[cfg(test)]
 mod profile_tests;
 #[cfg(test)]

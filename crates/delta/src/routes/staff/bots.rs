@@ -5,7 +5,8 @@
 //! - `platform.users.read`: list bots and see one
 //! - `platform.reports.resolve`: disable a bot
 //! - `platform.servers.read`: see the verification queue
-//! - `platform.servers.restrict`: verify, deny, take the mark away
+//! - `platform.reviews.decide`: verify or deny a request
+//! - `platform.servers.restrict`: take the mark away
 //! - `platform.servers.restrict`, step-up and the Owner role: delete a bot
 //!   (never an official one; see `deletion.rs`)
 //!
@@ -359,6 +360,62 @@ pub(super) async fn verifications_core(
     Ok(entries)
 }
 
+/// A request as the review room shows it: the request, the bot, and the
+/// bot's own profile (picture, description, links)
+#[derive(Serialize)]
+pub struct RoomEntry {
+    #[serde(flatten)]
+    pub entry: VerificationEntry,
+    /// The bot's display name, or its username
+    pub name: String,
+    /// The id of the bot's profile picture on the file server
+    pub avatar: Option<String>,
+    pub description: Option<String>,
+    pub links: Vec<String>,
+}
+
+/// # Zrzur Desk: bot verification requests for the review room
+///
+/// The desk bot only (404 for anyone else, and when the desk is off):
+/// the waiting requests, oldest first, with what a reviewer needs to see.
+/// Reading only; a decision is a press handed back to `/staff/desk/act`,
+/// where the presser's own staff grant and desk session decide.
+#[get("/desk/room/verifications")]
+pub async fn room_verifications(
+    db: &State<Database>,
+    user: revolt_database::User,
+) -> Result<Json<Vec<RoomEntry>>> {
+    super::desk::settings(&user).await?;
+    let requests = db
+        .fetch_bot_verifications(Some(BotVerificationStatus::Pending), None, 50)
+        .await?;
+    let mut entries = Vec::with_capacity(requests.len());
+    for request in requests {
+        let bot_user = db.fetch_user(&request.bot_id).await.ok();
+        let bot = match db.fetch_bot(&request.bot_id).await {
+            Ok(bot) => rows(db, vec![bot]).await?.pop(),
+            Err(_) => None,
+        };
+        let servers = db.fetch_server_count(&request.bot_id).await.unwrap_or(0);
+        let profile = bot_user.as_ref().and_then(|u| u.profile.clone());
+        entries.push(RoomEntry {
+            name: bot_user
+                .as_ref()
+                .map(|u| u.display_name.clone().unwrap_or_else(|| u.username.clone()))
+                .unwrap_or_default(),
+            avatar: bot_user.as_ref().and_then(|u| u.avatar.as_ref().map(|a| a.id.clone())),
+            description: profile.as_ref().and_then(|p| p.content.clone()),
+            links: profile.map(|p| p.links).unwrap_or_default(),
+            entry: VerificationEntry {
+                request: view(request),
+                bot,
+                servers,
+            },
+        });
+    }
+    Ok(Json(entries))
+}
+
 /// Sets or clears the verified flag and the mark on the bot's profile;
 /// `intents` are added to the approved privileged intents
 pub(crate) async fn set_verified(db: &Database, bot_id: &str, verified: bool, intents: i64) -> Result<()> {
@@ -426,7 +483,7 @@ pub(super) async fn decide_verification_core(
     id: &str,
     data: DataVerificationDecision,
 ) -> Result<VerificationView> {
-    staff.require(db, StaffPermission::ServersRestrict).await?;
+    staff.require(db, StaffPermission::ReviewsDecide).await?;
     let note = match data
         .note
         .as_deref()

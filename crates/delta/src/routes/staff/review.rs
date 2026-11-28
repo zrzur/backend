@@ -227,7 +227,7 @@ pub(super) async fn design_decide_core(
     data: DataStaffDesignDecision,
 ) -> Result<v0::CommunityItem> {
     staff
-        .require_step_up(db, StaffPermission::ReportsResolve)
+        .require_step_up(db, StaffPermission::ReviewsDecide)
         .await?;
     let action = match data.action.as_str() {
         "approve" => CommunityReviewAction::Approve,

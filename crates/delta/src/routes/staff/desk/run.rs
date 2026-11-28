@@ -32,7 +32,10 @@ use revolt_database::{
     AuditOutcome, AuditRecord, Database, DeskPending, Interaction, InteractionSource, User,
     record_platform_audit, staff_now,
 };
-use revolt_models::v0::{ButtonStyle, Component, ComponentBlock, InteractionType};
+use revolt_models::v0::{
+    ButtonStyle, CommandOptionType, Component, ComponentBlock, InteractionDataOption,
+    InteractionOptionValue, InteractionType,
+};
 use revolt_result::{ErrorType, Result, create_error};
 use rocket::{State, serde::json::Json};
 use ulid::Ulid;
@@ -46,6 +49,14 @@ use crate::util::on_heap::on_heap;
 
 const PATH_RUN: &str = "/staff/desk/run";
 const PATH_CONFIRM: &str = "/staff/desk/confirm";
+const PATH_ACT: &str = "/staff/desk/act";
+/// Custom id prefix of the review room's buttons and forms
+/// (`zd:act:<action>:<id>`)
+pub const ACT_PREFIX: &str = "zd:act:";
+/// The room's form that edits a bot's profile (`zd:act:bot-edit:<bot id>`)
+const EDIT_PREFIX: &str = "zd:act:bot-edit:";
+/// Longest description of a bot's profile, as for anyone's profile
+const DESCRIPTION_MAX: usize = 2000;
 /// Custom id prefix of a confirmation button
 pub const CONFIRM_PREFIX: &str = "zd:confirm:";
 
@@ -211,6 +222,178 @@ pub async fn run(
     registry::dispatch(db, &staff, entry, &input)
         .await
         .map(|view| Json(view.finish()))
+}
+
+/// What a review room press stands for: the desk command (command, group,
+/// name) and its options. Only these actions exist; the request id is the
+/// only value taken from the button, and the note only from the form's own
+/// field. Anything else is refused.
+pub(super) fn room_command(
+    custom_id: &str,
+    note: &str,
+) -> Option<(&'static str, Option<&'static str>, &'static str, Vec<InteractionDataOption>)> {
+    let rest = custom_id.strip_prefix(ACT_PREFIX)?;
+    let (action, id) = rest.split_once(':')?;
+    if id.is_empty() || id.len() > 64 || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return None;
+    }
+    let text = |name: &str, value: &str| InteractionDataOption {
+        name: name.to_string(),
+        kind: CommandOptionType::String,
+        value: Some(InteractionOptionValue::String(value.to_string())),
+        options: None,
+    };
+    let (decision, needs_note) = match action {
+        "verify-approve" => ("approve", false),
+        "verify-deny" => ("deny", true),
+        _ => return None,
+    };
+    let mut options = vec![text("request", id), text("decision", decision)];
+    let note = note.trim();
+    if !note.is_empty() {
+        options.push(text("note", note));
+    } else if needs_note {
+        return None;
+    }
+    Some(("desk-review", Some("verification"), "decide", options))
+}
+
+/// A reviewer fixes a bot's public description and links (one per line)
+/// before deciding: the same checks as anyone's own profile (clean links,
+/// the platform's word list), for staff who may decide reviews. Recorded in
+/// the platform audit log first, with what it was before.
+async fn edit_bot_profile(
+    db: &Database,
+    staff: &StaffContext,
+    bot_id: &str,
+    description: &str,
+    links: &str,
+) -> Result<DeskView> {
+    staff
+        .require_protective(db, revolt_database::StaffPermission::ReviewsDecide)
+        .await?;
+    if bot_id.is_empty() || bot_id.len() > 64 || !bot_id.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err(create_error!(InvalidOperation));
+    }
+    let bot = db.fetch_bot(bot_id).await?;
+    if bot.owner == staff.user.id {
+        return Err(create_error!(NotPrivileged));
+    }
+    if description.chars().count() > DESCRIPTION_MAX {
+        return Err(create_error!(FailedValidation {
+            error: format!("the description is longer than {DESCRIPTION_MAX} characters")
+        }));
+    }
+    let raw: Vec<String> = links
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect();
+    let links = crate::routes::users::profile_fields::clean_links(&raw)?;
+    for text in std::iter::once(description.to_string()).chain(links.iter().cloned()) {
+        if let Some(category) = revolt_database::check_platform_words(db, &text).await? {
+            return Err(create_error!(ProfileTextFiltered {
+                category: format!("{category:?}")
+            }));
+        }
+    }
+    let mut user = db.fetch_user(&bot.id).await?;
+    let mut profile = user.profile.clone().unwrap_or_default();
+    let before = (profile.content.clone().unwrap_or_default(), profile.links.join(" "));
+    profile.content = (!description.is_empty()).then(|| description.to_string());
+    profile.links = links;
+    let mut record = staff.record(
+        "staff.bot.profile.edit",
+        Some(revolt_database::StaffPermission::ReviewsDecide),
+    );
+    record.target_kind = Some("bot".to_string());
+    record.target_id = Some(bot.id.clone());
+    record.summary = Some(format!(
+        "desk: profile edited (before: {} chars, links {})",
+        before.0.chars().count(),
+        if before.1.is_empty() { "none" } else { before.1.as_str() }
+    ));
+    record_platform_audit(db, record, AuditOutcome::Success).await?;
+    user.update(
+        db,
+        revolt_database::PartialUser {
+            profile: Some(profile),
+            ..Default::default()
+        },
+        vec![],
+    )
+    .await?;
+    Ok(DeskView::new("Bot profile updated")
+        .line(format!("The description and links of <@{}> are saved.", bot.id))
+        .finish())
+}
+
+/// # Desk: a press in the review room
+///
+/// A button (or the form of one) on a card the desk bot posted in its
+/// review room: `zd:act:<action>:<id>`. Every check of `/run` applies (the
+/// desk's place, the presser's staff grant and desk session), the press
+/// stands for one desk command with fixed options, and the answer is that
+/// command's confirmation card: nothing changes before Confirm.
+#[post("/desk/act", data = "<data>")]
+pub async fn act(
+    db: &State<Database>,
+    user: User,
+    data: Json<DataDeskInteraction>,
+) -> Result<Json<DeskView>> {
+    let (staff, pressed) =
+        desk_actor(db, &user, &data, Expect::PressPrefix(ACT_PREFIX), PATH_ACT).await?;
+    let settings = super::settings(&user).await?;
+    // the bot's profile, edited from the room's form: done at once, recorded
+    if let Some(bot_id) = pressed
+        .custom_id
+        .as_deref()
+        .and_then(|custom| custom.strip_prefix(EDIT_PREFIX))
+    {
+        if pressed.kind != InteractionType::ModalSubmit {
+            return Err(create_error!(InvalidOperation));
+        }
+        return edit_bot_profile(
+            db,
+            &staff,
+            bot_id,
+            super::actor::field(&pressed, "description"),
+            super::actor::field(&pressed, "links"),
+        )
+        .await
+        .map(Json);
+    }
+    let note = super::actor::field(&pressed, "note");
+    let Some((command, group, name, options)) = pressed
+        .custom_id
+        .as_deref()
+        .and_then(|custom| room_command(custom, note))
+    else {
+        let mut record = staff.record("staff.desk.act", None);
+        record.summary = Some("desk: not a review room action".to_string());
+        record_platform_audit(db, record, AuditOutcome::Denied).await?;
+        return Err(create_error!(InvalidOperation));
+    };
+    let entry =
+        registry::find(command, group, name).ok_or_else(|| create_error!(InvalidOperation))?;
+    if !entry.offered(&settings) {
+        return Err(create_error!(NotFound));
+    }
+    if let Some(permission) = entry.permission {
+        staff.require_protective(db, permission).await?;
+    }
+    let input = DeskInput {
+        options,
+        areas: settings.areas.clone(),
+        lang: Lang::from_locale(pressed.locale.as_deref()),
+        pending: None,
+        page: 1,
+        origin: pressed.id.clone(),
+    };
+    propose(db, &staff, &settings, &pressed, entry, input)
+        .await
+        .map(Json)
 }
 
 /// The confirmation card of a pending action, as the bot must show it
@@ -543,4 +726,42 @@ pub async fn confirm(
     })
     .await
     .map(Json)
+}
+
+#[cfg(test)]
+mod room_tests {
+    use super::*;
+
+    fn value(options: &[InteractionDataOption], name: &str) -> Option<String> {
+        options.iter().find(|o| o.name == name).and_then(|o| match &o.value {
+            Some(InteractionOptionValue::String(v)) => Some(v.clone()),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn a_room_press_stands_for_the_desk_decision_with_fixed_options() {
+        let (command, group, name, options) =
+            room_command("zd:act:verify-approve:01ABCDEF", "").unwrap();
+        assert_eq!((command, group, name), ("desk-review", Some("verification"), "decide"));
+        assert_eq!(value(&options, "request").as_deref(), Some("01ABCDEF"));
+        assert_eq!(value(&options, "decision").as_deref(), Some("approve"));
+        assert_eq!(value(&options, "note"), None);
+
+        let (_, _, _, options) = room_command("zd:act:verify-deny:01ABCDEF", " not ready ").unwrap();
+        assert_eq!(value(&options, "decision").as_deref(), Some("deny"));
+        assert_eq!(value(&options, "note").as_deref(), Some("not ready"));
+    }
+
+    #[test]
+    fn anything_else_is_refused() {
+        // a denial needs the owner's note
+        assert!(room_command("zd:act:verify-deny:01ABCDEF", "  ").is_none());
+        // only the known actions, and only a plain id
+        assert!(room_command("zd:act:ban:01ABCDEF", "").is_none());
+        assert!(room_command("zd:act:verify-approve:", "").is_none());
+        assert!(room_command("zd:act:verify-approve:01ABC:extra", "").is_none());
+        assert!(room_command("zd:act:verify-approve:../x", "").is_none());
+        assert!(room_command("zd:confirm:01ABCDEF", "").is_none());
+    }
 }

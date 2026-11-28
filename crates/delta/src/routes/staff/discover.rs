@@ -64,7 +64,7 @@ pub(super) async fn decide_core(
     id: &str,
     data: DataDiscoverDecision,
 ) -> Result<()> {
-    staff.require(db, StaffPermission::ServersRestrict).await?;
+    staff.require(db, StaffPermission::ReviewsDecide).await?;
     let request_type = match kind {
         "server" => DiscoverRequestType::Server,
         "bot" => DiscoverRequestType::Bot,

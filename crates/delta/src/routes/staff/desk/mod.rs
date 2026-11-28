@@ -68,7 +68,8 @@ pub fn routes() -> Vec<Route> {
         overview::overview,
         run::commands,
         run::run,
-        run::confirm
+        run::confirm,
+        run::act
     ]
 }
 
