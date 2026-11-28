@@ -57,6 +57,9 @@ pub enum Expect<'a> {
     /// Any `/desk` command, or a button whose custom id starts with this
     /// (`/staff/desk/run`: a command or one of its page buttons)
     CommandOrButton(&'a str),
+    /// A button or a submitted form whose custom id starts with this
+    /// (`/staff/desk/act`: the review room's `zd:act:`)
+    PressPrefix(&'a str),
 }
 
 impl Expect<'_> {
@@ -88,6 +91,15 @@ impl Expect<'_> {
             Expect::CommandOrButton(prefix) => {
                 Expect::AnyCommand.matches(interaction)
                     || Expect::ButtonPrefix(prefix).matches(interaction)
+            }
+            Expect::PressPrefix(prefix) => {
+                matches!(
+                    interaction.kind,
+                    InteractionType::Component | InteractionType::ModalSubmit
+                ) && interaction
+                    .custom_id
+                    .as_deref()
+                    .is_some_and(|id| id.starts_with(prefix) && id.len() > prefix.len())
             }
             Expect::Button(id) => {
                 interaction.kind == InteractionType::Component

@@ -57,6 +57,7 @@ use ulid::Ulid;
 pub fn routes() -> Vec<Route> {
     platform::mark_started();
     let mut all = routes![
+        bots::room_verifications,
         words::list,
         words::add,
         words::remove,
