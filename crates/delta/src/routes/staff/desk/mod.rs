@@ -13,6 +13,7 @@
 //!
 //! [`StaffContext`]: super::StaffContext
 
+mod actions;
 mod actor;
 mod admin;
 #[cfg(test)]

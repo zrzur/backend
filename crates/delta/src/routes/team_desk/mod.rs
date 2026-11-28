@@ -1358,7 +1358,11 @@ async fn apply(
     revolt_database::util::staff_inbox::announce(
         db,
         "team",
-        format!("🙋 New team application `{}`", application.id),
+        format!(
+            "🙋 New team application `{}`{}",
+            application.id,
+            revolt_database::util::staff_inbox::tag("team", &application.id)
+        ),
     )
     .await;
     if identity.is_some_and(|identity| identity.purge_at.is_some()) {

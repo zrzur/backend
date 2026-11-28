@@ -194,8 +194,9 @@ pub(crate) async fn file_report(
         db,
         "reports",
         format!(
-            "📥 New report {} · {:?} · {:?} · priority {:?} — `/desk case view case:{}`",
-            case.reference, case.target.kind, case.category, case.priority, case.id
+            "📥 New report {} · {:?} · {:?} · priority {:?} — `/desk case view case:{}`{}",
+            case.reference, case.target.kind, case.category, case.priority, case.id,
+            revolt_database::util::staff_inbox::tag("case", &case.id)
         ),
     )
     .await;

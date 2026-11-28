@@ -206,7 +206,7 @@ pub async fn submit(
             _ => "bugs",
         },
         format!(
-            "{} New {} — `/desk bug view bug:{}`",
+            "{} New {} — `/desk bug view bug:{}`{}",
             match report.kind {
                 BugKind::Security => "🔐",
                 BugKind::Feedback => "💬",
@@ -217,7 +217,8 @@ pub async fn submit(
                 BugKind::Feedback => "feedback",
                 _ => "bug report",
             },
-            report.id
+            report.id,
+            revolt_database::util::staff_inbox::tag("bug", &report.id)
         ),
     )
     .await;
