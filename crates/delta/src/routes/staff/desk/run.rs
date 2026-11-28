@@ -243,19 +243,54 @@ pub(super) fn room_command(
         value: Some(InteractionOptionValue::String(value.to_string())),
         options: None,
     };
-    let (decision, needs_note) = match action {
-        "verify-approve" => ("approve", false),
-        "verify-deny" => ("deny", true),
-        _ => return None,
-    };
-    let mut options = vec![text("request", id), text("decision", decision)];
     let note = note.trim();
-    if !note.is_empty() {
-        options.push(text("note", note));
-    } else if needs_note {
-        return None;
+    match action {
+        // a bot asking for the verified mark
+        "verify-approve" | "verify-deny" => {
+            let deny = action == "verify-deny";
+            if deny && note.is_empty() {
+                return None;
+            }
+            let mut options = vec![
+                text("request", id),
+                text("decision", if deny { "deny" } else { "approve" }),
+            ];
+            if !note.is_empty() {
+                options.push(text("note", note));
+            }
+            Some(("desk-review", Some("verification"), "decide", options))
+        }
+        // a support ticket answered from its card, closed with it or not
+        "ticket-reply" | "ticket-reply-close" => {
+            if note.is_empty() {
+                return None;
+            }
+            let options = vec![
+                text("ticket", id),
+                text("text", note),
+                InteractionDataOption {
+                    name: "close".to_string(),
+                    kind: CommandOptionType::Boolean,
+                    value: Some(InteractionOptionValue::Boolean(action == "ticket-reply-close")),
+                    options: None,
+                },
+            ];
+            Some(("desk-support", Some("ticket"), "reply", options))
+        }
+        // a design waiting in the gallery's queue; refusing needs a reason
+        "design-approve" | "design-reject" | "design-suspend" => {
+            let decision = &action["design-".len()..];
+            if decision != "approve" && note.is_empty() {
+                return None;
+            }
+            let mut options = vec![text("design", id), text("action", decision)];
+            if !note.is_empty() {
+                options.push(text("reason", note));
+            }
+            Some(("desk-review", Some("design"), "review", options))
+        }
+        _ => None,
     }
-    Some(("desk-review", Some("verification"), "decide", options))
 }
 
 /// A reviewer fixes a bot's public description and links (one per line)
@@ -763,5 +798,37 @@ mod room_tests {
         assert!(room_command("zd:act:verify-approve:01ABC:extra", "").is_none());
         assert!(room_command("zd:act:verify-approve:../x", "").is_none());
         assert!(room_command("zd:confirm:01ABCDEF", "").is_none());
+        // a ticket answer needs its text, a refused design its reason
+        assert!(room_command("zd:act:ticket-reply:01ABCDEF", " ").is_none());
+        assert!(room_command("zd:act:design-reject:01ABCDEF", "").is_none());
+        assert!(room_command("zd:act:design-suspend:01ABCDEF", "").is_none());
+        assert!(room_command("zd:act:design-delete:01ABCDEF", "x").is_none());
+    }
+
+    #[test]
+    fn tickets_and_designs_stand_for_their_desk_commands() {
+        let (command, group, name, options) =
+            room_command("zd:act:ticket-reply-close:01ABCDEF", " Fixed, thanks ").unwrap();
+        assert_eq!((command, group, name), ("desk-support", Some("ticket"), "reply"));
+        assert_eq!(value(&options, "ticket").as_deref(), Some("01ABCDEF"));
+        assert_eq!(value(&options, "text").as_deref(), Some("Fixed, thanks"));
+        let close = options.iter().find(|o| o.name == "close").and_then(|o| match o.value {
+            Some(InteractionOptionValue::Boolean(v)) => Some(v),
+            _ => None,
+        });
+        assert_eq!(close, Some(true));
+        let (_, _, _, options) = room_command("zd:act:ticket-reply:01ABCDEF", "hi").unwrap();
+        assert!(options.iter().any(|o| o.name == "close"
+            && matches!(o.value, Some(InteractionOptionValue::Boolean(false)))));
+
+        let (command, group, name, options) =
+            room_command("zd:act:design-approve:01ABCDEF", "").unwrap();
+        assert_eq!((command, group, name), ("desk-review", Some("design"), "review"));
+        assert_eq!(value(&options, "design").as_deref(), Some("01ABCDEF"));
+        assert_eq!(value(&options, "action").as_deref(), Some("approve"));
+        assert_eq!(value(&options, "reason"), None);
+        let (_, _, _, options) = room_command("zd:act:design-reject:01ABCDEF", "blurry").unwrap();
+        assert_eq!(value(&options, "action").as_deref(), Some("reject"));
+        assert_eq!(value(&options, "reason").as_deref(), Some("blurry"));
     }
 }

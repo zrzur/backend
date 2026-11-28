@@ -24,6 +24,7 @@ mod official;
 mod platform;
 mod policies;
 mod review;
+mod room;
 mod safety;
 mod security;
 mod servers;
@@ -58,6 +59,8 @@ pub fn routes() -> Vec<Route> {
     platform::mark_started();
     let mut all = routes![
         bots::room_verifications,
+        room::room_tickets,
+        room::room_designs,
         words::list,
         words::add,
         words::remove,
