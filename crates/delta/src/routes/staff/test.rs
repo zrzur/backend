@@ -867,7 +867,7 @@ async fn discover_approval_follows_staff_roles() {
     assert!(queue.as_array().unwrap().iter().any(|e| e["request"]["id"] == server.id.as_str()));
     let (status, body) = send(&harness, &support, &support_token, Post, &path, json!({ "decision": "Approve" })).await;
     assert_eq!(status, Status::Forbidden);
-    assert_eq!(body["permission"], "platform.servers.restrict");
+    assert_eq!(body["permission"], "platform.reviews.decide");
 
     // denying needs a reason the owner can read
     let (status, _) = send(&harness, &ts, &ts_token, Post, &path, json!({ "decision": "Deny" })).await;
