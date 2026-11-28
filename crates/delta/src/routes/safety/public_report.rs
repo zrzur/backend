@@ -472,8 +472,9 @@ pub async fn create_public(
         db,
         "reports",
         format!(
-            "📥 New public report {} · {:?} · {:?} — `/desk case view case:{}`",
-            case.reference, case.target.kind, case.category, case.id
+            "📥 New public report {} · {:?} · {:?} — `/desk case view case:{}`{}",
+            case.reference, case.target.kind, case.category, case.id,
+            revolt_database::util::staff_inbox::tag("case", &case.id)
         ),
     )
     .await;

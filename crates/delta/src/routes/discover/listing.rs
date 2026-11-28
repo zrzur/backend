@@ -99,15 +99,15 @@ pub async fn submit(
         return Err(create_error!(Banned));
     }
 
-    let what = match request_type {
-        DiscoverRequestType::Bot => format!("bot <@{id}>"),
-        DiscoverRequestType::Server => format!("server `{id}`"),
+    let (what, mark) = match request_type {
+        DiscoverRequestType::Bot => (format!("bot <@{id}>"), revolt_database::util::staff_inbox::tag("discover-bot", id)),
+        DiscoverRequestType::Server => (format!("server `{id}`"), revolt_database::util::staff_inbox::tag("discover-server", id)),
     };
     let mut request = db.insert_discover_request(request_type, id).await?;
     revolt_database::util::staff_inbox::announce(
         db,
         "discover",
-        format!("🧭 Asked to be listed in Discover · {what} — `/desk queue discover`"),
+        format!("🧭 Asked to be listed in Discover · {what} — `/desk queue discover`{mark}"),
     )
     .await;
     if let Some(data) = data {

@@ -147,6 +147,24 @@ pub(crate) fn field<'a>(interaction: &'a Interaction, id: &str) -> &'a str {
         .unwrap_or_default()
 }
 
+/// A field of a submitted form: the text typed, or the first choice of a
+/// select (empty if absent)
+pub(crate) fn form_value(interaction: &Interaction, id: &str) -> String {
+    interaction
+        .modal_fields
+        .iter()
+        .find(|field| field.custom_id == id)
+        .and_then(|field| {
+            field
+                .value
+                .clone()
+                .filter(|v| !v.trim().is_empty())
+                .or_else(|| field.values.as_ref().and_then(|v| v.first().cloned()))
+        })
+        .map(|v| v.trim().to_string())
+        .unwrap_or_default()
+}
+
 fn presser_record(presser: &str, action: &str, summary: &str) -> AuditRecord {
     AuditRecord {
         actor_id: presser.to_string(),

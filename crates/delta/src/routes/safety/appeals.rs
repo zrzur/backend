@@ -155,7 +155,11 @@ pub async fn appeal(
     revolt_database::util::staff_inbox::announce(
         db,
         "appeals",
-        format!("⚖️ New appeal `{}` — `/desk appeal list`", appeal.id),
+        format!(
+            "⚖️ New appeal `{}` — `/desk appeal list`{}",
+            appeal.id,
+            revolt_database::util::staff_inbox::tag("appeal", &appeal.id)
+        ),
     )
     .await;
 

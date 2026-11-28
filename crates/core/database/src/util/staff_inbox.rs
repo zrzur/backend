@@ -17,6 +17,18 @@ pub fn inbox_of(desk: &revolt_config::FeaturesStaffDesk, kind: &str) -> Option<(
     (desk.enabled && !channel.is_empty() && !bot.is_empty()).then(|| (channel.to_string(), bot.to_string()))
 }
 
+/// The mark that ends an inbox line about one item: the desk bot turns the
+/// line into a card with buttons (`‹zr:case:01ABC…›`). Kinds and ids are
+/// plain letters, digits and dashes; anything else gives no mark.
+pub fn tag(kind: &str, id: &str) -> String {
+    let plain = |s: &str| !s.is_empty() && s.len() <= 64 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    if plain(kind) && plain(id) {
+        format!(" ‹zr:{kind}:{id}›")
+    } else {
+        String::new()
+    }
+}
+
 /// Post one line to the staff inbox. Never fails the request that called it.
 pub async fn announce(db: &Database, kind: &str, text: String) {
     let desk = config().await.features.staff_desk;
@@ -40,7 +52,16 @@ pub async fn announce(db: &Database, kind: &str, text: String) {
 
 #[cfg(test)]
 mod tests {
-    use super::inbox_of;
+    use super::{inbox_of, tag};
+
+    #[test]
+    fn a_tag_names_one_item_and_nothing_else() {
+        assert_eq!(tag("case", "01ABC"), " ‹zr:case:01ABC›");
+        assert_eq!(tag("discover-server", "01ABC"), " ‹zr:discover-server:01ABC›");
+        assert_eq!(tag("case", "01 ABC"), "");
+        assert_eq!(tag("case", "<@x>"), "");
+        assert_eq!(tag("", "01ABC"), "");
+    }
 
     #[test]
     fn the_inbox_needs_the_desk_a_bot_and_a_channel() {

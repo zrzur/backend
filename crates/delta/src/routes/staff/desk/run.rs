@@ -32,10 +32,7 @@ use revolt_database::{
     AuditOutcome, AuditRecord, Database, DeskPending, Interaction, InteractionSource, User,
     record_platform_audit, staff_now,
 };
-use revolt_models::v0::{
-    ButtonStyle, CommandOptionType, Component, ComponentBlock, InteractionDataOption,
-    InteractionOptionValue, InteractionType,
-};
+use revolt_models::v0::{ButtonStyle, Component, ComponentBlock, InteractionType};
 use revolt_result::{ErrorType, Result, create_error};
 use rocket::{State, serde::json::Json};
 use ulid::Ulid;
@@ -224,40 +221,6 @@ pub async fn run(
         .map(|view| Json(view.finish()))
 }
 
-/// What a review room press stands for: the desk command (command, group,
-/// name) and its options. Only these actions exist; the request id is the
-/// only value taken from the button, and the note only from the form's own
-/// field. Anything else is refused.
-pub(super) fn room_command(
-    custom_id: &str,
-    note: &str,
-) -> Option<(&'static str, Option<&'static str>, &'static str, Vec<InteractionDataOption>)> {
-    let rest = custom_id.strip_prefix(ACT_PREFIX)?;
-    let (action, id) = rest.split_once(':')?;
-    if id.is_empty() || id.len() > 64 || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
-        return None;
-    }
-    let text = |name: &str, value: &str| InteractionDataOption {
-        name: name.to_string(),
-        kind: CommandOptionType::String,
-        value: Some(InteractionOptionValue::String(value.to_string())),
-        options: None,
-    };
-    let (decision, needs_note) = match action {
-        "verify-approve" => ("approve", false),
-        "verify-deny" => ("deny", true),
-        _ => return None,
-    };
-    let mut options = vec![text("request", id), text("decision", decision)];
-    let note = note.trim();
-    if !note.is_empty() {
-        options.push(text("note", note));
-    } else if needs_note {
-        return None;
-    }
-    Some(("desk-review", Some("verification"), "decide", options))
-}
-
 /// A reviewer fixes a bot's public description and links (one per line)
 /// before deciding: the same checks as anyone's own profile (clean links,
 /// the platform's word list), for staff who may decide reviews. Recorded in
@@ -364,25 +327,24 @@ pub async fn act(
         .await
         .map(Json);
     }
-    let note = super::actor::field(&pressed, "note");
-    let Some((command, group, name, options)) = pressed
+    let form = |name: &str| super::actor::form_value(&pressed, name);
+    let Some((entry, options)) = pressed
         .custom_id
         .as_deref()
-        .and_then(|custom| room_command(custom, note))
+        .and_then(|custom| super::actions::room_command(custom, &form))
     else {
         let mut record = staff.record("staff.desk.act", None);
-        record.summary = Some("desk: not a review room action".to_string());
+        record.summary = Some("desk: not a room action".to_string());
         record_platform_audit(db, record, AuditOutcome::Denied).await?;
         return Err(create_error!(InvalidOperation));
     };
-    let entry =
-        registry::find(command, group, name).ok_or_else(|| create_error!(InvalidOperation))?;
     if !entry.offered(&settings) {
         return Err(create_error!(NotFound));
     }
     if let Some(permission) = entry.permission {
         staff.require_protective(db, permission).await?;
     }
+    let options = registry::resolve_people(db, entry, options).await?;
     let input = DeskInput {
         options,
         areas: settings.areas.clone(),
@@ -391,9 +353,15 @@ pub async fn act(
         page: 1,
         origin: pressed.id.clone(),
     };
-    propose(db, &staff, &settings, &pressed, entry, input)
+    // a changing command shows its confirmation card; a reading one answers
+    if entry.changes {
+        return propose(db, &staff, &settings, &pressed, entry, input)
+            .await
+            .map(Json);
+    }
+    registry::dispatch(db, &staff, entry, &input)
         .await
-        .map(Json)
+        .map(|view| Json(view.finish()))
 }
 
 /// The confirmation card of a pending action, as the bot must show it
@@ -726,42 +694,4 @@ pub async fn confirm(
     })
     .await
     .map(Json)
-}
-
-#[cfg(test)]
-mod room_tests {
-    use super::*;
-
-    fn value(options: &[InteractionDataOption], name: &str) -> Option<String> {
-        options.iter().find(|o| o.name == name).and_then(|o| match &o.value {
-            Some(InteractionOptionValue::String(v)) => Some(v.clone()),
-            _ => None,
-        })
-    }
-
-    #[test]
-    fn a_room_press_stands_for_the_desk_decision_with_fixed_options() {
-        let (command, group, name, options) =
-            room_command("zd:act:verify-approve:01ABCDEF", "").unwrap();
-        assert_eq!((command, group, name), ("desk-review", Some("verification"), "decide"));
-        assert_eq!(value(&options, "request").as_deref(), Some("01ABCDEF"));
-        assert_eq!(value(&options, "decision").as_deref(), Some("approve"));
-        assert_eq!(value(&options, "note"), None);
-
-        let (_, _, _, options) = room_command("zd:act:verify-deny:01ABCDEF", " not ready ").unwrap();
-        assert_eq!(value(&options, "decision").as_deref(), Some("deny"));
-        assert_eq!(value(&options, "note").as_deref(), Some("not ready"));
-    }
-
-    #[test]
-    fn anything_else_is_refused() {
-        // a denial needs the owner's note
-        assert!(room_command("zd:act:verify-deny:01ABCDEF", "  ").is_none());
-        // only the known actions, and only a plain id
-        assert!(room_command("zd:act:ban:01ABCDEF", "").is_none());
-        assert!(room_command("zd:act:verify-approve:", "").is_none());
-        assert!(room_command("zd:act:verify-approve:01ABC:extra", "").is_none());
-        assert!(room_command("zd:act:verify-approve:../x", "").is_none());
-        assert!(room_command("zd:confirm:01ABCDEF", "").is_none());
-    }
 }
